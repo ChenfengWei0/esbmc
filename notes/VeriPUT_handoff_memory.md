@@ -11437,6 +11437,58 @@ Official acfix_021 rerun after child-budget fix:
 - Remaining no-valid status buckets: 58 `no-output`, 5 `no-units`,
   2 `budget-exhausted`; the prior timeout bucket is now gone.
 
+## 2026-08-08 unit scheduling cheap-first repair
+
+Context:
+
+- Remaining no-valid after `acfix_021`: 65 / 124.
+- 58 are `no-output`; many stopped after trying only the first 1-3 units
+  because Stage 2 exceeded the no-output stop threshold before reaching later
+  units.
+- The old scheduler sorted by coarse priority then source/AST order. On
+  large target contracts this often put expensive business methods
+  (`initialize`, `buy`, `sell`, `execute`, `flashLoan`, `claim`, `create`,
+  `safeBatchTransferFrom`) before cheap setters or view helpers.
+
+Code change:
+
+- `notes/coverage/scripts/unit_schedule.py` now adds a stable
+  `schedule_rank.cheap_first` secondary rank inside each priority bucket.
+- Priority classes are unchanged: target hints are still priority 0, normal
+  state-changing units still priority 1, getter-like/enumerated units still
+  lower, static obstacles still priority 4.
+- Within a priority bucket, the scheduler now tries cheap view/pure helpers,
+  simple setters/ownership/pause/approval methods, and zero-interface units
+  before expensive payable/multi-arg/flash/batch/execute/deposit/withdraw
+  methods.
+- `scripts/test_unit_schedule.py` adds coverage that target-hinted cheap units
+  are tried before expensive target-hinted units without demoting them out of
+  priority 0.
+
+Dry-run schedule impact on existing no-valid cases:
+
+- `pop_033_PrivatePool`: after `flashFee`, new order tries
+  `setMerkleRoot`, `setFeeRate`, `setUseStolenNftOracle`, `setPayRoyalties`,
+  `setVirtualReserves` before `initialize/buy/sell/change/execute`.
+- `pop_009_PrivatePool` and `pop_048_PrivatePool`: target-hinted
+  `flashFeeAndProtocolFee` and `flashFee` move before hinted
+  `buy/sell/execute/flashLoan`.
+- `pop_018_PrivatePool`: after the single hinted `execute`, new order tries
+  setter-style units before `initialize/buy/sell/change/deposit/withdraw`.
+- `pop_070_PhiNFT1155`: `transferOwnership` and `setApprovalForAll` move
+  ahead of `initialize/createArtFromFactory/claimFromFactory`.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py`
+  passed.
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+
 Checks already run before committing this repair:
 
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`

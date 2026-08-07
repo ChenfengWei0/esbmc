@@ -34,6 +34,29 @@ INITIALIZER_LIKE_UNITS = {
     "setup",
     "setUp",
 }
+CHEAP_STATE_UNIT_NAMES = {
+    "approve",
+    "pause",
+    "unpause",
+    "unPause",
+    "renounceOwnership",
+    "setApprovalForAll",
+    "transferOwnership",
+}
+EXPENSIVE_UNIT_NAME_FRAGMENTS = (
+    "batch",
+    "buy",
+    "change",
+    "claim",
+    "create",
+    "deposit",
+    "execute",
+    "flash",
+    "safe",
+    "sell",
+    "upgrade",
+    "withdraw",
+)
 
 BUDGET_VALUE_FLAGS = {
     "--timeout",
@@ -219,6 +242,38 @@ def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None,
     return 3, "zero-arg-view"
 
 
+def _unit_cost_rank(unit: str, unit_info: dict | None) -> tuple[int, int, int]:
+    """Cheap-first order inside the same semantic priority bucket.
+
+    The priority bucket still decides what class of unit comes first.  This
+    rank only breaks ties inside that class, where source order often puts
+    heavy business methods before simple setters and view helpers.  Under a
+    fixed subject budget that can prevent later cheap units from being tried at
+    all.
+    """
+    if not unit_info:
+        return (50, 0, 0)
+    mutability = unit_info.get("state_mutability") or ""
+    params = int(unit_info.get("parameter_count") or 0)
+    returns = int(unit_info.get("return_count") or 0)
+    lower = unit.lower()
+    if unit in INITIALIZER_LIKE_UNITS:
+        tier = 80
+    elif mutability in ("view", "pure"):
+        tier = 5
+    elif unit in CHEAP_STATE_UNIT_NAMES or lower.startswith("set"):
+        tier = 10
+    elif params == 0 and returns == 0:
+        tier = 15
+    elif any(fragment in lower for fragment in EXPENSIVE_UNIT_NAME_FRAGMENTS):
+        tier = 70
+    else:
+        tier = 30
+    if mutability == "payable":
+        tier += 10
+    return (tier, params, returns)
+
+
 def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None,
                   out_path: str | None, unit_info: dict | None, *,
                   timeout_s: int, run_timeout_s: int, memlimit_gib: int,
@@ -234,6 +289,10 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
                    f"{unit}"),
         "priority": priority,
         "priority_reason": reason,
+        "schedule_rank": {
+            "cheap_first": list(_unit_cost_rank(unit, unit_info)),
+            "ordinal": ordinal,
+        },
         "ordinal": ordinal,
         "benchmark": subject["benchmark"],
         "subject_id": subject["subject_id"],
@@ -367,7 +426,11 @@ def build_schedule(manifest: dict,
 
     shard_spec = _parse_shard(shard)
     total_jobs = len(jobs)
-    jobs.sort(key=lambda item: (item["priority"], item["ordinal"]))
+    jobs.sort(key=lambda item: (
+        item["priority"],
+        item.get("schedule_rank", {}).get("cheap_first") or [50, 0, 0],
+        item["ordinal"],
+    ))
     jobs = _select_jobs(jobs, selection_strategy)
     jobs = _apply_shard(jobs, shard_spec)
     if limit:

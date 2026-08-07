@@ -255,9 +255,9 @@ def test_schedule_deprioritizes_unhinted_initializers():
            for job in doc["jobs"]]
     bad = 0
     bad += check(got == [("transfer", 1, "state-changing"),
-                         ("init", 2, "initializer-like"),
+                         ("balanceOf", 2, "pure/view-with-interface"),
                          ("setUp", 2, "initializer-like"),
-                         ("balanceOf", 2, "pure/view-with-interface")],
+                         ("init", 2, "initializer-like")],
                  f"unhinted initializer-like units do not monopolize first attempts: {got}")
 
     row["target"]["units_hint"] = ["init"]
@@ -272,6 +272,86 @@ def test_schedule_deprioritizes_unhinted_initializers():
     bad += check(hinted == [("init", 0, "target-hint"),
                             ("transfer", 1, "state-changing")],
                  f"explicit target hints still override initializer deprioritization: {hinted}")
+    return bad
+
+
+def test_schedule_orders_cheaper_units_inside_priority_bucket():
+    data = manifest()
+    row = data["subjects"][0]
+    row["target"]["units_hint"] = [
+        "buy",
+        "execute",
+        "flashFee",
+        "setFeeRate",
+    ]
+    row["unit_hints"] = {
+        "hinted_units": ["buy", "execute", "flashFee", "setFeeRate"],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    row["units"]["units"] = [
+        "buy",
+        "execute",
+        "flashFee",
+        "setFeeRate",
+        "deposit",
+        "transferOwnership",
+    ]
+    row["units"]["unit_info"] = [
+        {
+            "name": "buy",
+            "state_mutability": "payable",
+            "parameter_count": 3,
+            "return_count": 3,
+        },
+        {
+            "name": "execute",
+            "state_mutability": "payable",
+            "parameter_count": 2,
+            "return_count": 1,
+        },
+        {
+            "name": "flashFee",
+            "state_mutability": "view",
+            "parameter_count": 2,
+            "return_count": 1,
+        },
+        {
+            "name": "setFeeRate",
+            "state_mutability": "nonpayable",
+            "parameter_count": 1,
+            "return_count": 0,
+        },
+        {
+            "name": "deposit",
+            "state_mutability": "payable",
+            "parameter_count": 2,
+            "return_count": 0,
+        },
+        {
+            "name": "transferOwnership",
+            "state_mutability": "nonpayable",
+            "parameter_count": 1,
+            "return_count": 0,
+        },
+    ]
+    doc = unit_schedule.build_schedule(data)
+    got = [(job["unit"], job["priority"], job["priority_reason"],
+            job["schedule_rank"]["cheap_first"]) for job in doc["jobs"]]
+    bad = 0
+    bad += check([unit for unit, _prio, _reason, _rank in got] == [
+        "flashFee",
+        "setFeeRate",
+        "execute",
+        "buy",
+        "transferOwnership",
+        "deposit",
+    ], f"cheap hinted units are tried before expensive hinted units: {got}")
+    bad += check(all(prio == 0 and reason == "target-hint"
+                     for _unit, prio, reason, _rank in got[:4]),
+                 f"cheap-first ordering does not demote target hints: {got}")
+    bad += check(got[0][3] < got[2][3],
+                 f"schedule rank records the cheap-first decision: {got}")
     return bad
 
 
@@ -629,6 +709,7 @@ TESTS = [
     test_schedule_prioritizes_hinted_units_and_preserves_argv,
     test_schedule_prioritizes_semantic_units_before_getter_like_units,
     test_schedule_deprioritizes_unhinted_initializers,
+    test_schedule_orders_cheaper_units_inside_priority_bucket,
     test_schedule_deprioritizes_recursive_helper_obstacles,
     test_schedule_cli_reads_stdin_and_applies_limit,
     test_schedule_deduplicates_prepared_subject_units,
