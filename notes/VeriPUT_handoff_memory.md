@@ -11227,6 +11227,107 @@ JSON-only refresh of existing peer182 RQ1 output:
   `veriput 1 121 284 260 68 66 36.3% 1.43`.
 - The official anomaly audit now reports VeriPUT `raw>0 & valid==0 = 0`.
 
+## 2026-08-07 RQ1 peer182 wave to limit 132
+
+Command:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py \
+  --benchmark peer182 \
+  --limit 132 \
+  --order fast-first \
+  --jobs 2 \
+  --memlimit-gib 12 \
+  --timeout 600 \
+  --wrapper-grace 60 \
+  --resume \
+  --no-output-stage2-stop-s 100
+```
+
+Runtime notes:
+
+- Existing 121 latest rows were skipped via `--resume`.
+- 12 new subjects were queued and completed.
+- No residual `rq1_veriput_run`, `certify_all`, `put_all`, `esbmc`, or
+  `forge test` worker remained after the command exited.
+- No OOM was observed.  Highest noticed live RSS was about 7.1GiB
+  (`ClockBoxContract`), under the 12GiB case memlimit.
+
+New subject outcomes:
+
+- `peer_solar__DateTime`: `ok`, raw=7 valid=7, PUT 7/7, wall=401.6s,
+  Stage2=366.4s, Stage4=35.0s.
+- `peer_syntest__BirdOracle`: `ok`, `budget-exhausted`, raw=4 valid=3,
+  PUT 2/3, concrete 1/1, wall=599.3s, Stage2=346.5s, Stage4=252.6s.
+- `peer_ccsolbmc__FrontRunner`: `ok`, raw=6 valid=2, PUT 2/6,
+  wall=496.3s, Stage2=249.9s, Stage4=246.3s.
+- `peer_syntest__TimeMiner`: `no-output`, early stop, wall=120.4s.
+- `peer_ccsolbmc__TokenVesting`: `no-output`, early stop, wall=120.7s.
+- `peer_syntest__DJCoin`: `no-output`, early stop, wall=121.2s.
+- `peer_ccsolbmc__ClockBoxContract`: `no-output`, early stop,
+  wall=142.8s.
+- `peer_syntest__CryptoSecureBankToken`: `no-output`, early stop,
+  wall=361.1s.
+- `peer_solar__Prover`: `no-output`, early stop, wall=123.7s.
+- `peer_syntest__SLTDETHlpReward`: `no-output`, early stop, wall=106.3s.
+- `peer_ccsolbmc__SOTH`: `ok`, `budget-exhausted`, raw=2 valid=2,
+  PUT 2/2, wall=599.8s, Stage2=245.7s, Stage4=353.8s.
+- `peer_ccsolbmc__ERC20`: `ok`, `budget-exhausted`, raw=5 valid=5,
+  PUT 5/5, wall=595.6s, Stage2=300.8s, Stage4=294.8s.
+
+Aggregate after limit132:
+
+- Latest rows: 133.
+- Status:
+  - `ok`: 71
+  - `no-output`: 55
+  - `no-units`: 5
+  - `timeout`: 2
+- Completion:
+  - `ok`: 101
+  - `budget-exhausted`: 12
+  - `early-stop-no-output`: 13
+  - `no-units`: 5
+  - `timeout`: 2
+- Raw / valid tests: 308 / 279.
+- PUT raw / valid: 252 / 239.
+- Concrete raw / valid: 56 / 47.
+- Valid subjects: 71.
+- `valid=None`: 2 timeout rows.
+- Raw>0 and valid==0: 0.
+- Oracle classes:
+  - `R0`: 217
+  - `R1`: 230
+  - `R2`: 1404
+- Oracle combinations:
+  - `R0`: 217
+  - `R1`: 176
+  - `R1+R2`: 54
+  - `R2`: 1350
+
+Official `results_all.py --benchmark peer182` snapshot:
+
+- VeriPUT S3 line:
+  `veriput 1 133 308 279 73 71 39.0% 1.53`.
+- VeriPUT status audit:
+  `{'ok': 71, 'no-output': 55, 'no-units': 5, 'timeout': 2}`.
+- VeriPUT cost:
+  ran 133, total 5.18h, wall/subj 140.3 +/- 202.1s,
+  peakRSS 1650 +/- 3157 MB.
+- VeriPUT anomaly audit:
+  timeout/oom/error 2, sub-5s ok 0, raw>0 & valid==0 0.
+
+Interpretation:
+
+- This wave added 5 valid subjects and 19 valid tests over the refreshed
+  limit120 snapshot.
+- Successful late cases were relatively expensive but strong:
+  `DateTime` 7/7, `SOTH` 2/2, `ERC20` 5/5.  `FrontRunner` produced useful but
+  weaker PUTs, 2/6 valid.
+- The no-output cases are mostly early Stage2 stops after about 100-140s, except
+  `CryptoSecureBankToken` at 361s.  They did not produce raw artifacts and do
+  not pollute the raw/valid denominator.
+
 ## 2026-08-07 RQ1 production runner artifact schema
 
 User requirement recorded:
