@@ -11014,6 +11014,95 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 RQ1 VeriPUT production runner contract
+
+User tightened the output requirements before the benchmark wave:
+
+- JSON must always preserve timing statistics.
+- Raw generated tests and reference-valid tests must both be recorded.
+- Artifacts must be retained, not just counted.
+- PUT metadata must preserve whether rendered assertions are R0/R1/R2 or a
+  combination such as R1+R2.
+- Peer remains contracts080-only; all datasets use only the target contract
+  named in prepared-subject metadata.
+
+Code added:
+
+- `notes/coverage/scripts/rq1_veriput_run.py`
+  - Subject-scoped production wrapper for RQ1.
+  - Reads targets through `target_manifest.py`.
+  - Uses `stress203` / prepared-ok stress targets for the `real203` output
+    label.
+  - Resolves prepared subjects from
+    `/home/samson/workspace/VeriPUT/Results/{Peer182,BugFix124,Stress243}/subjects`.
+  - Writes only under
+    `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/<dataset>`.
+  - Writes compact AST cache under external `--ast-cache-root`
+    (default `/tmp/veriput_rq1_ast_cache`), not under Datasets/Results.
+  - Runs subject units in priority order through Stage 2 and Stage 4 until the
+    subject-level budget is exhausted.
+  - Default production budget is 600s per subject with 60s wrapper slack,
+    12GiB passed to ESBMC invocations, one concurrent subject.
+  - `results.jsonl` rows are append-only and last-write-wins by
+    `key=gen:veriput:<subject_id>`.
+  - Each subject has `subjects/<subject_id>/result.json`,
+    `unit-schedule.json`, `cert/certify-results.jsonl`, per-stage logs, and
+    `put/<unit>/...` Stage-4 artifact trees.
+
+Required row fields now emitted by the runner:
+
+- `wall_total_s`, `stage2_wall_s`, `stage4_wall_s`, `tool_timeout_s`,
+  `wall_cap_s`, `maxrss_mb`.
+- `raw`, `valid`, `put_raw`, `put_valid`, `concrete_raw`,
+  `concrete_valid`.
+- `status`, `reason`, `mem_budget_mb`, `n_concurrent`, `host`.
+- `artifact_root`, `result_json`, `cert_jsonl`, `put_summary_paths`.
+- `oracle_class_counts` and `oracle_class_combo_counts`.
+- flags `raw_artifacts_retained=true` and `valid_artifacts_retained=true`.
+
+The per-subject `result.json` additionally retains:
+
+- raw test rows and valid test rows from every `put-summary.json`;
+- every loaded `put.json` path;
+- `assertion_oracles` copied from PUT stats, including `classes`, `layer`,
+  `var`, `text`, `verdict`, `emitted_in_test`, and `guarded`;
+- stage command lines plus stdout/stderr log paths and tails.
+
+Path guard update:
+
+- `veriput_path_guard.ensure_path_not_protected()` still rejects writes under
+  `/home/samson/workspace/VeriPUT/Datasets` and the shared prepared
+  `/home/samson/workspace/VeriPUT/Results` trees.
+- It now explicitly allows the generated-tool output subtree
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`.
+- The previous guard behavior remains for paths such as
+  `/home/samson/workspace/VeriPUT/Results/put-stage4`.
+
+Smoke and cleanup:
+
+- A non-production 1s wiring smoke initially wrote one fake peer row before
+  the guard allowlist was fixed. It was moved out of the official result tree
+  to `/tmp/veriput_rq1_smoke_rejected/peer182_1786070277`.
+- Current `Results/RQ1/VeriPUT` tree has no formal peer row from that smoke.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  notes/coverage/scripts/rq1_veriput_run.py
+  notes/coverage/scripts/veriput_path_guard.py
+  scripts/test_rq1_veriput_run.py scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  passed and still checks that non-RQ1 Results output roots are refused.
+
+Next intended step:
+
+- Run a small formal sample, likely 1-3 subjects, with the real 600s/12GiB
+  budget to validate the production JSON and artifact layout before scaling
+  one-by-one across peer182, bugfix124, and real203.
+
 ## 2026-08-07 source-access `_msgSender()` slot narrowing
 
 Problem:

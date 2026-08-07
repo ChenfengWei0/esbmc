@@ -1,0 +1,681 @@
+#!/usr/bin/env python3
+"""Run the VeriPUT RQ1 generator over prepared benchmark subjects.
+
+This is the production wrapper around the existing Stage-2 (`certify_all.py`)
+and Stage-4 (`put_all.py`) drivers.  It is deliberately subject-scoped:
+benchmark inputs are read from `/home/samson/workspace/VeriPUT/Results/*/subjects`,
+while all generated artifacts are retained under
+`/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import resource
+import socket
+import subprocess
+import sys
+import time
+from collections import Counter
+from datetime import datetime, timezone
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[2]
+sys.path.insert(0, str(HERE))
+
+import subject_unit_manifest  # noqa: E402
+import target_manifest  # noqa: E402
+import unit_schedule  # noqa: E402
+from veriput_recipe import STRONG_RECIPE_VERSION  # noqa: E402
+from veriput_subjects import PreparedSubject  # noqa: E402
+
+PUT_ALL = HERE / "put_all.py"
+
+DEFAULT_VERIPUT_ROOT = Path("/home/samson/workspace/VeriPUT")
+DEFAULT_RESULT_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1" / "VeriPUT"
+DEFAULT_AST_CACHE_ROOT = Path("/tmp/veriput_rq1_ast_cache")
+DATASET_LABEL = {
+    "peer182": "peer182",
+    "bugfix124": "bugfix124",
+    "stress243": "real203",
+    "stress203": "real203",
+    "real203": "real203",
+}
+TARGET_BENCHMARK_ARG = {
+    "peer182": "peer182",
+    "bugfix124": "bugfix124",
+    "stress243": "stress203",
+    "stress203": "stress203",
+    "real203": "stress203",
+}
+
+
+class RQ1RunError(ValueError):
+    """The requested production run is unsafe or malformed."""
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _safe_name(text: str) -> str:
+    keep = []
+    for ch in str(text):
+        keep.append(ch if ch.isalnum() or ch in "._-" else "_")
+    return "".join(keep).strip("_") or "unnamed"
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.expanduser().resolve().relative_to(root.expanduser().resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def validate_roots(veriput_root: Path, result_root: Path, ast_cache_root: Path) -> None:
+    allowed_result = veriput_root / "Results" / "RQ1" / "VeriPUT"
+    if not _is_under(result_root, allowed_result):
+        raise RQ1RunError(
+            f"--result-root must be under {allowed_result}; got {result_root}")
+    for protected in (veriput_root / "Datasets", veriput_root / "Results"):
+        if _is_under(ast_cache_root, protected):
+            raise RQ1RunError(
+                f"--ast-cache-root must not be under {protected}; got {ast_cache_root}")
+
+
+def _write_json(path: Path, doc: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}.{time.time_ns()}")
+    tmp.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, path)
+
+
+def _append_jsonl(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as stream:
+        stream.write(json.dumps(row, sort_keys=True) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _latest_rows(path: Path) -> dict[str, dict]:
+    if not path.exists():
+        return {}
+    out = {}
+    for line in path.read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        key = row.get("key")
+        if key:
+            out[key] = row
+    return out
+
+
+def target_rows(veriput_root: Path, benchmark: str, subject_ids: list[str],
+                limit: int) -> tuple[str, list[dict]]:
+    if benchmark not in TARGET_BENCHMARK_ARG:
+        raise RQ1RunError(
+            "--benchmark must be one of: " + ", ".join(sorted(TARGET_BENCHMARK_ARG)))
+    target_arg = TARGET_BENCHMARK_ARG[benchmark]
+    doc = target_manifest.build_manifest(veriput_root, [target_arg], "include")
+    rows = [row for row in doc.get("targets") or [] if row.get("status") == "ok"]
+    if subject_ids:
+        wanted = set(subject_ids)
+        rows = [row for row in rows if row.get("subject_id") in wanted]
+    if limit:
+        rows = rows[:limit]
+    return DATASET_LABEL[benchmark], rows
+
+
+def cached_subject(subject: PreparedSubject, ast_cache_root: Path,
+                   dataset_label: str) -> PreparedSubject:
+    ast_name = Path(subject.solast).name
+    cached = ast_cache_root / dataset_label / subject.benchmark_key / ast_name
+    return subject.with_solast_path(str(cached.resolve()), source="rq1-cache")
+
+
+def _unit_hints(row: dict, units: list[str]) -> dict:
+    hints = list(row.get("units_hint") or [])
+    unit_set = set(units)
+    return {
+        "source": "target-manifest.units_hint",
+        "hinted_units": [name for name in hints if name in unit_set],
+        "missing_unit_hints": [name for name in hints if name not in unit_set],
+        "pending_unit_hints": [],
+    }
+
+
+def build_subject_schedule(subject: PreparedSubject, target_row: dict,
+                           ast_cache_root: Path, case_dir: Path, *,
+                           timeout_s: int, memlimit_gib: int) -> dict:
+    row = subject_unit_manifest.manifest_for_subject(
+        subject,
+        generate_ast=True,
+        ast_timeout_s=60.0)
+    if row.get("status") == "ok":
+        units = (row.get("units") or {}).get("units") or []
+        row["target"] = target_row
+        row["unit_hints"] = _unit_hints(target_row, units)
+    manifest = {
+        "schema": "veriput-unit-manifest/v1",
+        "generated_at": _utc_now(),
+        "benchmark": subject.benchmark,
+        "ast_cache_root": str(ast_cache_root),
+        "summary": {
+            "subjects": 1,
+            "ok": 1 if row.get("status") == "ok" else 0,
+            "missing_ast": 1 if row.get("status") == "missing-ast" else 0,
+            "error": 1 if row.get("status") == "error" else 0,
+            "units": len((row.get("units") or {}).get("units") or []),
+        },
+        "subjects": [row],
+    }
+    cert_out = str((case_dir / "cert" / "certify-results.jsonl").resolve())
+    return unit_schedule.build_schedule(
+        manifest,
+        selection_strategy="priority",
+        cert_out=cert_out,
+        timeout_s=timeout_s,
+        run_timeout_s=timeout_s,
+        memlimit_gib=memlimit_gib,
+        workdir=str((case_dir / "cert" / "work").resolve()))
+
+
+def _tail(text: str, limit: int = 4000) -> str:
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
+
+
+def _maxrss_mb() -> float:
+    # Linux reports ru_maxrss in KiB.
+    return round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024.0, 1)
+
+
+def _looks_oom(rc: int | None, text: str) -> bool:
+    if rc in (-9, 137, -6, 134):
+        return True
+    lowered = text.lower()
+    return any(token in lowered for token in (
+        "std::bad_alloc",
+        "bad_alloc",
+        "out of memory",
+        "cannot allocate memory",
+        "memory exhausted",
+        "enomem",
+    ))
+
+
+def run_command(argv: list[str], timeout_s: float, log_prefix: Path) -> dict:
+    log_prefix.parent.mkdir(parents=True, exist_ok=True)
+    start = time.monotonic()
+    timed_out = False
+    try:
+        cp = subprocess.run(argv,
+                            capture_output=True,
+                            text=True,
+                            timeout=max(1.0, timeout_s))
+        rc = cp.returncode
+        stdout = cp.stdout or ""
+        stderr = cp.stderr or ""
+    except subprocess.TimeoutExpired as exc:
+        timed_out = True
+        rc = None
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+    except OSError as exc:
+        rc = None
+        stdout = ""
+        stderr = f"could not start: {exc}"
+    wall_s = round(time.monotonic() - start, 3)
+    (log_prefix.with_suffix(".stdout.log")).write_text(stdout)
+    (log_prefix.with_suffix(".stderr.log")).write_text(stderr)
+    combined = stdout + "\n" + stderr
+    status = "timeout" if timed_out else ("ok" if rc == 0 else "error")
+    if status == "error" and _looks_oom(rc, combined):
+        status = "oom"
+    return {
+        "argv": argv,
+        "rc": rc,
+        "status": status,
+        "timed_out": timed_out,
+        "wall_s": wall_s,
+        "stdout_log": str(log_prefix.with_suffix(".stdout.log")),
+        "stderr_log": str(log_prefix.with_suffix(".stderr.log")),
+        "stdout_tail": _tail(stdout),
+        "stderr_tail": _tail(stderr),
+        "maxrss_mb_after": _maxrss_mb(),
+    }
+
+
+def _certified_count(cert_path: Path, benchmark_key: str, unit: str) -> int:
+    if not cert_path.exists():
+        return 0
+    count = 0
+    for line in cert_path.read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("bucket") != "CERTIFIED":
+            continue
+        if row.get("unit") != unit:
+            continue
+        if (row.get("benchmark") or row.get("poc")) != benchmark_key:
+            continue
+        count += len(row.get("certified") or {})
+    return count
+
+
+def _load_put_jsons(put_root: Path) -> list[dict]:
+    out = []
+    for path in sorted(put_root.rglob("put.json")):
+        try:
+            rec = json.loads(path.read_text(errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        rec["_put_json_path"] = str(path)
+        out.append(rec)
+    return out
+
+
+def summarize_put_artifacts(put_root: Path) -> dict:
+    emission = Counter()
+    valid = Counter()
+    rows = []
+    summary_paths = []
+    for path in sorted(put_root.rglob("put-summary.json")):
+        try:
+            doc = json.loads(path.read_text(errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        summary_paths.append(str(path))
+        em = doc.get("emission") or {}
+        b = doc.get("deliverable_b") or {}
+        v = b.get("valid_reference_tests") or {}
+        emission["put"] += int(em.get("puts_emitted") or 0)
+        emission["concrete"] += int(em.get("concrete_replays_emitted") or 0)
+        valid["put"] += int(v.get("put") or 0)
+        valid["concrete"] += int(v.get("concrete") or 0)
+        rows.extend(b.get("rows") or [])
+
+    put_jsons = _load_put_jsons(put_root)
+    by_test = {rec.get("test"): rec for rec in put_jsons if rec.get("test")}
+    oracle_label_counts = Counter()
+    oracle_combo_counts = Counter()
+    assertion_oracles = []
+    for rec in put_jsons:
+        details = rec.get("stats", {}).get("assertion_oracles") or []
+        for detail in details:
+            classes = tuple(detail.get("classes") or [])
+            if not classes:
+                continue
+            for label in classes:
+                oracle_label_counts[label] += 1
+            oracle_combo_counts["+".join(classes)] += 1
+            enriched = dict(detail)
+            enriched["test"] = rec.get("test")
+            enriched["put_json"] = rec.get("_put_json_path")
+            assertion_oracles.append(enriched)
+
+    raw_tests = []
+    valid_tests = []
+    for row in rows:
+        rec = by_test.get(row.get("test"), {})
+        entry = {
+            "kind": row.get("kind"),
+            "unit": row.get("unit"),
+            "enc": row.get("enc"),
+            "piece": row.get("piece"),
+            "test": row.get("test"),
+            "file": row.get("file"),
+            "forge_status": row.get("forge_status"),
+            "valid_reference_test": bool(row.get("valid_reference_test")),
+            "b": bool(row.get("b")),
+            "oracle_classes": rec.get("stats", {}).get("oracle_classes") or [],
+            "put_json": rec.get("_put_json_path"),
+        }
+        raw_tests.append(entry)
+        if entry["valid_reference_test"]:
+            valid_tests.append(entry)
+
+    return {
+        "raw": int(emission["put"] + emission["concrete"]),
+        "valid": int(valid["put"] + valid["concrete"]),
+        "put_raw": int(emission["put"]),
+        "put_valid": int(valid["put"]),
+        "concrete_raw": int(emission["concrete"]),
+        "concrete_valid": int(valid["concrete"]),
+        "summary_paths": summary_paths,
+        "raw_tests": raw_tests,
+        "valid_tests": valid_tests,
+        "put_json_count": len(put_jsons),
+        "oracle_class_counts": dict(sorted(oracle_label_counts.items())),
+        "oracle_class_combo_counts": dict(sorted(oracle_combo_counts.items())),
+        "assertion_oracles": assertion_oracles,
+    }
+
+
+def _remaining(deadline: float) -> float:
+    return max(0.0, deadline - time.monotonic())
+
+
+def _certify_argv_for_remaining(job: dict, remaining_s: float, memlimit_gib: int) -> list[str]:
+    budget = max(1, int(remaining_s))
+    return unit_schedule.budgeted_certify_argv(
+        [str(arg) for arg in job["certify_argv"]],
+        timeout_s=budget,
+        run_timeout_s=budget,
+        memlimit_gib=memlimit_gib,
+        workdir=job["certification_budget"]["workdir"])
+
+
+def _put_argv(cert_path: Path, unit: str, benchmark_key: str, out_root: Path,
+              remaining_s: float, memlimit_gib: int, forge_timeout: int) -> list[str]:
+    budget = max(1, int(remaining_s))
+    return [
+        sys.executable,
+        str(PUT_ALL),
+        "--cert",
+        str(cert_path),
+        "--only",
+        f"{benchmark_key}.{unit}",
+        "--strong-recipe",
+        "--timeout",
+        str(budget),
+        "--forge-timeout",
+        str(forge_timeout),
+        "--memlimit-gib",
+        str(memlimit_gib),
+        "--out-root",
+        str(out_root),
+    ]
+
+
+def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]:
+    start = time.monotonic()
+    subject_id = target_row["subject_id"]
+    case_dir = Path(args.result_root) / dataset_label / "subjects" / _safe_name(subject_id)
+    cert_path = case_dir / "cert" / "certify-results.jsonl"
+    ast_cache_root = Path(args.ast_cache_root).expanduser().resolve()
+    subject = subject_unit_manifest.resolve_subject(
+        subject_id,
+        benchmark=target_row["benchmark"],
+        require_unit=False)
+    subject = cached_subject(subject.with_inferred_solc_bin(), ast_cache_root, dataset_label)
+    deadline = start + float(args.timeout)
+    stages = []
+    units_attempted = []
+    result_status = "ok"
+    failure_reason = None
+
+    try:
+        schedule = build_subject_schedule(subject,
+                                          target_row,
+                                          ast_cache_root,
+                                          case_dir,
+                                          timeout_s=args.timeout,
+                                          memlimit_gib=args.memlimit_gib)
+    except Exception as exc:  # Fail-soft at subject granularity.
+        result_status = "error"
+        failure_reason = str(exc)
+        schedule = {
+            "schema": "veriput-unit-schedule/v1",
+            "jobs": [],
+            "summary": {},
+        }
+
+    _write_json(case_dir / "unit-schedule.json", schedule)
+    jobs = list(schedule.get("jobs") or [])
+    if result_status == "ok" and not jobs:
+        result_status = "no-units"
+        failure_reason = "target contract has no schedulable public/external units"
+
+    for idx, job in enumerate(jobs, 1):
+        if _remaining(deadline) < args.min_remaining_s:
+            result_status = "budget-exhausted"
+            failure_reason = "case budget exhausted before remaining units"
+            break
+        unit = job["unit"]
+        units_attempted.append(unit)
+        cert_argv = _certify_argv_for_remaining(job, _remaining(deadline),
+                                                args.memlimit_gib)
+        cert_stage = run_command(cert_argv,
+                                 _remaining(deadline) + args.wrapper_grace,
+                                 case_dir / "logs" / f"{idx:03d}-{_safe_name(unit)}-certify")
+        cert_stage.update({
+            "stage": "certify",
+            "unit": unit,
+            "job_id": job.get("job_id"),
+        })
+        stages.append(cert_stage)
+        if cert_stage["status"] in ("timeout", "oom"):
+            result_status = cert_stage["status"]
+            failure_reason = f"certify {unit}: {cert_stage['status']}"
+            break
+        if cert_stage["status"] != "ok":
+            continue
+        n_certified = _certified_count(cert_path, subject.benchmark_key, unit)
+        if n_certified <= 0:
+            continue
+        if _remaining(deadline) < args.min_remaining_s:
+            result_status = "budget-exhausted"
+            failure_reason = "case budget exhausted before Stage 4"
+            break
+        put_root = case_dir / "put" / _safe_name(unit)
+        put_argv = _put_argv(cert_path,
+                             unit,
+                             subject.benchmark_key,
+                             put_root,
+                             _remaining(deadline),
+                             args.memlimit_gib,
+                             args.forge_timeout)
+        put_stage = run_command(put_argv,
+                                _remaining(deadline) + args.wrapper_grace,
+                                case_dir / "logs" / f"{idx:03d}-{_safe_name(unit)}-put")
+        put_stage.update({
+            "stage": "put",
+            "unit": unit,
+            "certified_regions_for_unit": n_certified,
+            "put_out_root": str(put_root),
+        })
+        stages.append(put_stage)
+        if put_stage["status"] in ("timeout", "oom"):
+            result_status = put_stage["status"]
+            failure_reason = f"put {unit}: {put_stage['status']}"
+            break
+
+    put_summary = summarize_put_artifacts(case_dir / "put")
+    wall_total_s = round(time.monotonic() - start, 3)
+    if result_status == "ok" and put_summary["raw"] == 0:
+        result_status = "no-output"
+        failure_reason = "no PUT or concrete replay emitted"
+    row = {
+        "key": f"gen:veriput:{subject_id}",
+        "stage": "gen_veriput",
+        "schema": "veriput-rq1-result-row/v1",
+        "ts": round(time.time(), 3),
+        "generated_at": _utc_now(),
+        "host": socket.gethostname(),
+        "n_concurrent": 1,
+        "mem_budget_mb": args.memlimit_gib * 1024,
+        "tool_timeout_s": args.timeout,
+        "wall_cap_s": args.timeout + args.wrapper_grace,
+        "status": result_status,
+        "reason": failure_reason,
+        "subject_id": subject_id,
+        "benchmark": target_row["benchmark"],
+        "dataset": dataset_label,
+        "contract": target_row.get("contract"),
+        "raw": put_summary["raw"],
+        "valid": put_summary["valid"] if result_status != "timeout" else None,
+        "put_raw": put_summary["put_raw"],
+        "put_valid": put_summary["put_valid"],
+        "concrete_raw": put_summary["concrete_raw"],
+        "concrete_valid": put_summary["concrete_valid"],
+        "oracle_class_counts": put_summary["oracle_class_counts"],
+        "oracle_class_combo_counts": put_summary["oracle_class_combo_counts"],
+        "units_attempted": units_attempted,
+        "units_scheduled": len(jobs),
+        "stage2_wall_s": round(sum(s["wall_s"] for s in stages
+                                   if s.get("stage") == "certify"), 3),
+        "stage4_wall_s": round(sum(s["wall_s"] for s in stages
+                                   if s.get("stage") == "put"), 3),
+        "wall": wall_total_s,
+        "wall_total_s": wall_total_s,
+        "maxrss_mb": _maxrss_mb(),
+        "artifact_root": str(case_dir),
+        "result_json": str(case_dir / "result.json"),
+        "cert_jsonl": str(cert_path),
+        "put_summary_paths": put_summary["summary_paths"],
+        "raw_artifacts_retained": True,
+        "valid_artifacts_retained": True,
+        "recipe_version": STRONG_RECIPE_VERSION,
+    }
+    detail = {
+        "schema": "veriput-rq1-case-result/v1",
+        "row": row,
+        "target": target_row,
+        "subject": subject.to_record(),
+        "schedule": {
+            "path": str(case_dir / "unit-schedule.json"),
+            "summary": schedule.get("summary") or {},
+        },
+        "stages": stages,
+        "put": put_summary,
+    }
+    _write_json(case_dir / "result.json", detail)
+    return row, detail
+
+
+def write_dataset_manifest(root: Path, dataset_label: str, journal: Path) -> None:
+    latest = _latest_rows(journal)
+    status = Counter(str(row.get("status") or "<missing>") for row in latest.values())
+    doc = {
+        "schema": "veriput-rq1-dataset-manifest/v1",
+        "generated_at": _utc_now(),
+        "dataset": dataset_label,
+        "journal": str(journal),
+        "summary": {
+            "rows": len(latest),
+            "raw": sum(row.get("raw") or 0 for row in latest.values()),
+            "valid": sum(row.get("valid") or 0 for row in latest.values()
+                         if row.get("valid") is not None),
+            "put_raw": sum(row.get("put_raw") or 0 for row in latest.values()),
+            "put_valid": sum(row.get("put_valid") or 0 for row in latest.values()),
+            "concrete_raw": sum(row.get("concrete_raw") or 0 for row in latest.values()),
+            "concrete_valid": sum(row.get("concrete_valid") or 0
+                                  for row in latest.values()),
+            "status": dict(sorted(status.items())),
+        },
+    }
+    _write_json(root / dataset_label / "manifest.json", doc)
+
+
+def build_dry_run(args) -> dict:
+    dataset_label, rows = target_rows(Path(args.veriput_root), args.benchmark,
+                                      args.subject_id, args.limit)
+    return {
+        "schema": "veriput-rq1-dry-run/v1",
+        "generated_at": _utc_now(),
+        "dataset": dataset_label,
+        "result_root": args.result_root,
+        "ast_cache_root": args.ast_cache_root,
+        "timeout_s": args.timeout,
+        "memlimit_gib": args.memlimit_gib,
+        "subjects": [{
+            "subject_id": row.get("subject_id"),
+            "benchmark": row.get("benchmark"),
+            "contract": row.get("contract"),
+            "units_hint": row.get("units_hint") or [],
+        } for row in rows],
+    }
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--veriput-root", default=str(DEFAULT_VERIPUT_ROOT))
+    ap.add_argument("--benchmark", required=True,
+                    choices=sorted(TARGET_BENCHMARK_ARG),
+                    help="peer182, bugfix124, or real203/stress203")
+    ap.add_argument("--subject-id", action="append", default=[],
+                    help="restrict to one prepared subject id. Repeatable")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="run only the first N selected target subjects")
+    ap.add_argument("--result-root", default=str(DEFAULT_RESULT_ROOT))
+    ap.add_argument("--ast-cache-root", default=str(DEFAULT_AST_CACHE_ROOT))
+    ap.add_argument("--timeout", type=int, default=600,
+                    help="whole subject generation budget, seconds")
+    ap.add_argument("--wrapper-grace", type=int, default=60,
+                    help="subprocess cleanup/writeout slack outside the tool budget")
+    ap.add_argument("--min-remaining-s", type=int, default=20,
+                    help="do not start another stage with less than this many seconds")
+    ap.add_argument("--memlimit-gib", type=int, default=12,
+                    help="per-ESBMC memory budget passed to Stage 2/4")
+    ap.add_argument("--forge-timeout", type=int, default=180)
+    ap.add_argument("--resume", action="store_true",
+                    help="skip subject keys already present in results.jsonl")
+    ap.add_argument("--redo", action="store_true",
+                    help="run selected subjects even if results.jsonl already has a row")
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args(argv)
+
+    try:
+        veriput_root = Path(args.veriput_root).expanduser().resolve()
+        result_root = Path(args.result_root).expanduser().resolve()
+        ast_cache_root = Path(args.ast_cache_root).expanduser().resolve()
+        validate_roots(veriput_root, result_root, ast_cache_root)
+        if args.timeout <= 0 or args.wrapper_grace < 0 or args.memlimit_gib <= 0:
+            raise RQ1RunError("timeouts must be positive and --memlimit-gib must be positive")
+        args.veriput_root = str(veriput_root)
+        args.result_root = str(result_root)
+        args.ast_cache_root = str(ast_cache_root)
+        if args.dry_run:
+            print(json.dumps(build_dry_run(args), indent=2, sort_keys=True))
+            return 0
+
+        dataset_label, rows = target_rows(veriput_root, args.benchmark,
+                                          args.subject_id, args.limit)
+        journal = result_root / dataset_label / "results.jsonl"
+        done = _latest_rows(journal) if args.resume and not args.redo else {}
+        attempted = 0
+        for target_row in rows:
+            key = f"gen:veriput:{target_row['subject_id']}"
+            if key in done:
+                print(f"[rq1] skip recorded {target_row['subject_id']}")
+                continue
+            print(f"[rq1] {dataset_label} {target_row['subject_id']} "
+                  f"contract={target_row.get('contract')}", flush=True)
+            row, _detail = run_subject(target_row, dataset_label, args)
+            _append_jsonl(journal, row)
+            write_dataset_manifest(result_root, dataset_label, journal)
+            attempted += 1
+            print(f"[rq1] -> status={row['status']} raw={row['raw']} "
+                  f"valid={row['valid']} put={row['put_valid']}/"
+                  f"{row['put_raw']} concrete={row['concrete_valid']}/"
+                  f"{row['concrete_raw']} wall={row['wall_total_s']}s",
+                  flush=True)
+        if attempted == 0:
+            write_dataset_manifest(result_root, dataset_label, journal)
+        return 0
+    except (OSError, RQ1RunError) as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

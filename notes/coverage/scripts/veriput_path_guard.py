@@ -26,11 +26,20 @@ def protected_roots(veriput_root: Path = VERIPUT_ROOT) -> list[Path]:
     return [root / "Datasets", root / "Results"]
 
 
+def allowed_result_roots(veriput_root: Path = VERIPUT_ROOT) -> list[Path]:
+    """Result subtrees that are generated tool artifacts, not shared inputs."""
+    root = Path(veriput_root)
+    return [root / "Results" / "RQ1" / "VeriPUT"]
+
+
 def ensure_path_not_protected(label: str, path: str | os.PathLike[str] | None):
     """Refuse a planned write path under the shared VeriPUT data roots."""
     if not path:
         return
     p = Path(path)
+    for allowed in allowed_result_roots():
+        if is_under(p, allowed):
+            return
     for root in protected_roots():
         if is_under(p, root):
             raise ValueError(
