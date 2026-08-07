@@ -11014,6 +11014,37 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## RQ1 rerun / upgrade policy after later fixes
+
+User asked whether fixes for no-output / hard cases may improve cases that
+already generated output, e.g. stronger assertions or concrete-to-PUT upgrades.
+
+Answer / policy:
+
+- Yes, but only for fix classes that touch shared generation quality:
+  - certification/instrumentation bugs can turn an existing concrete replay into
+    a proved PUT, because the same path may become certifiable over an R1/R2
+    region;
+  - region construction, coordinate choice, and oracle extraction fixes can
+    strengthen already-valid PUTs by widening R1/R2 or adding semantically
+    justified assertions;
+  - harness / validity fixes can turn raw-invalid artifacts into valid replay
+    artifacts without changing the underlying witness;
+  - scheduler / early-stop fixes mostly help no-output cases and generally do
+    not improve already-finished cases unless those cases stopped before
+    exploring better units.
+- Concrete replay is a seed / witness, not a proof.  It can be promoted to PUT
+  only after ESBMC proves the generalized region/oracle.  Fuzz can cheaply
+  refute proposed upgrades but cannot justify promotion.
+- During the sequential dataset sweep, do not automatically rerun every earlier
+  successful case after each fix.  Record the code version and continue forward.
+  Use selective reruns only when the fix is expected to improve a class of
+  existing outputs with high yield.
+- After the generator stabilizes, run a small upgrade sample over already-valid
+  concrete-only or weak-PUT cases to estimate uplift.  If the conversion rate is
+  meaningful, schedule a bounded upgrade pass; otherwise keep the first-pass
+  results and spend the budget on untouched / no-output subjects.
+
 ## 2026-08-08 - RQ1 scheduler no-output diagnosis
 
 Official accounting:
