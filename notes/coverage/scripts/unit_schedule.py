@@ -28,6 +28,12 @@ DEFAULT_TIMEOUT_S = 60
 DEFAULT_RUN_TIMEOUT_S = 60
 DEFAULT_MEMLIMIT_GIB = 8
 SELECTION_STRATEGIES = ("priority", "round-robin-benchmark", "round-robin-subject")
+INITIALIZER_LIKE_UNITS = {
+    "init",
+    "initialize",
+    "setup",
+    "setUp",
+}
 
 BUDGET_VALUE_FLAGS = {
     "--timeout",
@@ -203,6 +209,8 @@ def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None,
     params = int(unit_info.get("parameter_count") or 0)
     returns = int(unit_info.get("return_count") or 0)
     if mutability not in ("view", "pure"):
+        if unit in INITIALIZER_LIKE_UNITS:
+            return 2, "initializer-like"
         if params == 0 and returns == 0:
             return 2, "zero-interface-state-changing"
         return 1, "state-changing"

@@ -214,6 +214,67 @@ def test_schedule_prioritizes_semantic_units_before_getter_like_units():
     return bad
 
 
+def test_schedule_deprioritizes_unhinted_initializers():
+    data = manifest()
+    row = data["subjects"][0]
+    row["target"]["units_hint"] = []
+    row["unit_hints"] = {
+        "hinted_units": [],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    row["units"]["units"] = ["init", "transfer", "setUp", "balanceOf"]
+    row["units"]["unit_info"] = [
+        {
+            "name": "init",
+            "state_mutability": "nonpayable",
+            "parameter_count": 4,
+            "return_count": 0,
+        },
+        {
+            "name": "transfer",
+            "state_mutability": "nonpayable",
+            "parameter_count": 2,
+            "return_count": 1,
+        },
+        {
+            "name": "setUp",
+            "state_mutability": "nonpayable",
+            "parameter_count": 0,
+            "return_count": 0,
+        },
+        {
+            "name": "balanceOf",
+            "state_mutability": "view",
+            "parameter_count": 1,
+            "return_count": 1,
+        },
+    ]
+    doc = unit_schedule.build_schedule(data)
+    got = [(job["unit"], job["priority"], job["priority_reason"])
+           for job in doc["jobs"]]
+    bad = 0
+    bad += check(got == [("transfer", 1, "state-changing"),
+                         ("init", 2, "initializer-like"),
+                         ("setUp", 2, "initializer-like"),
+                         ("balanceOf", 2, "pure/view-with-interface")],
+                 f"unhinted initializer-like units do not monopolize first attempts: {got}")
+
+    row["target"]["units_hint"] = ["init"]
+    row["unit_hints"] = {
+        "hinted_units": ["init"],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    hinted_doc = unit_schedule.build_schedule(data)
+    hinted = [(job["unit"], job["priority"], job["priority_reason"])
+              for job in hinted_doc["jobs"][:2]]
+    bad += check(hinted == [("init", 0, "target-hint"),
+                            ("transfer", 1, "state-changing")],
+                 f"explicit target hints still override initializer deprioritization: {hinted}")
+    return bad
+
+
 def test_schedule_deprioritizes_recursive_helper_obstacles():
     recursive_ast = {
         "nodes": [
@@ -567,6 +628,7 @@ def test_schedule_refuses_protected_write_paths():
 TESTS = [
     test_schedule_prioritizes_hinted_units_and_preserves_argv,
     test_schedule_prioritizes_semantic_units_before_getter_like_units,
+    test_schedule_deprioritizes_unhinted_initializers,
     test_schedule_deprioritizes_recursive_helper_obstacles,
     test_schedule_cli_reads_stdin_and_applies_limit,
     test_schedule_deduplicates_prepared_subject_units,

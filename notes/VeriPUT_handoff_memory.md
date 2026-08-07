@@ -11014,6 +11014,69 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 - RQ1 scheduler no-output diagnosis
+
+Official accounting:
+
+- Use `/home/samson/workspace/VeriPUT/Results/results_all.py` and the
+  `Results/RQ1/VeriPUT/<dataset>/results.jsonl` journals.  Do not count
+  `result.json` files directly because redo/archive directories inflate the
+  file count.
+- Current journal-based VeriPUT funnel:
+  - `peer182`: 415 raw, 360 valid; statuses
+    `ok=102, no-output=69, timeout=6, no-units=5`.
+  - `bugfix124`: 174 raw, 129 valid; statuses
+    `ok=58, no-output=57, no-units=5, budget-exhausted=2, timeout=2`.
+  - `real203`: 132 raw, 124 valid; statuses
+    `ok=24, no-output=177, no-units=2`.
+- `real203` has no current `raw>0 && valid==0` VeriPUT cases; its main RQ1
+  weakness is generation coverage, not replay validity.
+
+Failure clustering:
+
+- `real203` no-output is dominated by Stage-2 non-production:
+  44 cases stopped after 4 consecutive units without a Stage-2 candidate;
+  many others are `NO-WITNESS-UNKNOWN` or `NO-COORDINATE`.
+- Representative blocker: `ERC-3643__ERC-3643__Token` scheduled 46 units but
+  attempted only `init`; that initializer consumed about 361s and then
+  triggered early-stop before any normal token entry point ran.
+- The original schedule put `init` first because it was treated as ordinary
+  state-changing priority 1.  In large upgradeable/stress contracts this lets
+  initializer/setup paths monopolize the per-subject budget even when many
+  business entry points are available.
+
+Code change:
+
+- `notes/coverage/scripts/unit_schedule.py` now classifies unhinted
+  initializer-like units (`init`, `initialize`, `setup`, `setUp`) as priority 2
+  `initializer-like`, behind ordinary state-changing functions.
+- Explicit target manifest hints still override this and keep priority 0.  So
+  patchfix or benchmark-specified initializer targets are still first.
+- This is scheduler-only; it does not modify datasets and does not run ESBMC.
+
+Concrete effect:
+
+- Rebuilding a schedule for
+  `real203/ERC-3643__ERC-3643__Token` into `/tmp` with the new code produced
+  first jobs:
+  `approve`, `increaseAllowance`, `decreaseAllowance`, `setName`,
+  `setSymbol`, `setOnchainID`, `batchTransfer`, ...
+- Summary changed to `by_priority {'1': 27, '2': 19}`; `init` no longer
+  monopolizes the first attempt.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py notes/VeriPUT_handoff_memory.md`
+  passed after this note was added.
+- `pylint --errors-only notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+
 ## 2026-08-08 - constructor precompile fixture repair
 
 Branch/worktree:
