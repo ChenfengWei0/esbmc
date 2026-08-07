@@ -11024,6 +11024,22 @@ Current benchmark intuition before a new broad rerun:
   have string name/symbol constructors and were previously vacuous before any
   region logic ran.
 
+Post-fix focused end-to-end sample:
+
+- `AIRBets.approve` full Stage2 certification:
+  `/tmp/veriput_postfix_airbets_approve_1786061953/airbets-approve-cert.jsonl`.
+- Budget: 600s / 8GiB; result: `CERTIFIED` in 194s.
+- Stage2 certified 1 / 1 witnessed path (`enc=15`), with:
+  - `amount = [0, uint256.max]`
+  - `spender = [1, address.max]`
+  - `msg.value == 0`
+  - body-slice entry-state pins.
+- Stage4 PUT:
+  `/tmp/veriput_postfix_airbets_approve_1786061953/put-all/put-summary.json`.
+- Result: 1 reference-valid generated test, 1 strict PUT/B, 0 concrete replay.
+  The emitted PUT has 2 fuzz parameters (`spender`, `amount`) and 1 return-value
+  oracle; Forge gate was green.
+
 ## 2026-08-07 ESBMC array-decay and Solidity string OM fix
 
 Problem:
