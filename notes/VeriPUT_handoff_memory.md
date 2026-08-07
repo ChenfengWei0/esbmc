@@ -11014,6 +11014,77 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 - constructor precompile fixture repair
+
+Branch/worktree:
+
+- Branch remains `feat/veriput-fuzz-first`.
+- Tracked code changes are in:
+  - `scripts/solidity_path_put.py`
+  - `scripts/test_solidity_path_put.py`
+
+Problem found:
+
+- HyperEVM representative had `raw=9 valid=0` after no-coordinate concrete
+  fallback support.
+- The red reference tests were not a certification search failure.  `setUp`
+  deployed `new HyperEVMRateProvider(0, 0)`, but the constructor calls a
+  HyperEVM precompile at `0x80C`; local Foundry has no such precompile, so
+  `setUp` was red and `put_all.py` disabled it.  The remaining concrete test
+  then called `address(0)`.
+- A manual temp Foundry check proved that `vm.mockCall` for the constructor
+  precompile makes `getSpotPriceMultiplier` concrete tests green.
+
+Code change:
+
+- `solidity_path_put.py` now derives constructor-only staticcall mocks from
+  `src/flat.sol`:
+  - finds `address constant ... = 0x...` targets used via `.staticcall`;
+  - reads the following `abi.decode(..., (T))` return type;
+  - emits `vm.mockCall(address(...), bytes(""), abi.encode(...))` before the
+    target constructor call in `setUp`;
+  - immediately emits `vm.clearMockedCalls()` after the constructor, so the
+    unit under test does NOT inherit the mock;
+  - for struct returns, emits a typed struct initializer and adds the owning
+    library symbol to the flat import;
+  - for HyperEVM-style `szDecimals`, reconstructs the value from the witness
+    entry `_spotPriceMultiplier` when possible.
+- `put.json` now records `constructor_staticcall_mocks`.
+- This is intentionally constructor-scoped.  It does NOT mock runtime
+  precompile/staticcall behavior inside the target unit; those paths still need
+  separate witness-backed extcall modeling before they can be counted valid.
+
+Validation:
+
+- Pure tests:
+  - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+    passed, now 240 tests.
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+    passed.
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+    passed.
+  - `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+    passed.
+- Do not apply `yapf --diff` wholesale here: it wants to reformat much of the
+  historical 10k-line script and creates unrelated churn.
+- No ESBMC rerun was consumed for this validation.  The real emitted artifacts
+  already on disk were reassembled in `/tmp` with the new helper and checked
+  with Foundry.
+
+Observed effect on the HyperEVM representative, using existing emitted
+artifacts only:
+
+- `getSpotPriceMultiplier`: 2 / 2 concrete green.
+- `getTokenIndex`: 2 / 2 concrete green.
+- `getPairIndex`: 2 / 2 concrete green.
+- `getRate`: 1 / 3 concrete green; the two normal `getRate()` paths still
+  revert because runtime `HyperSpotPricePrecompile.spotPrice` is deliberately
+  not mocked by this constructor-only repair.
+- Overall temp Foundry replay: 7 / 9 concrete green.  Expected official rerun
+  for this representative after commit: approximately `raw=9 valid=7`, still
+  `put=0` because these are no-coordinate constructor-fixed concrete fallbacks.
+
 ## 2026-08-08 — abi.decode(struct) no-cov abort fixed
 
 Context:

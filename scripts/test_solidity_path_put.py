@@ -62,6 +62,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                assert_query_pins,
                                assert_query_region_entries, build_put,
                                check_esbmc_args, cell_of,
+                               constructor_staticcall_mock_lines,
                                exit_kind_asserted, find_unit_call,
                                no_oracle_reason, observed_env,
                                normal_exit_region_retreat,
@@ -148,6 +149,63 @@ contract TargetCovTest is Test {
 }
 """
 
+EMITTED_PRECOMPILE_CTOR = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+
+import {Test} from "forge-std/Test.sol";
+import {HyperEVMRateProvider} from "./flat.sol";
+
+contract HyperEVMRateProviderCovTest is Test {
+  HyperEVMRateProvider c0;
+  function setUp() public {
+    c0 = new HyperEVMRateProvider(0, 0);
+  }
+  // claim: sol:@C@HyperEVMRateProvider@F@getSpotPriceMultiplier#75:path:3
+  function test_cov_0() public {
+    c0.getSpotPriceMultiplier();
+  }
+}
+"""
+
+PRECOMPILE_FLAT = """\
+pragma solidity >=0.8.0;
+
+contract HyperEVMRateProvider {
+    uint256 private immutable _spotPriceMultiplier;
+    constructor(uint32 tokenIndex, uint32 pairIndex) {
+        uint8 szDecimals = HyperTokenInfoPrecompile.szDecimals(tokenIndex);
+        _spotPriceMultiplier = 1e18 / (10 ** (8 - szDecimals));
+        pairIndex;
+    }
+    function getSpotPriceMultiplier() external view returns (uint256) {
+        return _spotPriceMultiplier;
+    }
+}
+
+library HyperTokenInfoPrecompile {
+    struct HyperTokenInfo {
+        string name;
+        uint64[] spots;
+        uint64 deployerTradingFeeShare;
+        address deployer;
+        address evmContract;
+        uint8 szDecimals;
+        uint8 weiDecimals;
+        int8 evmExtraWeiDecimals;
+    }
+    address public constant TOKEN_INFO_PRECOMPILE_ADDRESS =
+        0x000000000000000000000000000000000000080C;
+    function szDecimals(uint32 tokenIndex) internal view returns (uint8) {
+        (bool success, bytes memory out) =
+            TOKEN_INFO_PRECOMPILE_ADDRESS.staticcall(abi.encode(tokenIndex));
+        require(success);
+        HyperTokenInfo memory tokenInfo = abi.decode(out, (HyperTokenInfo));
+        return tokenInfo.szDecimals;
+    }
+}
+"""
+
 # What solc reports for FeeVault: {var: (slot, offset, bytes)}. `feeBps` and
 # `maxFee` are `constant` and are ABSENT, which is the fact the second direction
 # below rests on.
@@ -182,6 +240,20 @@ def make_case_target_after_mock():
         os.unlink(path)
     case = em.case_for("sol:@C@Target@F@setFlag#9", 7)
     assert case is not None, "fixture: the emitted case for enc=7 was not found"
+    return em, case
+
+
+def make_case_precompile_ctor():
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(EMITTED_PRECOMPILE_CTOR)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for(
+        "sol:@C@HyperEVMRateProvider@F@getSpotPriceMultiplier#75", 3)
+    assert case is not None, "fixture: the precompile case was not found"
     return em, case
 
 
@@ -305,6 +377,37 @@ def test_path_cov_fixture_replays_constructor_then_pins_state():
                  "fixture scalar state is established on c1")
     bad += check("c0 = new Mock();" in text,
                  "unrelated mock setup is left intact")
+    return bad
+
+
+def test_constructor_staticcall_mock_is_scoped_to_deployment():
+    """A missing local precompile should not make a legal constructor red."""
+    em, case = make_case_precompile_ctor()
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "src"))
+        with open(os.path.join(project, "src", "flat.sol"), "w") as f:
+            f.write(PRECOMPILE_FLAT)
+        mocks = constructor_staticcall_mock_lines(
+            project,
+            {"entry_storage": {
+                "_spotPriceMultiplier": "1000000000000000000"
+            }}, "    ")
+    text = assemble_concrete_source(
+        em, case,
+        "HyperEVMRateProviderCovTest_HyperEVMRateProvider_getSpot"
+        "PriceMultiplier_concrete3_fb",
+        None, None, "HyperEVMRateProvider", "getSpotPriceMultiplier", mocks)
+    bad = 0
+    mock_at = text.find("vm.mockCall(address(0x000000000000000000000000000000000000080C)")
+    new_at = text.find("c0 = new HyperEVMRateProvider(0, 0);")
+    clear_at = text.find("vm.clearMockedCalls();")
+    bad += check(mock_at >= 0, "the constructor precompile is mocked")
+    bad += check("uint8(8)" in text,
+                 "szDecimals is reconstructed from the witness state")
+    bad += check(mock_at < new_at < clear_at,
+                 "the mock is active only for deployment")
+    bad += check("function test_cov_0() public" in text,
+                 "the concrete replay remains a concrete replay")
     return bad
 
 
@@ -10456,6 +10559,7 @@ def main():
               test_pin_with_a_slot_is_established,
               test_storage_oracles_read_the_actual_target_instance_not_c0,
               test_path_cov_fixture_replays_constructor_then_pins_state,
+              test_constructor_staticcall_mock_is_scoped_to_deployment,
               test_pin_without_a_slot_is_reported_not_dropped,
               test_region_bound_still_wins_over_a_duplicate_pin,
               test_env_agreement_emits_when_the_preamble_matches,

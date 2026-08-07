@@ -8248,8 +8248,201 @@ def apply_foundry_fixture(lines, emitted, case, unit, contract, fixture, layout)
     return out
 
 
+def _flat_source_for_project(forge_project):
+    try:
+        with open(os.path.join(forge_project, "src", "flat.sol")) as stream:
+            return stream.read()
+    except OSError:
+        return ""
+
+
+def _constant_address_map(source):
+    out = {}
+    rx = re.compile(r"\baddress\s+(?:public\s+|private\s+|internal\s+|"
+                    r"external\s+)*constant\s+([A-Za-z_]\w*)\s*=\s*"
+                    r"(0x[0-9A-Fa-f]{40})")
+    for name, addr in rx.findall(source):
+        out[name] = addr
+    return out
+
+
+def _next_function_boundary(source, start):
+    m = re.search(r"\bfunction\s+[A-Za-z_]\w*\s*\(", source[start:])
+    return len(source) if m is None else start + m.start()
+
+
+def _staticcall_return_types(source):
+    constants = _constant_address_map(source)
+    out = {}
+    target_rx = re.compile(r"([A-Za-z_]\w*)\s*\.staticcall\s*\(")
+    for m in target_rx.finditer(source):
+        addr = constants.get(m.group(1))
+        if addr is None:
+            continue
+        end = _next_function_boundary(source, m.end())
+        window = source[m.end():end]
+        dec = re.search(r"\babi\.decode\s*\([^,]+,\s*\(([^()]+)\)\s*\)",
+                        window, re.S)
+        if dec is None:
+            continue
+        out.setdefault(addr, dec.group(1).strip())
+    return out
+
+
+def _struct_owner(source, start):
+    prefix = source[:start]
+    lib = list(re.finditer(r"\blibrary\s+([A-Za-z_]\w*)\s*\{", prefix))
+    con = list(re.finditer(r"\bcontract\s+([A-Za-z_]\w*)\s*\{", prefix))
+    if not lib:
+        return None
+    if con and con[-1].start() > lib[-1].start():
+        return None
+    return lib[-1].group(1)
+
+
+def _struct_fields(source, name):
+    m = re.search(r"\bstruct\s+" + re.escape(name) + r"\s*\{(.*?)\}",
+                  source, re.S)
+    if m is None:
+        return None, []
+    fields = []
+    for raw in m.group(1).split(";"):
+        text = raw.strip()
+        if not text:
+            continue
+        parts = text.split()
+        if len(parts) < 2:
+            continue
+        fields.append((" ".join(parts[:-1]), parts[-1]))
+    return _struct_owner(source, m.start()), fields
+
+
+def _derive_sz_decimals(entry_storage):
+    if not isinstance(entry_storage, dict):
+        return None
+    raw = (entry_storage.get("_spotPriceMultiplier") or
+           entry_storage.get("state._spotPriceMultiplier"))
+    if raw is None:
+        return None
+    try:
+        value = int(str(raw), 0)
+    except ValueError:
+        return None
+    base = 10**18
+    for sz in range(0, 9):
+        denom = 10**(8 - sz)
+        if base // denom == value:
+            return sz
+    return None
+
+
+def _abi_mock_expr_for_type(source, typ, field_name, entry_storage):
+    typ = typ.strip()
+    if typ.endswith("[]"):
+        return f"new {typ[:-2].strip()}[](0)"
+    if typ == "string":
+        return '""'
+    if typ == "bytes":
+        return "bytes(\"\")"
+    if typ == "bool":
+        return "false"
+    if typ == "address":
+        return "address(0)"
+    if re.fullmatch(r"bytes[0-9]+", typ):
+        return f"{typ}(0)"
+    if re.fullmatch(r"uint[0-9]*", typ):
+        if field_name == "szDecimals":
+            return f"{typ}({_derive_sz_decimals(entry_storage) or 8})"
+        return f"{typ}(1)"
+    if re.fullmatch(r"int[0-9]*", typ):
+        return f"{typ}(0)"
+    owner, fields = _struct_fields(source, typ)
+    if fields:
+        qtyp = f"{owner}.{typ}" if owner else typ
+        items = ", ".join(
+            f"{fname}: "
+            f"{_abi_mock_expr_for_type(source, ftype, fname, entry_storage)}"
+            for ftype, fname in fields)
+        return f"{qtyp}({{{items}}})"
+    return "uint256(1)"
+
+
+def constructor_staticcall_mock_lines(forge_project, claim, indent):
+    source = _flat_source_for_project(forge_project)
+    if not source or ".staticcall" not in source:
+        return []
+    entry_storage = (claim or {}).get("entry_storage") or {}
+    lines = []
+    for addr, typ in sorted(_staticcall_return_types(source).items()):
+        expr = _abi_mock_expr_for_type(source, typ, "", entry_storage)
+        lines += [
+            f"{indent}// ESBMC constructor fixture: local Foundry has no "
+            f"precompile at {addr}.",
+            f"{indent}vm.mockCall(address({addr}), bytes(\"\"), "
+            f"abi.encode({expr}));",
+        ]
+    return lines
+
+
+def apply_constructor_staticcall_mocks(lines, emitted, case, unit, contract,
+                                       mock_lines):
+    if not mock_lines:
+        return lines
+    body = emitted.lines[case[3][0] + 1:case[3][1]]
+    call_i = find_unit_call(body, unit)
+    inst = target_instance_for_call(body, call_i, unit)
+    if inst is None:
+        return lines
+    rx = re.compile(r"^(\s*)" + re.escape(inst) + r"\s*=\s*new\s+"
+                    + re.escape(contract) + r"\s*\(")
+    out, i, replaced = [], 0, False
+    while i < len(lines):
+        m = rx.match(lines[i])
+        if not replaced and m:
+            indent = m.group(1)
+            end = _statement_end(lines, i)
+            out += mock_lines
+            out.extend(lines[i:end + 1])
+            out.append(f"{indent}vm.clearMockedCalls();")
+            replaced = True
+            i = end + 1
+            continue
+        out.append(lines[i])
+        i += 1
+    symbols = sorted(set(re.findall(r"\b([A-Za-z_]\w*)\.[A-Za-z_]\w*\s*\(\{",
+                                    "\n".join(mock_lines))))
+    if symbols:
+        out = add_flat_import_symbols(out, symbols)
+    return out
+
+
+def add_flat_import_symbols(lines, symbols):
+    if not symbols:
+        return lines
+    rx = re.compile(r'^(\s*import\s*\{)([^}]*)(\}\s*from\s*"[^"]*flat\.sol";)')
+    out = []
+    done = False
+    for line in lines:
+        m = rx.match(line)
+        if not done and m:
+            existing = []
+            for item in m.group(2).split(","):
+                name = item.strip()
+                if not name:
+                    continue
+                existing.append(name)
+            bare = {item.split()[0] for item in existing}
+            merged = existing + [s for s in symbols if s not in bare]
+            out.append(m.group(1) + ", ".join(merged) + m.group(3))
+            done = True
+            continue
+        out.append(line)
+    return out
+
+
 def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
-                        layout=None, contract=None, unit=None):
+                        layout=None, contract=None, unit=None,
+                        constructor_mocks=None):
     """Insert PUT functions into the emitter's contract and rename safely."""
     cname, _cstart, cend = emitted.blocks[case[0]]
     lines = list(emitted.lines)
@@ -8269,6 +8462,9 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
     if fixture is not None and contract is not None and unit is not None:
         lines = apply_foundry_fixture(lines, emitted, case, unit, contract,
                                       fixture, layout)
+    if contract is not None and unit is not None:
+        lines = apply_constructor_staticcall_mocks(
+            lines, emitted, case, unit, contract, constructor_mocks or [])
     source = "\n".join(lines) + "\n"
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")
@@ -8283,7 +8479,8 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
 
 
 def assemble_concrete_source(emitted, case, new_contract, fixture=None,
-                             layout=None, contract=None, unit=None):
+                             layout=None, contract=None, unit=None,
+                             constructor_mocks=None):
     """Keep exactly one concrete replay case and rename its test contract.
 
     This is the point-region fallback for a certified region that renders no
@@ -8302,6 +8499,9 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
     if fixture is not None and contract is not None and unit is not None:
         lines = apply_foundry_fixture(lines, emitted, case, unit, contract,
                                       fixture, layout)
+    if contract is not None and unit is not None:
+        lines = apply_constructor_staticcall_mocks(
+            lines, emitted, case, unit, contract, constructor_mocks or [])
     source = "\n".join(lines) + "\n"
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")
@@ -8789,6 +8989,12 @@ def main():
         return 1
     print(f"[put]   concrete case: {case[1]} in contract {emitted.blocks[case[0]][0]}")
     case_body, case_call_i = emitted_case_body_and_call(emitted, case, a.unit)
+    constructor_mocks = constructor_staticcall_mock_lines(
+        a.forge_project, claim, "    ")
+    if constructor_mocks:
+        notes.append("constructor staticcall mocks inserted before deployment "
+                     f"({len(constructor_mocks) // 2} address(es)); cleared "
+                     "after constructor")
 
     if a.concrete_only:
         layout = None
@@ -8806,7 +9012,8 @@ def main():
         newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
                 f"{plabel}{a.test_suffix}")
         txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
-                                       layout, a.contract, a.unit)
+                                       layout, a.contract, a.unit,
+                                       constructor_mocks)
         dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
         with open(dest, "w") as f:
             f.write(txt)
@@ -8852,6 +9059,8 @@ def main():
                        "concrete_reason": (
                            "Stage-2 concrete_fallback with witness_check="
                            + str(a.concrete_stage2_witness_check)),
+                       "constructor_staticcall_mocks": len(
+                           constructor_mocks) // 2,
                        "stats": {
                            "fuzz_params": 0,
                            "lifted": [],
@@ -9456,7 +9665,8 @@ def main():
         newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
                 f"{plabel}{a.test_suffix}")
         txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
-                                       layout, a.contract, a.unit)
+                                       layout, a.contract, a.unit,
+                                       constructor_mocks)
         dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
         with open(dest, "w") as f:
             f.write(txt)
@@ -9499,6 +9709,8 @@ def main():
                                 "max_tx": a.max_tx, "rule": cell_rule},
                        "binary": binary_identity(a.esbmc),
                        "concrete_reason": fallback.reason,
+                       "constructor_staticcall_mocks": len(
+                           constructor_mocks) // 2,
                        "stats": {
                            "fuzz_params": 0,
                            "lifted": [],
@@ -9523,7 +9735,7 @@ def main():
     cname, _cstart, _cend = emitted.blocks[case[0]]
     newc = f"{cname}_{a.contract}_{a.unit}_put{a.enc}{plabel}{a.test_suffix}"
     txt = assemble_put_source(emitted, case, [put], newc, foundry_fixture,
-                              layout, a.contract, a.unit)
+                              layout, a.contract, a.unit, constructor_mocks)
     dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
     with open(dest, "w") as f:
         f.write(txt)
@@ -9607,6 +9819,8 @@ def main():
                    "unwind_attempts": unwind_attempts,
                    "cell": {"name": cell_name, "scope": a.scope,
                             "max_tx": a.max_tx, "rule": cell_rule},
+                   "constructor_staticcall_mocks": len(
+                       constructor_mocks) // 2,
                    # WHICH EXECUTABLE PRODUCED THIS. Without it a reader
                    # that re-reads put.json (put_all --forge-only) cannot tell
                    # a row emitted by this tree from one left behind by a build
