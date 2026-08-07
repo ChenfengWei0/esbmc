@@ -11328,6 +11328,112 @@ Interpretation:
   `CryptoSecureBankToken` at 361s.  They did not produce raw artifacts and do
   not pollute the raw/valid denominator.
 
+## 2026-08-07 RQ1 peer182 wave to limit 144
+
+Command:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py \
+  --benchmark peer182 \
+  --limit 144 \
+  --order fast-first \
+  --jobs 2 \
+  --memlimit-gib 12 \
+  --timeout 600 \
+  --wrapper-grace 60 \
+  --resume \
+  --no-output-stage2-stop-s 100
+```
+
+Runtime notes:
+
+- No residual worker processes after exit.
+- No OOM observed.
+- The wave entered larger ERC20-like token contracts; several successful cases
+  ended at the 600s case boundary but still produced valid artifacts.
+- Highest observed live RSS in this wave was about 9.8GiB for `SATURNITE` and
+  about 9.1GiB for `PipiCoin`, both under the 12GiB memlimit.
+
+New subject outcomes:
+
+- `peer_solar__array-utils`: `no-output`, early stop, raw=0 valid=0,
+  wall=148.0s.  It reached Stage4 briefly but produced no deliverable PUT,
+  showing the no-oracle/refusal accounting is active.
+- `peer_ccsolbmc__eMastiff`: `ok`, `budget-exhausted`, raw=2 valid=2,
+  PUT 2/2, wall=599.9s.
+- `peer_ccsolbmc__ChinaCoin`: `ok`, `budget-exhausted`, raw=2 valid=2,
+  PUT 2/2, wall=599.8s.
+- `peer_ccsolbmc__EStack`: `ok`, `budget-exhausted`, raw=1 valid=1,
+  PUT 1/1, wall=599.3s.
+- `peer_ccsolbmc__goldinu`: `ok`, raw=3 valid=3, PUT 2/2,
+  concrete 1/1, wall=216.4s.
+- `peer_ccsolbmc__SATURNITE`: `ok`, `budget-exhausted`, raw=2 valid=2,
+  PUT 2/2, wall=600.3s.
+- `peer_ccsolbmc__Ryujin`: `ok`, raw=3 valid=3, PUT 2/2,
+  concrete 1/1, wall=147.8s.
+- `peer_ccsolbmc__PROGEV2`: `ok`, raw=5 valid=5, PUT 2/2,
+  concrete 3/3, wall=309.1s.
+- `peer_ccsolbmc__TESTDONTBUY`: `ok`, `budget-exhausted`, raw=2 valid=2,
+  PUT 2/2, wall=599.9s.
+- `peer_ccsolbmc__PipiCoin`: `ok`, `budget-exhausted`, raw=5 valid=5,
+  PUT 5/5, wall=599.6s.
+- `peer_ccsolbmc__ShibaJail`: `ok`, `budget-exhausted`, raw=2 valid=2,
+  PUT 2/2, wall=600.3s.
+
+Aggregate after limit144:
+
+- Latest rows: 144.
+- Status:
+  - `ok`: 81
+  - `no-output`: 56
+  - `no-units`: 5
+  - `timeout`: 2
+- Completion:
+  - `ok`: 104
+  - `budget-exhausted`: 19
+  - `early-stop-no-output`: 14
+  - `no-units`: 5
+  - `timeout`: 2
+- Raw / valid tests: 335 / 306.
+- PUT raw / valid: 274 / 261.
+- Concrete raw / valid: 61 / 52.
+- Raw subjects: 83.
+- Valid subjects: 81.
+- `valid=None`: 2 timeout rows.
+- Raw>0 and valid==0: 0.
+- Oracle classes:
+  - `R0`: 239
+  - `R1`: 285
+  - `R2`: 1469
+- Oracle combinations:
+  - `R0`: 239
+  - `R1`: 225
+  - `R1+R2`: 60
+  - `R2`: 1409
+
+Official `results_all.py --benchmark peer182` snapshot:
+
+- VeriPUT S3 line:
+  `veriput 1 144 335 306 83 81 44.5% 1.68`.
+- VeriPUT status audit:
+  `{'ok': 81, 'no-output': 56, 'no-units': 5, 'timeout': 2}`.
+- VeriPUT cost:
+  ran 144, total 6.58h, wall/subj 164.4 +/- 218.4s,
+  peakRSS 2215 +/- 3767 MB.
+- VeriPUT anomaly audit:
+  timeout/oom/error 2, sub-5s ok 0, raw>0 & valid==0 0.
+
+Interpretation:
+
+- This wave added 10 valid subjects and 27 valid tests over limit132.
+- The large token cluster is slow but high quality: all raw tests from
+  eMastiff/ChinaCoin/EStack/goldinu/SATURNITE/Ryujin/PROGEV2/TESTDONTBUY/
+  PipiCoin/ShibaJail were valid on the reference.
+- The current bottleneck is still coverage/no-output, not invalid generated
+  artifacts.  Among latest rows with raw artifacts, 81 / 83 subjects have at
+  least one valid test; the two exceptions are timeout rows with `valid=None`,
+  not raw-valid failures.
+
 ## 2026-08-07 RQ1 production runner artifact schema
 
 User requirement recorded:
