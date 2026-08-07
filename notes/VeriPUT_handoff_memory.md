@@ -15612,6 +15612,99 @@ Operational note:
   one-off script edit unless artifact retention, JSON accounting, or resume
   semantics break.
 
+## 2026-08-07 bugfix124 fast-first final 124/124 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --limit 124 --order fast-first --jobs 2 --memlimit-gib 12 --mem-fraction 0.98 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Post-run process check:
+
+- No residual `rq1_veriput_run`, `certify_all`, `put_all`, `esbmc`, or
+  `forge test` workers remained after the run.
+- This completed the full bugfix124 VeriPUT run:
+  `ran=124 / 124`.
+- Output root:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124`.
+
+Tail subjects completed in this final wave:
+
+- `pop_058_PuttyV2`: no-output, raw=0, valid=0, wall=104.043s.
+- `pop_020_GSPFunding`: no-output, raw=0, valid=0, wall=147.510s.
+- `pop_032_PuttyV2`: no-output, raw=0, valid=0, wall=101.033s.
+- `pop_077_MergingPool`: no-output, raw=0, valid=0, wall=114.091s.
+- `pop_018_PrivatePool`: no-output, raw=0, valid=0, wall=228.544s.
+- `pop_033_PrivatePool`: no-output, raw=0, valid=0, wall=289.178s.
+- `pop_048_PrivatePool`: no-output, raw=0, valid=0, wall=258.763s.
+- `pop_001_Multicall`: no-units, raw=0, valid=0, wall=0.206s.
+- `pop_009_PrivatePool`: no-output, raw=0, valid=0, wall=273.535s.
+- `pop_070_PhiNFT1155`: no-output, raw=0, valid=0, wall=147.300s.
+
+Final latest-key bugfix124 aggregate:
+
+- Rows:
+  `124`.
+- Status counts:
+  `ok=58`, `no-output=57`, `no-units=5`, `budget-exhausted=2`,
+  `timeout=2`.
+- Completion counts:
+  `ok=90`, `budget-exhausted=5`, `early-stop-no-output=22`,
+  `no-units=5`, `timeout=2`.
+- Raw / valid tests:
+  `174 / 129`.
+- PUT raw / valid:
+  `137 / 112`.
+- Concrete replay raw / valid:
+  `37 / 19`.
+- Subjects with raw tests:
+  `59`.
+- Subjects with valid tests:
+  `52`.
+- Rows with `valid=None`:
+  `2`.
+- Raw-positive reference-invalid rows:
+  `7`:
+  `rcx_reentrancy__0xb5e1b1ee15c6fa0e48fce100125569d430f1bd12__SmartFix`,
+  `rcx_reentrancy__0x23a91059fdc9579a9fbd0edc5f2ea0bfdb70deb4__SmartFix`,
+  `rc_unchecked_low_level_calls__0x7d09edb07d23acb532a82be3da5c17d9d85806b4__TIPS__0x7d09edb07d23acb532a82be3da5c17d9d85806b4U2`,
+  `acfix_llama3_024_CVE_2019_15078`, `acfix_088_EmergencyOracleFactory`,
+  `acfix_3_5_088_EmergencyOracleFactory`, and `reprod_DCFToken`.
+- Oracle class totals:
+  `R0=103`, `R1=147`, `R2=396`.
+- Oracle class combination totals:
+  `R0=103`, `R1=115`, `R1+R2=32`, `R2=364`.
+
+Official `results_all.py --benchmark bugfix124` final snapshot:
+
+- VeriPUT row:
+  `ran=124`, `raw_u=174`, `valid_u=129`, `raw_c=59`,
+  `valid_c=52`, `coverage=41.9%`, `VT/case=1.04`.
+- Cost row:
+  `ran=124`, `total=5.45h`, `wall/subj=158.1+-172.5s`,
+  `peakRSS=1448+-2076MB`.
+- Anomaly audit for VeriPUT:
+  `timeout/oom/error=2`, `sub-5s ok=0`, `raw>0 & valid==0=6`
+  in the official display.
+- The only invariant violations reported by `results_all.py` were unrelated
+  multi-host comparability issues for cc-solbmc, Solar, and SynTest.
+
+Operational conclusion:
+
+- bugfix124 is now complete and should not be rerun unless a wrapper/accounting
+  bug is found.
+- The final tail did not add valid tests; the dominant failure mode is Stage-2
+  region/certification no-output on larger pop/PrivatePool/Product-like
+  subjects, not PUT artifact retention or JSON accounting.
+- For future improvement, group-analyse:
+  1. Stage-2 `NO-WITNESS-UNKNOWN`, `NO-PATH`, and `esbmc-no-cov-report`
+     reasons on large pop/ACFix cases;
+  2. raw-positive reference-invalid rows, especially `reprod_DCFToken` and the
+     EmergencyOracleFactory pair;
+  3. timeout rows with `valid=None` (`acfix_llama3_024_CVE_2019_15078`,
+     `acfix_021_CVE_2018_19832`).
+- Continue benchmark production with `stress203`/`real203` in small waves.
+  Start at `jobs=2 --memlimit-gib 12`; raise only after observing memory.
+
 ## 2026-08-07 certification-first retry planning
 
 Attempt-2 diagnostic run:
