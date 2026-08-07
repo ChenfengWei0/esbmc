@@ -15418,6 +15418,107 @@ Final peer182 artifact/accounting note:
 - `valid=None` timeout rows are archived raw outputs only; they must not be
   counted as reference-valid in downstream mutation or regression scoring.
 
+## 2026-08-07 bugfix124 fast-first limit100 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --limit 100 --order fast-first --jobs 3 --memlimit-gib 12 --mem-fraction 0.98 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Post-run process check:
+
+- No residual `rq1_veriput_run`, `certify_all`, `put_all`, `esbmc`, or
+  `forge test` workers remained after the run.
+- The run resumed from the official 78-row bugfix124 state and completed 25
+  additional latest-key rows, bringing the VeriPUT arm to `ran=103`.
+- Output root:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124`.
+
+Important newly completed subjects:
+
+- `rcx_reentrancy__0x7b368c4e805c3870b6c49a3f1f49f69af8662cf3__sGuard`:
+  ok, raw=3, valid=1, PUT=1/2, concrete=0/1, wall=219.255s.
+- `rcx_reentrancy__0x93c32845fae42c83a70e5f06214c8433665c2ab5__sGuard`:
+  ok, raw=3, valid=1, PUT=1/2, concrete=0/1, wall=220.092s.
+- `rcx_reentrancy__0xbe4041d55db380c5ae9d4a9b9703f1ed4e7e3888__sGuard`:
+  ok, raw=3, valid=3, PUT=3/3, wall=226.513s.
+- `rcx_reentrancy__0x96edbe868531bd23a6c05e9d0c424ea64fb1b78b__sGuard`:
+  ok, raw=3, valid=3, PUT=3/3, wall=231.027s.
+- `acfix_031_CVE_2021_34273`: ok, raw=4, valid=4, PUT=4/4,
+  wall=25.552s.
+- `acfix_016_CVE_2018_10705`: ok, raw=1, valid=1, PUT=1/1,
+  wall=9.529s.
+- `acfix_llama3_022_CVE_2018_19833`: ok, raw=6, valid=6, PUT=6/6,
+  wall=492.504s.
+- `acfix_llama3_017_CVE_2018_11329`: ok, raw=14, valid=14, PUT=9/9,
+  concrete=5/5, wall=566.772s.
+- `acfix_3_5_076_RoundFactory`: ok, raw=7, valid=7, PUT=7/7,
+  wall=260.367s.
+
+Notable failed / archived rows:
+
+- `acfix_llama3_024_CVE_2019_15078`: timeout, raw=2, `valid=None`,
+  PUT raw=2, wall=660.468s.  Archive raw only; do not count valid.
+- `acfix_021_CVE_2018_19832`: timeout, raw=0, `valid=None`,
+  wall=660.282s.
+- Raw-positive but reference-invalid rows now reported by `results_all.py`:
+  `rcx_reentrancy__0xb5e1b1ee15c6fa0e48fce100125569d430f1bd12__SmartFix`,
+  `rcx_reentrancy__0x23a91059fdc9579a9fbd0edc5f2ea0bfdb70deb4__SmartFix`,
+  `rc_unchecked_low_level_calls__0x7d09edb07d23acb532a82be3da5c17d9d85806b4__TIPS__0x7d09edb07d23acb532a82be3da5c17d9d85806b4U2`,
+  `acfix_088_EmergencyOracleFactory`, and
+  `acfix_3_5_088_EmergencyOracleFactory`.
+
+Latest-key aggregate after this wave:
+
+- Rows:
+  `103`.
+- Status counts:
+  `ok=55`, `no-output=40`, `no-units=4`, `budget-exhausted=2`,
+  `timeout=2`.
+- Raw / valid tests:
+  `166 / 125`.
+- PUT raw / valid:
+  `129 / 108`.
+- Concrete replay raw / valid:
+  `37 / 19`.
+- Subjects with raw tests:
+  `56`.
+- Subjects with valid tests:
+  `50`.
+- Rows with `valid=None`:
+  `2`.
+- Oracle class totals:
+  `R0=95`, `R1=140`, `R2=388`.
+- Oracle class combination totals:
+  `R0=95`, `R1=108`, `R1+R2=32`, `R2=356`.
+
+Official `results_all.py --benchmark bugfix124` snapshot:
+
+- VeriPUT row:
+  `ran=103`, `raw_u=166`, `valid_u=125`, `raw_c=56`,
+  `valid_c=50`, `coverage=40.3%`, `VT/case=1.01`.
+- This wave's increment over the prior official 78-row state was:
+  `+25 ran`, `+58 raw_u`, `+40 valid_u`, `+13 raw_c`, `+9 valid_c`.
+- Cost row:
+  `ran=103`, `total=4.16h`, `wall/subj=145.3+-163.7s`,
+  `peakRSS=1350+-1943MB`.
+- Anomaly audit for VeriPUT:
+  `timeout/oom/error=2`, `sub-5s ok=0`, `raw>0 & valid==0=5`.
+- The invariant violations reported by `results_all.py` were unrelated
+  multi-host comparability issues for cc-solbmc, Solar, and SynTest; the
+  VeriPUT rows did not introduce a host-comparability invariant violation.
+
+Operational note:
+
+- `jobs=3 --memlimit-gib 12` was safe on this machine for this wave.  Peak
+  live pressure briefly included two ESBMC PUT assertion checks around
+  6.8GiB and 4.7GiB RSS, with system `MemAvailable` still above 25GiB.
+- Do not raise to `jobs=4` for bugfix124/stress without a fresh memory check.
+  The remaining bugfix tail includes larger pop/ACFix subjects, so continue
+  with `jobs=3` at most, and consider `jobs=2` for the largest pop cases.
+- Continue with `--resume`; do not rerun completed rows unless an accounting
+  bug is found.  Timeout rows with raw artifacts must remain archived but
+  `valid=None` is not reference-valid.
+
 ## 2026-08-07 certification-first retry planning
 
 Attempt-2 diagnostic run:
