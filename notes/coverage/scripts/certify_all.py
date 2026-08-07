@@ -686,6 +686,24 @@ def result_generalise_progress(workdir, since_mtime=None):
     return data
 
 
+def result_enumeration_report(workdir, imported_report=None, since_mtime=None):
+    """The stable Stage-1 enumeration report path for Stage 4.
+
+    `cov-report.json` is reused by later certification queries, so direct
+    enumeration preserves the original report as `enumeration-report.json`.
+    Imported reports are already stable and remain authoritative.
+    """
+    if imported_report:
+        return imported_report
+    path = os.path.join(workdir, "enumeration-report.json")
+    try:
+        if since_mtime is not None and os.stat(path).st_mtime < since_mtime:
+            return None
+    except OSError:
+        return None
+    return path
+
+
 def result_empty_witness_obstacles(workdir, unit=None, since_mtime=None):
     path = os.path.join(workdir, "cov-report.json")
     try:
@@ -2162,7 +2180,8 @@ def main():
                         "slot_coord": list(args.slot_coord),
                         "state_struct_fields": bool(args.state_struct_fields),
                         "enumeration_index": args.enumeration_index,
-                        "enumeration_report": args.enumeration_report,
+                        "enumeration_report": result_enumeration_report(
+                            uwd, args.enumeration_report, t1),
                         # WHAT WE ASKED TO PIN, which is NOT the same field as
                         # `pins` -- that one is the driver's own report of what
                         # it ENDED UP pinning (auto msg.value, constants it

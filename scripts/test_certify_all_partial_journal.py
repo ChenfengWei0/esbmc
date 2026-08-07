@@ -147,6 +147,20 @@ def main():
                                                             stale_since) is None,
                      "stale generalise progress sidecar is ignored")
 
+        enum_report = workdir / "enumeration-report.json"
+        enum_report.write_text(json.dumps({"claims": []}))
+        bad += check(certify_all.result_enumeration_report(str(workdir), None,
+                                                           since)
+                     == str(enum_report),
+                     "direct enumeration report snapshot is preserved")
+        bad += check(certify_all.result_enumeration_report(str(workdir), None,
+                                                           stale_since) is None,
+                     "stale enumeration report snapshot is ignored")
+        bad += check(certify_all.result_enumeration_report(
+            str(workdir), "/tmp/imported-cov-report.json", stale_since)
+                     == "/tmp/imported-cov-report.json",
+                     "imported enumeration report remains authoritative")
+
         report = workdir / "cov-report.json"
         report.write_text(json.dumps({
             "claims": [

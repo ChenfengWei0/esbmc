@@ -11327,6 +11327,66 @@ Interpretation:
 - `for_1_break_fail` is the next cheap raw-only-invalid diagnostic target.
   It should be inspected from saved artifacts before any rerun.
 
+## 2026-08-07 Stage1 exit-kind report preservation
+
+Follow-up diagnosis on `peer_soltg__for_1_break_fail / Cfb2.f`:
+
+- This is an intentionally failing SOLTG contract:
+  `for (; x < 10;) { if (b) ++x; else break; } assert(x >= 10);`.
+- Stage 2 certified five regions and Stage 4 emitted five PUTs, but all five
+  had:
+  `asserts=0`, `exit_kind=null`, `oracle_classes=[]`.
+- Four PUTs were red in Foundry because the reference contract really can hit
+  its internal assertion. One PUT was green but still invalid because it was a
+  zero-oracle skeleton.
+- The `certify-results.jsonl` row had `enumeration_report: null`.
+- The workdir's `cov-report.json` was not a stable Stage-1 enumeration report;
+  it had already been overwritten by a later certification query and contained
+  only one claim (`97#...`).
+
+Root cause:
+
+- `solidity_path_generalise.py` direct enumeration produced the Stage-1
+  `cov-report.json`, but later certification queries reuse the same filename.
+- `certify_all.py` only forwarded `args.enumeration_report`, which is present
+  for imported Stage-1 runs but absent in direct mode.
+- Therefore `put_all.py` had no complete Stage-1 report to recover normal or
+  revert exit-kind for most certified rows.
+
+Code changes:
+
+- `solidity_path_generalise.py` now writes a stable
+  `enumeration-report.json` snapshot immediately after enumeration succeeds
+  and before certification queries can overwrite `cov-report.json`.
+- It removes stale `enumeration-report.json` at the start of enumeration, same
+  as the salvage sidecar.
+- `generalise-result.json.enumeration_source.report` now records the direct
+  snapshot's file identity; imported Stage-1 reports remain authoritative.
+- `certify_all.py` now writes `enumeration_report` in each row as:
+  - the imported report path when `--enumeration-report` is used;
+  - otherwise the direct `enumeration-report.json` snapshot path when fresh.
+
+Expected effect:
+
+- Future direct-mode Stage2 rows will carry a complete Stage-1 report into
+  Stage4, so `put_all.report_exit_kind()` can pass `--exit-kind normal/revert`
+  for every certified path whose report contains that fact.
+- This composes with the prior R0 normal-exit counting fix.  Previously
+  completed rows are not rerun or rewritten.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_generalise.py notes/coverage/scripts/certify_all.py scripts/test_certify_all_partial_journal.py scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_certify_all_partial_journal.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check -- scripts/solidity_path_generalise.py notes/coverage/scripts/certify_all.py scripts/test_certify_all_partial_journal.py scripts/test_put_all_accounting.py`
+  passed.
+
 ## 2026-08-07 RQ1 production runner and early benchmark samples
 
 Production output contract:

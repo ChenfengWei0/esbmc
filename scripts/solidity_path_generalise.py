@@ -803,6 +803,10 @@ def enumeration_salvage_path(cwd):
     return os.path.join(cwd, "enumeration-salvage.json")
 
 
+def enumeration_report_snapshot_path(cwd):
+    return os.path.join(cwd, "enumeration-report.json")
+
+
 def generalise_progress_path(cwd):
     return os.path.join(cwd, "generalise-progress.json")
 
@@ -934,9 +938,12 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
     # ESBMC's own message about a solc mismatch or a missing contract -- can
     # never fire, so the actionable diagnostic is replaced by silent stale data.
     report = os.path.join(cwd, "cov-report.json")
+    report_snapshot = enumeration_report_snapshot_path(cwd)
     salvage_sidecar = enumeration_salvage_path(cwd)
     if os.path.exists(salvage_sidecar):
         os.remove(salvage_sidecar)
+    if os.path.exists(report_snapshot):
+        os.remove(report_snapshot)
     if enumeration_report:
         validate_enumeration_import(
             enumeration_index, enumeration_report, esbmc, sol, ast, contract,
@@ -977,6 +984,12 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
                     "Its output was:\n" + log)
     with open(report) as f:
         rep = json.load(f)
+    try:
+        shutil.copyfile(report, report_snapshot)
+    except OSError as e:
+        raise SystemExit(
+            f"[enumerate] could not preserve stage-1 report at "
+            f"{report_snapshot}: {e}")
 
     claims = [c for c in rep.get("claims", [])
               if claim_unit(c) == unit and "path_id" in c
@@ -8620,6 +8633,8 @@ def main():
     # for the C2 check that a region contains it.
     ce_by_enc = {e: ce for e, _d, ce in all_paths}
     depth_by_enc = {e: d for e, d, _ce in all_paths}
+    enumeration_report_path = (
+        args.enumeration_report or enumeration_report_snapshot_path(cwd))
     out = {
         "schema": "path-generalise-result/1",
         "contract": args.contract,
@@ -8635,7 +8650,7 @@ def main():
         "enumeration_source": {
             "mode": "imported-stage-1" if args.enumeration_report else "direct",
             "index": file_identity(args.enumeration_index),
-            "report": file_identity(args.enumeration_report),
+            "report": file_identity(enumeration_report_path),
             "salvage": read_enumeration_salvage(cwd),
         },
         # The slice every region below is a statement ABOUT. A region quoted
