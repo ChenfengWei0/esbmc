@@ -11408,6 +11408,59 @@ Updated bugfix124 official summary after this rerun:
   valid artifacts split is 126 PUT + 40 concrete, so artifact-level PUT
   generalization is 126 / 166 = 75.9%.
 
+## 2026-08-08 expensive target-hint scheduling correction
+
+Problem:
+
+- Target hints used to be absolute priority 0.  This was too expensive when a
+  changed-function hint was a heavy business method such as `execute`, `buy`,
+  `sell`, `withdraw`, or `flashLoan`.
+- Under `--no-output-stage2-stop-s`, one heavy hinted unit can spend the whole
+  early-stop budget and prevent cheap semantic units from running at all.
+  `pop_018_PrivatePool` was the clearest dry-run example: hinted `execute`
+  would run before simple setters.
+
+Code change:
+
+- `unit_schedule.py` now keeps cheap target hints as priority 0, but labels
+  target-hinted units with cost tier >=70 as priority-1
+  `expensive-target-hint`.
+- Priority-1 sorting uses:
+  `(priority, cost_tier, target-hint tie-break, parameter/return count,
+  original ordinal)`.
+- Result:
+  - cheap target hints remain first;
+  - cheap unhinted setters and zero-interface state transitions can run before
+    heavy target hints;
+  - within the same cost tier, target hints still beat non-hints.
+
+Dry-run sanity, no ESBMC consumed:
+
+- `pop_018_PrivatePool`: first units changed from hinted `execute` to
+  `setMerkleRoot`, `setFeeRate`, `setUseStolenNftOracle`, `setPayRoyalties`,
+  `setVirtualReserves`, `setAllParameters`; `execute` remains scheduled as
+  `expensive-target-hint`.
+- `pop_009_PrivatePool`: `flashFeeAndProtocolFee` and `flashFee` remain priority
+  0; setters now run before heavy hinted `sell`, `execute`, `buy`, and
+  `flashLoan`.
+- `pop_033_PrivatePool`: unchanged in the intended direction; hinted
+  `flashFee` first, then setters.
+- `pop_070_PhiNFT1155`: unchanged from the prior correction; cheap
+  pause/setter/claim units stay before ownership/approval/heavy units.
+- `pop_032_PuttyV2` / `pop_058_PuttyV2`: medium-cost target hints such as
+  `fillOrder` and `exercise` remain priority 0; the demotion only targets the
+  expensive tier.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed.
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+
 ## 2026-08-08 GameItems concrete replay repair
 
 Context:

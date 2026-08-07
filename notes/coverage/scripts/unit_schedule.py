@@ -227,6 +227,9 @@ def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None,
     if static_obstacles:
         return 4, "static-obstacle"
     if unit in hinted:
+        if (unit_info and unit not in INITIALIZER_LIKE_UNITS
+                and _unit_cost_rank(unit, unit_info)[0] >= 70):
+            return 1, "expensive-target-hint"
         return 0, "target-hint"
     if not unit_info:
         return 2, "enumerated"
@@ -430,11 +433,16 @@ def build_schedule(manifest: dict,
 
     shard_spec = _parse_shard(shard)
     total_jobs = len(jobs)
-    jobs.sort(key=lambda item: (
-        item["priority"],
-        item.get("schedule_rank", {}).get("cheap_first") or [50, 0, 0],
-        item["ordinal"],
-    ))
+    def _job_sort_key(item: dict) -> tuple:
+        rank = item.get("schedule_rank", {}).get("cheap_first") or [50, 0, 0]
+        tier = rank[0] if rank else 50
+        rest = tuple(rank[1:])
+        hinted_tie = (
+            0 if item.get("priority_reason") in
+            ("target-hint", "expensive-target-hint") else 1)
+        return (item["priority"], tier, hinted_tie, rest, item["ordinal"])
+
+    jobs.sort(key=_job_sort_key)
     jobs = _select_jobs(jobs, selection_strategy)
     jobs = _apply_shard(jobs, shard_spec)
     if limit:

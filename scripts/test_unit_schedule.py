@@ -342,15 +342,19 @@ def test_schedule_orders_cheaper_units_inside_priority_bucket():
     bad += check([unit for unit, _prio, _reason, _rank in got] == [
         "flashFee",
         "setFeeRate",
+        "transferOwnership",
         "execute",
         "buy",
-        "transferOwnership",
         "deposit",
-    ], f"cheap hinted units are tried before expensive hinted units: {got}")
+    ], f"cheap units are tried before expensive target hints: {got}")
     bad += check(all(prio == 0 and reason == "target-hint"
-                     for _unit, prio, reason, _rank in got[:4]),
-                 f"cheap-first ordering does not demote target hints: {got}")
-    bad += check(got[0][3] < got[2][3],
+                     for _unit, prio, reason, _rank in got[:2]),
+                 f"cheap target hints stay in the first bucket: {got}")
+    bad += check(all(reason == "expensive-target-hint"
+                     for unit, _prio, reason, _rank in got[3:5]
+                     if unit in ("execute", "buy")),
+                 f"expensive target hints stay marked for audit: {got}")
+    bad += check(got[0][3] < got[3][3],
                  f"schedule rank records the cheap-first decision: {got}")
     return bad
 
