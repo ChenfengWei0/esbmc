@@ -11124,6 +11124,38 @@ Implication:
 - It will not improve PUT counts by itself.  Concrete-to-PUT still requires a
   separate ESBMC proof over a generalized region.
 
+Official RQ1 redo after commit `53c83943e1`:
+
+- Command:
+  `rq1_veriput_run.py --benchmark real203 --redo --jobs 1 --timeout 600
+   --esbmc-run-timeout 120 --stage2-unit-timeout-cap-s 180
+   --no-output-stage2-stop-s 90 --no-candidate-stage2-unit-stop-n 4
+   --zero-output-stage4-stop-s 30 --memlimit-gib 12 --wrapper-grace 60
+   --subject-id ERC-3643__ERC-3643__Token`.
+- Result line:
+  `status=ok raw=1 valid=1 put=0/0 concrete=1/1 wall=602.863s`.
+- Latest official row:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/real203/results.jsonl`.
+- Case result:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/real203/subjects/ERC-3643__ERC-3643__Token/result.json`.
+- Stage times:
+  `stage2_wall_s=360.321`, `stage4_wall_s=241.732`,
+  `maxrss_mb=11680.2`, `budget_exhausted=true`.
+- Units attempted:
+  `approve`, then `increaseAllowance`.
+- Stage-4 candidate accounting:
+  each attempted unit had `certified=0`, `cleared=0`,
+  `timeout_concrete_fallbacks_for_unit=1`.
+- Final retained artifact:
+  `TokenCovTest_Token_approve_concrete15_fb.t.sol`.
+- Final `put.json` records:
+  `kind=concrete`, `stage2_source=timeout_concrete_fallback`,
+  `concrete_reason=Stage-2 timeout_concrete_fallback with witness_check=TIMEOUT-WITNESSED`,
+  no oracle vars/classes/assertions.
+- `increaseAllowance` Stage 4 ran but did not add a valid/raw artifact before
+  the case exhausted its budget; the single useful deliverable is the valid
+  concrete replay for `approve`.
+
 ## 2026-08-08 - RQ1 scheduler no-output diagnosis
 
 Official accounting:
