@@ -11452,6 +11452,73 @@ Interpretation:
   passing normal/revert exit-kind into Stage4 more reliably.
 - The `raw>0 valid==0` count did not increase in this wave; it remains 4.
 
+## 2026-08-07 peer182 fast-first limit60 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 60 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Execution:
+
+- The runner skipped the first 48 fast-first peer rows and queued the next 12.
+- No OOM, timeout, or residual worker processes after completion.
+- Slow rows in this wave:
+  - `peer_solar__BasicToken / transfer`: 230.735s, valid 2/2.
+  - `peer_solar__GuardCheck / donate`: 317.339s, valid 2/3.
+  These are expensive but productive, so do not blacklist the whole class.
+
+Latest peer182 aggregate after this wave:
+
+- Latest rows: 61.  This includes earlier `peer_ccsolbmc__AIRBets` plus
+  fast-first prefix 60.
+- Status counts: 35 `ok`, 25 `no-output`, 1 `no-units`.
+- Completion counts: 1 `budget-exhausted`, 59 `ok`, 1 `no-units`.
+- Valid subjects: 31 / 61.
+- Generated tests: raw/valid 98 / 69.
+- PUT tests: raw/valid 79 / 54.
+- Concrete replay tests: raw/valid 19 / 15.
+- Raw>0 but valid==0 subjects: 4.
+- Oracle classes: `R2: 626`, `R1: 40`, `R0: 31`.
+- Oracle combinations: `R2: 606`, `R1: 20`, `R1+R2: 20`, `R0: 31`.
+- Median ok-wall: 23.039s.  Max ok-wall remains AIRBets at 585.465s.
+- `results_all.py --benchmark peer182` reports VeriPUT `ran=61`,
+  `raw_u=98`, `valid_u=69`, `raw_c=35`, `valid_c=31`,
+  `coverage=17.0%`, `VT/case=0.38`, median ok-wall 23.0s, and
+  `raw>0 & valid==0=4`.
+
+New rows in fast-first 49-60:
+
+- `peer_soltg__simple_if_struct / Csi4`: no-output, wall 1.521s.
+- `peer_soltg__simple_if_struct_2 / Csi5`: no-output, wall 1.517s.
+- `peer_solar__VulnerableTwoStep / VulnerableTwoStep`: ok, raw=3,
+  valid=2, PUT 1/1, concrete 1/2, wall 17.062s, oracle classes `R0:1`.
+- `peer_soltg__simple_if_array / Csi2`: no-output, wall 28.066s.
+- `peer_soltg__branches_inside_modifiers_3 / Cb4`: no-output,
+  wall 1.014s.
+- `peer_soltg__branches_inside_modifiers_2 / Cb3`: no-output,
+  wall 1.016s.
+- `peer_soltg__short_circuit_or_inside_branch / cs6`: ok, raw=2,
+  valid=1, concrete 1/2 only, wall 11.525s.
+- `peer_soltg__short_circuit_and_inside_branch / cs3`: no-output,
+  wall 1.010s.
+- `peer_solar__BasicToken / BasicToken`: ok, raw=2, valid=2,
+  PUT 2/2, wall 230.735s, oracle classes `R0:2, R1:1, R2:23`.
+- `peer_solar__GuardCheck / GuardCheck`: ok, raw=3, valid=2,
+  PUT 2/3, wall 317.339s, oracle classes `R0:3`.
+- `peer_soltg__many_fun / Cfc3`: ok, raw=10, valid=10,
+  PUT 7/7, concrete 3/3, wall 61.626s, oracle classes `R0:7, R2:292`.
+- `peer_ccsolbmc__UniswapV3MigratorProxy / UniswapV3MigratorProxy`: ok,
+  raw=2, valid=1, PUT 1/2, wall 11.028s, oracle classes `R0:2, R1:1, R2:1`.
+
+Interpretation:
+
+- The fast-first peer prefix remains productive: 31 valid subjects out of 61
+  latest rows, with no OOM/timeout.
+- `many_fun` is an important positive case for strong R2 generation:
+  292 R2 oracle labels and 10/10 valid generated tests.
+- `raw>0 valid==0` stayed flat at 4, so the recent R0/report fixes are not
+  introducing new invalid-only subjects.
+
 ## 2026-08-07 RQ1 production runner and early benchmark samples
 
 Production output contract:
