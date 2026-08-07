@@ -11103,6 +11103,13 @@ Smoke and cleanup:
   `Results/RQ1/VeriPUT/<dataset>/results.jsonl` directly. On the AIRBets-only
   sample, `results_all.py --benchmark peer182` reports veriput raw_u=2,
   valid_u=2, raw_c=1, valid_c=1.
+- Second formal sample:
+  `bugfix124/acfix_fixlink_DepositLog`, 600s/12GiB, one subject.
+  Completed in 72.110s with `status=ok`, raw=11, valid=11, PUT=5/5,
+  concrete=6/6, peak RSS about 247MiB. It attempted all 14 scheduled units.
+  Oracle metadata: `oracle_class_counts={R0:1, R1:4, R2:8}` and matching
+  combo counts. `results_all.py --benchmark bugfix124` reports veriput
+  raw_u=11, valid_u=11, raw_c=1, valid_c=1.
 
 Validation:
 
