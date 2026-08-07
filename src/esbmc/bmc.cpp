@@ -4660,11 +4660,14 @@ smt_convt::resultt bmct::multi_property_check(
                   return !scalar || (!source_local && !replayable_env);
                 }),
               w.nondet_inputs.end());
-            goto_coveraget::path_probe_nondets_kept.fetch_add(
-              w.nondet_inputs.size(), std::memory_order_relaxed);
-            goto_coveraget::path_probe_nondets_dropped.fetch_add(
-              probe_skipped_before_model + before - w.nondet_inputs.size(),
-              std::memory_order_relaxed);
+            if (is_probe_claim)
+            {
+              goto_coveraget::path_probe_nondets_kept.fetch_add(
+                w.nondet_inputs.size(), std::memory_order_relaxed);
+              goto_coveraget::path_probe_nondets_dropped.fetch_add(
+                probe_skipped_before_model + before - w.nondet_inputs.size(),
+                std::memory_order_relaxed);
+            }
           }
         }
         w.ce_index = ce_counter++;
@@ -5712,11 +5715,27 @@ smt_convt::resultt bmct::multi_property_check(
           ce.observed_path_depth = observed_path_depth;
           ce.observed_path_known =
             observed_path_id_known && observed_path_depth_known;
-          // Accumulated locally and published once after the loop: publishing
-          // per witness would leave the shared maps disagreeing about how many
-          // witnesses a claim has for the duration of the enumeration, and the
-          // CE journal is written from those maps by a hook on this same claim.
           ce_all.push_back(std::move(ce));
+
+          // Publish the first payload before asking for extra witnesses. If a
+          // later blocking-clause solve or model harvest runs out of memory, the
+          // concrete member that already refuted this path must still survive in
+          // cov-ce-journal.json for the driver to salvage a replay test.
+          if (
+            !is_probe_claim && ce_all.size() == 1 &&
+            !goto_coveraget::path_ce_journal_path.empty())
+          {
+            {
+              std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+              goto_coveraget::path_ce[claim_sig] = ce_all.front();
+              goto_coveraget::path_ce_all[claim_sig] = ce_all;
+            }
+            goto_coveraget::write_path_ce_journal_atomic(
+              fmt::format(
+                "after first witness for claim {} of {}", decided_now,
+                remaining_claims),
+              /*complete=*/false);
+          }
         }
 
         witnesses.push_back(std::move(w));

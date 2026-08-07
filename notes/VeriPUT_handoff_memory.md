@@ -10945,6 +10945,85 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 Peer string constructor and CE-journal salvage fixes
+
+Problem found while diagnosing Peer `AIRBets.approve`:
+
+- Pre-fix 600s Peer smoke had `AIRBets.approve` and `Arcadia_Token.approve`
+  as `NO-PATH` / all bounded-holds.
+- `--show-vcc --claim 679` for `AIRBets.approve:path:15` showed false
+  constructor assumptions before the transaction:
+  `_str_assign(&this->_name, "AIRBets")` and `_str_assign(&this->_symbol,
+  "AIRBets")` were cut by the default path-coverage unwind bound.
+- A focused `--unwind=16` run immediately made `approve:path:15` feasible,
+  confirming this was ESBMC string-model unwinding, not a PUT region failure.
+
+Code changes:
+
+- `src/c2goto/library/solidity/solidity_string.c`:
+  `_str_assign` now keeps the old 64-byte capped deep-copy semantics but
+  expresses the copy as explicit guarded steps instead of two loops.  This
+  avoids constructor string assignments depending on the global path-coverage
+  unwind bound and prevents vacuous unit path claims.
+- `src/esbmc/bmc.cpp`:
+  path-coverage CE payloads are now published to `path_ce` /
+  `cov-ce-journal.json` immediately after the first witness is harvested,
+  before extra `--all-witnesses` blocking-clause enumeration.  If later witness
+  enumeration OOMs or times out, the concrete member already found by ESBMC is
+  still salvageable by `solidity_path_generalise.py`.
+- `src/esbmc/bmc.cpp`:
+  probe blocker kept/dropped counters now count only actual probe claims.  The
+  replayable-nondet filtering still applies to path claims, but no longer
+  pollutes `--path-cov-probe` metrics for units with no probe goals.
+
+Focused validation:
+
+- `cmake --build build --target esbmc -j2` passed.
+- `AIRBets.approve`, default unwind, 120s / 8GiB:
+  `/tmp/veriput_airbets_strassign_fix_120_1786061324`.
+  It changed from all bounded-holds to 1 witnessed path (`enc=15`, depth 3).
+- After first-witness journal salvage, a 60s / 8GiB run:
+  `/tmp/veriput_airbets_journal_salvage_1786061606`
+  salvaged 1 path from partial `cov-ce-journal.json` (`3/35` claims decided).
+  The salvaged payload included `spender=1`, `amount=0`, `msg.value=0`,
+  environment pins, and entry storage.  Region refinement then expanded the
+  body path to:
+  - `amount = [0, uint256.max]`
+  - `spender = [1, address.max]`
+  plus body-slice pins.
+- This run reached `certify-query-started` before the 60s budget ended, so it
+  demonstrates payload/region recovery but not final certification for this
+  unit.
+
+Regression checks:
+
+- String-related Solidity checks passed:
+  `contract_var_1`, `contract_var_2`, `esol_clone_string_pass`, `mapping_4`,
+  `tod_race_ctor_args_pass`.
+- Path/journal/probe checks passed:
+  `solidity_path_cov_ce_journal_survives_death`,
+  `solidity_path_cov_nondet_string_no_prefill_loop`,
+  `solidity_path_cov_partial_report_on_oom`,
+  `solidity_path_cov_partial_report_on_signal`,
+  `solidity_path_cov_probe_fire`,
+  `solidity_path_cov_probe_silent`,
+  `solidity_path_cov_verdict_survives_mid_witness_death`.
+- `git diff --check -- src/c2goto/library/solidity/solidity_string.c src/esbmc/bmc.cpp`
+  passed.
+- `cppcheck` over changed Solidity frontend files was a no-op because this
+  patch touches no `src/solidity-frontend/*.cpp` or `*.h` files.
+
+Current benchmark intuition before a new broad rerun:
+
+- Existing 9-case smoke at
+  `/tmp/veriput_current_smoke_20260807_065046`:
+  4/9 units certified (44.4%).
+- Stage4 over certified regions produced 13/13 reference-valid tests:
+  9/13 strict PUT/B tests (69.2%) and 4/13 concrete replay fallbacks (30.8%).
+- The new fixes are expected mainly to improve Peer-style token contracts that
+  have string name/symbol constructors and were previously vacuous before any
+  region logic ran.
+
 ## 2026-08-07 ESBMC array-decay and Solidity string OM fix
 
 Problem:

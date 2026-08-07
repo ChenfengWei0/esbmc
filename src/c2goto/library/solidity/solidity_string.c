@@ -197,20 +197,82 @@ __ESBMC_HIDE:;
         *str1 = NULL;
         return;
     }
-    /* Bounded scan instead of strlen: in --contract mode (and anywhere a
-     * string parameter is nondet) str2's bytes are symbolic, so the generic
-     * strlen's "while (s[len] != 0) len++" has no concrete termination and
-     * the unwinder spins until OOM. A 256-byte cap is more than enough for
-     * any Solidity name/symbol/short-URI literal we see in practice. */
-    size_t len = 0;
-    while (len < _ESBMC_SOL_STR_MAX && str2[len] != '\0')
-        ++len;
-    *str1 = (char *)malloc(len + 1);
-    for (size_t i = 0; i < _ESBMC_SOL_STR_MAX; ++i) {
-        if (i >= len) break;
-        (*str1)[i] = str2[i];
-    }
-    (*str1)[len] = '\0';
+    /* Keep the old 64-byte cap, but do not express it as loops. Solidity
+     * constructors often assign token name/symbol strings before any harness
+     * transaction. If this model depends on the global unwind bound, a short
+     * default bound can truncate the constructor and make every later path
+     * coverage claim vacuous. */
+    *str1 = (char *)malloc(_ESBMC_SOL_STR_MAX + 1);
+#define _ESBMC_STR_ASSIGN_STEP(IDX)                                            \
+    (*str1)[IDX] = str2[IDX];                                                  \
+    if (str2[IDX] == '\0')                                                     \
+        return
+    _ESBMC_STR_ASSIGN_STEP(0);
+    _ESBMC_STR_ASSIGN_STEP(1);
+    _ESBMC_STR_ASSIGN_STEP(2);
+    _ESBMC_STR_ASSIGN_STEP(3);
+    _ESBMC_STR_ASSIGN_STEP(4);
+    _ESBMC_STR_ASSIGN_STEP(5);
+    _ESBMC_STR_ASSIGN_STEP(6);
+    _ESBMC_STR_ASSIGN_STEP(7);
+    _ESBMC_STR_ASSIGN_STEP(8);
+    _ESBMC_STR_ASSIGN_STEP(9);
+    _ESBMC_STR_ASSIGN_STEP(10);
+    _ESBMC_STR_ASSIGN_STEP(11);
+    _ESBMC_STR_ASSIGN_STEP(12);
+    _ESBMC_STR_ASSIGN_STEP(13);
+    _ESBMC_STR_ASSIGN_STEP(14);
+    _ESBMC_STR_ASSIGN_STEP(15);
+    _ESBMC_STR_ASSIGN_STEP(16);
+    _ESBMC_STR_ASSIGN_STEP(17);
+    _ESBMC_STR_ASSIGN_STEP(18);
+    _ESBMC_STR_ASSIGN_STEP(19);
+    _ESBMC_STR_ASSIGN_STEP(20);
+    _ESBMC_STR_ASSIGN_STEP(21);
+    _ESBMC_STR_ASSIGN_STEP(22);
+    _ESBMC_STR_ASSIGN_STEP(23);
+    _ESBMC_STR_ASSIGN_STEP(24);
+    _ESBMC_STR_ASSIGN_STEP(25);
+    _ESBMC_STR_ASSIGN_STEP(26);
+    _ESBMC_STR_ASSIGN_STEP(27);
+    _ESBMC_STR_ASSIGN_STEP(28);
+    _ESBMC_STR_ASSIGN_STEP(29);
+    _ESBMC_STR_ASSIGN_STEP(30);
+    _ESBMC_STR_ASSIGN_STEP(31);
+    _ESBMC_STR_ASSIGN_STEP(32);
+    _ESBMC_STR_ASSIGN_STEP(33);
+    _ESBMC_STR_ASSIGN_STEP(34);
+    _ESBMC_STR_ASSIGN_STEP(35);
+    _ESBMC_STR_ASSIGN_STEP(36);
+    _ESBMC_STR_ASSIGN_STEP(37);
+    _ESBMC_STR_ASSIGN_STEP(38);
+    _ESBMC_STR_ASSIGN_STEP(39);
+    _ESBMC_STR_ASSIGN_STEP(40);
+    _ESBMC_STR_ASSIGN_STEP(41);
+    _ESBMC_STR_ASSIGN_STEP(42);
+    _ESBMC_STR_ASSIGN_STEP(43);
+    _ESBMC_STR_ASSIGN_STEP(44);
+    _ESBMC_STR_ASSIGN_STEP(45);
+    _ESBMC_STR_ASSIGN_STEP(46);
+    _ESBMC_STR_ASSIGN_STEP(47);
+    _ESBMC_STR_ASSIGN_STEP(48);
+    _ESBMC_STR_ASSIGN_STEP(49);
+    _ESBMC_STR_ASSIGN_STEP(50);
+    _ESBMC_STR_ASSIGN_STEP(51);
+    _ESBMC_STR_ASSIGN_STEP(52);
+    _ESBMC_STR_ASSIGN_STEP(53);
+    _ESBMC_STR_ASSIGN_STEP(54);
+    _ESBMC_STR_ASSIGN_STEP(55);
+    _ESBMC_STR_ASSIGN_STEP(56);
+    _ESBMC_STR_ASSIGN_STEP(57);
+    _ESBMC_STR_ASSIGN_STEP(58);
+    _ESBMC_STR_ASSIGN_STEP(59);
+    _ESBMC_STR_ASSIGN_STEP(60);
+    _ESBMC_STR_ASSIGN_STEP(61);
+    _ESBMC_STR_ASSIGN_STEP(62);
+    _ESBMC_STR_ASSIGN_STEP(63);
+#undef _ESBMC_STR_ASSIGN_STEP
+    (*str1)[_ESBMC_SOL_STR_MAX] = '\0';
 }
 
 unsigned int nondet_uint();
