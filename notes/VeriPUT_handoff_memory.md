@@ -11014,6 +11014,85 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 nested tuple-array solver crash fix
+
+Context:
+
+- While triaging the bugfix124 tail subject `pop_070_PhiNFT1155`, the old
+  `initialize` path-coverage smoke did not fail as a VeriPUT wrapper problem.
+  It exposed solver-side tuple-array modeling gaps for Solidity nested
+  mappings with tuple-like leaves.
+- The command used for smoke triage was the existing read-only prepared-subject
+  command:
+  `/tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__pop_070_PhiNFT1155/flat.sol.solast`
+  plus
+  `/home/samson/workspace/VeriPUT/Results/BugFix124/subjects/pop_070_PhiNFT1155/flat.sol`,
+  `--contract PhiNFT1155 --focus-function initialize
+  --solidity-path-coverage --solidity-max-tx 1 --memlimit 12g
+  --result-only --cov-report-json --branch-function-coverage
+  --path-cov-probe --all-witnesses --max-witnesses 8
+  --overflow-check --div-by-zero-check --path-cov-arith-resolve`.
+  No Dataset file was modified.
+
+Diagnosed failures and fixes:
+
+- First failure was a Bitwuzla equality sort mismatch on
+  `sol:@C@PhiNFT1155@minterData...data`, from
+  `mapping(uint256 => mapping(address => bytes32))`.
+  The bytes32 leaf field `BytesStatic.data` already had the full nested array
+  type, but `caof_broadcast_leaf` wrapped it in one more array dimension.
+  Fix: `caof_broadcast_leaf` now returns immediately when the requested array
+  type already equals the leaf value type.
+- Second failure was
+  `array_convt::mk_array_symbol: Can't create array of arrays with array
+  flattener`, from
+  `mapping(uint256 => mapping(address => string)) advancedTokenURI`.
+  The tuple-node symbol builder decomposed K>=2 struct leaves but not pointer
+  leaves.  Solidity `string` is pointer-like in the SMT tuple layer.  Fix:
+  `mk_tuple_array_symbol` treats pointer leaves as decomposable tuple leaves
+  and emits the same struct-of-arrays representation used for struct leaves.
+- Third failure was the tuple diagnostic
+  `bare smt_sort (id=4) reached to_solver_smt_sort<>`, from a nested
+  `constant_array_of` whose initializer sort was the pointer tuple.  Fix:
+  `convert_array_of_prep` extends the K>=2 tuple-leaf constant broadcast path
+  from struct leaves to struct-or-pointer leaves.  Pointer leaves are accepted
+  only for the expected NULL default initializer and are broadcast as the
+  two-field zero pointer tuple; non-NULL pointer array-of initializers still
+  abort instead of being silently approximated.
+
+Regression coverage:
+
+- Added `regression/esbmc-solidity/nested_mapping_bytes32_default_pass`.
+  The test uses `mapping(uint256 => mapping(address => bytes32))`, assumes a
+  zero slot, then asserts the same slot.  This covers the bytes32 nested field
+  equality encoding without relying on current mapping default-zero precision.
+- Added `regression/esbmc-solidity/nested_mapping_string_default_pass`.
+  The test uses `mapping(uint256 => mapping(address => string))`, assumes the
+  default string slot has zero length, then asserts the same expression.  This
+  covers pointer-leaf nested mapping initialization and use.
+
+Validation:
+
+- `cmake --build build --target esbmc -j2` passed after the solver changes.
+- `cd build && cmake -DESBMC_REGRESS_TIMEOUT=90 ..` was run so the new
+  regression directories entered CTest.
+- `cd build && ctest -R
+  '(nested_mapping_bytes32_default_pass|nested_mapping_string_default_pass|abi_decode_tuple_destructure_pass|abi_decode_msg_data_slice_pass)'
+  --output-on-failure` passed: 4 / 4 tests.
+- `git diff --check -- src/solvers/smt/smt_conv.cpp
+  src/solvers/smt/tuple/smt_tuple_node.cpp
+  regression/esbmc-solidity/nested_mapping_bytes32_default_pass
+  regression/esbmc-solidity/nested_mapping_string_default_pass` passed.
+- `cppcheck --enable=style,warning ... src/solvers/smt/smt_conv.cpp
+  src/solvers/smt/tuple/smt_tuple_node.cpp` passed.  A pre-existing unused
+  local `c` in `convert_terminal` was removed while making this file clean.
+- PhiNFT1155 smoke after the fixes no longer crashes with sort mismatch,
+  array-of-array assert, or bare sort.  With a 90s timeout it reached normal
+  multi-claim solving and exited `rc=124` with partial coverage:
+  `Complete Paths: 295`, `Claims Decided: 22 of 24242`, terminated before
+  verification concluded.  This keeps the official bugfix124 no-output result
+  unchanged, but removes a reusable ESBMC crash class for future stress runs.
+
 ## 2026-08-07 ESBMC ABI decode tuple destructuring fix
 
 Strategy decision:

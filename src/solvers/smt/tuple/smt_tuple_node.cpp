@@ -95,18 +95,20 @@ smt_astt smt_tuple_node_flattener::mk_tuple_array_symbol(const expr2tc &expr)
   while (is_array_type(leaf))
     leaf = to_array_type(leaf).subtype;
 
-  if (!k_ge_2 || !is_struct_type(leaf))
+  const bool leaf_is_decomposable_tuple =
+    is_struct_type(leaf) || is_pointer_type(leaf);
+  if (!k_ge_2 || !leaf_is_decomposable_tuple)
   {
-    // K=1 array-of-struct, or a non-struct leaf (pointer/code/complex
-    // nested array — out of scope for the SoA decomposition): unchanged.
+    // K=1 array-of-tuple, or a nested array whose leaf is not a
+    // decomposable tuple (code/complex/non-tuple leaf): unchanged.
     smt_sortt sort = ctx->convert_sort(ctx->flatten_array_type(sym.type));
     smt_sortt subtype =
       ctx->convert_sort(ctx->get_flattened_array_subtype(sym.type));
     return array_conv.mk_array_symbol(name, sort, subtype);
   }
 
-  // 2C.2c — K>=2 struct leaf: struct-of-arrays representation.  A
-  // tuple_node whose sort is the leaf struct (project / eq / get walk
+  // 2C.2c — K>=2 tuple leaf: struct-of-arrays representation.  A
+  // tuple_node whose sort is the leaf tuple (project / eq / get walk
   // its m members) and whose elements[i] is a solver-NATIVE array
   // array^K<fi> (primitive fi ⇒ Branch A native, no bare sort, no
   // array_conv; struct fi ⇒ convert_ast re-enters this builder and

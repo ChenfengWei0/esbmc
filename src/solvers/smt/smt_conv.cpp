@@ -2994,7 +2994,7 @@ smt_astt smt_convt::convert_terminal(const expr2tc &expr)
 
     uint64_t magnitude, fraction, fin;
     unsigned int bitwidth = thereal.type->get_width();
-    std::string m, f, c;
+    std::string m, f;
     std::string theval = thereal.value.to_expr().value().as_string();
 
     m = extract_magnitude(theval, bitwidth);
@@ -4744,6 +4744,8 @@ caof_rebuild_array_leaf(const type2tc &t, const type2tc &leaf_type)
 static expr2tc
 caof_broadcast_leaf(const type2tc &arr_t, const expr2tc &leaf_val)
 {
+  if (arr_t == leaf_val->type)
+    return leaf_val;
   if (!is_array_type(arr_t))
     return leaf_val;
   const array_type2t &a = to_array_type(arr_t);
@@ -4757,15 +4759,15 @@ smt_astt smt_convt::convert_array_of_prep(const expr2tc &expr)
   expr2tc base_init;
   unsigned long array_size = 0;
 
-  // 2C.2d: K>=2 array-of-struct constant (immediate subtype is itself
-  // an array, struct leaf) — emit the struct-of-arrays representation so
+  // 2C.2d: K>=2 array-of-tuple constant (immediate subtype is itself
+  // an array, struct/pointer leaf) — emit the struct-of-arrays representation so
   // it equates field-wise with the 2C.2c symbol tuple_node and no bare
   // nested array-of-struct sort ever reaches the backend.  Each field is a
   // per-field native array broadcasting that field's init value across the
   // whole domain, so an unwritten slot reads the struct's default (0 for a
   // zero-initialised mapping) — matching EVM zero-init and the K=1
   // tuple_array_of route.  (The historical code left each field a FRESH
-  // unconstrained symbol, which made unwritten deep struct-valued mapping
+  // unconstrained symbol, which made unwritten deep tuple-valued mapping
   // slots read nondet — see deep_mapping_structval_*_zeroinit tests.)  K=1
   // (immediate subtype is the struct) keeps the historical tuple_array_of
   // route below -> byte-identical.
@@ -4775,8 +4777,9 @@ smt_astt smt_convt::convert_array_of_prep(const expr2tc &expr)
     while (is_array_type(leaf))
       leaf = to_array_type(leaf).subtype;
 
-    if (is_struct_type(leaf))
+    if (is_struct_type(leaf) || is_pointer_type(leaf))
     {
+      type2tc tuple_leaf = is_pointer_type(leaf) ? pointer_struct : leaf;
       const struct_union_data &sd = get_type_def(leaf);
 
       // Walk the (possibly nested) array_of initializer down to the struct
@@ -4793,15 +4796,33 @@ smt_astt smt_convt::convert_array_of_prep(const expr2tc &expr)
 
         // Field i's value in the broadcast struct (default 0 for a
         // zero-initialised mapping).
-        expr2tc fld_val =
-          is_constant_struct2t(leaf_init)
-            ? to_constant_struct2t(leaf_init).datatype_members[i]
-            : expr2tc(member2tc(sd.members[i], leaf_init, sd.member_names[i]));
+        expr2tc fld_val;
+        if (is_constant_struct2t(leaf_init))
+        {
+          fld_val = to_constant_struct2t(leaf_init).datatype_members[i];
+        }
+        else if (is_pointer_type(leaf))
+        {
+          // Nested Solidity mappings initialise string/bytes pointers to NULL.
+          // The pointer tuple representation is two zero-valued fields.
+          if (
+            !is_symbol2t(leaf_init) ||
+            to_symbol2t(leaf_init).thename != irep_idt("NULL"))
+          {
+            log_error("Unsupported non-NULL pointer array_of initializer");
+            abort();
+          }
+          fld_val = constant_int2tc(sd.members[i], BigInt(0));
+        }
+        else
+        {
+          fld_val = member2tc(sd.members[i], leaf_init, sd.member_names[i]);
+        }
 
         fields.push_back(caof_broadcast_leaf(fld_arr, fld_val));
       }
       return tuple_api->tuple_create(
-        constant_struct2tc(leaf, std::move(fields)));
+        constant_struct2tc(tuple_leaf, std::move(fields)));
     }
   }
 
