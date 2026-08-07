@@ -11217,6 +11217,31 @@ Expected RQ1 impact:
 - This is not POC overfitting: the rule is semantic and gated by certified
   normal exit, not by subject name.
 
+Official RQ1 rerun:
+
+- Command:
+  `python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --subject-id peer_solar__array-utils --redo --timeout 600 --esbmc-run-timeout 120 --stage2-unit-timeout-cap-s 120 --wrapper-grace 60 --memlimit-gib 12 --jobs 1 --forge-timeout 300`
+- Result line:
+  `status=ok raw=15 valid=14 put=3/4 concrete=11/11 wall=600.318s`.
+- Row details:
+  - `budget_exhausted=true`, `reason="case budget exhausted before remaining units"`.
+  - `stage2_wall_s=449.917`, `stage4_wall_s=150.151`.
+  - `oracle_class_counts={"R0": 4, "R2": 5}`.
+  - `oracle_class_combo_counts={"R0": 4, "R2": 5}`.
+  - Valid PUTs:
+    - `indexOf`, `oracle_classes=["R0","R2"]`;
+    - `indexOfFromEnd`, `oracle_classes=["R0","R2"]`;
+    - `setAddressesA`, `oracle_classes=["R0"]`.
+  - `contains` emitted an `R0+R2` PUT but failed reference Forge, so it is raw
+    but not valid.
+- Updated `results_all.py --benchmark peer182`:
+  - VeriPUT peer182: `raw_u=451`, `valid_u=414`, `raw_c=113`,
+    `valid_c=112`, coverage `61.5%`, `VT/case=2.27`.
+  - Status buckets: `ok=107`, `no-output=64`, `timeout=6`, `no-units=5`.
+- The subject-level full rerun consumed the whole 600s because other array util
+  units still ran; the targeted `put_all --only` probe was fast and B=2/2 for
+  the repaired functions.
+
 JSON/statistics reminder:
 
 - RQ1 rows preserve `oracle_class_counts`,
