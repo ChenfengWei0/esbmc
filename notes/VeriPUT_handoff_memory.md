@@ -11323,6 +11323,26 @@ Expected RQ1 impact:
 - This is not subject-name special casing: it is a general Foundry replay rule
   for constructor pranks and a general concrete-only red replay filter.
 
+Official RQ1 rerun:
+
+- Command:
+  `python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --subject-id rc_unchecked_low_level_calls__0x7d09edb07d23acb532a82be3da5c17d9d85806b4__TIPS__0x7d09edb07d23acb532a82be3da5c17d9d85806b4U2 --redo --timeout 600 --esbmc-run-timeout 120 --stage2-unit-timeout-cap-s 120 --wrapper-grace 60 --memlimit-gib 12 --jobs 1 --forge-timeout 300`
+- Result line:
+  `status=ok raw=20 valid=20 put=8/8 concrete=12/12 wall=278.946s`.
+- `oracle_class_counts={"R0": 8, "R1": 11, "R2": 17}`.
+- `oracle_class_combo_counts={"R0": 8, "R1": 7, "R1+R2": 4, "R2": 13}`.
+- Valid PUTs:
+  - `AdjustBetAmounts`: enc 7 `R0+R1+R2`, enc 6 `R0`;
+  - `AdjustDifficulty`: enc 7 `R0+R1+R2`, enc 6 `R0`;
+  - `OpenToThePublic`: enc 7 `R0+R1+R2`, enc 6 `R0`;
+  - `hasPlayerWagered`: enc 7 `R0+R1+R2`;
+  - `transferAnyERC20Token`: enc 6 `R0`.
+- Updated `results_all.py --benchmark bugfix124`:
+  - VeriPUT bugfix124: `raw_u=188`, `valid_u=151`, `raw_c=60`,
+    `valid_c=54`, coverage `43.5%`, `VT/case=1.22`.
+  - Status buckets: `ok=59`, `no-output=56`, `no-units=5`,
+    `budget-exhausted=2`, `timeout=2`.
+
 ## RQ1 rerun / upgrade policy after later fixes
 
 User asked whether fixes for no-output / hard cases may improve cases that
