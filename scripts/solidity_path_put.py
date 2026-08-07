@@ -5170,6 +5170,15 @@ def _is_address_payable_type(sol_type):
     return (sol_type or "").strip() == "address payable"
 
 
+def _source_sol_param_type(raw):
+    text = re.sub(r"\s+", " ", (raw or "").strip())
+    if not text:
+        return None
+    if re.search(r"\baddress\s+payable\b", text):
+        return "address payable"
+    return _function_sig_type(text)
+
+
 def repair_payable_replay_call_args(lines, unit, params):
     """Cast replay-call arguments whose declaration is `address payable`.
 
@@ -5208,6 +5217,100 @@ def repair_payable_replay_call_args(lines, unit, params):
             new_args[idx] = text
         out.append(line[:start] + ", ".join(new_args) + line[end:])
         changed += 1
+    return out, changed
+
+
+def _source_contract_chunk(source, contract):
+    rx = re.compile(r"^\s*(?:abstract\s+)?(?:contract|interface|library)\s+"
+                    + re.escape(contract) + r"\b", re.M)
+    m = rx.search(source or "")
+    if m is None:
+        return None
+    next_rx = re.compile(r"^\s*(?:abstract\s+)?(?:contract|interface|library)"
+                         r"\s+[A-Za-z_]\w*\b", re.M)
+    nxt = next_rx.search(source, m.end())
+    return source[m.start():nxt.start() if nxt else len(source)]
+
+
+def source_constructor_param_types(forge_project, contract):
+    source = _flat_source_for_project(forge_project)
+    chunk = _source_contract_chunk(source, contract)
+    if not chunk:
+        return []
+    m = re.search(r"\bconstructor\s*\((.*?)\)", chunk, re.S)
+    if m is None:
+        return []
+    params = []
+    for item in split_top_level(m.group(1)):
+        typ = _source_sol_param_type(item)
+        if typ:
+            params.append(typ)
+    return params
+
+
+def _constructor_arg_span(stmt, contract):
+    m = re.search(r"\bnew\s+" + re.escape(contract) + r"\s*\(", stmt)
+    if m is None:
+        return None
+    start = m.end()
+    depth, i = 1, start
+    while i < len(stmt) and depth:
+        if stmt[i] == "(":
+            depth += 1
+        elif stmt[i] == ")":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    if depth:
+        return None
+    args = split_top_level(stmt[start:i])
+    if len(args) == 1 and args[0] == "":
+        args = []
+    return start, i, args
+
+
+def repair_payable_constructor_args(lines, contract, constructor_params):
+    """Cast constructor replay arguments declared as `address payable`."""
+    if not contract or not constructor_params:
+        return list(lines), 0
+    if not any(_is_address_payable_type(ty) for ty in constructor_params):
+        return list(lines), 0
+    rx = re.compile(r"\bnew\s+" + re.escape(contract) + r"\s*\(")
+    out, changed, i = [], 0, 0
+    while i < len(lines):
+        if not rx.search(lines[i]):
+            out.append(lines[i])
+            i += 1
+            continue
+        end = _statement_end(lines, i)
+        stmt = "\n".join(lines[i:end + 1])
+        span = _constructor_arg_span(stmt, contract)
+        if span is None:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        start, close, args = span
+        if len(args) != len(constructor_params):
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        new_args = list(args)
+        touched = False
+        for idx, ty in enumerate(constructor_params):
+            if _is_address_payable_type(ty):
+                casted = _payable_arg_expr(args[idx])
+                if casted != args[idx]:
+                    new_args[idx] = casted
+                    touched = True
+        if not touched:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        new_stmt = stmt[:start] + ", ".join(new_args) + stmt[close:]
+        out.extend(new_stmt.split("\n"))
+        changed += 1
+        i = end + 1
     return out, changed
 
 
@@ -8806,7 +8909,8 @@ def add_flat_import_symbols(lines, symbols):
 
 def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
                         layout=None, contract=None, unit=None,
-                        constructor_mocks=None, runtime_mocks=None):
+                        constructor_mocks=None, runtime_mocks=None,
+                        constructor_params=None):
     """Insert PUT functions into the emitter's contract and rename safely."""
     cname, _cstart, cend = emitted.blocks[case[0]]
     lines = list(emitted.lines)
@@ -8836,6 +8940,8 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
         lines = apply_runtime_interface_mocks(
             lines, emitted, case, unit, contract, runtime_mocks or [])
         lines = repair_pranked_constructor_origins(lines, contract)
+        lines, _constructor_payable_repairs = repair_payable_constructor_args(
+            lines, contract, constructor_params or [])
     source = "\n".join(lines) + "\n"
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")
@@ -8851,7 +8957,8 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
 
 def assemble_concrete_source(emitted, case, new_contract, fixture=None,
                              layout=None, contract=None, unit=None,
-                             constructor_mocks=None, runtime_mocks=None):
+                             constructor_mocks=None, runtime_mocks=None,
+                             constructor_params=None):
     """Keep exactly one concrete replay case and rename its test contract.
 
     This is the point-region fallback for a certified region that renders no
@@ -8876,6 +8983,8 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
         lines = apply_runtime_interface_mocks(
             lines, emitted, case, unit, contract, runtime_mocks or [])
         lines = repair_pranked_constructor_origins(lines, contract)
+        lines, _constructor_payable_repairs = repair_payable_constructor_args(
+            lines, contract, constructor_params or [])
     source = "\n".join(lines) + "\n"
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")
@@ -8956,10 +9065,12 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
 
     base_contract = emitted.blocks[case[0]][0]
     probe_contract = f"{base_contract}_{contract}_{unit}_put{enc}_FuzzR2"
+    constructor_params = source_constructor_param_types(project, contract)
     source = assemble_put_source(emitted, case, puts, probe_contract, fixture,
                                  layout, contract, unit,
                                  constructor_mocks=constructor_mocks,
-                                 runtime_mocks=runtime_mocks)
+                                 runtime_mocks=runtime_mocks,
+                                 constructor_params=constructor_params)
     artifact = os.path.join(workdir, "fuzz-r2-prefilter.t.sol")
     with open(artifact, "w") as stream:
         stream.write(source)
@@ -9392,6 +9503,12 @@ def main():
         notes.append("runtime interface mocks inserted after deployment "
                      f"({runtime_mock_addresses} address(es), "
                      f"{runtime_mock_calls} call(s))")
+    constructor_params = source_constructor_param_types(
+        a.forge_project, a.contract)
+    if any(_is_address_payable_type(ty) for ty in constructor_params):
+        notes.append("constructor replay uses address payable parameter(s); "
+                     "Foundry constructor arguments will be wrapped with "
+                     "payable(...) where needed")
 
     if a.concrete_only:
         layout = None
@@ -9410,7 +9527,8 @@ def main():
                 f"{plabel}{a.test_suffix}")
         txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
                                        layout, a.contract, a.unit,
-                                       constructor_mocks, runtime_mocks)
+                                       constructor_mocks, runtime_mocks,
+                                       constructor_params)
         dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
         with open(dest, "w") as f:
             f.write(txt)
@@ -10077,7 +10195,8 @@ def main():
                 f"{plabel}{a.test_suffix}")
         txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
                                        layout, a.contract, a.unit,
-                                       constructor_mocks, runtime_mocks)
+                                       constructor_mocks, runtime_mocks,
+                                       constructor_params)
         dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
         with open(dest, "w") as f:
             f.write(txt)
@@ -10149,7 +10268,7 @@ def main():
     newc = f"{cname}_{a.contract}_{a.unit}_put{a.enc}{plabel}{a.test_suffix}"
     txt = assemble_put_source(emitted, case, [put], newc, foundry_fixture,
                               layout, a.contract, a.unit, constructor_mocks,
-                              runtime_mocks)
+                              runtime_mocks, constructor_params)
     dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
     with open(dest, "w") as f:
         f.write(txt)

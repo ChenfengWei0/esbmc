@@ -10709,6 +10709,45 @@ contract VaultCovTest is Test {
     return bad
 
 
+def test_address_payable_constructor_args_are_cast():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Vault} from "./Vault.sol";
+contract VaultCovTest is Test {
+  Vault c1;
+  function setUp() public {
+    c1 = new Vault(address(uint160(1)), address(uint160(2)));
+  }
+  // claim: sol:@C@Vault@F@approve#41:path:7
+  function test_cov_0() public {
+    bool ok = c1.approve(address(uint160(3)), 4);
+    assertTrue(ok);
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Vault@F@approve#41", 7)
+    text = assemble_put_source(
+        em, case, ["  function test_put_Vault_approve_path7() public {}"],
+        "VaultCovTest_Vault_approve_put7", contract="Vault", unit="approve",
+        constructor_params=["address payable", "address payable"])
+    bad = 0
+    bad += check("c1 = new Vault(payable(address(uint160(1))), "
+                 "payable(address(uint160(2))));" in text,
+                 "constructor address payable args are cast in setUp")
+    bad += check("function test_cov_0()" not in text,
+                 "stale concrete tests are still removed")
+    return bad
+
+
 def test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input():
     emitted = """\
 // SPDX-License-Identifier: MIT
@@ -11174,6 +11213,7 @@ def main():
               test_unconstrained_replay_args_become_full_domain_fuzz_inputs,
               test_missing_address_payable_replay_arg_casts_at_the_unit_call,
               test_address_payable_replay_prefix_calls_are_cast,
+              test_address_payable_constructor_args_are_cast,
               test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input,
               test_missing_low_level_value_gate_args_update_abi_signature,
               test_assembled_put_source_drops_stale_concrete_replays,
