@@ -11091,6 +11091,92 @@ End-to-end smoke test:
   - Forge reported the concrete replay green.
   - Summary counted `B=0`, `PUT=0`, `valid concrete=1`.
 
+## 2026-08-07 real203 limit130 capped wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark real203 --limit 130 --order fast-first --jobs 2 --memlimit-gib 12 --mem-fraction 0.98 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100 --stage2-unit-timeout-cap-s 180`
+
+Reason:
+
+- Test a small production wave after the Stage-2 unit cap and cleared concrete
+  fallback changes.
+- Do not jump directly from real203 limit120 to a large wave, because the
+  limit120 tail had poor ROI.
+
+Observed behavior:
+
+- Resume skipped previous recorded subjects and queued 10 new real203 subjects.
+- No Dataset files were modified.
+- The new wave ran with `jobs=2`, 12GiB per ESBMC process, and
+  `stage2_unit_timeout_cap_s=180`.
+- No timeout/OOM/error status was reported.
+
+Incremental result for the 10 new rows:
+
+- Status: 1 `ok`, 9 `no-output`.
+- Raw/valid: 5 / 4.
+- PUT raw/valid: 5 / 4.
+- Concrete raw/valid: 0 / 0.
+- Total wall across these rows: about 1326.7s.
+- No cleared concrete fallback was emitted in this wave.
+
+Successful subject:
+
+- `ensdomains__ens-contracts__DefaultReverseRegistrar`
+  - status `ok`.
+  - raw/valid 5 / 4, all PUT.
+  - stage2 wall 245.736s; stage4 wall 93.171s; total wall 339.258s.
+  - valid PUTs:
+    - `setController` enc 7, R0/R1/R2.
+    - `setNameForAddr` enc 6, R0.
+    - `transferOwnership` enc 15, R0/R2.
+    - `transferOwnership` enc 14, R0.
+  - invalid raw PUT:
+    - `renounceOwnership` enc 7, forge status `Failure`.
+
+No-output rows and reasons:
+
+- Fast no-witness/no-certified rows:
+  - `HyperEVMRateProviderFactory`: 32.730s,
+    `NO-WITNESS-UNDECIDED=2`, `NO-WITNESS-UNKNOWN=7`.
+  - `BalancerContractRegistry`: 36.242s,
+    `NO-WITNESS-UNDECIDED=5`, `NO-WITNESS-UNKNOWN=6`.
+  - `BalancerContractRegistryInitializer`: 1.566s,
+    `NO-WITNESS-UNKNOWN=1`.
+  - `LocalConduitController`: 28.739s,
+    `NO-WITNESS-UNKNOWN=14`.
+- Early-stop no-output after Stage 2:
+  - `FeeBurnerAuthentication`: 265.930s total, Stage 2 216.252s.
+  - `L2ReverseRegistrar`: 120.825s total, Stage 2 120.605s.
+  - `OnChainLiquidator`: 135.883s total, Stage 2 135.623s.
+  - `L2ReverseRegistrarWithMigration`: 121.662s total, Stage 2 121.328s.
+  - `CometWithExtendedAssetList`: 243.871s total, Stage 2 241.718s.
+
+Updated cumulative real203 latest-key totals after the wave:
+
+- latest rows: 129.
+- Status: 23 `ok`, 104 `no-output`, 2 `no-units`.
+- Raw/valid: 123 / 117.
+- PUT raw/valid: 115 / 109.
+- Concrete raw/valid: 8 / 8.
+- Official `results_all.py` real203 line:
+  `veriput rounds=1 ran=129 raw_u=123 valid_u=117 raw_c=23 valid_c=23 coverage=11.3% VT/case=0.58`.
+- Official cost line:
+  `veriput 129 total_h=3.95 wall/subj=110.3+-144.6 peakRSS=1251+-2084MB`.
+- Official anomaly audit for real203 VeriPUT:
+  timeout/oom/error 0, sub-5s ok 0, raw>0 & valid==0 0.
+
+Interpretation:
+
+- The cap did not prevent useful output: `DefaultReverseRegistrar` still
+  produced 4 valid PUTs.
+- ROI is still poor in this segment: 10 new subjects yielded one productive
+  subject.
+- Do not immediately expand to limit160.  Next better target is strategy:
+  subject-level early stop for repeated no-candidate units, better priority
+  ordering, and region/candidate improvements for ENS/Comet/Balancer tails.
+
 ## 2026-08-07 real203 fast-first limit36 wave
 
 Production policy for RQ1 waves:
