@@ -11072,8 +11072,7 @@ Validation:
   already on disk were reassembled in `/tmp` with the new helper and checked
   with Foundry.
 
-Observed effect on the HyperEVM representative, using existing emitted
-artifacts only:
+Observed effect on the HyperEVM representative:
 
 - `getSpotPriceMultiplier`: 2 / 2 concrete green.
 - `getTokenIndex`: 2 / 2 concrete green.
@@ -11081,9 +11080,12 @@ artifacts only:
 - `getRate`: 1 / 3 concrete green; the two normal `getRate()` paths still
   revert because runtime `HyperSpotPricePrecompile.spotPrice` is deliberately
   not mocked by this constructor-only repair.
-- Overall temp Foundry replay: 7 / 9 concrete green.  Expected official rerun
-  for this representative after commit: approximately `raw=9 valid=7`, still
-  `put=0` because these are no-coordinate constructor-fixed concrete fallbacks.
+- Temp Foundry replay from existing emitted artifacts: 7 / 9 concrete green.
+- Official RQ1 rerun after commit `fdfd0b91e9`:
+  `status=ok raw=9 valid=7 put=0/0 concrete=7/9 wall=20.553s`.
+  Result path:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/real203/subjects/balancer__balancer-v3-monorepo__HyperEVMRateProvider/result.json`.
+- These are still no-coordinate constructor-fixed concrete fallbacks, not PUTs.
 
 ## 2026-08-08 — abi.decode(struct) no-cov abort fixed
 
