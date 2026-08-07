@@ -13,8 +13,9 @@ rule against creating new Markdown files.
 User budget update:
 
 - Treat the final per-case ESBMC certification budget as 600s.
-- Keep the normal small-run memory cap at 8GiB unless the user explicitly says
-  otherwise.
+- Memory cap may be raised beyond the old 8GiB default when it buys useful
+  oracle extraction; the user explicitly allowed 10-12GiB and even higher for
+  selected cases.  Keep concurrency low when doing this.
 - Fuzz is still refute-only.  It can cheaply find counterexamples for bad
   assertions/regions/instrumentation, but it cannot prove a region or a PUT.
 
@@ -11074,6 +11075,38 @@ Validation:
   `solidity_path_cov_assert_r1_pair_written` and
   `--path-cov-fault-after 2` printed partial rows such as
   `bal: post == pre  REFUTED` before the injected `bad_alloc`.
+
+Latest Arcadia approve recheck:
+
+- 8GiB latest-code rerun:
+  `/tmp/veriput_arcadia_partial_latest_1786066311`.
+  It still exited `-6`, but partial salvage changed the ladder from total
+  `NO ROW` to `rows=1`: `_allowances[msg.sender][spender]: post == pre`
+  `REFUTED`.  That is useful diagnosis but not a B oracle, so the row stayed
+  Forge-green but non-B (`0` asserts).  Peak RSS was about 8.26GB.
+- 12GiB latest-code rerun:
+  `/tmp/veriput_arcadia_12g_latest_1786067371`.
+  Same certified region, same source slot, same R2 options, but
+  `--memlimit-gib 12`.
+  Result: `B = 1 / 1`, one strict fuzz PUT, one oracle assert, one
+  reference-valid PUT, zero concrete fallback.  Peak RSS was about 12.51GB and
+  elapsed wall time was 19:39.86.
+- What changed at 12GiB:
+  the ladder returned four R1 rows for
+  `_allowances[msg.sender][spender]`:
+  `post == pre REFUTED`, `post != pre REFUTED`,
+  `post >= pre HOLDS`, `post <= pre REFUTED`.
+  The rendered oracle came from the HOLDS ordering row, not from the source
+  assignment `post == amount`; the R2 pass still reported no row.
+- Updated Peer approve mini-wave interpretation:
+  replacing the old Arcadia Stage4 row with this 12GiB latest-code row makes
+  the three approve certified regions all strict PUT/B and reference-valid:
+  AIRBets B, Arcadia B, Animalia B.  Split: 3 PUT, 0 concrete.
+- Remaining issue:
+  memory helps this case, but the elapsed time is too high for broad sweeps if
+  every hard row gets 12GiB.  The next optimization target is to avoid spending
+  the full R2 batch when a smaller R1 ordering row is enough to create a B
+  oracle, or to use fuzz/preflight to shrink R2 candidate batches before ESBMC.
 
 ## 2026-08-07 post-string-fix Peer approve mini-wave
 
