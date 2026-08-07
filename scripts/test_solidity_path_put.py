@@ -75,7 +75,8 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                rendered_env_coords_for_emitted_case,
                                parse_ladder, region_slot_vars, statement_start,
                                target_instance_for_call, rewrite_call_args,
-                               truncated_loops, unwindset_args)
+                               truncated_loops, unwrap_normal_try_call,
+                               unwindset_args)
 
 
 # VERBATIM captures. Shape 1 is the assert gate's refusal, semicolon-joined on
@@ -9272,6 +9273,71 @@ def test_effective_exit_kind_falls_back_to_the_fresh_claim():
     return bad
 
 
+def test_a_STAGE1_normal_try_call_is_unwrapped_for_return_oracles():
+    """peer_solar array-utils shape.
+
+    The coverage emitter produced a revert-tolerant wrapper even though the
+    selected path report says normal exit.  Keeping the wrapper drops every
+    return rung; unwrapping it gives both the R0 exit oracle and the member
+    return assertions.
+    """
+    src = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+contract C { function indexOf(address[] memory, address) public returns (uint256, bool) {} }
+contract CCovTest is Test {
+  C c0;
+  function setUp() public { c0 = new C(); }
+  // claim: sol:@C@C@F@indexOf#1292:path:7
+  function test_cov_0() public {
+    // [revert-tolerant] outcome not asserted
+    try c0.indexOf(new address[](4), address(uint160(0))) {} catch {}
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(src)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@indexOf#1292", 7)
+    notes = []
+    put, stats = build_put(
+        "C", "indexOf", 7, 2, "sol:@C@C@F@indexOf#1292",
+        region={"a": (0, (1 << 160) - 1)}, holes={}, pins={},
+        params=[("A", "address[]"), ("a", "address")], emitted=em,
+        case=case, layout={}, ladder_rows=[
+            ("return", "a value IS returned on this path (REFUTED == yes)",
+             "REFUTED"),
+            ("return.0", "return == 0", "HOLDS"),
+            ("return.1", "return == false", "HOLDS"),
+        ], notes=notes, exit_kind="normal",
+        rettypes=[("", "uint256"), ("", "bool")])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    if put is None:
+        return bad + 5
+    txt = "\n".join(put)
+    bad += check("try c0.indexOf" not in txt,
+                 "the normal-exit PUT no longer tolerates a revert")
+    bad += check("[asserted] path exits normally" in txt,
+                 "the emitted comment names the R0 oracle")
+    bad += check("(uint256 _put_ret0, bool _put_ret1) = "
+                 "c0.indexOf(new address[](4), a);" in txt,
+                 "the tuple return is bound after unwrapping")
+    bad += check("assertEq(uint256(_put_ret0), 0" in txt
+                 and "assertFalse(_put_ret1" in txt,
+                 "both member return rungs are asserted")
+    bad += check(stats["return_asserts"] == 2
+                 and stats["exit_kind_asserts"] == 1
+                 and stats["asserts"] == 3,
+                 f"R0 plus two return assertions are counted: {stats}")
+    return bad
+
+
 def test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle():
     """St1inch.setMaxLossRatio enc=14 shape.
 
@@ -10670,6 +10736,7 @@ def main():
               test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle,
               test_oracle_class_metadata_keeps_R0_R1_R2_apart,
               test_effective_exit_kind_falls_back_to_the_fresh_claim,
+              test_a_STAGE1_normal_try_call_is_unwrapped_for_return_oracles,
               test_typed_R2_omits_bool_without_a_bool_endpoint,
               test_typed_R2_proposes_bool_equality_to_bool_coordinate,
               test_a_bool_region_parameter_is_lifted_and_can_feed_R2,

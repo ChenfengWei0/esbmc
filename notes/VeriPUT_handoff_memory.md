@@ -11164,6 +11164,71 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08: normal-exit try/catch unwrap for return/R0 oracles
+
+Context:
+
+- Some Stage-4 rows were certified but still produced `raw=0` because the
+  coverage emitter had wrapped a high-level call as:
+  `try c0.f(...) {} catch {}` with a comment saying the outcome was not
+  asserted.
+- When Stage 1 says this selected path exits normally, keeping that wrapper is
+  too weak: a revert is tolerated, the normal-exit R0 oracle is not counted,
+  and return-value rungs cannot be bound because there is no assignment target.
+- This was observed on `peer_solar__array-utils.indexOf` and
+  `indexOfFromEnd`: ladder rows had `return.0 == 0 HOLDS` and
+  `return.1 == false HOLDS`, but the old emitted PUT had zero assertions.
+
+Code change:
+
+- `scripts/solidity_path_put.py` now unwraps high-level
+  `try ... {} catch {}` calls only when the effective `exit_kind` is `normal`.
+- Low-level `.call` shapes are not unwrapped by this helper.
+- The rewritten bare call asserts the normal exit by Solidity control flow:
+  if it reverts, the test fails.
+- The generated comment is rewritten from revert-tolerant to asserted-normal.
+- `normal_exit_asserted` accounting treats this unwrap as one R0 exit-kind
+  assertion, so `put.json` and RQ1 JSON preserve the oracle class.
+
+Validation:
+
+- `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `pylint --errors-only scripts/solidity_path_put.py` passed.
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only scripts/test_solidity_path_put.py`
+  passed.
+- `python3 scripts/test_solidity_path_put.py` passed, 242 / 242 tests.
+- `python3 scripts/test_rq1_veriput_run.py` passed, 15 / 15 tests.
+- Real temporary probe:
+  `/tmp/veriput_normal_unwrap_probe_1786133611`.
+- Command selected:
+  `peer182__peer_solar__array-utils.indexOf`, but the substring also selected
+  `indexOfFromEnd`; both are useful because both had the same shape.
+- Result:
+  - `indexOf`: B, 3 fuzz parameters, 3 assertions.
+  - `indexOfFromEnd`: B, 3 fuzz parameters, 3 assertions.
+  - Assertions per PUT: 2 return-value assertions plus 1 normal-exit R0.
+  - Both are green on the reference contract.
+
+Expected RQ1 impact:
+
+- Official rerun of `peer_solar__array-utils` should recover at least these
+  two valid PUTs from a previous certified-region/raw-zero bucket.
+- This is not POC overfitting: the rule is semantic and gated by certified
+  normal exit, not by subject name.
+
+JSON/statistics reminder:
+
+- RQ1 rows preserve `oracle_class_counts`,
+  `oracle_class_combo_counts`, `raw_tests[*].oracle_classes`,
+  `valid_tests[*].oracle_classes`, and aggregated `assertion_oracles`.
+- Per-PUT `put.json` preserves `stats.oracle_classes` and
+  `stats.assertion_oracles[*].classes`.
+- A single contract/subject can contain R0, R1, and R2 tests together; one PUT
+  can also carry multiple classes such as `R1+R2`.
+- Concrete replay tests normally have `oracle_classes: []` and should not be
+  counted as PUT oracle strength.
+
 ## RQ1 rerun / upgrade policy after later fixes
 
 User asked whether fixes for no-output / hard cases may improve cases that

@@ -3877,6 +3877,23 @@ def bind_return_lhs(call_line, unit, lhs):
     return indent + lhs + " = " + stripped, None
 
 
+def unwrap_normal_try_call(call_line):
+    """Turn the emitter's revert-tolerant high-level call into a bare call.
+
+    This is used only after Stage 1/Stage 4 has identified THIS path as a normal
+    exit.  The old wrapper then no longer represents caution; it prevents both
+    the R0 non-revert oracle and any return-value rungs from being rendered.
+    """
+    m = re.match(r"^(\s*)try\s+(.+?)\s*\{\s*\}\s*catch\s*\{\s*\}\s*$",
+                 call_line)
+    if not m:
+        return call_line, False
+    call = m.group(2).strip()
+    if ".call" in call:
+        return call_line, False
+    return m.group(1) + call + ";", True
+
+
 def bind_return(call_line, unit, decl_type, var):
     """The scalar case of `bind_return_lhs`."""
     return bind_return_lhs(call_line, unit, f"{decl_type} {var}")
@@ -6874,6 +6891,13 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         raise ConcreteFallback(reason)
 
     new_call, _ = rewrite_call_args(call_line, unit, repl)
+    normal_exit_unwrapped = False
+    if exit_kind == "normal":
+        new_call, normal_exit_unwrapped = unwrap_normal_try_call(new_call)
+        if normal_exit_unwrapped:
+            notes.append("normal-exit path: unwrapped the emitter's "
+                         "revert-tolerant try/catch so the PUT asserts the "
+                         "call does not revert")
     target_addr = target_address_expr_for_call(body, call_i, unit)
     if target_addr is None:
         notes.append("could not identify the contract instance targeted by the "
@@ -7948,6 +7972,11 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             out.append("    // [asserted] path exits through revert; "
                        "vm.expectRevert arms the call")
             continue
+        if (normal_exit_unwrapped
+                and "[revert-tolerant] outcome not asserted" in ln):
+            out.append("    // [asserted] path exits normally; a revert fails "
+                       "the test")
+            continue
         out.append(ln)
     if guarded or catch_assert_revert:
         out.append(f"    bool {okvar} = true;")
@@ -7982,7 +8011,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     original_call_body = list(body[:call_i]) + [new_call] + list(
         body[call_i + 1:])
     normal_exit_asserted = (
-        exit_kind == "normal" and exit_kind_asserted(original_call_body))
+        exit_kind == "normal" and
+        (normal_exit_unwrapped or exit_kind_asserted(original_call_body)))
     exit_kind_asserts = 1 if (
         catch_assert_revert or insert_expect_revert or
         (revert_layer1 and existing_expect_revert) or normal_exit_asserted
