@@ -11164,6 +11164,71 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 disabled concrete replay accounting
+
+Problem:
+
+- bugfix124 had two `raw>0 && valid==0` VeriPUT rows that were not real
+  deliverable tests:
+  - `rcx_reentrancy__0xb5e1b1ee15c6fa0e48fce100125569d430f1bd12__SmartFix`;
+  - `rcx_reentrancy__0x23a91059fdc9579a9fbd0edc5f2ea0bfdb70deb4__SmartFix`.
+- In both subjects, Stage 4 generated a concrete fallback, then
+  `put_all.py` correctly found the replay RED on the unmodified contract and
+  renamed `test_cov_1` to `disabled_test_cov_1`.
+- The generated Solidity file explicitly says the artifact is retained but
+  renamed out of Forge's `test*` prefix, so it is not coverage we can claim.
+- RQ1's `summarize_put_artifacts` still counted the row as raw because
+  `put-summary.json` did not carry a disabled marker.
+
+Code change:
+
+- Commit `9f337d19fb [scripts] Exclude disabled concrete replays`, pushed to
+  `E-SOL/feat/veriput-fuzz-first`.
+- `rq1_veriput_run.py` now detects concrete rows whose file contains
+  `function disabled_<test>(...)` and no enabled `function <test>(...)`.
+- Such rows are skipped from raw deliverables, matching the semantics already
+  documented in `put_all.py`.
+- This changes RQ1 accounting only. It does not convert a red concrete replay
+  into a valid test and does not rerun ESBMC.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py` passed.
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only
+  notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/rq1_veriput_run.py
+  scripts/test_rq1_veriput_run.py` passed.
+
+Official-output update:
+
+- Backed up old bugfix artifacts to:
+  `/tmp/veriput_bugfix_disabled_concrete_backup_1786138800`.
+- Recomputed only the two affected subject `result.json` rows and appended
+  fresh latest rows to `bugfix124/results.jsonl`; no Stage 2 or Stage 4 command
+  was rerun.
+- Both subjects changed from `ok raw=1 valid=0 concrete=0/1` to
+  `no-output raw=0 valid=0 concrete=0/0`.
+
+bugfix124 after update:
+
+- Manifest summary:
+  `raw=186`, `valid=149`, `put_raw=137`, `put_valid=120`,
+  `concrete_raw=49`, `concrete_valid=31`, `rows=124`.
+- Status buckets:
+  57 `ok`, 58 `no-output`, 5 `no-units`, 2 `budget-exhausted`, 2 `timeout`.
+- `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark
+  bugfix124` completed.
+- VeriPUT `raw>0 && valid==0` bucket is now 5:
+  - `acfix_llama3_024_CVE_2019_15078` (put timeout);
+  - `acfix_088_EmergencyOracleFactory`;
+  - `acfix_3_5_088_EmergencyOracleFactory`;
+  - `reprod_DCFToken`;
+  - `pop_077_GameItems`.
+
 ## 2026-08-08 shibabread payable constructor repair
 
 Problem:
