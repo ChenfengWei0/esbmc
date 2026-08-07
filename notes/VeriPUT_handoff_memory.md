@@ -11099,6 +11099,48 @@ Validation:
 - `git diff --check -- notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
   passed.
 
+## 2026-08-08 real203 target manifest duplicate repair
+
+Context:
+
+- After running visible real203 targets, `results_all.py --benchmark real203`
+  parsed VeriPUT successfully but reported `veriput ran=202` while the usable
+  denominator is 203.
+- Diagnosis:
+  - `target_manifest.build_manifest(..., ["stress203"], ...)` produced 203
+    rows but only 202 unique `subject_id`s.
+  - Duplicate row:
+    `ensdomains__ens-contracts__Controllable`.
+  - Prepared usable subject missing from target rows:
+    `ensdomains__ens-contracts__ExtendedResolver`.
+- This is a target-manifest construction issue, not a dataset edit. The
+  prepared Results/Stress243 subject directory and meta already exist and are
+  marked ok.
+
+Code change:
+
+- `stress_targets(..., prepared_ok_only=True)` now treats prepared-ok subjects
+  as the authoritative population for `stress203`.
+- CSV rows still supply metadata when available, but duplicate stress target
+  rows are emitted once.
+- Prepared-ok subjects missing from `TARGETS.csv` are recovered from their
+  prepared `meta.json` (`repo`, `contract`, `path`) without modifying anything
+  under `/home/samson/workspace/VeriPUT/Datasets`.
+
+Validation:
+
+- Added `test_stress203_recovers_prepared_subject_missing_from_csv_duplicate`
+  to `scripts/test_target_manifest.py`.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/target_manifest.py scripts/test_target_manifest.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_target_manifest.py` passed
+  all 3 tests.
+- `git diff --check -- notes/coverage/scripts/target_manifest.py scripts/test_target_manifest.py`
+  passed.
+- Actual real203 manifest after the fix:
+  `target_rows=203`, `unique=203`, `dups=[]`, remaining unrun target is
+  `ensdomains__ens-contracts__ExtendedResolver`.
+
 ## 2026-08-08 nested tuple-array solver crash fix
 
 Context:

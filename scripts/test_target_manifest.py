@@ -211,10 +211,49 @@ def test_stress203_uses_prepared_ok_population():
     return bad
 
 
+def test_stress203_recovers_prepared_subject_missing_from_csv_duplicate():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make_stress(root)
+        base = root / "Datasets" / "Stress-Projects"
+        extra_src = base / "org__repo" / "src" / "Extra.sol"
+        extra_src.write_text("contract Extra {}\n")
+        extra = root / "Results" / "Stress243" / "subjects" / "org__repo__Extra"
+        extra.mkdir(parents=True)
+        (extra / "flat.sol").write_text("contract Extra {}\n")
+        (extra / "meta.json").write_text(json.dumps({
+            "subject_id": "org__repo__Extra",
+            "status": "ok",
+            "repo": "org/repo",
+            "contract": "Extra",
+            "path": "src/Extra.sol",
+            "state_class": "STATEFUL",
+        }) + "\n")
+
+        csv_path = base / "TARGETS.csv"
+        rows = list(csv.DictReader(csv_path.open()))
+        rows.append(dict(rows[0]))
+        write_csv(csv_path, rows)
+
+        doc = build_manifest(root, ["stress203"], "include")
+
+    bad = 0
+    ids = [row["subject_id"] for row in doc["targets"]
+           if row["status"] == "ok"]
+    bad += check(ids.count("org__repo__C") == 1,
+                 f"duplicate CSV stress target is emitted once: {ids}")
+    bad += check("org__repo__Extra" in ids,
+                 f"prepared-ok subject absent from CSV is recovered: {ids}")
+    bad += check(doc["summary"]["ok"] == 3,
+                 f"stress203 prepared-ok summary is complete: {doc['summary']}")
+    return bad
+
+
 def main():
     tests = [
         test_manifest_from_three_target_sources,
         test_stress203_uses_prepared_ok_population,
+        test_stress203_recovers_prepared_subject_missing_from_csv_duplicate,
     ]
     bad = 0
     for test in tests:

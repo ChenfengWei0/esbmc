@@ -49,17 +49,22 @@ def _read_csv(path: Path) -> list[dict]:
 
 
 def _stress_prepared_subjects(root: Path) -> set[str]:
+    return set(_stress_prepared_meta(root))
+
+
+def _stress_prepared_meta(root: Path) -> dict[str, dict]:
     subjects = root / "Results" / "Stress243" / "subjects"
     if not subjects.is_dir():
         raise TargetManifestError(f"missing prepared stress subjects: {subjects}")
-    usable = set()
+    usable = {}
     for meta_path in sorted(subjects.glob("*/meta.json")):
         try:
             meta = json.loads(meta_path.read_text())
         except json.JSONDecodeError:
             continue
         if meta.get("status") == "ok" and (meta_path.parent / "flat.sol").exists():
-            usable.add(meta.get("subject_id") or meta_path.parent.name)
+            subject_id = meta.get("subject_id") or meta_path.parent.name
+            usable[subject_id] = meta
     return usable
 
 
@@ -121,8 +126,28 @@ def bugfix_targets(root: Path) -> list[dict]:
 def stress_targets(root: Path, scope: str, *, prepared_ok_only=False) -> list[dict]:
     base = root / "Datasets" / "Stress-Projects"
     rows = _read_csv(base / "TARGETS.csv")
-    prepared = _stress_prepared_subjects(root) if prepared_ok_only else None
+    prepared_meta = _stress_prepared_meta(root) if prepared_ok_only else None
+    prepared = set(prepared_meta) if prepared_meta is not None else None
     targets = []
+    seen_subjects = set()
+
+    def append_target(row: dict, subject_id: str, repo: str, contract: str,
+                      source: Path, metadata: dict):
+        if subject_id in seen_subjects:
+            return
+        seen_subjects.add(subject_id)
+        targets.append({
+            "schema": "veriput-eval-target/v1",
+            "benchmark": "stress243",
+            "subject_id": subject_id,
+            "status": "ok",
+            "contract": contract,
+            "source_kind": "stress-source",
+            "sources": [{"variant": "source", "path": _rel(source, root)}],
+            "units_hint": [],
+            "metadata": metadata,
+        })
+
     for row in rows:
         include = row.get("include") == "yes"
         stateful = row.get("state_class") == "STATEFUL"
@@ -144,16 +169,13 @@ def stress_targets(root: Path, scope: str, *, prepared_ok_only=False) -> list[di
                 contract=contract,
                 source=_rel(source, root))
             continue
-        targets.append({
-            "schema": "veriput-eval-target/v1",
-            "benchmark": "stress243",
-            "subject_id": subject_id,
-            "status": "ok",
-            "contract": contract,
-            "source_kind": "stress-source",
-            "sources": [{"variant": "source", "path": _rel(source, root)}],
-            "units_hint": [],
-            "metadata": {
+        append_target(
+            row,
+            subject_id,
+            repo,
+            contract,
+            source,
+            {
                 "repo": repo,
                 "source_path": row["path"],
                 "state_class": row.get("state_class"),
@@ -162,8 +184,50 @@ def stress_targets(root: Path, scope: str, *, prepared_ok_only=False) -> list[di
                 "writing_entry_points": row.get("writing_entry_points"),
                 "test_frameworks": row.get("test_frameworks"),
                 "referenced_by_dev_tests": row.get("referenced_by_dev_tests"),
-            },
-        })
+            })
+    if prepared_ok_only:
+        for subject_id in sorted(prepared - seen_subjects):
+            meta = prepared_meta[subject_id]
+            repo = meta.get("repo") or ""
+            contract = meta.get("contract") or ""
+            path = meta.get("path") or ""
+            if not repo or not contract or not path:
+                _row_error(
+                    targets,
+                    "stress243",
+                    subject_id,
+                    "prepared subject is missing repo/contract/path metadata",
+                    contract=contract,
+                    metadata=meta)
+                continue
+            source = base / _repo_slug(repo) / path
+            if not source.exists():
+                _row_error(
+                    targets,
+                    "stress243",
+                    subject_id,
+                    "prepared target source does not exist",
+                    contract=contract,
+                    source=_rel(source, root))
+                continue
+            append_target(
+                {},
+                subject_id,
+                repo,
+                contract,
+                source,
+                {
+                    "repo": repo,
+                    "source_path": path,
+                    "state_class": meta.get("state_class"),
+                    "named_entry_points": meta.get("named_entry_points"),
+                    "public_state_vars": meta.get("public_state_vars"),
+                    "writing_entry_points": meta.get("writing_entry_points"),
+                    "test_frameworks": meta.get("test_frameworks"),
+                    "referenced_by_dev_tests": meta.get(
+                        "referenced_by_dev_tests"),
+                    "source": "prepared-subject-meta",
+                })
     return targets
 
 
