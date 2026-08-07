@@ -11014,6 +11014,129 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 RQ1 production runner artifact schema
+
+User requirement recorded:
+
+- RQ1 VeriPUT JSON must include timing statistics.
+- Generated artifacts must be retained for both raw and valid tests.
+- The JSON must preserve whether generated assertions are R0, R1, R2, or a
+  combination.
+
+Runner state:
+
+- Production output root remains:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`.
+- Do not modify prepared datasets or subject contracts under
+  `/home/samson/workspace/VeriPUT/Datasets` or prepared
+  `/home/samson/workspace/VeriPUT/Results/*/subjects`.
+- `rq1_veriput_run.py` now writes these timing/resource fields in each flat
+  row:
+  `wall_total_s`, `stage2_wall_s`, `stage4_wall_s`, `tool_timeout_s`,
+  `wall_cap_s`, `esbmc_run_timeout_s`, `maxrss_mb`, `mem_budget_mb`,
+  `n_concurrent`, `host`.
+- Each flat row also now directly includes:
+  `raw_tests`, `valid_tests`, `assertion_oracles`, and `put_json_count`, in
+  addition to existing `raw`, `valid`, `put_raw`, `put_valid`,
+  `concrete_raw`, `concrete_valid`, `oracle_class_counts`, and
+  `oracle_class_combo_counts`.
+- `raw_tests` and `valid_tests` entries include the emitted file path, test
+  kind (`put` or `concrete`), valid-reference flag, unit, encoding id, forge
+  status, oracle classes, and the backing `put.json` when applicable.
+- `assertion_oracles` entries include the emitted assertion text, layer, var,
+  verdict, guard flag, classes, test id, and backing `put.json`.
+- Existing generated rows were mechanically enriched without rerunning ESBMC:
+  78 `bugfix124` rows, 13 `peer182` rows, and 1 `real203` row.  This appended
+  same-key rows to each `results.jsonl`; the RQ1 readers use last-write-wins.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- Post-backfill latest-row checks:
+  - `bugfix124`: 78 rows, status
+    `{ok: 43, budget-exhausted: 2, no-output: 29, no-units: 4}`,
+    raw/valid 108/85, PUT 80/71, concrete 28/14.
+  - `peer182`: 13 rows, status `{ok: 10, no-output: 3}`,
+    raw/valid 29/20, PUT 19/12, concrete 10/8.
+  - `real203`: 1 row, status `{ok: 1}`,
+    raw/valid 16/15, PUT 11/10, concrete 5/5.
+  - All latest rows in these three result journals have `raw_tests`,
+    `valid_tests`, and `assertion_oracles`.
+
+## 2026-08-07 peer182 contract080 fast-first wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 12 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Notes:
+
+- `target_manifest.peer_targets()` already restricts peer to contract080
+  (`meta.source_080` / `contracts_080/`); do not run the unupgraded peer
+  contract.
+- This wave added the 12 fast-first SOLTG subjects after the earlier
+  `peer_ccsolbmc__AIRBets` row, so `peer182` currently has 13 latest rows.
+- No OOM, timeout, or residual worker processes after completion.
+
+Results:
+
+- Status counts: 10 `ok`, 3 `no-output`.
+- Valid subjects: 10 / 13 latest rows.
+- Generated tests: raw/valid 29 / 20.
+- PUT tests: raw/valid 19 / 12.
+- Concrete replay tests: raw/valid 10 / 8.
+- Oracle classes across latest rows:
+  `R2: 143`, `R1: 7`, `R0: 4`.
+- Oracle combinations:
+  `R2: 139`, `R1: 3`, `R1+R2: 4`, `R0: 4`.
+- Median ok-wall: 22.0s.  Max ok-wall remains earlier AIRBets at 585.5s.
+- `results_all.py --benchmark peer182` reports VeriPUT `ran=13`,
+  `raw_u=29`, `valid_u=20`, `raw_c=10`, `valid_c=10`, `coverage=5.5%`,
+  `VT/case=0.11`.  In `results_all.py`, `raw_c/valid_c` are subject counts,
+  not concrete replay test counts.
+
+Per-subject peer182 fast-first 12:
+
+- `peer_soltg__loop_basic / Simplelb`: ok, raw=4, valid=4,
+  PUT 0/0, concrete 4/4, wall 16.543s.
+- `peer_soltg__while_2 / Cwb7`: no-output, raw=0, valid=0, wall 6.529s.
+- `peer_soltg__constructor_3_m / A3`: ok, raw=1, valid=1,
+  PUT 1/1, concrete 0/0, wall 30.541s.
+- `peer_soltg__while_1 / Cwb1`: ok, raw=5, valid=1,
+  PUT 1/5, concrete 0/0, wall 51.065s.
+- `peer_soltg__for_1_continue / Cfb3`: ok, raw=3, valid=2,
+  PUT 1/2, concrete 1/1, wall 22.031s.
+- `peer_soltg__while_1_continue / Cwb4`: ok, raw=3, valid=1,
+  PUT 1/2, concrete 0/1, wall 23.039s.
+- `peer_soltg__for_1_break / Cfb1`: ok, raw=3, valid=1,
+  PUT 1/2, concrete 0/1, wall 14.526s.
+- `peer_soltg__simple_if_2 / Csi2`: ok, raw=3, valid=3,
+  PUT 2/2, concrete 1/1, wall 15.532s.
+- `peer_soltg__overloading / Co`: no-output, raw=0, valid=0,
+  wall 2.012s.
+- `peer_soltg__simple_if / Csi1`: ok, raw=2, valid=2,
+  PUT 2/2, concrete 0/0, wall 13.526s.
+- `peer_soltg__exampl / A`: ok, raw=3, valid=3,
+  PUT 2/2, concrete 1/1, wall 22.039s.
+- `peer_soltg__few_calls / Cfc1`: no-output, raw=0, valid=0,
+  wall 2.010s.
+
+Interpretation:
+
+- The artifact and JSON pipeline works across bugfix, peer, and real samples.
+- The fast peer subset is cheap and has high valid-subject rate, but most
+  strong assertion volume is still R2-heavy.
+- The no-output peer rows are quick structural no-output cases, unlike the
+  slow bugfix reentrancy-bank no-output cases.
+- For speed, keep using `--no-output-stage2-stop-s 100` on production waves,
+  but remember it only checks at unit boundaries and does not interrupt a
+  single long-running ESBMC child.
+
 ## 2026-08-07 RQ1 production runner and early benchmark samples
 
 Production output contract:
