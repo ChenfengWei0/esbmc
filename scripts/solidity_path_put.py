@@ -9636,6 +9636,17 @@ def main():
     assert_dir = os.path.join(a.workdir, "assert")
     os.makedirs(emit_dir, exist_ok=True)
     os.makedirs(assert_dir, exist_ok=True)
+    put_deadline = time.monotonic() + float(a.timeout)
+    postprocess_reserve_s = min(60.0, max(5.0, float(a.timeout) * 0.10))
+
+    def esbmc_budget(label):
+        """Seconds left for the next ESBMC child inside this PUT run."""
+        remaining = put_deadline - time.monotonic()
+        budget = max(1, int(remaining - postprocess_reserve_s))
+        if budget < int(a.timeout):
+            print(f"[put]   ESBMC budget for {label}: {budget}s "
+                  f"(reserved {postprocess_reserve_s:.0f}s for PUT assembly)")
+        return budget
 
     notes = []
 
@@ -9684,7 +9695,7 @@ def main():
         ["--generate-foundry-testcase", "--cov-report-json",
          "--overflow-check", "--div-by-zero-check",
          "--path-cov-arith-resolve"] + a.esbmc_arg,
-        emit_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
+        emit_dir, a.max_tx, esbmc_budget("emit"), a.memlimit, a.scope)
     produced = sorted(f for f in os.listdir(emit_dir)
                       if f.endswith(".cov.t.sol"))
     print(f"[put]   exit={rc1} {w1:.1f}s  emitted={produced}")
@@ -10013,7 +10024,7 @@ def main():
         a.esbmc, a.sol, a.ast, a.contract, a.unit,
         ["--path-cov-assert", os.path.join(assert_dir, "spec.json"),
          "--cov-report-json"] + a.esbmc_arg,
-        assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
+        assert_dir, a.max_tx, esbmc_budget("ladder"), a.memlimit, a.scope)
     rows, summary, refusal, blocker = parse_ladder(out2)
     # The ladder run is asked about exactly ONE (unit, enc), so any rollback
     # line in ITS log is about this path -- but the pair is still matched rather
@@ -10043,7 +10054,8 @@ def main():
             a.esbmc, a.sol, a.ast, a.contract, a.unit,
             ["--path-cov-assert", os.path.join(assert_dir, "spec.json"),
              "--cov-report-json"] + a.esbmc_arg + extra,
-            assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
+            assert_dir, a.max_tx, esbmc_budget("auto-unwind"), a.memlimit,
+            a.scope)
         rows_b, summary_b, refusal_b, blocker_b = parse_ladder(out2b)
         # ---- AN ATTEMPT THAT PRODUCED NO LADDER MAY NOT REPLACE THE STATE ---
         #
@@ -10089,7 +10101,8 @@ def main():
             a.esbmc, a.sol, a.ast, a.contract, a.unit,
             ["--path-cov-assert", os.path.join(assert_dir, "spec.json"),
              "--cov-report-json"] + a.esbmc_arg + extra,
-            assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
+            assert_dir, a.max_tx, esbmc_budget("partial-loops"), a.memlimit,
+            a.scope)
         rows_b, summary_b, refusal_b, blocker_b = parse_ladder(out2b)
         usable = attempt_is_usable(rows_b, blocker_b)
         unwind_attempts.append({"attempt": a.auto_unwind + 1,
@@ -10288,7 +10301,8 @@ def main():
                     a.esbmc, a.sol, a.ast, a.contract, a.unit,
                     ["--path-cov-assert", spec_path, "--cov-report-json"]
                     + a.esbmc_arg + unwind_applied,
-                    assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
+                    assert_dir, a.max_tx, esbmc_budget("R2"), a.memlimit,
+                    a.scope)
                 return o
 
             rows += maybe_run_r2_passes(

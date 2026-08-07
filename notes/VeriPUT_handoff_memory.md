@@ -11393,6 +11393,21 @@ Code accounting fix:
   for Foundry replay (`2 * forge_timeout`) while still passing only the
   remaining generation budget into `put_all.py`.
 
+PUT child-budget fix:
+
+- `acfix_021_CVE_2018_19832` showed Stage 2 certified one region, then Stage 4
+  timed out with no `put.json`. Its `put_all.py` command passed the remaining
+  subject budget (`--timeout 443`) to `solidity_path_put.py`, and that driver
+  treated the value as the timeout for EACH ESBMC child. Emit/assert logs were
+  present, but the final artifact was never written before the outer wrapper
+  killed Stage 4.
+- `scripts/solidity_path_put.py` now treats its `--timeout` as the path's
+  shared generation window: emit, ladder, auto-unwind/partial-loop retry, and
+  R2 all draw from one deadline, with 10% capped at 60s reserved for Python PUT
+  assembly/writeout.
+- `notes/coverage/scripts/put_all.py` help text now describes this as a
+  per-PUT-driver generation budget rather than a per-ESBMC-child timeout.
+
 Checks already run before committing this repair:
 
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
@@ -11406,6 +11421,13 @@ Checks already run before committing this repair:
 - `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
   passed.
 - `git diff --check -- notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md`
+  passed.
+- After the PUT child-budget fix:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 252 declared tests ran.
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only notes/coverage/scripts/put_all.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
   passed.
 
 ## 2026-08-08 DCF RQ1 repair: Foundry-only fixture and state-scalar ladder superset

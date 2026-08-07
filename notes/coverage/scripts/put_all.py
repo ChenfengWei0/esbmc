@@ -723,7 +723,9 @@ def main():
                          "parameters absent from the certified region as "
                          "full-domain fuzz inputs when their type is supported")
     ap.add_argument("--timeout", type=int, default=600,
-                    help="per ESBMC invocation in the PUT driver")
+                    help="generation budget for each PUT driver invocation; "
+                         "the driver shares it across its ESBMC children and "
+                         "reserves time to assemble/write the PUT artifact")
     ap.add_argument("--forge-timeout", type=int, default=300,
                     help="per Forge invocation; Forge is run twice per project "
                          "for replay filtering and the final green gate")
