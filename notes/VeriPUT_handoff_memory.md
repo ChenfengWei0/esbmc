@@ -11097,6 +11097,144 @@ Diagnosis from this wave:
 - Because no harness/accounting failure appeared, the next action should be
   another real203 wave instead of rerunning or patching this wave.
 
+## 2026-08-07 real203 fast-first limit80 wave
+
+Command:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py \
+  --benchmark real203 --limit 80 --order fast-first --jobs 3 \
+  --memlimit-gib 10 --mem-fraction 0.98 --timeout 600 \
+  --wrapper-grace 60 --resume --no-output-stage2-stop-s 100
+```
+
+Operational notes:
+
+- This run increased throughput from `jobs=2` to `jobs=3` and lowered the
+  per-case memory cap from 12GiB to 10GiB to keep the concurrent ceiling below
+  the available WSL2 memory.
+- Before launch, available memory was about 36GiB and there were no residual
+  VeriPUT/ESBMC processes.
+- During a long quiet window, RSS checks showed the active ESBMC process around
+  0.8GiB and available memory around 35GiB.  `jobs=3` did not cause memory
+  pressure.
+- After completion, `pgrep -af 'rq1_veriput_run|veriput|esbmc'` showed no
+  residual VeriPUT/ESBMC runner processes.  A separate SolAR/ganache experiment
+  from another run was still present and unrelated.
+- The command skipped the already recorded fast-first prefix via `--resume`.
+  The result file now has 79 latest/journal rows for real203; the practical
+  accounting should use the result rows, not the nominal `limit 80`, because the
+  fast-first prefix contains duplicate-like subject identities.
+
+Official `Results/results_all.py --benchmark real203` snapshot:
+
+- `veriput ran=79 raw_u=115 valid_u=110 raw_c=21 valid_c=21 coverage=10.3% VT/case=0.54`.
+- Cost: `total=2.07h`, `wall/subj=94.5+-142.7s`, `peakRSS=896+-1568MB`.
+- VeriPUT statuses: 21 `ok`, 56 `no-output`, 2 `no-units`.
+- VeriPUT anomaly audit: `timeout/oom/error=0`, `sub-5s ok=0`,
+  `raw>0 & valid==0=0`.
+- Remaining invariant violations are still only the existing multi-host
+  comparability issues for other tools (`cc-solbmc`, `solar`, `syntest`), not
+  VeriPUT.
+
+Latest-key total aggregate after limit80:
+
+- Rows: 79.
+- Status: 21 `ok`, 56 `no-output`, 2 `no-units`.
+- Completion reasons: 64 `ok`, 2 `no-units`, 12 `early-stop-no-output`,
+  1 `budget-exhausted`.
+- Raw/valid tests: 115 / 110.
+- PUT raw/valid: 109 / 104.
+- Concrete raw/valid: 6 / 6.
+- Subjects with raw tests: 21.
+- Subjects with valid tests: 21.
+- `valid=None`: 0.
+- `raw>0 && valid==0`: 0.
+- Oracle class counts: `R0=105`, `R1=34`, `R2=82`.
+- Oracle combo counts: `R0=105`, `R1=34`, `R2=82`.
+
+Incremental aggregate for the new rows after the first 35:
+
+- Rows: 44.
+- Status: 11 `ok`, 33 `no-output`.
+- Completion reasons: 32 `ok`, 11 `early-stop-no-output`,
+  1 `budget-exhausted`.
+- Raw/valid tests: 59 / 58.
+- PUT raw/valid: 58 / 57.
+- Concrete raw/valid: 1 / 1.
+- Subjects with raw tests: 11.
+- Subjects with valid tests: 11.
+- `valid=None`: 0.
+- `raw>0 && valid==0`: 0.
+- Oracle class counts: `R0=58`, `R1=16`, `R2=34`.
+- Oracle combo counts: `R0=58`, `R1=16`, `R2=34`.
+
+High-value successful rows added by this wave:
+
+- `compound-finance__comet__MarketUpdateTimelock`: 8 / 8 valid PUT,
+  515.633s wall.
+- Bridge receiver family:
+  - `PolygonBridgeReceiver`: 3 / 3 valid PUT, 364.397s.
+  - `SweepableBridgeReceiver`: 3 / 3 valid PUT, 298.934s.
+  - `ArbitrumBridgeReceiver`: 3 / 3 valid PUT, 328.619s.
+  - `LineaBridgeReceiver`: 3 / 3 valid PUT, 353.4s.
+  - `ScrollBridgeReceiver`: 5 / 5 valid PUT, 396.959s.
+  - `OptimismBridgeReceiver`: 5 / 5 valid PUT, 393.636s.
+  - `RoninBridgeReceiver`: 3 / 3 valid PUT, 358.076s.
+- `ensdomains__ens-contracts__ReverseRegistrar`: 2 raw / 1 valid PUT,
+  599.885s wall.
+- `ERC-3643__ERC-3643__AgentRoleUpgradeable`: 16 / 16 valid,
+  with 15 / 15 PUT and 1 / 1 concrete, 322.045s wall.
+- `ERC-3643__ERC-3643__ClaimTopicsRegistry`: 8 / 8 valid PUT,
+  539.113s wall.
+
+Slow no-output rows worth later diagnosis:
+
+- `LinearPremiumPriceOracle`: 239.766s,
+  `no output after 239.7s Stage 2`.
+- `MarketUpdateProposer`: 163.972s,
+  `no output after 137.8s Stage 2`.
+- `BaseBridgeReceiver`: 154.187s,
+  `no output after 154.1s Stage 2`.
+- `TokenCallbackHandler`: 125.832s,
+  `no output after 125.8s Stage 2`.
+- `ProtocolConfig`: 123.672s,
+  `no output after 123.6s Stage 2`.
+- `ENSRegistry`: 121.202s,
+  `no output after 121.2s Stage 2`.
+- `ENSRegistryWithFallback`: 121.162s,
+  `no output after 121.1s Stage 2`.
+- `ExponentialPremiumPriceOracle`: 120.657s,
+  `no output after 120.6s Stage 2`.
+- `ReferenceConduit`: 120.647s,
+  `no output after 120.6s Stage 2`.
+- `WstETHPriceFeed`: 107.198s,
+  `no output after 107.1s Stage 2`.
+- `ConfiguratorProxy`: 107.159s,
+  `no output after 107.1s Stage 2`.
+
+Diagnosis from this wave:
+
+- The runner and artifact/statistics pipeline still look healthy: no
+  `valid=None`, no `raw>0 && valid==0`, and no timeout/OOM/error rows.
+- `jobs=3` is currently safe on this machine and materially improves throughput
+  for real203, because many successful rows take 300-600s.
+- Do not reduce the 600s per-case budget: several strong PUT-producing rows
+  need most of it (`ReverseRegistrar`, `ClaimTopicsRegistry`,
+  `MarketUpdateTimelock`).
+- The main weakness is not validation.  It is still certification/region
+  coverage and Stage-2 search cost, especially price/oracle/feed contracts,
+  ENS registry/oracle contracts, OpenSea conduit, Safe helpers, and some proxy
+  shells.
+- Bridge receiver contracts are a strong positive cluster.  Compare
+  `BaseBridgeReceiver` against the successful bridge receivers later to find
+  why one stops without output while the others generate 3-5 valid PUTs.
+- Next production step: continue real203 in another wave with `jobs=3`,
+  probably a moderate prefix increment rather than a huge one.  If the next
+  wave shows the same clean artifact accounting, continue production; if slow
+  no-output dominates without enough new valid PUTs, pause to optimize Stage-2
+  candidate ordering / cheap refutation / coordinate extraction.
+
 ## 2026-08-07 RQ1 peer182 wave to limit 120 and zero-oracle accounting
 
 User requirements still active:
