@@ -11014,6 +11014,78 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 RQ1 production runner and early benchmark samples
+
+Production output contract:
+
+- Runner: `notes/coverage/scripts/rq1_veriput_run.py`.
+- Official output root:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`.
+- Prepared subjects are read from `/home/samson/workspace/VeriPUT/Results/*/subjects`;
+  dataset contracts and prepared subject files are never modified.
+- AST cache default is external:
+  `/tmp/veriput_rq1_ast_cache`.
+- Every subject writes:
+  - append-only dataset journal `results.jsonl`;
+  - `subjects/<subject_id>/result.json`;
+  - `unit-schedule.json`;
+  - certification JSONL and stage logs;
+  - `put/<unit>/...` raw generated tests, valid replay tests, and `put.json`
+    oracle metadata.
+- JSON rows retain time and resource accounting:
+  `tool_timeout_s`, `wall_cap_s`, `wall_total_s`, `stage2_wall_s`,
+  `stage4_wall_s`, `maxrss_mb`, `mem_budget_mb`, `n_concurrent`, and `host`.
+- JSON rows retain raw/valid and PUT/concrete splits:
+  `raw`, `valid`, `put_raw`, `put_valid`, `concrete_raw`, `concrete_valid`.
+- Oracle strength is retained via:
+  `oracle_class_counts`, `oracle_class_combo_counts`, and per-test
+  `assertion_oracles` with R0/R1/R2 class lists.
+- If a case exhausts the 600s budget after producing artifacts, row
+  `status` is `ok`, `completion_status` is `budget-exhausted`, and
+  `budget_exhausted` is true.  If no artifact is produced, the row stays
+  `budget-exhausted` or `no-output`.
+- `--jobs` runs subjects concurrently.  The parent process owns journal
+  appends.  Admission refuses runs where `jobs * memlimit_gib` exceeds
+  `--mem-fraction` of current `MemAvailable`.
+
+Ordering policy:
+
+- Default `--order fast-first` sorts target rows before applying `--limit`.
+- The cost key is prepared `flat.sol` size under
+  `Results/<PreparedDataset>/subjects/<subject_id>/flat.sol`, then target unit
+  hint count, then subject id.
+- `--order dataset` preserves target-manifest order.  Use this only when a
+  dataset-order pass is explicitly required.
+- The purpose is not to bias final RQ1 results; full runs use no `--limit`.
+  For small waves, fast-first gives a cheaper early view of generation quality.
+
+Known production samples:
+
+- `peer182/peer_ccsolbmc__AIRBets`:
+  `status=ok`, `completion_status=budget-exhausted`, raw=2, valid=2,
+  PUT 1/1, concrete 1/1, wall about 585s, peak RSS about 12.2GiB,
+  oracle classes include R2.
+- `bugfix124/acfix_fixlink_DepositLog`:
+  `status=ok`, raw=11, valid=11, PUT 5/5, concrete 6/6, wall about 72s,
+  oracle counts R0=1, R1=4, R2=8.
+- `real203/ERC-3643__ERC-3643__AgentRole`:
+  final rerun after AST-cache namespace fix was `status=ok`, raw=16,
+  valid=15, PUT 10/11, concrete 5/5, wall about 213s, oracle counts
+  R0=7, R1=2, R2=11.  One raw PUT failed reference replay and is retained
+  only in raw artifacts.
+- A first bugfix124 `--jobs 2 --limit 6 --resume` wave showed the dataset
+  order is bad for early throughput: two subjects spent nearly the full 600s
+  with no output (`DnGmxBatchingManager`, `MStableYieldSource`), and three
+  more produced no output quickly.  This motivated default `fast-first` order
+  for limited waves.
+
+Checks after the fast-first runner change:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  should pass.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  should pass.
+
 ## 2026-08-07 RQ1 VeriPUT production runner contract
 
 User tightened the output requirements before the benchmark wave:

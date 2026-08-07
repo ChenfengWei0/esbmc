@@ -53,6 +53,11 @@ TARGET_BENCHMARK_ARG = {
     "stress203": "stress203",
     "real203": "stress203",
 }
+PREPARED_DATASET_DIR = {
+    "peer182": "Peer182",
+    "bugfix124": "BugFix124",
+    "stress243": "Stress243",
+}
 
 
 class RQ1RunError(ValueError):
@@ -122,7 +127,7 @@ def _latest_rows(path: Path) -> dict[str, dict]:
 
 
 def target_rows(veriput_root: Path, benchmark: str, subject_ids: list[str],
-                limit: int) -> tuple[str, list[dict]]:
+                limit: int, order: str = "fast-first") -> tuple[str, list[dict]]:
     if benchmark not in TARGET_BENCHMARK_ARG:
         raise RQ1RunError(
             "--benchmark must be one of: " + ", ".join(sorted(TARGET_BENCHMARK_ARG)))
@@ -132,9 +137,29 @@ def target_rows(veriput_root: Path, benchmark: str, subject_ids: list[str],
     if subject_ids:
         wanted = set(subject_ids)
         rows = [row for row in rows if row.get("subject_id") in wanted]
+    if order == "fast-first":
+        rows = sorted(rows, key=lambda row: _target_cost_key(veriput_root, row))
+    elif order != "dataset":
+        raise RQ1RunError("--order must be dataset or fast-first")
     if limit:
         rows = rows[:limit]
     return DATASET_LABEL[benchmark], rows
+
+
+def _target_cost_key(veriput_root: Path, row: dict) -> tuple[int, int, str]:
+    bench = row.get("benchmark")
+    subject_id = row.get("subject_id") or ""
+    dirname = PREPARED_DATASET_DIR.get(bench)
+    size = 1 << 60
+    if dirname and subject_id:
+        flat = veriput_root / "Results" / dirname / "subjects" / subject_id / "flat.sol"
+        try:
+            size = flat.stat().st_size
+        except OSError:
+            pass
+    hints = len(row.get("units_hint") or [])
+    # Hinted target rows tend to be narrower, but flat size dominates.
+    return (size, -hints, subject_id)
 
 
 def cached_subject(subject: PreparedSubject, ast_cache_root: Path,
@@ -770,7 +795,7 @@ def write_dataset_manifest(root: Path, dataset_label: str, journal: Path) -> Non
 
 def build_dry_run(args) -> dict:
     dataset_label, rows = target_rows(Path(args.veriput_root), args.benchmark,
-                                      args.subject_id, args.limit)
+                                      args.subject_id, args.limit, args.order)
     return {
         "schema": "veriput-rq1-dry-run/v1",
         "generated_at": _utc_now(),
@@ -779,6 +804,8 @@ def build_dry_run(args) -> dict:
         "ast_cache_root": args.ast_cache_root,
         "timeout_s": args.timeout,
         "memlimit_gib": args.memlimit_gib,
+        "jobs": args.jobs,
+        "order": args.order,
         "subjects": [{
             "subject_id": row.get("subject_id"),
             "benchmark": row.get("benchmark"),
@@ -798,6 +825,10 @@ def main(argv=None) -> int:
                     help="restrict to one prepared subject id. Repeatable")
     ap.add_argument("--limit", type=int, default=0,
                     help="run only the first N selected target subjects")
+    ap.add_argument("--order", choices=("fast-first", "dataset"),
+                    default="fast-first",
+                    help="subject order before --limit. fast-first sorts by "
+                         "prepared flat.sol size to get early throughput")
     ap.add_argument("--result-root", default=str(DEFAULT_RESULT_ROOT))
     ap.add_argument("--ast-cache-root", default=str(DEFAULT_AST_CACHE_ROOT))
     ap.add_argument("--timeout", type=int, default=600,
@@ -837,7 +868,7 @@ def main(argv=None) -> int:
             return 0
 
         dataset_label, rows = target_rows(veriput_root, args.benchmark,
-                                          args.subject_id, args.limit)
+                                          args.subject_id, args.limit, args.order)
         journal = result_root / dataset_label / "results.jsonl"
         done = _latest_rows(journal) if args.resume and not args.redo else {}
         for target_row in rows:

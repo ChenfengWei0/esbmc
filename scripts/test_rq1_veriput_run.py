@@ -171,12 +171,55 @@ def test_jobs_admission_refuses_oversubscription():
     return check(refused, "subject concurrency refuses memory oversubscription")
 
 
+def test_target_rows_fast_first_sorts_before_limit():
+    old = rq1_veriput_run.target_manifest.build_manifest
+    rows = [
+        {
+            "status": "ok",
+            "benchmark": "bugfix124",
+            "subject_id": "slow",
+            "contract": "Slow",
+        },
+        {
+            "status": "ok",
+            "benchmark": "bugfix124",
+            "subject_id": "fast",
+            "contract": "Fast",
+        },
+    ]
+    rq1_veriput_run.target_manifest.build_manifest = lambda *_args: {
+        "targets": rows,
+    }
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fast = root / "Results" / "BugFix124" / "subjects" / "fast" / "flat.sol"
+            slow = root / "Results" / "BugFix124" / "subjects" / "slow" / "flat.sol"
+            fast.parent.mkdir(parents=True)
+            slow.parent.mkdir(parents=True)
+            fast.write_text("contract Fast {}\n")
+            slow.write_text("contract Slow {\n" + ("uint256 x;\n" * 100) + "}\n")
+            _label, dataset_rows = rq1_veriput_run.target_rows(
+                root, "bugfix124", [], 1, "dataset")
+            _label, fast_rows = rq1_veriput_run.target_rows(
+                root, "bugfix124", [], 1, "fast-first")
+    finally:
+        rq1_veriput_run.target_manifest.build_manifest = old
+    bad = 0
+    bad += check(dataset_rows[0]["subject_id"] == "slow",
+                 "dataset order is preserved before limit")
+    bad += check(fast_rows[0]["subject_id"] == "fast",
+                 "fast-first sorts by prepared flat.sol size before limit")
+    return bad
+
+
 def main():
     tests = [
         test_path_guard_allows_only_veriput_rq1_result_tree,
         test_put_artifact_summary_counts_raw_valid_and_oracle_classes,
         test_real203_cache_uses_prepared_benchmark_namespace,
         test_jobs_admission_refuses_oversubscription,
+        test_target_rows_fast_first_sorts_before_limit,
     ]
     bad = 0
     for test in tests:
