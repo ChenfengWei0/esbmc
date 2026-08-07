@@ -11683,6 +11683,104 @@ Interpretation:
 - The unchanged `raw>0 valid==0` count means the recent R0 and report
   preservation fixes are not causing invalid-only subjects.
 
+## 2026-08-07 peer182 fast-first limit96 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 96 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Execution:
+
+- The runner skipped the first 84 fast-first peer rows and queued the next 12.
+- No OOM, wrapper crash, or residual worker processes after completion.
+- This wave contains a mix of Greeter-style subjects, syntest token/finance
+  subjects, and several long-running role/admin subjects.
+- `salvador`, `Identity`, and `PermissionGroups` are very valuable but
+  budget-edge cases: each completed near 600s and wrote valid PUTs before the
+  case budget ended.
+
+Latest peer182 aggregate after this wave:
+
+- Latest rows: 97.  This includes earlier `peer_ccsolbmc__AIRBets` plus
+  fast-first prefix 96.
+- Status counts: 56 `ok`, 37 `no-output`, 4 `no-units`.
+- Completion counts: 4 `budget-exhausted`, 87 `ok`, 4 `no-units`,
+  2 `early-stop-no-output`.
+- Valid subjects: 52 / 97.
+- Generated tests: raw/valid 193 / 152.
+- PUT tests: raw/valid 143 / 109.
+- Concrete replay tests: raw/valid 50 / 43.
+- Raw>0 but valid==0 subjects: 4.  This still did not increase.
+- Oracle classes: `R2: 870`, `R1: 81`, `R0: 89`.
+- Oracle combinations: `R2: 842`, `R1: 53`, `R1+R2: 28`, `R0: 89`.
+- Median ok-wall: 33.048s.  Max ok-wall is now `salvador` at 599.738s.
+- `results_all.py --benchmark peer182` reports VeriPUT `ran=97`,
+  `raw_u=193`, `valid_u=152`, `raw_c=56`, `valid_c=52`,
+  `coverage=28.6%`, `VT/case=0.84`, median ok-wall 33.0s, and
+  `raw>0 & valid==0=4`.
+
+New rows in fast-first 85-96:
+
+- `peer_soltg__constructor_state_variable_init_diamond / D4v3`: no-units,
+  wall 0.012s.
+- `peer_ccsolbmc__salvador / salvador`: ok, budget-exhausted,
+  raw=3, valid=3, PUT 3/3, wall 599.738s, stage2 334.416s,
+  stage4 265.275s, oracle classes `R0:3, R1:3, R2:21`.
+- `peer_solar__Greeter3 / Greeter3`: ok, raw=12, valid=10,
+  PUT 2/4, concrete 8/8, wall 68.203s, oracle classes `R0:2`.
+- `peer_solar__Casino / Casino`: no-output, early-stop-no-output,
+  wall 160.181s, reason `no output after 160.1s Stage 2`.
+- `peer_solar__Greeter / Greeter`: ok, raw=12, valid=10,
+  PUT 2/4, concrete 8/8, wall 68.094s, oracle classes `R0:2`.
+- `peer_syntest__Core_Fi_V3 / Core_Fi_V3`: no-output, wall 6.034s,
+  reason `NO-PATH=6`.
+- `peer_syntest__Straight_Fire_Finance / Straight_Fire_Finance`: no-output,
+  wall 6.036s, reason `NO-PATH=6`.
+- `peer_solar__Greeter2 / Greeter2`: ok, raw=7, valid=5,
+  PUT 1/3, concrete 4/4, wall 43.069s, oracle classes `R0:1`.
+- `peer_syntest__GAZ_ERC20 / GAZ_ERC20`: no-output, wall 5.533s,
+  reason `NO-WITNESS-UNKNOWN=3`.
+- `peer_syntest__Rootkit_finance / Rootkit_finance`: no-output,
+  wall 6.038s, reason `NO-PATH=6`.
+- `peer_solar__Identity / Identity`: ok, budget-exhausted,
+  raw=6, valid=6, PUT 6/6, wall 592.129s, stage2 550.508s,
+  stage4 41.543s, oracle classes `R0:6, R1:5, R2:8`.
+- `peer_solar__PermissionGroups / PermissionGroups`: ok, budget-exhausted,
+  raw=6, valid=5, PUT 5/6, wall 599.622s, stage2 543.490s,
+  stage4 56.057s, oracle classes `R0:6, R1:2, R2:8`.
+
+Diagnostics:
+
+- The syntest token/finance no-output rows are cheap failures, not budget
+  problems:
+  - `Core_Fi_V3`, `Straight_Fire_Finance`, and `Rootkit_finance` have
+    six `NO-PATH` units each, about 0.6-0.8s per unit.
+  - `GAZ_ERC20` has three `NO-WITNESS-UNKNOWN` units, about 1.4-1.7s per unit.
+- `Casino.unsafeEntry` is the expensive no-output row:
+  `NOT-CERTIFIED`, 0 certified / 2 witnessed, 159.9s.
+- Greeter-family invalid PUT candidates are zero-oracle candidates:
+  `ladder_refusal` says no candidate assertion could be formed, `oracle_vars`
+  is empty, and `oracle_classes=[]`.
+  These are retained as raw artifacts but should not be interpreted as strong
+  PUTs.  A future accounting cleanup could either drop zero-assert PUTs from
+  PUT raw counts or classify them separately, without rerunning ESBMC.
+- `PermissionGroups.transferAdmin` has one genuine invalid PUT candidate with
+  R0/R1/R2 oracle classes.  It happens in a budget-exhausted subject; the same
+  subject still produced 5 valid PUTs.  Do not rerun now.  If this pattern
+  grows, inspect the reference replay failure around established
+  `state.admin := msg.sender` / `pendingAdmin` storage pins.
+
+Interpretation:
+
+- This wave added 39 valid tests and 6 valid subjects.  It is still productive
+  despite several cheap no-output rows.
+- Strong role/admin and token-like PUTs often complete at the 600s boundary.
+  The current 600s final timeout is justified; cutting it to 300s would lose
+  valid tests on `salvador`, `Identity`, and `PermissionGroups`.
+- The best speed target is still generic R2/oracle candidate pruning plus
+  fuzz-refutation before expensive ESBMC assertion batches, not POC- or
+  subject-specific rules.
+
 ## 2026-08-07 RQ1 production runner and early benchmark samples
 
 Production output contract:
