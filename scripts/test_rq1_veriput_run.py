@@ -216,26 +216,42 @@ def test_target_rows_fast_first_sorts_before_limit():
 def test_certification_summary_identifies_inner_timeouts():
     with tempfile.TemporaryDirectory() as td:
         cert = Path(td) / "certify-results.jsonl"
-        cert.write_text(json.dumps({
-            "bucket": "KILLED",
-            "exit": 124,
-            "unit": "transfer",
-            "witnessed": None,
-            "certified": {},
-            "not_certified": {},
-        }) + "\n")
+        rows = [
+            {
+                "bucket": "KILLED",
+                "exit": 124,
+                "unit": "transfer",
+                "witnessed": None,
+                "certified": {},
+                "not_certified": {},
+            },
+            {
+                "bucket": "KILLED",
+                "exit": 1,
+                "unit": "fallback",
+                "witnessed": None,
+                "wall_s": 120.3,
+                "run_timeout_s": 120,
+                "driver_diagnostic": {
+                    "tag": "esbmc-no-cov-report",
+                },
+                "certified": {},
+                "not_certified": {},
+            },
+        ]
+        cert.write_text("".join(json.dumps(row) + "\n" for row in rows))
         summary = rq1_veriput_run.summarize_certification(cert)
     bad = 0
-    bad += check(summary["bucket_counts"] == {"KILLED": 1},
+    bad += check(summary["bucket_counts"] == {"KILLED": 2},
                  f"certification buckets retained: {summary}")
-    bad += check(summary["exit_counts"] == {"124": 1},
+    bad += check(summary["exit_counts"] == {"1": 1, "124": 1},
                  f"certification exits retained: {summary}")
-    bad += check(summary["witness_counts"] == {"unknown": 1},
+    bad += check(summary["witness_counts"] == {"unknown": 2},
                  f"witness status retained: {summary}")
-    bad += check(summary["timed_out_units"] == ["transfer"],
+    bad += check(summary["timed_out_units"] == ["fallback", "transfer"],
                  f"inner timeout unit identified: {summary}")
     bad += check(rq1_veriput_run._no_output_reason(summary) ==
-                 "certification timed out before PUT artifacts: transfer",
+                 "certification timed out before PUT artifacts: fallback, transfer",
                  "no-output reason distinguishes inner certification timeout")
     return bad
 

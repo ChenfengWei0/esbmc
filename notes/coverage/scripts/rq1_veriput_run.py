@@ -438,7 +438,7 @@ def summarize_certification(cert_path: Path) -> dict:
         summary["certified_regions"] += len(row.get("certified") or {})
         summary["not_certified_regions"] += len(row.get("not_certified") or {})
         unit = row.get("unit") or "<unknown>"
-        if exit_code == 124 or str(bucket).upper() == "TIMEOUT":
+        if _cert_row_timed_out(row):
             timed_out_units.append(unit)
         if exit_code in (-9, 137) or str(bucket).upper() == "OOM":
             oom_units.append(unit)
@@ -452,6 +452,25 @@ def summarize_certification(cert_path: Path) -> dict:
     summary["oom_units"] = sorted(set(oom_units))
     summary["driver_refusal_tags"] = dict(sorted(refusals.items()))
     return summary
+
+
+def _cert_row_timed_out(row: dict) -> bool:
+    if row.get("exit") == 124 or str(row.get("bucket") or "").upper() == "TIMEOUT":
+        return True
+    diagnostic = row.get("driver_diagnostic") or {}
+    progress = row.get("generalise_progress") or {}
+    run_timeout = row.get("run_timeout_s") or progress.get("timeout_s")
+    try:
+        run_timeout = float(run_timeout)
+        wall_s = float(row.get("wall_s") or 0)
+    except (TypeError, ValueError):
+        return False
+    if run_timeout <= 0 or wall_s < max(1.0, run_timeout * 0.9):
+        return False
+    return (
+        str(row.get("bucket") or "").upper() == "KILLED"
+        and row.get("witnessed") is None
+        and diagnostic.get("tag") == "esbmc-no-cov-report")
 
 
 def _no_output_reason(cert_summary: dict) -> str:

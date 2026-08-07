@@ -11151,6 +11151,66 @@ Diagnosis:
   `<subject>.incomplete.<timestamp>.<pid>` so interrupted runs do not pollute a
   later official row.
 
+## 2026-08-07 bugfix124 fast-first 24-subject state
+
+Second fast-first wave command after fixing the real ESBMC subquery cap:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --limit 24 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume`
+
+Important context:
+
+- A prior attempted 24-limit wave exposed that `_certify_argv_for_remaining`
+  still launched `certify_all.py --run-timeout 599`; that run was killed before
+  appending official journal rows.
+- The rerun quarantined the two interrupted subject directories as
+  `.incomplete.<timestamp>.<pid>` before writing official outputs.
+- The fixed second wave launched `certify_all.py --run-timeout 120` while
+  preserving the subject-level `--timeout 600` cap.
+
+Outcome of the next 12 selected subjects:
+
+- 1 / 12 produced valid reference tests:
+  `rc_access_control__phishable__sGuardPlus__phishable`, raw=1, valid=1,
+  PUT 1/1, wall about 8.5s.
+- 7 / 12 were `no-output` after the 120s ESBMC subquery cap.  All were
+  `transfer` units whose initial witness/certification probe timed out before
+  PUT artifacts existed.
+- 4 / 12 were `no-units`; the target contract had no schedulable
+  public/external target unit.
+- No residual `rq1_veriput_run.py`, `certify_all.py`, `put_all.py`,
+  `solidity_path_generalise.py`, or `esbmc` process remained after the wave.
+
+Aggregate bugfix124 VeriPUT state after the 24-limit fast-first pass plus the
+earlier dataset-order rows:
+
+- Latest rows: 30.
+- Status counts: `ok=9`, `budget-exhausted=2`, `no-output=15`,
+  `no-units=4`.
+- Aggregate raw=24, valid=24.
+- Aggregate PUT 18/18; concrete replay 6/6.
+- Subjects with at least one valid test: 9 / 30.
+- Aggregate oracle counts: R0=13, R1=5, R2=9.
+- `Results/results_all.py --benchmark bugfix124` reports the VeriPUT arm as:
+  `ran=30`, `raw_u=24`, `valid_u=24`, `raw_c=9`, `valid_c=9`,
+  `coverage=7.3%`, `VT/case=0.19`, `wall/subj=136.2s`.
+
+Metadata repair and accounting fix:
+
+- `certify_all.py` sometimes reports a real ESBMC run-timeout as
+  `exit=1`, `bucket=KILLED`, `witnessed=None`, and
+  `driver_diagnostic.tag=esbmc-no-cov-report`, with wall time at the configured
+  `run_timeout_s`.
+- `rq1_veriput_run.py` now treats that shape as a timed-out certification row
+  when `wall_s >= 0.9 * run_timeout_s`.  This is accounting only: it does not
+  prove or certify any region.
+- A metadata-only repair appended 25 latest-key rows to
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/results.jsonl`
+  and updated corresponding `result.json` files without rerunning ESBMC.
+- The affected no-output rows now have a precise reason such as
+  `certification timed out before PUT artifacts: transfer` and
+  `cert_timed_out_units=["transfer"]`, instead of the older generic
+  `no certified regions: KILLED=1`.
+
 ## 2026-08-07 RQ1 VeriPUT production runner contract
 
 User tightened the output requirements before the benchmark wave:
