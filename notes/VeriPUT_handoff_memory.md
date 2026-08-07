@@ -11137,6 +11137,71 @@ Interpretation:
   but remember it only checks at unit boundaries and does not interrupt a
   single long-running ESBMC child.
 
+## 2026-08-07 peer182 fast-first limit24 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 24 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Execution:
+
+- The runner skipped the 12 already-recorded fast-first peer rows and queued
+  the next 12 rows.
+- No OOM, timeout, or residual worker processes after completion.
+- New rows were written after the row-schema change, and the latest peer rows
+  all directly contain `raw_tests`, `valid_tests`, and `assertion_oracles`.
+
+Latest peer182 aggregate after this wave:
+
+- Latest rows: 25.  This includes the earlier `peer_ccsolbmc__AIRBets` row
+  plus fast-first prefix 24.
+- Status counts: 15 `ok`, 10 `no-output`.
+- Completion counts: 1 `budget-exhausted`, 24 `ok`.
+- Valid subjects: 12 / 25.
+- Generated tests: raw/valid 42 / 27.
+- PUT tests: raw/valid 32 / 19.
+- Concrete replay tests: raw/valid 10 / 8.
+- Raw>0 but valid==0 subjects: 3.
+- Oracle classes: `R2: 248`, `R1: 7`, `R0: 4`.
+- Oracle combinations: `R2: 244`, `R1: 3`, `R1+R2: 4`, `R0: 4`.
+- Median ok-wall: 22.031s.  Max ok-wall remains AIRBets at 585.465s.
+- `results_all.py --benchmark peer182` reports VeriPUT `ran=25`,
+  `raw_u=42`, `valid_u=27`, `raw_c=15`, `valid_c=12`,
+  `coverage=6.6%`, `VT/case=0.15`, median ok-wall 22.0s, and
+  `raw>0 & valid==0=3`.
+
+New rows in fast-first 13-24:
+
+- `peer_soltg__short_circuit_and / cs1`: no-output, wall 1.019s.
+- `peer_soltg__branches_merge_variables_5 / Cb7`: ok, raw=2,
+  valid=0, PUT 0/2, wall 8.028s.
+- `peer_soltg__branches_merge_variables_6 / Cb8`: ok, raw=2,
+  valid=0, PUT 0/2, wall 7.519s.
+- `peer_soltg__branches_merge_variables_3 / Cb6`: ok, raw=2,
+  valid=0, PUT 0/2, wall 8.023s.
+- `peer_soltg__loop_if / Cfc2`: ok, raw=3, valid=3,
+  PUT 3/3, wall 29.040s.
+- `peer_soltg__constructor_9 / B9`: no-output, wall 1.012s.
+- `peer_soltg__seq_calls / Csc`: no-output, wall 2.514s.
+- `peer_soltg__do_while_1_fail / Cdw1`: no-output, wall 1.011s.
+- `peer_soltg__triple_nested_if / Csi7`: no-output, wall 2.012s.
+- `peer_soltg__return_1 / Cr1`: ok, raw=4, valid=4,
+  PUT 4/4, wall 33.550s.
+- `peer_solar__BadAuction / BadAuction`: no-output, wall 1.011s.
+- `peer_soltg__state_machine_1_fail / Csm1`: no-output, wall 6.522s.
+
+Diagnosis:
+
+- The three `branches_merge_variables_*` cases are cheap raw-only-invalid PUT
+  failures.  They are useful for analyzing region/oracle over-generalization:
+  the pipeline emits PUTs, but reference replay refutes them.
+- The no-output rows in this peer slice are cheap structural no-output cases,
+  not slow timeout/OOM cases.
+- Good next target: inspect one `branches_merge_variables_*` result to learn
+  whether invalidity comes from region selection, R2 assertion shape, or
+  missing path pins; do not rerun ESBMC before reading the saved raw/valid
+  artifacts and `assertion_oracles`.
+
 ## 2026-08-07 RQ1 production runner and early benchmark samples
 
 Production output contract:
