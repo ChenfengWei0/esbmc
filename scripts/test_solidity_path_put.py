@@ -378,8 +378,8 @@ def test_path_cov_fixture_replays_constructor_then_pins_state():
                  "runtimeCode skip is not used when replay args are present")
     bad += check("vm.store(address(c1), bytes32(uint256(3))" in text,
                  "fixture scalar state is established on c1")
-    bad += check("c0 = new Mock();" in text,
-                 "unrelated mock setup is left intact")
+    bad += check("try new Mock() returns (Mock _esbmc_setup_c0)" in text,
+                 "unused unrelated mock setup is revert-tolerant")
     return bad
 
 
@@ -10748,6 +10748,49 @@ contract VaultCovTest is Test {
     return bad
 
 
+def test_unused_setup_helper_deployment_is_revert_tolerant():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Helper} from "./Helper.sol";
+import {Target} from "./Target.sol";
+contract TargetCovTest is Test {
+  Helper c0;
+  Target c1;
+  function setUp() public {
+    c0 = new Helper(address(uint160(0)));
+    c1 = new Target();
+  }
+  // claim: sol:@C@Target@F@run#41:path:7
+  function test_cov_0() public {
+    c1.run();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Target@F@run#41", 7)
+    text = assemble_put_source(
+        em, case, ["  function test_put_Target_run_path7() public {",
+                   "    c1.run();", "  }"],
+        "TargetCovTest_Target_run_put7", contract="Target", unit="run")
+    bad = 0
+    bad += check("try new Helper(address(uint160(0))) returns "
+                 "(Helper _esbmc_setup_c0)" in text,
+                 "unused helper deployment is revert-tolerant")
+    bad += check("c0 = _esbmc_setup_c0;" in text,
+                 "successful helper construction still assigns the instance")
+    bad += check("c1 = new Target();" in text,
+                 "target deployment remains strict")
+    return bad
+
+
 def test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input():
     emitted = """\
 // SPDX-License-Identifier: MIT
@@ -11214,6 +11257,7 @@ def main():
               test_missing_address_payable_replay_arg_casts_at_the_unit_call,
               test_address_payable_replay_prefix_calls_are_cast,
               test_address_payable_constructor_args_are_cast,
+              test_unused_setup_helper_deployment_is_revert_tolerant,
               test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input,
               test_missing_low_level_value_gate_args_update_abi_signature,
               test_assembled_put_source_drops_stale_concrete_replays,

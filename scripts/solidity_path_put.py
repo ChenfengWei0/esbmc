@@ -5314,6 +5314,96 @@ def repair_payable_constructor_args(lines, contract, constructor_params):
     return out, changed
 
 
+def _setup_body_span(lines):
+    start = None
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*function\s+setUp\s*\(\s*\)\s+public\b", line):
+            start = i
+            break
+    if start is None:
+        return None
+    depth = 0
+    seen_open = False
+    for i in range(start, len(lines)):
+        stripped = _strip_strings(lines[i])
+        if "{" in stripped:
+            seen_open = True
+        depth += stripped.count("{") - stripped.count("}")
+        if seen_open and depth == 0:
+            return start, i
+    return None
+
+
+def _outside_setup_without_declarations(lines, setup_span):
+    start, end = setup_span
+    outside = lines[:start] + lines[end + 1:]
+    kept = []
+    for line in outside:
+        if re.match(r"^\s*[A-Za-z_]\w*(?:\s*\[\s*\])?\s+"
+                    r"[A-Za-z_]\w*\s*;\s*$", line):
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def tolerate_unused_setup_deployments(lines, target_contract=None):
+    """Make irrelevant helper deployments in setUp revert-tolerant.
+
+    A generated setUp can deploy helper contracts that are not used by the PUT
+    being assembled.  If such a helper constructor reverts on Foundry, the
+    target call is never reached.  Only deployments whose instance name is not
+    referenced outside setUp are wrapped; anything the test body uses stays
+    strict.
+    """
+    setup_span = _setup_body_span(lines)
+    if setup_span is None:
+        return list(lines), 0
+    outside = _outside_setup_without_declarations(lines, setup_span)
+    start, end = setup_span
+    out = list(lines[:start])
+    changed = 0
+    i = start
+    deploy_rx = re.compile(
+        r"^(\s*)([A-Za-z_]\w*)\s*=\s*new\s+([A-Za-z_]\w*)"
+        r"((?:\s*\{[^{}]*\})?)\s*\(")
+    while i <= end:
+        line = lines[i]
+        m = deploy_rx.match(line)
+        if m is None:
+            out.append(line)
+            i += 1
+            continue
+        var, typ = m.group(2), m.group(3)
+        if target_contract and typ == target_contract:
+            out.append(line)
+            i += 1
+            continue
+        if re.search(r"\b" + re.escape(var) + r"\b", outside):
+            out.append(line)
+            i += 1
+            continue
+        stmt_end = _statement_end(lines, i)
+        if stmt_end > end:
+            out.append(line)
+            i += 1
+            continue
+        stmt = "\n".join(lines[i:stmt_end + 1]).strip()
+        if not stmt.endswith(";"):
+            out.extend(lines[i:stmt_end + 1])
+            i = stmt_end + 1
+            continue
+        indent = m.group(1)
+        rhs = stmt.split("=", 1)[1].strip().rstrip(";")
+        tmp = f"_esbmc_setup_{var}"
+        out.append(f"{indent}try {rhs} returns ({typ} {tmp}) {{")
+        out.append(f"{indent}  {var} = {tmp};")
+        out.append(f"{indent}}} catch {{}}")
+        changed += 1
+        i = stmt_end + 1
+    out.extend(lines[end + 1:])
+    return out, changed
+
+
 def _setup_try_call(line, unit):
     stripped = line.strip()
     if stripped.startswith("try ") or not stripped.endswith(";"):
@@ -8942,6 +9032,8 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
         lines = repair_pranked_constructor_origins(lines, contract)
         lines, _constructor_payable_repairs = repair_payable_constructor_args(
             lines, contract, constructor_params or [])
+        lines, _unused_setup_deployments = tolerate_unused_setup_deployments(
+            lines, target_contract=contract)
     source = "\n".join(lines) + "\n"
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")
@@ -8985,6 +9077,8 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
         lines = repair_pranked_constructor_origins(lines, contract)
         lines, _constructor_payable_repairs = repair_payable_constructor_args(
             lines, contract, constructor_params or [])
+        lines, _unused_setup_deployments = tolerate_unused_setup_deployments(
+            lines, target_contract=contract)
     source = "\n".join(lines) + "\n"
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")
