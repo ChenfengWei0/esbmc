@@ -11519,6 +11519,78 @@ Interpretation:
 - `raw>0 valid==0` stayed flat at 4, so the recent R0/report fixes are not
   introducing new invalid-only subjects.
 
+## 2026-08-07 peer182 fast-first limit72 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 72 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Execution:
+
+- The runner skipped the first 60 fast-first peer rows and queued the next 12.
+- No OOM, timeout, or residual worker processes after completion.
+- This wave added some value/payable and provenance examples.
+- Slow no-output rows:
+  - `peer_solar__FundRaising / FundRaising`: no-output, 98.174s,
+    reason `no certified regions: NOT-CERTIFIED=3`.
+  - `peer_ccsolbmc__kia_quiz / kia_quiz`: no-output, 76.593s,
+    reason `NO-COORDINATE=2, NO-WITNESS-UNKNOWN=1, NOT-CERTIFIED=3`.
+
+Latest peer182 aggregate after this wave:
+
+- Latest rows: 73.  This includes earlier `peer_ccsolbmc__AIRBets` plus
+  fast-first prefix 72.
+- Status counts: 39 `ok`, 31 `no-output`, 3 `no-units`.
+- Completion counts: 1 `budget-exhausted`, 69 `ok`, 3 `no-units`.
+- Valid subjects: 35 / 73.
+- Generated tests: raw/valid 114 / 82.
+- PUT tests: raw/valid 91 / 64.
+- Concrete replay tests: raw/valid 23 / 18.
+- Raw>0 but valid==0 subjects: 4.
+- Oracle classes: `R2: 666`, `R1: 49`, `R0: 43`.
+- Oracle combinations: `R2: 646`, `R1: 29`, `R1+R2: 20`, `R0: 43`.
+- Median ok-wall: 26.034s.  Max ok-wall remains AIRBets at 585.465s.
+- `results_all.py --benchmark peer182` reports VeriPUT `ran=73`,
+  `raw_u=114`, `valid_u=82`, `raw_c=39`, `valid_c=35`,
+  `coverage=19.2%`, `VT/case=0.45`, median ok-wall 26.0s, and
+  `raw>0 & valid==0=4`.
+
+New rows in fast-first 61-72:
+
+- `peer_solar__Gift_1_ETH / Gift_1_ETH`: no-output, wall 16.564s,
+  reason `no certified regions: NOT-CERTIFIED=4`.
+- `peer_solar__EtherBank / EtherBank`: ok, raw=5, valid=4,
+  PUT 3/3, concrete 1/2, wall 50.106s, oracle classes `R0:3, R1:1, R2:12`.
+- `peer_soltg__simple_if_tuple / Csi6`: no-output, wall 2.013s,
+  reason `NO-COORDINATE=1`.
+- `peer_soltg__Math / Math`: ok, raw=3, valid=1,
+  PUT 1/3, wall 45.568s, oracle classes `R0:3, R2:11`.
+- `peer_soltg__constructors / Ccs`: no-units, wall 0.011s.
+- `peer_ccsolbmc__RoomThermostat / RoomThermostat`: ok, raw=3,
+  valid=3, PUT 2/2, concrete 1/1, wall 25.046s, oracle classes
+  `R0:2, R1:2, R2:2`.
+- `peer_ccsolbmc__kia_quiz / kia_quiz`: no-output, wall 76.593s.
+- `peer_solar__Randomness / Randomness`: no-output, wall 26.539s,
+  reason `NO-COORDINATE=1, NOT-CERTIFIED=2`.
+- `peer_syntest__Baz / Baz`: no-output, wall 22.536s,
+  reason `NO-COORDINATE=1, NOT-CERTIFIED=1`.
+- `peer_solar__FundRaising / FundRaising`: no-output, wall 98.174s.
+- `peer_soltg__constructor_state_variable_init / Cv1`: no-units,
+  wall 0.010s.
+- `peer_ccsolbmc__BasicProvenance / BasicProvenance`: ok, raw=5,
+  valid=5, PUT 4/4, concrete 1/1, wall 54.644s, oracle classes
+  `R0:4, R1:6, R2:15`.
+
+Interpretation:
+
+- This wave stayed productive enough: 4 new valid subjects, 13 new valid tests,
+  and no increase in raw-only-invalid subject count.
+- Most no-output rows are certification/coordinate limitations rather than
+  timeouts.  The only moderately expensive no-output row is `FundRaising`
+  at 98s, still below the case budget and without OOM.
+- No immediate code fix is obvious from this wave; keep moving unless the same
+  no-certified-region pattern starts dominating slower datasets.
+
 ## 2026-08-07 RQ1 production runner and early benchmark samples
 
 Production output contract:
