@@ -11128,8 +11128,10 @@ Validation:
   passed.
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
   passed.
-- HyperEVM representative rerun before committing these follow-up script edits:
-  `status=ok raw=9 valid=0 put=0/0 concrete=0/9 wall=22.053s`.
+- HyperEVM representative rerun after commit `c2ff852115`:
+  `status=ok raw=9 valid=0 put=0/0 concrete=0/9 wall=23.054s`.
+- Spot-checked emitted `put.json` files now record:
+  `Stage-2 concrete_fallback with witness_check=COMPLETE-WITNESS-NO-COORDINATE`.
 - Interpretation of that rerun:
   Stage-2 and Stage-4 are now connected for `NO-COORDINATE` complete witnesses.
   The remaining invalidity is a real replay/fixture issue: the generated
