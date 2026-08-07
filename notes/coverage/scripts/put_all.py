@@ -499,6 +499,49 @@ def apply_strong_put_recipe(args):
     return STRONG_RECIPE_VERSION
 
 
+def append_stage4_driver_options(cmd, args, path_function, exit_kind,
+                                 stage2_source, stage2_witness_check, piece,
+                                 pins):
+    if args.foundry_fixture:
+        cmd += ["--foundry-fixture", args.foundry_fixture]
+    if args.auto_partial_loops:
+        cmd += ["--auto-partial-loops"]
+    if args.lift_unconstrained_calldata:
+        cmd += ["--lift-unconstrained-calldata"]
+    if path_function:
+        cmd += ["--path-function", path_function]
+    if exit_kind:
+        cmd += ["--exit-kind", exit_kind]
+    if args.propose_r2 and stage2_source not in CONCRETE_ONLY_STAGE2_SOURCES:
+        cmd += ["--propose-r2", "--r2-depth", str(args.r2_depth),
+                "--r2-term-budget", str(args.r2_term_budget),
+                "--r2-candidate-budget", str(args.r2_candidate_budget)]
+    if (args.fuzz_r2_prefilter
+            and stage2_source not in CONCRETE_ONLY_STAGE2_SOURCES):
+        cmd += ["--fuzz-r2-prefilter", "--fuzz-runs", str(args.fuzz_runs),
+                "--fuzz-r2-candidate-budget",
+                str(args.fuzz_r2_candidate_budget),
+                "--fuzz-r2-prefilter-timeout", str(args.forge_timeout)]
+    if stage2_source in CONCRETE_ONLY_STAGE2_SOURCES:
+        cmd += ["--concrete-only", "--test-suffix", "_fb"]
+        cmd += ["--concrete-stage2-source",
+                CONCRETE_ONLY_STAGE2_SOURCES[stage2_source]]
+        if stage2_witness_check:
+            cmd += [
+                "--concrete-stage2-witness-check",
+                str(stage2_witness_check),
+            ]
+    for extra in args.esbmc_arg:
+        cmd.append(f"--esbmc-arg={extra}")
+    # ONLY when this row IS a piece, so an unsplit region's command line is
+    # byte-identical to every one already recorded.
+    if piece:
+        cmd += ["--piece", str(piece)]
+    for n, v in pins.items():
+        cmd += ["--pin", f"{n}={v}"]
+    return cmd
+
+
 def print_stage2_path_accounting(accounting):
     print()
     print("STAGE 2 PATH ACCOUNTING for the selected unit(s)")
@@ -683,6 +726,12 @@ def main():
                          "for replay filtering and the final green gate")
     ap.add_argument("--memlimit-gib", type=int, default=8, metavar="N",
                     help="per ESBMC process; the official POC recipe passes 8")
+    ap.add_argument("--foundry-fixture", default=None,
+                    help="JSON fixture passed only to solidity_path_put.py's "
+                         "Foundry assembly step. It is not forwarded to the "
+                         "ESBMC concrete testcase emission run, so it can "
+                         "repair a red local constructor replay without "
+                         "changing the certified Stage-2 input.")
     ap.add_argument("--esbmc-arg", action="append", default=[], metavar="ARG",
                     help="one solver/encoder argument passed to every PUT/R2 "
                          "ESBMC invocation. Repeatable; use the = form for "
@@ -1049,42 +1098,9 @@ def main():
                "--scope", args.scope, "--max-tx", str(args.max_tx),
                "--auto-unwind", str(args.auto_unwind),
                "--derived-by", json.dumps(deriv)]
-        if args.auto_partial_loops:
-            cmd += ["--auto-partial-loops"]
-        if args.lift_unconstrained_calldata:
-            cmd += ["--lift-unconstrained-calldata"]
-        if path_function:
-            cmd += ["--path-function", path_function]
-        if exit_kind:
-            cmd += ["--exit-kind", exit_kind]
-        if args.propose_r2 and stage2_source not in CONCRETE_ONLY_STAGE2_SOURCES:
-            cmd += ["--propose-r2", "--r2-depth", str(args.r2_depth),
-                    "--r2-term-budget", str(args.r2_term_budget),
-                    "--r2-candidate-budget", str(args.r2_candidate_budget)]
-        if (args.fuzz_r2_prefilter
-                and stage2_source not in CONCRETE_ONLY_STAGE2_SOURCES):
-            cmd += ["--fuzz-r2-prefilter", "--fuzz-runs",
-                    str(args.fuzz_runs), "--fuzz-r2-candidate-budget",
-                    str(args.fuzz_r2_candidate_budget),
-                    "--fuzz-r2-prefilter-timeout",
-                    str(args.forge_timeout)]
-        if stage2_source in CONCRETE_ONLY_STAGE2_SOURCES:
-            cmd += ["--concrete-only", "--test-suffix", "_fb"]
-            cmd += ["--concrete-stage2-source",
-                    CONCRETE_ONLY_STAGE2_SOURCES[stage2_source]]
-            if stage2_witness_check:
-                cmd += [
-                    "--concrete-stage2-witness-check",
-                    str(stage2_witness_check),
-                ]
-        for extra in args.esbmc_arg:
-            cmd.append(f"--esbmc-arg={extra}")
-        # ONLY when this row IS a piece, so an unsplit region's command line is
-        # byte-identical to every one already recorded.
-        if piece:
-            cmd += ["--piece", str(piece)]
-        for n, v in pins.items():
-            cmd += ["--pin", f"{n}={v}"]
+        append_stage4_driver_options(
+            cmd, args, path_function, exit_kind, stage2_source,
+            stage2_witness_check, piece, pins)
         j = os.path.join(wd, "put.json")
         if args.forge_only:
             # RE-READ, never re-emit. The B gate has to be re-runnable without

@@ -11297,6 +11297,85 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 DCF RQ1 repair: Foundry-only fixture and state-scalar ladder superset
+
+Problem:
+
+- `bugfix124/reprod_DCFToken` had official Stage-4 output
+  `raw=4 valid=0 put=4/0 concrete=0/0`.
+- The generated Foundry `setUp()` replay deployed `DCF` with
+  `vm.startPrank(address(uint160(0)))`, and the real ERC20 constructor reverted
+  with `ERC20: mint to the zero address`.
+- Passing the existing `--path-cov-fixture` through `--esbmc-arg` fixed Foundry
+  deployment but polluted ESBMC concrete testcase emission: ESBMC then omitted
+  the target call, so Stage 4 could not assemble the replay.
+
+Code repair:
+
+- `scripts/solidity_path_put.py` now accepts `--foundry-fixture`.
+  It is loaded only for Foundry replay/PUT assembly; it is not appended to
+  ESBMC testcase-emission arguments.
+- `notes/coverage/scripts/put_all.py` now forwards `--foundry-fixture` as a
+  first-class Stage-4 driver option, separate from repeated `--esbmc-arg`.
+- `put_all.py` command construction was factored into
+  `append_stage4_driver_options()` so tests can assert the boundary.
+- `assert_query_pins()` and `assert_query_region_entries()` now drop ordinary
+  storage-scalar `state.*` pins/regions from `--path-cov-assert`, with an
+  explicit note.  Foundry still establishes those entry-state constraints, but
+  ESBMC's assertion ladder is asked over the larger unconstrained-state
+  superset.  If a rung HOLDS on the superset, it is valid for the original
+  pinned/certified slice; if it does not hold, no assertion is emitted.  This
+  avoids verifier-side refusal such as:
+  `region coordinate 'state._owner' cannot be expressed`.
+- Queryable mapping slots are still passed to the ladder.
+
+Validation:
+
+- Pure checks passed:
+  - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py notes/coverage/scripts/put_all.py scripts/test_solidity_path_put.py scripts/test_put_all_accounting.py`
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  - `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only scripts/solidity_path_put.py notes/coverage/scripts/put_all.py scripts/test_solidity_path_put.py scripts/test_put_all_accounting.py`
+  - `git diff --check -- scripts/solidity_path_put.py notes/coverage/scripts/put_all.py scripts/test_solidity_path_put.py scripts/test_put_all_accounting.py`
+- Temporary DCF probe after only `--foundry-fixture`:
+  `/tmp/veriput_dcf_foundry_fixture_probe_1786140537`.
+  Result: `setDistributeAddress` became green but only carried R0 because
+  state-scalar pins still killed the ladder.
+- Temporary DCF probe after state-scalar superset repair:
+  `/tmp/veriput_dcf_foundry_fixture_probe2_1786140741`.
+  Result: `setDistributeAddress` emitted 2/2 reference-valid PUTs; path 7 had
+  5 assertions including R0/R1/R2.
+
+Official RQ1 update:
+
+- Full DCF official backup:
+  `/tmp/veriput_dcf_official_backup_1786140581`.
+- Old official put-dir backup:
+  `/tmp/veriput_dcf_old_put_1786140880`.
+- Fixture used:
+  `/tmp/veriput_dcf_skip_fixture.json` with
+  `{"contract":"DCF","skip_constructor":true,"foundry":{"skip_constructor":true}}`.
+- Re-ran official Stage 4 for:
+  - `bugfix124__reprod_DCFToken.setDistributeAddress`
+  - `bugfix124__reprod_DCFToken.setWhite`
+- Because `put_all.py --only` is substring-based, `setWhite` also emitted the
+  3 timeout concrete fallbacks for `setWhiteBulk`; all three are reference-valid
+  concrete replays.
+- Updated
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/reprod_DCFToken/result.json`,
+  appended a last-write-wins row to
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/results.jsonl`,
+  and regenerated the bugfix124 VeriPUT manifest.
+- New DCF official row:
+  `raw=7 valid=7 put_raw=4 put_valid=4 concrete_raw=3 concrete_valid=3`.
+- Oracle class counts for DCF remain recorded:
+  `R0=4, R1=3, R2=4`; combo counts are the same.
+- `results_all.py --benchmark bugfix124` now reports VeriPUT:
+  `raw_u=189 valid_u=161`, valid cases `57/124 = 46.0%`, VT/case `1.30`.
+- Non-timeout `raw>0 valid==0` VeriPUT bugfix124 case left in
+  `results_all.py` anomaly audit:
+  `pop_077_GameItems`.
+
 ## 2026-08-08 disabled concrete replay accounting
 
 Problem:

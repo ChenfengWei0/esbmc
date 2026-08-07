@@ -66,6 +66,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                constructor_staticcall_mock_lines,
                                effective_exit_kind,
                                exit_kind_asserted, find_unit_call,
+                               fixture_from_esbmc_args, load_fixture_json,
                                no_oracle_reason, observed_env,
                                normal_exit_region_retreat,
                                oracle_class_summary,
@@ -1110,6 +1111,32 @@ def test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies():
     return bad
 
 
+def test_foundry_fixture_loading_keeps_esbmc_fixture_as_fallback():
+    bad = 0
+    with tempfile.NamedTemporaryFile("w", delete=False) as fh:
+        fixture_path = fh.name
+        json.dump({"contract": "DCF", "skip_constructor": True}, fh)
+    try:
+        want = {"contract": "DCF", "skip_constructor": True}
+        bad += check(load_fixture_json(fixture_path) == want,
+                     "direct foundry fixture JSON loads")
+        bad += check(fixture_from_esbmc_args([
+            "--unwindset",
+            "64:512",
+            "--path-cov-fixture",
+            fixture_path,
+        ]) == want,
+                     "legacy ESBMC fixture still feeds Foundry assembly")
+        bad += check(fixture_from_esbmc_args(["--path-cov-fixture"]) is None,
+                     "missing fixture value is ignored")
+        bad += check(load_fixture_json(
+            "/tmp/does-not-exist-veriput-fixture") is None,
+                     "missing foundry fixture is ignored")
+    finally:
+        os.unlink(fixture_path)
+    return bad
+
+
 def test_the_cell_is_named_and_an_unsettled_one_says_so():
     """Which of the two settled command lines a run is, or neither.
 
@@ -1912,29 +1939,34 @@ def test_certified_region_mapping_slots_are_ASKED_before_guesses():
     return bad
 
 
-def test_assert_query_drops_semantic_pins_ESBMC_cannot_resolve():
+def test_assert_query_drops_state_pins_ESBMC_cannot_resolve():
     """`state._DOCKED` is a semantic pin from source, not a storage-layout slot.
 
-    Keeping it in the PUT/report is useful; passing it to --path-cov-assert is
-    not, because the internal resolver cannot express it as a query coordinate.
+    `state.owner` is a real storage slot, but --path-cov-assert still cannot
+    use a storage scalar as a region coordinate.  The Foundry test establishes
+    it; the solver ladder is asked over the larger unconstrained-state superset.
     """
     keep, skipped = assert_query_pins(
         {"state._DOCKED": 255, "state.owner": 7, "msg.value": 0},
         layout={"owner": (0, 0, 20)}, maps={})
     bad = 0
-    bad += check(keep == {"state.owner": 7, "msg.value": 0},
+    bad += check(keep == {"msg.value": 0},
                  f"only queryable pins remain in the assert spec: {keep}")
     bad += check(any("state._DOCKED" in s and "semantic constant" in s
                      for s in skipped),
                  f"the skipped semantic pin is reported: {skipped}")
+    bad += check(any("state.owner" in s and "unconstrained-state superset" in s
+                     for s in skipped),
+                 f"the skipped storage-scalar pin is reported: {skipped}")
     return bad
 
 
-def test_assert_query_region_keeps_slots_but_drops_semantic_state():
+def test_assert_query_region_keeps_slots_but_drops_state_scalars():
     lit = "0x2000000000000000000000000000000000000000000000000000000000000000"
     region = {
         "msg.value": (0, 0),
         "state._DOCKED": (255, 255),
+        "state.owner": (7, 7),
         f"state._balances[maker][app][{lit}][token0].amount": (0, 0),
     }
     maps = {
@@ -1942,7 +1974,8 @@ def test_assert_query_region_keeps_slots_but_drops_semantic_state():
                              31, 0, "_balances", "amount"),
     }
     entries, skipped = assert_query_region_entries(
-        region, holes={"msg.value": [7]}, layout={}, maps=maps)
+        region, holes={"msg.value": [7]},
+        layout={"owner": (0, 0, 20)}, maps=maps)
     names = [e["name"] for e in entries]
     bad = 0
     bad += check("msg.value" in names and entries[0].get("holes") == ["7"],
@@ -1952,8 +1985,15 @@ def test_assert_query_region_keeps_slots_but_drops_semantic_state():
         f"certified mapping-member region survives: {entries}")
     bad += check("state._DOCKED" not in names,
                  f"semantic state is not sent to the assert query: {entries}")
+    bad += check("state.owner" not in names,
+                 f"storage scalar state is not sent to the assert query: "
+                 f"{entries}")
     bad += check(any("state._DOCKED" in s for s in skipped),
                  f"and the skipped semantic region coordinate is reported: "
+                 f"{skipped}")
+    bad += check(any("state.owner" in s and "unconstrained-state superset" in s
+                     for s in skipped),
+                 f"and the skipped storage-scalar coordinate is reported: "
                  f"{skipped}")
     return bad
 
@@ -11261,8 +11301,8 @@ def main():
               test_source_access_slots_render_state_struct_member_keys,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,
-              test_assert_query_drops_semantic_pins_ESBMC_cannot_resolve,
-              test_assert_query_region_keeps_slots_but_drops_semantic_state,
+              test_assert_query_drops_state_pins_ESBMC_cannot_resolve,
+              test_assert_query_region_keeps_slots_but_drops_state_scalars,
               test_an_ADDRESS_endpoint_renders_for_an_ABSOLUTE_bound,
               test_an_ADDRESS_endpoint_is_STILL_REFUSED_for_a_DELTA_bound,
               test_a_named_R2_bound_renders_as_the_test_parameter,
@@ -11300,6 +11340,7 @@ def main():
               test_only_the_low_level_value_gate_assertion_counts_as_exit_kind,
               test_a_single_line_call_still_reports_its_own_statement,
               test_the_low_level_value_gate_emits_a_PUT,
+              test_foundry_fixture_loading_keeps_esbmc_fixture_as_fallback,
               test_missing_replay_args_become_full_domain_fuzz_inputs,
               test_unconstrained_replay_args_become_full_domain_fuzz_inputs,
               test_missing_address_payable_replay_arg_casts_at_the_unit_call,

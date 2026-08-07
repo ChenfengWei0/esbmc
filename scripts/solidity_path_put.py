@@ -4143,7 +4143,13 @@ def assert_query_pins(pins, layout, maps):
                     "not a queryable mapping member in solc's layout)")
             continue
         if layout and v in layout:
-            keep[name] = value
+            skipped.append(
+                f"{name} (not passed to --path-cov-assert: storage scalar "
+                "entry-state pins are established in the Foundry test, but "
+                "the ESBMC assertion ladder cannot resolve them as query "
+                "coordinates today. The ladder is asked over the larger "
+                "unconstrained-state superset instead; any HOLDS result is "
+                "therefore still valid for the pinned slice)")
         else:
             skipped.append(
                 f"{name} (not passed to --path-cov-assert: solc's layout "
@@ -4169,6 +4175,16 @@ def assert_query_region_entries(region, holes, layout, maps):
                     f"{name} (not passed to --path-cov-assert: solc's layout "
                     "does not list it, so it is a semantic constant/immutable "
                     "pin)")
+                continue
+            else:
+                skipped.append(
+                    f"{name} (not passed to --path-cov-assert: storage "
+                    "scalar entry-state regions are established in the "
+                    "Foundry test, but the ESBMC assertion ladder cannot "
+                    "resolve them as query coordinates today. The ladder is "
+                    "asked over the larger unconstrained-state superset "
+                    "instead; any HOLDS result is therefore still valid for "
+                    "the certified slice)")
                 continue
         entry = {"name": name, "lo": str(lo), "hi": str(hi)}
         if holes.get(name):
@@ -8508,14 +8524,20 @@ def fixture_from_esbmc_args(extra):
     i = 0
     while i < len(extra):
         if extra[i] == "--path-cov-fixture" and i + 1 < len(extra):
-            try:
-                with open(extra[i + 1]) as f:
-                    return json.load(f)
-            except (OSError, ValueError):
-                return None
-            break
+            return load_fixture_json(extra[i + 1])
         i += 1
     return None
+
+
+def load_fixture_json(path):
+    """Best-effort JSON fixture load for optional replay assembly hints."""
+    if not path:
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
 def _fixture_value(v):
@@ -9414,6 +9436,13 @@ def main():
                     help="a Foundry project whose src/ holds this flat; used "
                          "for `forge inspect <C> storageLayout` and to run "
                          "the emitted test")
+    ap.add_argument("--foundry-fixture", default=None,
+                    help="JSON fixture applied only while assembling the "
+                         "Foundry replay/PUT. Unlike --esbmc-arg "
+                         "--path-cov-fixture, this is NOT passed into the "
+                         "ESBMC testcase emission run, so it preserves the "
+                         "original concrete target call while letting Foundry "
+                         "skip or repair an unconstructible deployment.")
     ap.add_argument("--workdir", required=True)
     ap.add_argument("--max-tx", type=int, default=1)
     ap.add_argument("--timeout", type=int, default=600)
@@ -9534,7 +9563,9 @@ def main():
     if refusal:
         print(f"[put] REFUSED: {refusal}")
         return 1
-    foundry_fixture = fixture_from_esbmc_args(a.esbmc_arg)
+    foundry_fixture = (
+        load_fixture_json(a.foundry_fixture) or
+        fixture_from_esbmc_args(a.esbmc_arg))
     if (a.r2_term_budget <= 0 or a.r2_candidate_budget <= 0
             or a.fuzz_runs <= 0 or a.fuzz_r2_prefilter_timeout <= 0
             or a.fuzz_r2_candidate_budget <= 0):

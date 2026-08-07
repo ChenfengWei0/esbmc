@@ -189,6 +189,40 @@ def main():
                      put_all.claim_path_id_int("7#nonvacuous"), 7)
         bad += check("stage4-claim-path-id-nonnumeric",
                      put_all.claim_path_id_int("path:7#nonvacuous"), None)
+        stage4_args = Namespace(foundry_fixture="/tmp/foundry.json",
+                                auto_partial_loops=True,
+                                lift_unconstrained_calldata=True,
+                                propose_r2=True,
+                                r2_depth=1,
+                                r2_term_budget=96,
+                                r2_candidate_budget=128,
+                                fuzz_r2_prefilter=True,
+                                fuzz_runs=256,
+                                fuzz_r2_candidate_budget=128,
+                                forge_timeout=660,
+                                esbmc_arg=[
+                                    "--path-cov-fixture",
+                                    "/tmp/esbmc.json",
+                                ])
+        cmd = ["driver"]
+        put_all.append_stage4_driver_options(
+            cmd, stage4_args, "sol:@C@DCF@F@setDistributeAddress#1",
+            "normal", "certified_region", None, None, {"state.owner": 7})
+        bad += check("stage4-foundry-fixture-is-driver-option",
+                     cmd[:3],
+                     ["driver", "--foundry-fixture", "/tmp/foundry.json"])
+        bad += check("stage4-esbmc-fixture-stays-esbmc-arg",
+                     ("--esbmc-arg=--path-cov-fixture" in cmd
+                      and "--esbmc-arg=/tmp/esbmc.json" in cmd),
+                     True)
+        bad += check("stage4-foundry-fixture-not-esbmc-arg",
+                     "--esbmc-arg=/tmp/foundry.json" in cmd,
+                     False)
+        bad += check("stage4-driver-options-preserve-proof-switches",
+                     ("--propose-r2" in cmd
+                      and "--fuzz-r2-prefilter" in cmd
+                      and "--pin" in cmd),
+                     True)
         with tempfile.NamedTemporaryFile("w", delete=False) as report_fh:
             report_path = report_fh.name
             json.dump({
