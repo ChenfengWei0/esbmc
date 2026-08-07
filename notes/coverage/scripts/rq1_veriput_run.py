@@ -608,6 +608,16 @@ def validate_jobs(args) -> None:
             f"MemAvailable ({available:.1f}GiB)")
 
 
+def _stage_wall_s(stages: list[dict], stage_name: str) -> float:
+    return sum(stage.get("wall_s") or 0.0 for stage in stages
+               if stage.get("stage") == stage_name)
+
+
+def _format_stage2_no_output_stop(stage2_wall_s: float) -> str:
+    return (f"no output after {stage2_wall_s:.1f}s Stage 2; "
+            "stopped before remaining units")
+
+
 def _certify_argv_for_remaining(job: dict, remaining_s: float, run_timeout_s: int,
                                 memlimit_gib: int) -> list[str]:
     budget = max(1, int(remaining_s))
@@ -659,6 +669,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     units_attempted = []
     result_status = "ok"
     failure_reason = None
+    early_stop_reason = None
 
     try:
         schedule = build_subject_schedule(subject,
@@ -712,6 +723,15 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             break
         n_certified = _certified_count(cert_path, subject.benchmark_key, unit)
         if n_certified <= 0:
+            stop_s = args.no_output_stage2_stop_s
+            if stop_s > 0 and _stage_wall_s(stages, "certify") >= stop_s:
+                partial_put = summarize_put_artifacts(case_dir / "put")
+                if partial_put["raw"] == 0:
+                    early_stop_reason = _format_stage2_no_output_stop(
+                        _stage_wall_s(stages, "certify"))
+                    result_status = "early-stop-no-output"
+                    failure_reason = early_stop_reason
+                    break
             continue
         if _remaining(deadline) < args.min_remaining_s:
             result_status = "budget-exhausted"
@@ -739,14 +759,26 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             result_status = put_stage["status"]
             failure_reason = f"put {unit}: {put_stage['status']}"
             break
+        stop_s = args.no_output_stage2_stop_s
+        if stop_s > 0 and _stage_wall_s(stages, "certify") >= stop_s:
+            partial_put = summarize_put_artifacts(case_dir / "put")
+            if partial_put["raw"] == 0:
+                early_stop_reason = _format_stage2_no_output_stop(
+                    _stage_wall_s(stages, "certify"))
+                result_status = "early-stop-no-output"
+                failure_reason = early_stop_reason
+                break
 
     put_summary = summarize_put_artifacts(case_dir / "put")
     cert_summary = summarize_certification(cert_path)
     wall_total_s = round(time.monotonic() - start, 3)
     completion_status = result_status
     budget_exhausted = completion_status == "budget-exhausted"
+    early_stopped_no_output = completion_status == "early-stop-no-output"
     if budget_exhausted and put_summary["raw"] > 0:
         result_status = "ok"
+    if early_stopped_no_output:
+        result_status = "no-output"
     if result_status == "ok" and put_summary["raw"] == 0:
         result_status = "no-output"
         failure_reason = _no_output_reason(cert_summary)
@@ -761,6 +793,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "mem_budget_mb": args.memlimit_gib * 1024,
         "tool_timeout_s": args.timeout,
         "esbmc_run_timeout_s": args.esbmc_run_timeout,
+        "no_output_stage2_stop_s": args.no_output_stage2_stop_s,
+        "early_stop_reason": early_stop_reason,
         "wall_cap_s": args.timeout + args.wrapper_grace,
         "status": result_status,
         "completion_status": completion_status,
@@ -785,10 +819,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "cert_oom_units": cert_summary["oom_units"],
         "units_attempted": units_attempted,
         "units_scheduled": len(jobs),
-        "stage2_wall_s": round(sum(s["wall_s"] for s in stages
-                                   if s.get("stage") == "certify"), 3),
-        "stage4_wall_s": round(sum(s["wall_s"] for s in stages
-                                   if s.get("stage") == "put"), 3),
+        "stage2_wall_s": round(_stage_wall_s(stages, "certify"), 3),
+        "stage4_wall_s": round(_stage_wall_s(stages, "put"), 3),
         "wall": wall_total_s,
         "wall_total_s": wall_total_s,
         "maxrss_mb": max(
@@ -931,6 +963,7 @@ def build_dry_run(args) -> dict:
         "ast_cache_root": args.ast_cache_root,
         "timeout_s": args.timeout,
         "esbmc_run_timeout_s": args.esbmc_run_timeout,
+        "no_output_stage2_stop_s": args.no_output_stage2_stop_s,
         "memlimit_gib": args.memlimit_gib,
         "jobs": args.jobs,
         "order": args.order,
@@ -968,6 +1001,10 @@ def main(argv=None) -> int:
                     help="subprocess cleanup/writeout slack outside the tool budget")
     ap.add_argument("--min-remaining-s", type=int, default=20,
                     help="do not start another stage with less than this many seconds")
+    ap.add_argument("--no-output-stage2-stop-s", type=int, default=0,
+                    help="if positive, stop trying remaining units in a subject "
+                         "after this many cumulative Stage-2 seconds when no "
+                         "raw artifact has been produced")
     ap.add_argument("--memlimit-gib", type=int, default=12,
                     help="per-ESBMC memory budget passed to Stage 2/4")
     ap.add_argument("--jobs", type=int, default=1,
@@ -989,8 +1026,10 @@ def main(argv=None) -> int:
         ast_cache_root = Path(args.ast_cache_root).expanduser().resolve()
         validate_roots(veriput_root, result_root, ast_cache_root)
         if (args.timeout <= 0 or args.esbmc_run_timeout <= 0
-                or args.wrapper_grace < 0 or args.memlimit_gib <= 0):
-            raise RQ1RunError("timeouts must be positive and --memlimit-gib must be positive")
+                or args.wrapper_grace < 0 or args.memlimit_gib <= 0
+                or args.no_output_stage2_stop_s < 0):
+            raise RQ1RunError("timeouts and --memlimit-gib must be positive; "
+                              "--no-output-stage2-stop-s must be non-negative")
         if args.esbmc_run_timeout > args.timeout:
             raise RQ1RunError("--esbmc-run-timeout must not exceed --timeout")
         validate_jobs(args)

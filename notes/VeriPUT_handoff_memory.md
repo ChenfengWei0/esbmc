@@ -11358,6 +11358,103 @@ Aggregate bugfix124 VeriPUT state after this wave:
   median ok-wall 45.6s, `timeout/oom/error=0`, `raw>0 & valid==0=0`.
 - No residual VeriPUT/ESBMC worker processes remained after the wave.
 
+## 2026-08-07 bugfix124 fast-first 60-subject state and early-stop policy
+
+Fifth fast-first wave command:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --limit 60 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume`
+
+The runner skipped the first 48 fast-first rows and queued the next 12:
+
+- `rcx_unchecked_low_level_calls__0x4a66...__sGuard / EBU.transfer`:
+  no-output, 120.700s, timed-out transfer reason.  Together with prior TIPS
+  and SmartFix rows, EBU.transfer is a stable 120s no-output cluster.
+- `rc_access_control__wallet_02_refund_nosub__SmartFix__wallet_02_refund_nosub / Wallet`:
+  ok, raw=5, valid=2, PUT 2/4, concrete 0/1, wall 50.137s,
+  oracle R0=2, R1=2, R2=9.
+- `rc_bad_randomness__old_blockhash__SolGPT__old_blockhash_1round`:
+  ok, raw=1, valid=1, PUT 0/0, concrete 1/1, wall 22.037s.
+- `rc_reentrancy__reentrancy_bonus__SmartFix__reentrancy_bonus`:
+  no-output, raw=0, wall 247.236s, reason
+  `no certified regions: NOT-CERTIFIED=2`.
+- `rc_unchecked_low_level_calls__0xb7c...__sGuardPlus__... / keepMyEther`:
+  no-output, wall 53.558s, reason `no certified regions: NOT-CERTIFIED=1`.
+- `rc_bad_randomness__old_blockhash__SolGPT__old_blockhash_3round`:
+  ok, raw=1, valid=1, PUT 0/0, concrete 1/1, wall 22.038s.
+- `rc_reentrancy__reentrancy_simple__sGuard__reentrancy_simple`:
+  ok, raw=2, valid=1, PUT 1/1, concrete 0/1, wall 73.586s,
+  oracle R1=1, R2=23.
+- `rc_bad_randomness__old_blockhash__SolGPT__old_blockhash_2round`:
+  ok, raw=1, valid=1, PUT 0/0, concrete 1/1, wall 24.039s.
+- `rc_reentrancy__reentrancy_dao__sGuardPlus__reentrancy_dao`:
+  ok, raw=2, valid=1, PUT 0/0, concrete 1/2, wall 129.189s.
+- `acfix_077_L1Block`:
+  no-output, wall 4.518s, reason
+  `no certified regions: NO-COORDINATE=1, NOT-CERTIFIED=1`.
+- `acfix_3_5_077_L1Block`:
+  no-output, wall 21.533s, same NO-COORDINATE / NOT-CERTIFIED reason.
+- `rc_reentrancy__modifier_reentrancy__SmartFix__modifier_reentrancy`:
+  no-output, wall 126.689s, reason `no certified regions: NOT-CERTIFIED=1`.
+
+Wave-level outcome:
+
+- 6 / 12 subjects were `ok`.
+- 6 / 12 subjects produced at least one valid reference test.
+- New wave raw=12, valid=7.
+- New wave PUT 3/5; concrete replay 4/7.
+- New wave oracle additions: R0=2, R1=3, R2=32.
+- The old_blockhash cluster is fast but only concrete replay so far; this is a
+  PUT-strength/modeling issue, not a speed issue.
+- ReentrancyDAO remains valid-concrete-only across variants.
+
+Aggregate bugfix124 VeriPUT state after this wave:
+
+- Latest rows: 66.
+- Status counts: `ok=33`, `no-output=27`, `no-units=4`,
+  `budget-exhausted=2`.
+- Aggregate raw=87, valid=72.
+- Aggregate PUT 58/66; concrete replay 14/21.
+- Subjects with at least one valid test: 33 / 66.
+- Aggregate oracle counts: R0=47, R1=17, R2=68.
+- `Results/results_all.py --benchmark bugfix124` reports the VeriPUT arm as:
+  `ran=66`, `raw_u=87`, `valid_u=72`, `raw_c=33`, `valid_c=33`,
+  `coverage=26.6%`, `VT/case=0.58`.
+- `results_all.py` anomaly audit for VeriPUT:
+  median ok-wall 45.6s, `timeout/oom/error=0`, `raw>0 & valid==0=0`.
+- No residual VeriPUT/ESBMC worker processes remained after the wave.
+
+Diagnosis and code change:
+
+- The 247s `reentrancy_bonus` no-output was not one ESBMC child ignoring the
+  120s cap.  It came from the subject-level loop trying multiple units:
+  `withdrawReward` took about 107s and produced `NOT-CERTIFIED`; then
+  `getFirstWithdrawalBonus` took about 139s and also produced
+  `NOT-CERTIFIED`.
+- This reveals a general speed policy issue: when a subject has produced no raw
+  artifact and has already spent substantial Stage-2 time, continuing through
+  remaining units can waste budget without improving RQ1 output.
+- `rq1_veriput_run.py` now has an optional
+  `--no-output-stage2-stop-s <seconds>` policy.  Default is `0`, preserving
+  old behavior.  When positive, if cumulative Stage-2 certification time
+  reaches the threshold and the subject has produced no raw artifact, the
+  runner stops remaining units and records:
+  - `completion_status=early-stop-no-output`;
+  - public `status=no-output`;
+  - `no_output_stage2_stop_s=<threshold>`;
+  - `early_stop_reason="no output after X.Ys Stage 2; stopped before remaining units"`.
+- This is a speed/refutation-cost policy only.  It does not certify or prove
+  anything, and it does not turn a fuzz/timeout result into a PUT.
+- Next production wave should use `--no-output-stage2-stop-s 100` to test the
+  policy.  On the observed `reentrancy_bonus` shape, it would have stopped
+  after the first 107s no-output unit and avoided the second 139s attempt.
+- Checks for the code change:
+  - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+    passed.
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+    passed with 10 tests.
+  - `git diff --check -- notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+    passed.
+
 ## 2026-08-07 RQ1 VeriPUT production runner contract
 
 User tightened the output requirements before the benchmark wave:

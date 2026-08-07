@@ -360,6 +360,32 @@ def test_prepare_case_dir_preserves_complete_and_quarantines_partial():
         return bad
 
 
+def test_stage2_no_output_stop_reason_is_audit_friendly():
+    stages = [
+        {
+            "stage": "certify",
+            "wall_s": 61.25,
+        },
+        {
+            "stage": "put",
+            "wall_s": 5.0,
+        },
+        {
+            "stage": "certify",
+            "wall_s": 43.75,
+        },
+    ]
+    wall_s = rq1_veriput_run._stage_wall_s(stages, "certify")
+    reason = rq1_veriput_run._format_stage2_no_output_stop(wall_s)
+    bad = 0
+    bad += check(wall_s == 105.0,
+                 f"Stage-2 wall clock sums only certification stages: {wall_s}")
+    bad += check(reason == "no output after 105.0s Stage 2; "
+                 "stopped before remaining units",
+                 f"early-stop reason is stable: {reason}")
+    return bad
+
+
 def main():
     tests = [
         test_path_guard_allows_only_veriput_rq1_result_tree,
@@ -371,6 +397,7 @@ def main():
         test_subject_schedule_uses_separate_esbmc_run_timeout,
         test_certify_argv_for_remaining_caps_only_run_timeout,
         test_prepare_case_dir_preserves_complete_and_quarantines_partial,
+        test_stage2_no_output_stop_reason_is_audit_friendly,
     ]
     bad = 0
     for test in tests:
