@@ -1040,7 +1040,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "dataset": dataset_label,
         "contract": target_row.get("contract"),
         "raw": put_summary["raw"],
-        "valid": put_summary["valid"] if result_status != "timeout" else None,
+        "valid": put_summary["valid"],
         "put_raw": put_summary["put_raw"],
         "put_valid": put_summary["put_valid"],
         "concrete_raw": put_summary["concrete_raw"],

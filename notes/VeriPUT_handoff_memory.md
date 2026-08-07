@@ -11253,6 +11253,59 @@ Post-follow-up scan:
     `ok=102`, `no-output=69`, `timeout=6`, `no-units=5`,
     `valid>0=101`, `raw>0=108`, `concrete_valid>0=25`.
 
+## 2026-08-08 - valid accounting for timeout rows
+
+Problem found during raw-invalid scan:
+
+- Some historical VeriPUT timeout rows have `valid=null` even though the same
+  row contains positive `put_valid`/`concrete_valid` and non-empty
+  `valid_tests`.
+- Example:
+  `peer182/peer_ccsolbmc__Benu` has `status=timeout`, `raw=14`,
+  `valid=null`, but `put_valid=14` and 14 valid PUT entries.
+- `Results/results_all.py` was reading only `valid`, so these rows were
+  undercounted in `valid_units` / `valid_cases` and falsely appeared in
+  `raw>0 & valid==0` audits.
+
+Code changes:
+
+- `notes/coverage/scripts/rq1_veriput_run.py` now always writes
+  `valid=put_summary["valid"]`, even when the case status is `timeout`.
+  The status still remains `timeout`; only the generated-artifact accounting is
+  no longer nulled out.
+- `/home/samson/workspace/VeriPUT/Results/results_all.py` was already dirty
+  with the VeriPUT arm integration.  On top of that dirty file, added:
+  - `count_int(row, key)`;
+  - `valid_count(row)`, which reads `valid` when present and otherwise derives
+    from `put_valid + concrete_valid`, falling back to `len(valid_tests)`;
+  - `row_scored(row)`.
+- `results_all.py` now uses `valid_count` for funnel units/cases, anomaly
+  audit, and valid<=raw invariant checks, so old timeout rows are read
+  correctly without rewriting journals.
+
+Validation:
+
+- `py_compile` passed for `rq1_veriput_run.py`, `results_all.py`, and
+  `test_rq1_veriput_run.py`.
+- `scripts/test_rq1_veriput_run.py` passed.
+- `pylint --errors-only` passed for the changed runner/test files.
+- `git diff --check` passed for the changed runner and `results_all.py`.
+- `Results/results_all.py --benchmark real203` passed and reports VeriPUT:
+  `raw>0 & valid==0 = 0`.
+- `Results/results_all.py --benchmark peer182` passed and reports VeriPUT:
+  `raw_u=415`, `valid_u=391`, `raw_c=108`, `valid_c=107`.
+- `Results/results_all.py --benchmark bugfix124` passed and reports VeriPUT:
+  `raw_u=177`, `valid_u=131`, `raw_c=60`, `valid_c=53`;
+  anomaly audit now shows `raw>0 & valid==0 = 7`, which excludes old timeout
+  rows with real valid PUTs.
+
+Important repository note:
+
+- `Results/results_all.py` lives in `/home/samson/workspace/VeriPUT`, not this
+  ESBMC branch.  It already had uncommitted changes before this accounting fix
+  (the VeriPUT arm integration).  Do not overwrite it; preserve and commit/push
+  from the VeriPUT repo only when the user wants that repo finalized.
+
 ## 2026-08-08 - RQ1 scheduler no-output diagnosis
 
 Official accounting:
