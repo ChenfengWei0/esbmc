@@ -321,6 +321,58 @@ def main():
         finally:
             put_all.run_forge = old_run_forge
             put_all.current_binary_identity = old_binary
+        with tempfile.TemporaryDirectory() as proj:
+            os.makedirs(os.path.join(proj, "test"))
+            test_path = os.path.join(proj, "test", "Probe.t.sol")
+            with open(test_path, "w") as fh:
+                fh.write("""\
+contract Probe {
+  function setUp() public {
+  }
+  function helper() public {
+  }
+  function test_cov_0() public {
+  }
+  function test_put_Probe_target_path1() public {
+  }
+}
+""")
+            old_run_forge = put_all.run_forge
+            try:
+                put_all.run_forge = lambda _proj, _timeout: (
+                    0,
+                    json.dumps({
+                        "test/Probe.t.sol:Probe": {
+                            "test_results": {
+                                "setUp()": {"status": "Failure"},
+                                "helper()": {"status": "Failure"},
+                                "test_cov_0()": {"status": "Failure"},
+                                "test_put_Probe_target_path1()": {
+                                    "status": "Failure"
+                                },
+                            }
+                        }
+                    }),
+                    "",
+                    False)
+                put_all.disable_red_replays([proj], 10)
+            finally:
+                put_all.run_forge = old_run_forge
+            with open(test_path) as fh:
+                disabled = fh.read()
+            bad += check("stage4-red-selfcheck-keeps-setup",
+                         "function setUp() public" in disabled,
+                         True)
+            bad += check("stage4-red-selfcheck-keeps-helper",
+                         "function helper() public" in disabled,
+                         True)
+            bad += check("stage4-red-selfcheck-disables-only-concrete",
+                         "function disabled_test_cov_0() public" in disabled,
+                         True)
+            bad += check("stage4-red-selfcheck-keeps-put-red",
+                         "function test_put_Probe_target_path1() public"
+                         in disabled,
+                         True)
         plain = Namespace(strong_recipe=False, auto_unwind=0,
                           auto_partial_loops=False,
                           lift_unconstrained_calldata=False)

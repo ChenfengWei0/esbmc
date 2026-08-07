@@ -8473,6 +8473,35 @@ def apply_constructor_staticcall_mocks(lines, emitted, case, unit, contract,
     return out
 
 
+def repair_pranked_constructor_origins(lines, contract):
+    """Replay EOA-style constructor pranks with msg.sender == tx.origin."""
+    out = []
+    for i, line in enumerate(lines):
+        m = re.match(r"^(\s*)vm\.startPrank\((.*)\);\s*$", line)
+        if not m:
+            out.append(line)
+            continue
+        args = split_top_level(m.group(2))
+        if len(args) != 1:
+            out.append(line)
+            continue
+        deploys_target = False
+        for later in lines[i + 1:]:
+            if re.match(r"^\s*function\s+\w+\s*\(", later):
+                break
+            if re.search(r"\bnew\s+" + re.escape(contract) + r"\s*\(", later):
+                deploys_target = True
+                break
+            if re.search(r"\bvm\.stopPrank\s*\(\s*\)\s*;", later):
+                break
+        if not deploys_target:
+            out.append(line)
+            continue
+        arg = args[0].strip()
+        out.append(f"{m.group(1)}vm.startPrank({arg}, {arg});")
+    return out
+
+
 def add_flat_import_symbols(lines, symbols):
     if not symbols:
         return lines
@@ -8522,6 +8551,7 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
     if contract is not None and unit is not None:
         lines = apply_constructor_staticcall_mocks(
             lines, emitted, case, unit, contract, constructor_mocks or [])
+        lines = repair_pranked_constructor_origins(lines, contract)
     source = "\n".join(lines) + "\n"
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")
@@ -8559,6 +8589,7 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
     if contract is not None and unit is not None:
         lines = apply_constructor_staticcall_mocks(
             lines, emitted, case, unit, contract, constructor_mocks or [])
+        lines = repair_pranked_constructor_origins(lines, contract)
     source = "\n".join(lines) + "\n"
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")

@@ -412,6 +412,7 @@ def main():
     reds = []
     seen_red = set()
     passes = 0
+    failures = 0
     cur_file = cur_contract = None
     # BOTH SUITE HEADERS. forge prints every failure twice -- under
     # `Ran N tests for <file>:<contract>` and again under
@@ -441,11 +442,18 @@ def main():
                 passes += 1
             continue
         m = re.match(r"\[FAIL[^\]]*\]\s+(\w+)\(", line)
+        if m and cur_file and m.group(1).startswith("test_cov"):
+            key = (cur_file, cur_contract, m.group(1))
+            if key not in seen_red:
+                seen_red.add(key)
+                failures += 1
+                reds.append(key)
+            continue
         if m and cur_file:
             key = (cur_file, cur_contract, m.group(1))
             if key not in seen_red:
                 seen_red.add(key)
-                reds.append(key)
+                failures += 1
 
     # CROSS-CHECK AGAINST forge's OWN TOTAL. This reconstructs a number the
     # tool already prints; checking one against the other is what turns the
@@ -454,9 +462,9 @@ def main():
     m = re.search(r"(\d+) tests? passed, (\d+) failed", out)
     if m:
         fg, fr = int(m.group(1)), int(m.group(2))
-        if (fg, fr) != (passes, len(reds)):
+        if (fg, fr) != (passes, failures):
             print(f"** PARSE DISAGREES WITH forge's OWN SUMMARY: parsed "
-                  f"{passes} passed / {len(reds)} failed, forge reported "
+                  f"{passes} passed / {failures} failed, forge reported "
                   f"{fg} passed / {fr} failed. The disable step below would "
                   f"act on the wrong set. **", flush=True)
         else:

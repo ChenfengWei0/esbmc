@@ -413,6 +413,54 @@ def test_constructor_staticcall_mock_is_scoped_to_deployment():
     return bad
 
 
+def test_pranked_constructor_replay_sets_tx_origin_too():
+    """A one-arg startPrank does not satisfy constructor onlyRealPeople gates."""
+    src = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {EOAOnly} from "./flat.sol";
+contract EOAOnlyCovTest is Test {
+  EOAOnly c0;
+  function setUp() public {
+    vm.startPrank(address(uint160(7)));
+    c0 = new EOAOnly(1);
+    vm.stopPrank();
+  }
+  // claim: sol:@C@EOAOnly@F@setX#17:path:1
+  function test_cov_0() public {
+    c0.setX(1);
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(src)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@EOAOnly@F@setX#17", 1)
+    put = [
+        "  function test_put_EOAOnly_setX_path1(uint256 x) public {",
+        "    c0.setX(x);",
+        "    assertTrue(true);",
+        "  }",
+    ]
+    text = assemble_put_source(
+        em, case, [put], "EOAOnlyCovTest_EOAOnly_setX_put1",
+        None, None, "EOAOnly", "setX")
+    bad = 0
+    bad += check("vm.startPrank(address(uint160(7)), address(uint160(7)));"
+                 in text,
+                 "constructor replay sets both msg.sender and tx.origin")
+    bad += check("vm.startPrank(address(uint160(7)));" not in text,
+                 "the red one-argument constructor prank is gone")
+    bad += check("function test_put_EOAOnly_setX_path1" in text,
+                 "the PUT still assembles")
+    return bad
+
+
 def test_pin_without_a_slot_is_reported_not_dropped():
     """`state.feeBps == 250` is a `constant`: no slot, and it must SAY so."""
     em, case = make_case()
@@ -10647,6 +10695,7 @@ def main():
               test_storage_oracles_read_the_actual_target_instance_not_c0,
               test_path_cov_fixture_replays_constructor_then_pins_state,
               test_constructor_staticcall_mock_is_scoped_to_deployment,
+              test_pranked_constructor_replay_sets_tx_origin_too,
               test_pin_without_a_slot_is_reported_not_dropped,
               test_region_bound_still_wins_over_a_duplicate_pin,
               test_env_agreement_emits_when_the_preamble_matches,

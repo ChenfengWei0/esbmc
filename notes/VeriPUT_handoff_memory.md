@@ -11254,6 +11254,75 @@ JSON/statistics reminder:
 - Concrete replay tests normally have `oracle_classes: []` and should not be
   counted as PUT oracle strength.
 
+## 2026-08-08: red concrete replay disabling must not remove setUp
+
+Targeted symptom:
+
+- Subject:
+  `bugfix124/rc_unchecked_low_level_calls__0x7d09edb07d23acb532a82be3da5c17d9d85806b4__TIPS__0x7d09edb07d23acb532a82be3da5c17d9d85806b4U2`.
+- Before this fix the subject had `raw=9 valid=0 put=0/8`, even though those
+  PUTs carried `R0/R1/R2` oracle metadata.
+- Example: `AdjustBetAmounts` had 2 certified regions and emitted 2 PUTs, both
+  reference-red.
+
+Root cause:
+
+- Stage4 self-check saw Forge report `setUp() Failure: EvmError: Revert`.
+- `put_all.disable_red_replays` treated every non-`test_put_*` failure as a red
+  concrete replay and renamed it, so the generated PUT files contained
+  `function disabled_setUp()` instead of `function setUp()`.
+- The PUT body still depended on `c0` being deployed, so disabling `setUp`
+  made the test run against an uninitialized contract handle.
+- Keeping `setUp` alone was not enough for this contract: the constructor has
+  `require(msg.sender == tx.origin)`, while the emitter used one-argument
+  `vm.startPrank(addr)`, which changes only `msg.sender`.  Forge therefore
+  still reported `setUp() Failure`.
+
+Code changes:
+
+- `notes/coverage/scripts/put_all.py` now disables only red concrete replay
+  functions whose names start with `test_cov`, not `setUp`, helper functions,
+  or PUTs.
+- `notes/coverage/scripts/forge_roundtrip.py` was updated with the same
+  concrete-only rule.
+- `scripts/solidity_path_put.py` now repairs constructor deployment replays:
+  a one-argument `vm.startPrank(x); ... new Contract(...) ... vm.stopPrank();`
+  window is rewritten to `vm.startPrank(x, x);`, so Foundry replays an EOA-style
+  deployment with `msg.sender == tx.origin`.
+- The repair is applied in both `assemble_put_source` and
+  `assemble_concrete_source`, after constructor staticcall mocks and fixture
+  constructor rewrites.
+
+Validation:
+
+- `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py notes/coverage/scripts/forge_roundtrip.py scripts/test_put_all_accounting.py`
+  passed.
+- `python3 scripts/test_solidity_path_put.py` passed, 243 / 243 tests.
+- `python3 scripts/test_put_all_accounting.py` passed.
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py notes/coverage/scripts/forge_roundtrip.py scripts/test_put_all_accounting.py`
+  passed.
+
+Temporary real-case probe:
+
+- Output:
+  `/tmp/veriput_ctor_prank_probe_1786134771`.
+- Command selected only
+  `...TIPS...U2.AdjustBetAmounts` from the existing official certification
+  JSONL; it did not rerun full RQ1.
+- Result:
+  - `AdjustBetAmounts` enc 7: B.
+  - `AdjustBetAmounts` enc 6: B.
+  - Summary: `B = 2 of 2 Stage-4 candidate row(s)`;
+    `Reference-valid generated tests: 2 total (2 PUT, 0 concrete)`.
+
+Expected RQ1 impact:
+
+- A full official rerun of the TIPS U2 subject should recover at least the two
+  `AdjustBetAmounts` PUTs; likely more of the previous `0/8` PUTs share the
+  same constructor fixture failure.
+- This is not subject-name special casing: it is a general Foundry replay rule
+  for constructor pranks and a general concrete-only red replay filter.
+
 ## RQ1 rerun / upgrade policy after later fixes
 
 User asked whether fixes for no-output / hard cases may improve cases that

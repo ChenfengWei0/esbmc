@@ -1275,7 +1275,7 @@ def disable_red_replays(projects, forge_timeout):
         for suite, body in data.items():
             for name, res in (body.get("test_results") or {}).items():
                 fn = name.split("(")[0]
-                if res.get("status") == "Failure":
+                if res.get("status") == "Failure" and fn.startswith("test_cov"):
                     red.setdefault(suite.split(":")[0], []).append(fn)
         for path, fns in sorted(red.items()):
             # `path` is the source file forge reports for the suite.
