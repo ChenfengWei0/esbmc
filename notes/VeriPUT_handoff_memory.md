@@ -359,6 +359,14 @@ RQ1 production-output policy:
   Combined assertions are represented as e.g. `["R1", "R2"]`.
 - Fuzz remains refute-only.  A Forge pass can remove bad R2 candidates by
   counterexample, but it is never recorded as proof.
+- PUT accounting is double-oracle:
+  - ESBMC/VeriPUT certification is the proof side for regions and assertions;
+  - Foundry replay on the reference contract is only a refutation/false-positive
+    guard.  A red replay drops the generated artifact; a green replay does not
+    prove the PUT.  Its time is outside the 600s generation budget and is
+    recorded separately as `foundry_replay_wall_s`.
+  - RQ1 rows now expose `generation_wall_s` / `stage4_generation_wall_s` for
+    the timeout-budget ledger; `wall_total_s` remains end-to-end runner time.
 - Commit discipline in `/home/samson/workspace/VeriPUT`: another experiment is
   running and may commit periodically.  Do not auto commit/pull/rebase there;
   write only the requested result files and keep ESBMC implementation commits
@@ -11295,6 +11303,69 @@ Checks:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_campaign_plan.py`
   passed.
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
+  passed.
+
+## 2026-08-08 RQ1 double-oracle timing and cheap-first correction
+
+User policy clarification:
+
+- PUT validity is double-oracle:
+  - ESBMC/VeriPUT certification is the proof oracle for the path region and
+    R0/R1/R2 assertions;
+  - Foundry replay on the reference contract is only a refutation guard against
+    bad emitted tests or verifier false positives.  Foundry red rejects the
+    artifact; Foundry green does not prove the PUT.
+- Foundry replay must not count against the 600s generation timeout.  It is
+  recorded separately.
+
+Code/accounting changes:
+
+- `put_all.py` now writes `timing.generation_wall_s` next to
+  `timing.foundry_replay_wall_s` and keeps
+  `foundry_replay_outside_generation_timeout=true`.
+- `rq1_veriput_run.py` now surfaces:
+  - `generation_wall_s` = Stage2 certification wall time plus Stage4 generation
+    wall time;
+  - `stage4_generation_wall_s` = PUT emission/generation time inside
+    `put_all.py`;
+  - `foundry_replay_wall_s` remains separate;
+  - `wall_total_s` remains the end-to-end runner wall clock including replay.
+
+Cheap-first correction after the `pop_070_PhiNFT1155` negative feedback:
+
+- The previous cheap-first rank treated `transferOwnership` and
+  `setApprovalForAll` as too cheap.  A single official rerun on
+  `pop_070_PhiNFT1155` spent the budget on those two units and produced
+  `raw=0`, `valid=0`, so the rank was corrected before more benchmark runs.
+- `unit_schedule.py` now keeps only very small names (`pause`, `unpause`,
+  `unPause`) in the cheap exact-name bucket.  `approve`,
+  `renounceOwnership`, `setApprovalForAll`, and `transferOwnership` are a
+  moderate bucket.
+- Zero-parameter, zero-return state-changing units are now priority 1 rather
+  than priority 2, so cheap semantic state transitions are tried before
+  getter-like rows.
+
+Dry-run schedule sanity, no ESBMC consumed:
+
+- `pop_070_PhiNFT1155`: first units are now
+  `pause`, `unPause`, `setContractURI`, `acceptOwnership`, `signatureClaim`,
+  `merkleClaim`, `updateRoyalties`; `transferOwnership` is 9th and
+  `setApprovalForAll` 10th.
+- `pop_033_PrivatePool`: after hinted `flashFee`, simple setters
+  (`setMerkleRoot`, `setFeeRate`, `setUseStolenNftOracle`, `setPayRoyalties`,
+  `setVirtualReserves`, `setAllParameters`) precede heavy `buy/sell/execute`.
+- `pop_009_PrivatePool`: cheap hinted fee views
+  (`flashFeeAndProtocolFee`, `flashFee`) precede heavy hinted units, then
+  simple setters are next.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_unit_schedule.py` passed.
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py notes/VeriPUT_handoff_memory.md`
   passed.
 
 ## 2026-08-08 GameItems concrete replay repair

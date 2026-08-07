@@ -35,10 +35,12 @@ INITIALIZER_LIKE_UNITS = {
     "setUp",
 }
 CHEAP_STATE_UNIT_NAMES = {
-    "approve",
     "pause",
     "unpause",
     "unPause",
+}
+MODERATE_STATE_UNIT_NAMES = {
+    "approve",
     "renounceOwnership",
     "setApprovalForAll",
     "transferOwnership",
@@ -235,7 +237,7 @@ def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None,
         if unit in INITIALIZER_LIKE_UNITS:
             return 2, "initializer-like"
         if params == 0 and returns == 0:
-            return 2, "zero-interface-state-changing"
+            return 1, "zero-interface-state-changing"
         return 1, "state-changing"
     if params or returns:
         return 2, "pure/view-with-interface"
@@ -261,6 +263,8 @@ def _unit_cost_rank(unit: str, unit_info: dict | None) -> tuple[int, int, int]:
         tier = 80
     elif mutability in ("view", "pure"):
         tier = 5
+    elif unit in MODERATE_STATE_UNIT_NAMES:
+        tier = 45
     elif unit in CHEAP_STATE_UNIT_NAMES or lower.startswith("set"):
         tier = 10
     elif params == 0 and returns == 0:

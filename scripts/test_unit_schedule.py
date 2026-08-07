@@ -205,8 +205,8 @@ def test_schedule_prioritizes_semantic_units_before_getter_like_units():
            for job in doc["jobs"]]
     bad = 0
     bad += check(got == [("setX", 1, "state-changing"),
+                         ("poke", 1, "zero-interface-state-changing"),
                          ("quote", 2, "pure/view-with-interface"),
-                         ("poke", 2, "zero-interface-state-changing"),
                          ("name", 3, "zero-arg-view")],
                  f"semantic units are sampled before getter-like rows: {got}")
     bad += check(doc["jobs"][0]["unit_info"]["parameter_count"] == 1,

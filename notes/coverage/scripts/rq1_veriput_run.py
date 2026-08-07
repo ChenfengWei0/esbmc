@@ -640,6 +640,10 @@ def summarize_put_artifacts(put_root: Path) -> dict:
         valid["put"] += int(v.get("put") or 0)
         valid["concrete"] += int(v.get("concrete") or 0)
         tm = doc.get("timing") or {}
+        generation_wall_s = tm.get("generation_wall_s")
+        if generation_wall_s is None:
+            generation_wall_s = tm.get("emission_wall_s")
+        timing["stage4_generation_wall_s"] += float(generation_wall_s or 0.0)
         timing["stage4_emission_wall_s"] += float(
             tm.get("emission_wall_s") or 0.0)
         timing["foundry_replay_wall_s"] += float(
@@ -735,6 +739,8 @@ def summarize_put_artifacts(put_root: Path) -> dict:
         "raw_tests": raw_tests,
         "valid_tests": valid_tests,
         "put_json_count": len(put_jsons),
+        "stage4_generation_wall_s": round(
+            timing["stage4_generation_wall_s"], 3),
         "stage4_emission_wall_s": round(
             timing["stage4_emission_wall_s"], 3),
         "foundry_replay_wall_s": round(
@@ -1053,6 +1059,10 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     if result_status == "ok" and put_summary["raw"] == 0:
         result_status = "no-output"
         failure_reason = _no_output_reason(cert_summary)
+    stage2_wall_s = round(_stage_wall_s(stages, "certify"), 3)
+    stage4_wall_s = round(_stage_wall_s(stages, "put"), 3)
+    generation_wall_s = round(
+        stage2_wall_s + put_summary["stage4_generation_wall_s"], 3)
     row = {
         "key": f"gen:veriput:{subject_id}",
         "stage": "gen_veriput",
@@ -1100,8 +1110,10 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "cert_oom_units": cert_summary["oom_units"],
         "units_attempted": units_attempted,
         "units_scheduled": len(jobs),
-        "stage2_wall_s": round(_stage_wall_s(stages, "certify"), 3),
-        "stage4_wall_s": round(_stage_wall_s(stages, "put"), 3),
+        "generation_wall_s": generation_wall_s,
+        "stage2_wall_s": stage2_wall_s,
+        "stage4_wall_s": stage4_wall_s,
+        "stage4_generation_wall_s": put_summary["stage4_generation_wall_s"],
         "stage4_emission_wall_s": put_summary["stage4_emission_wall_s"],
         "foundry_replay_wall_s": put_summary["foundry_replay_wall_s"],
         "put_all_wall_s": put_summary["put_all_wall_s"],

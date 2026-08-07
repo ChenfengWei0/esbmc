@@ -1241,6 +1241,7 @@ def main():
             "timing": {
                 "generation_timeout_s": args.timeout,
                 "forge_timeout_s_per_run": args.forge_timeout,
+                "generation_wall_s": emission_wall_s,
                 "emission_wall_s": emission_wall_s,
                 "foundry_replay_wall_s":
                     b_summary.get("foundry_replay", {}).get("wall_s", 0.0),
