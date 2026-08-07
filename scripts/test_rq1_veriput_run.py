@@ -295,6 +295,55 @@ def test_subject_schedule_uses_separate_esbmc_run_timeout():
     return bad
 
 
+def test_certify_argv_for_remaining_caps_only_run_timeout():
+    job = {
+        "certify_argv": [
+            "python3",
+            "certify_all.py",
+            "--timeout",
+            "600",
+            "--run-timeout",
+            "600",
+            "--memlimit-gib",
+            "8",
+        ],
+        "certification_budget": {
+            "workdir": "/tmp/work",
+        },
+    }
+    argv = rq1_veriput_run._certify_argv_for_remaining(
+        job, remaining_s=599.8, run_timeout_s=120, memlimit_gib=12)
+    pairs = dict(zip(argv, argv[1:]))
+    bad = 0
+    bad += check(pairs.get("--timeout") == "599",
+                 f"whole certify budget follows remaining case time: {argv}")
+    bad += check(pairs.get("--run-timeout") == "120",
+                 f"per-ESBMC run budget is capped: {argv}")
+    bad += check(pairs.get("--memlimit-gib") == "12",
+                 f"memory budget is authoritative: {argv}")
+    return bad
+
+
+def test_prepare_case_dir_preserves_complete_and_quarantines_partial():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        complete = root / "complete"
+        complete.mkdir()
+        (complete / "result.json").write_text("{}\n")
+        partial = root / "partial"
+        partial.mkdir()
+        (partial / "unit-schedule.json").write_text("{}\n")
+        rq1_veriput_run.prepare_case_dir(complete)
+        rq1_veriput_run.prepare_case_dir(partial)
+        quarantined = list(root.glob("partial.incomplete.*"))
+        bad = 0
+        bad += check(complete.exists() and complete.joinpath("result.json").exists(),
+                     "complete case directory is preserved")
+        bad += check(not partial.exists() and len(quarantined) == 1,
+                     f"partial case directory is quarantined: {quarantined}")
+        return bad
+
+
 def main():
     tests = [
         test_path_guard_allows_only_veriput_rq1_result_tree,
@@ -304,6 +353,8 @@ def main():
         test_target_rows_fast_first_sorts_before_limit,
         test_certification_summary_identifies_inner_timeouts,
         test_subject_schedule_uses_separate_esbmc_run_timeout,
+        test_certify_argv_for_remaining_caps_only_run_timeout,
+        test_prepare_case_dir_preserves_complete_and_quarantines_partial,
     ]
     bad = 0
     for test in tests:

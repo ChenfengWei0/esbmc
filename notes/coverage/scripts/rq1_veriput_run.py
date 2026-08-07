@@ -109,6 +109,22 @@ def _append_jsonl(path: Path, row: dict) -> None:
         os.fsync(stream.fileno())
 
 
+def prepare_case_dir(case_dir: Path) -> None:
+    if not case_dir.exists():
+        return
+    if case_dir.joinpath("result.json").exists():
+        return
+    try:
+        has_content = any(case_dir.iterdir())
+    except OSError:
+        has_content = True
+    if not has_content:
+        return
+    suffix = f".incomplete.{int(time.time())}.{os.getpid()}"
+    target = case_dir.with_name(case_dir.name + suffix)
+    case_dir.rename(target)
+
+
 def _latest_rows(path: Path) -> dict[str, dict]:
     if not path.exists():
         return {}
@@ -573,12 +589,14 @@ def validate_jobs(args) -> None:
             f"MemAvailable ({available:.1f}GiB)")
 
 
-def _certify_argv_for_remaining(job: dict, remaining_s: float, memlimit_gib: int) -> list[str]:
+def _certify_argv_for_remaining(job: dict, remaining_s: float, run_timeout_s: int,
+                                memlimit_gib: int) -> list[str]:
     budget = max(1, int(remaining_s))
+    run_budget = max(1, min(budget, int(run_timeout_s)))
     return unit_schedule.budgeted_certify_argv(
         [str(arg) for arg in job["certify_argv"]],
         timeout_s=budget,
-        run_timeout_s=budget,
+        run_timeout_s=run_budget,
         memlimit_gib=memlimit_gib,
         workdir=job["certification_budget"]["workdir"])
 
@@ -609,6 +627,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     start = time.monotonic()
     subject_id = target_row["subject_id"]
     case_dir = Path(args.result_root) / dataset_label / "subjects" / _safe_name(subject_id)
+    prepare_case_dir(case_dir)
     cert_path = case_dir / "cert" / "certify-results.jsonl"
     ast_cache_root = Path(args.ast_cache_root).expanduser().resolve()
     subject = subject_unit_manifest.resolve_subject(
@@ -653,6 +672,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         unit = job["unit"]
         units_attempted.append(unit)
         cert_argv = _certify_argv_for_remaining(job, _remaining(deadline),
+                                                args.esbmc_run_timeout,
                                                 args.memlimit_gib)
         cert_stage = run_command(cert_argv,
                                  _remaining(deadline) + args.wrapper_grace,

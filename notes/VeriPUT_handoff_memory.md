@@ -11140,6 +11140,16 @@ Diagnosis:
   from consuming the entire case budget; it would have cut the two long airdrop
   no-output rows from about 600s each to about 120s each.  The cap is recorded
   in dry-run and result rows as `esbmc_run_timeout_s`.
+- Important correction: the first implementation only changed the schedule, but
+  `_certify_argv_for_remaining` replaced both `--timeout` and `--run-timeout`
+  with remaining subject time at launch, so live commands still used
+  `--run-timeout 599`.  That buggy wave was killed before journal rows were
+  appended.  The fixed code now caps only `--run-timeout` at
+  `min(remaining, --esbmc-run-timeout)` and has a unit test for the final argv.
+- Runner also quarantines incomplete case directories that lack `result.json`
+  before rerunning a subject, preserving the partial directory as
+  `<subject>.incomplete.<timestamp>.<pid>` so interrupted runs do not pollute a
+  later official row.
 
 ## 2026-08-07 RQ1 VeriPUT production runner contract
 
