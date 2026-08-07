@@ -11110,6 +11110,26 @@ Smoke and cleanup:
   Oracle metadata: `oracle_class_counts={R0:1, R1:4, R2:8}` and matching
   combo counts. `results_all.py --benchmark bugfix124` reports veriput
   raw_u=11, valid_u=11, raw_c=1, valid_c=1.
+- Real203/stress sample initially exposed an AST-cache namespace bug:
+  the RQ1 output label is `real203`, but prepared subject metadata and
+  `certify_all.py` use `stress243`. The first
+  `ERC-3643__ERC-3643__AgentRole` attempt therefore wrote a no-output row
+  after immediate `could not resolve prepared subject` refusals. This was a
+  runner bug, not a proof attempt.
+- Fix committed in ESBMC:
+  `rq1_veriput_run.py::cached_subject()` now stores ASTs under the prepared
+  subject benchmark namespace (`stress243/<benchmark_key>`) rather than the
+  RQ1 output label (`real203/<benchmark_key>`), and any `certify_all.py`
+  nonzero rc now makes the subject `status=error` instead of being swallowed
+  into `no-output`.
+- Third formal sample after that fix:
+  `real203/ERC-3643__ERC-3643__AgentRole`, 600s/12GiB, `--redo`.
+  Completed in 212.744s with `status=ok`, raw=16, valid=15, PUT=10/11,
+  concrete=5/5, peak RSS about 544MiB. It attempted all 6 scheduled units.
+  Oracle metadata: `oracle_class_counts={R0:7, R1:2, R2:11}` and matching
+  combo counts. One PUT (`renounceOwnership` path 7) was raw but failed on
+  the reference, correctly excluded from valid. `results_all.py --benchmark
+  real203` reports veriput raw_u=16, valid_u=15, raw_c=1, valid_c=1.
 
 Validation:
 
