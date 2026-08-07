@@ -11233,6 +11233,68 @@ Implication:
   a literal EOA-like address.  The unchecked R2 arithmetic fix is a generic
   replay/oracle semantic alignment issue for Solidity 0.8.
 
+## 2026-08-08 official FrontRunner Stage-4 repair
+
+Context:
+
+- Code commit `8b22524717 [scripts] Mock runtime interface replays` had already
+  been pushed to `E-SOL/feat/veriput-fuzz-first`.
+- The relevant fixes were general, not FrontRunner-specific:
+  - runtime mocks for literal-address interface state variables in `src/flat.sol`
+    are emitted after deployment;
+  - R2 oracle assertions are wrapped in `unchecked { ... }` when rendering
+    Solidity arithmetic, so the oracle itself does not fail with Solidity 0.8
+    checked-arithmetic panics.
+- The old official FrontRunner result had `raw=6`, `valid=2`, `PUT=2/6`; both
+  token-swap units were invalid only at Foundry replay time.
+
+Official-output update:
+
+- Did not rerun broad ESBMC certification.  Reused:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/peer_ccsolbmc__FrontRunner/cert/certify-results.jsonl`.
+- Backed up the old official subject artifacts to:
+  `/tmp/veriput_front_official_backup_1786137415`.
+- Reran only Stage 4 with `put_all.py --timeout 600 --forge-timeout 660
+  --memlimit-gib 12 --strong-recipe --emit-cleared-concrete-fallbacks` for:
+  - `peer182__peer_ccsolbmc__FrontRunner.ethToToken`;
+  - `peer182__peer_ccsolbmc__FrontRunner.tokenToEth`.
+- Wrote the replacement Stage-4 artifacts under the official subject's
+  `put/ethToToken` and `put/tokenToEth` directories.
+- Regenerated the subject `result.json`, appended a fresh latest row to
+  `peer182/results.jsonl`, rewrote the dataset manifest, and added a
+  `stage4_partial_rerun` note explaining that certification was reused.
+
+Updated FrontRunner result:
+
+- `raw=6`, `valid=6`.
+- `put_raw=6`, `put_valid=6`.
+- `concrete_raw=0`, `concrete_valid=0`.
+- Oracle-class counts: `R0=6`, `R1=2`, `R2=14`.
+- Valid generated PUTs:
+  - `drainETH` enc=6: R0;
+  - `ethToToken` enc=7: R0/R1/R2;
+  - `ethToToken` enc=6: R0;
+  - `kill` enc=6: R0;
+  - `tokenToEth` enc=7: R0/R1/R2;
+  - `tokenToEth` enc=6: R0.
+
+Peer manifest after update:
+
+- `raw=451`, `valid=387`.
+- `put_raw=376`, `put_valid=354`.
+- `concrete_raw=75`, `concrete_valid=64`.
+- `rows=182`.
+- Status buckets stayed: 107 `ok`, 64 `no-output`, 5 `no-units`, 6
+  `timeout`.
+
+Verification:
+
+- `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark
+  peer182` completed successfully.
+- The anomaly audit now reports only one VeriPUT row with `raw>0` and
+  `valid==0`: `peer_ccsolbmc__shibabread`.
+- No files under `/home/samson/workspace/VeriPUT/Datasets` were modified.
+
 ## 2026-08-08 FrontRunner PUT assembly fixes
 
 Targeted failing bucket:
