@@ -11126,6 +11126,13 @@ Diagnosis:
 - Next optimization should add a cheap-probe/fuzz/refutation gate or a
   per-subject slow-probe classifier before spending the whole 600s Stage 2
   budget on single-unit cases.
+- Follow-up runner change after inspecting the airdrop artifacts:
+  future rows now aggregate `cert_bucket_counts`, `cert_exit_counts`,
+  `cert_witness_counts`, `cert_timed_out_units`, and `cert_oom_units` from
+  `certify-results.jsonl`.  A no-output row caused by an inner Stage 2 timeout
+  now gets a reason like
+  `certification timed out before PUT artifacts: transfer` instead of the
+  generic `no PUT or concrete replay emitted`.
 
 ## 2026-08-07 RQ1 VeriPUT production runner contract
 

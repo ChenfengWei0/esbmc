@@ -378,6 +378,83 @@ def _certified_count(cert_path: Path, benchmark_key: str, unit: str) -> int:
     return count
 
 
+def summarize_certification(cert_path: Path) -> dict:
+    summary = {
+        "rows": 0,
+        "bucket_counts": {},
+        "exit_counts": {},
+        "witness_counts": {},
+        "certified_regions": 0,
+        "not_certified_regions": 0,
+        "timed_out_units": [],
+        "oom_units": [],
+        "driver_refusal_tags": {},
+    }
+    if not cert_path.exists():
+        return summary
+    buckets = Counter()
+    exits = Counter()
+    witnesses = Counter()
+    refusals = Counter()
+    timed_out_units = []
+    oom_units = []
+    for line in cert_path.read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        summary["rows"] += 1
+        bucket = str(row.get("bucket") or "<missing>")
+        buckets[bucket] += 1
+        exit_code = row.get("exit")
+        if exit_code is not None:
+            exits[str(exit_code)] += 1
+        witnessed = row.get("witnessed")
+        if witnessed is None:
+            witnesses["unknown"] += 1
+        elif witnessed:
+            witnesses["true"] += 1
+        else:
+            witnesses["false"] += 1
+        summary["certified_regions"] += len(row.get("certified") or {})
+        summary["not_certified_regions"] += len(row.get("not_certified") or {})
+        unit = row.get("unit") or "<unknown>"
+        if exit_code == 124 or str(bucket).upper() == "TIMEOUT":
+            timed_out_units.append(unit)
+        if exit_code in (-9, 137) or str(bucket).upper() == "OOM":
+            oom_units.append(unit)
+        refusal = row.get("driver_refusal_tag")
+        if refusal:
+            refusals[str(refusal)] += 1
+    summary["bucket_counts"] = dict(sorted(buckets.items()))
+    summary["exit_counts"] = dict(sorted(exits.items()))
+    summary["witness_counts"] = dict(sorted(witnesses.items()))
+    summary["timed_out_units"] = sorted(set(timed_out_units))
+    summary["oom_units"] = sorted(set(oom_units))
+    summary["driver_refusal_tags"] = dict(sorted(refusals.items()))
+    return summary
+
+
+def _no_output_reason(cert_summary: dict) -> str:
+    if cert_summary.get("timed_out_units"):
+        units = ", ".join(cert_summary["timed_out_units"][:4])
+        suffix = "" if len(cert_summary["timed_out_units"]) <= 4 else ", ..."
+        return f"certification timed out before PUT artifacts: {units}{suffix}"
+    if cert_summary.get("oom_units"):
+        units = ", ".join(cert_summary["oom_units"][:4])
+        suffix = "" if len(cert_summary["oom_units"]) <= 4 else ", ..."
+        return f"certification OOM before PUT artifacts: {units}{suffix}"
+    if cert_summary.get("rows") and not cert_summary.get("certified_regions"):
+        buckets = cert_summary.get("bucket_counts") or {}
+        if buckets:
+            detail = ", ".join(f"{key}={value}" for key, value in buckets.items())
+            return f"no certified regions: {detail}"
+        return "no certified regions"
+    return "no PUT or concrete replay emitted"
+
+
 def _load_put_jsons(put_root: Path) -> list[dict]:
     out = []
     for path in sorted(put_root.rglob("put.json")):
@@ -623,6 +700,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             break
 
     put_summary = summarize_put_artifacts(case_dir / "put")
+    cert_summary = summarize_certification(cert_path)
     wall_total_s = round(time.monotonic() - start, 3)
     completion_status = result_status
     budget_exhausted = completion_status == "budget-exhausted"
@@ -630,7 +708,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         result_status = "ok"
     if result_status == "ok" and put_summary["raw"] == 0:
         result_status = "no-output"
-        failure_reason = "no PUT or concrete replay emitted"
+        failure_reason = _no_output_reason(cert_summary)
     row = {
         "key": f"gen:veriput:{subject_id}",
         "stage": "gen_veriput",
@@ -658,6 +736,11 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "concrete_valid": put_summary["concrete_valid"],
         "oracle_class_counts": put_summary["oracle_class_counts"],
         "oracle_class_combo_counts": put_summary["oracle_class_combo_counts"],
+        "cert_bucket_counts": cert_summary["bucket_counts"],
+        "cert_exit_counts": cert_summary["exit_counts"],
+        "cert_witness_counts": cert_summary["witness_counts"],
+        "cert_timed_out_units": cert_summary["timed_out_units"],
+        "cert_oom_units": cert_summary["oom_units"],
         "units_attempted": units_attempted,
         "units_scheduled": len(jobs),
         "stage2_wall_s": round(sum(s["wall_s"] for s in stages
@@ -686,6 +769,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             "summary": schedule.get("summary") or {},
         },
         "stages": stages,
+        "certification": cert_summary,
         "put": put_summary,
     }
     _write_json(case_dir / "result.json", detail)

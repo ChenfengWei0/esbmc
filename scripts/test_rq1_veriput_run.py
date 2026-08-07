@@ -213,6 +213,33 @@ def test_target_rows_fast_first_sorts_before_limit():
     return bad
 
 
+def test_certification_summary_identifies_inner_timeouts():
+    with tempfile.TemporaryDirectory() as td:
+        cert = Path(td) / "certify-results.jsonl"
+        cert.write_text(json.dumps({
+            "bucket": "KILLED",
+            "exit": 124,
+            "unit": "transfer",
+            "witnessed": None,
+            "certified": {},
+            "not_certified": {},
+        }) + "\n")
+        summary = rq1_veriput_run.summarize_certification(cert)
+    bad = 0
+    bad += check(summary["bucket_counts"] == {"KILLED": 1},
+                 f"certification buckets retained: {summary}")
+    bad += check(summary["exit_counts"] == {"124": 1},
+                 f"certification exits retained: {summary}")
+    bad += check(summary["witness_counts"] == {"unknown": 1},
+                 f"witness status retained: {summary}")
+    bad += check(summary["timed_out_units"] == ["transfer"],
+                 f"inner timeout unit identified: {summary}")
+    bad += check(rq1_veriput_run._no_output_reason(summary) ==
+                 "certification timed out before PUT artifacts: transfer",
+                 "no-output reason distinguishes inner certification timeout")
+    return bad
+
+
 def main():
     tests = [
         test_path_guard_allows_only_veriput_rq1_result_tree,
@@ -220,6 +247,7 @@ def main():
         test_real203_cache_uses_prepared_benchmark_namespace,
         test_jobs_admission_refuses_oversubscription,
         test_target_rows_fast_first_sorts_before_limit,
+        test_certification_summary_identifies_inner_timeouts,
     ]
     bad = 0
     for test in tests:
