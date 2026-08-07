@@ -11202,6 +11202,68 @@ Diagnosis:
   missing path pins; do not rerun ESBMC before reading the saved raw/valid
   artifacts and `assertion_oracles`.
 
+## 2026-08-07 raw-only-invalid peer branch-merge diagnosis
+
+Inspected without rerunning ESBMC:
+
+- Subject:
+  `peer_soltg__branches_merge_variables_5 / Cb7.f`.
+- Source shape:
+  pure function, one calldata argument `x`, branch `x > 10`, both arms set
+  local `a = 3`, then internal `assert(a == 3)`.
+- Stage 2 correctly certified two body regions:
+  - enc 6: `x in [11, UINT256_MAX]`, path guard `x > 10`;
+  - enc 7: `x in [0, 10]`, path guard `x <= 10`.
+- Both emitted PUTs were green in Foundry, but `valid_reference_test=false`.
+- Saved `put.json` showed:
+  - `asserts: 0`;
+  - `oracle_classes: []`;
+  - `assertion_oracles: []`;
+  - `exit_kind: null`;
+  - `r2_fuzz_prefilter.reason: no R2 candidate was proposed`.
+- The emitted test body was a bare call with the comment
+  `[asserted] path exits normally; a revert fails the test`, so the actual
+  observable oracle is R0 normal exit.  Because the function has no state or
+  return value, there is no R1/R2 surface.
+
+Root causes found:
+
+- `put_all.report_exit_kind()` tried to parse every Stage-1 report `path_id`
+  with `int(path_id)`.  New reports use ids such as `7#nonvacuous` and
+  `7#exit0`, so the parser returned no exit kind and Stage 4 did not pass
+  `--exit-kind normal`.
+- Even after passing `--exit-kind normal`, `solidity_path_put.py` counted R0
+  exit-kind assertions for revert/expectRevert/low-level value-gate cases, but
+  not for a normal bare call.
+
+Code changes:
+
+- `put_all.py` now parses numeric prefixes in Stage-1 claim ids, so
+  `7#nonvacuous` maps to enc 7 and returns its `exit_kind`.
+- `solidity_path_put.py` now counts a normal bare call as one R0
+  `exit_kind_assert` only when Stage 1 explicitly reports `exit_kind ==
+  "normal"` and the emitted body shape really asserts the exit kind.
+- Assertion metadata records this as:
+  `layer=exit`, `var=exit`, `text=path exits normally`, `classes=[R0]`.
+
+Expected effect:
+
+- Future runs of the peer `branches_merge_variables_*` shape should become
+  valid R0 PUTs instead of raw-only-invalid zero-oracle PUTs.
+- Previously completed rows were not rerun or rewritten, per the rule that
+  completed benchmark rows are not repeated just to improve historical output.
+
+Checks:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 239 / 239 registered tests.
+- `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py scripts/test_put_all_accounting.py`
+  passed.
+
 ## 2026-08-07 RQ1 production runner and early benchmark samples
 
 Production output contract:

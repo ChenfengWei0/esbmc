@@ -9119,6 +9119,35 @@ def test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT():
     return bad
 
 
+def test_a_STAGE1_normal_path_counts_the_bare_call_as_R0():
+    """A pure/no-state path can still be a valid PUT if Stage 1 proved normal
+    exit and the emitted call is bare.  The call itself is the R0 oracle: a
+    mutant that makes it revert turns the test red.  This is the shape seen in
+    peer SOLTG branch-merge functions, where no state/return rung exists."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=[], notes=notes, exit_kind="normal")
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    if put is None:
+        return bad + 3
+    bad += check(stats.get("exit_kind_asserts") == 1
+                 and stats.get("asserts") == 1,
+                 f"the normal bare call counts as the R0 oracle: {stats}")
+    bad += check(stats.get("oracle_classes") == ["R0"],
+                 f"the oracle class is R0: {stats.get('oracle_classes')}")
+    bad += check([d.get("text") for d in stats.get("assertion_oracles", [])]
+                 == ["path exits normally"],
+                 f"the assertion metadata names normal exit: "
+                 f"{stats.get('assertion_oracles')}")
+    return bad
+
+
 def test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle():
     """St1inch.setMaxLossRatio enc=14 shape.
 
@@ -10613,6 +10642,7 @@ def main():
               test_an_OBSERVED_msg_value_slot_key_is_nameable,
               test_a_change_rung_is_GUARDED_on_a_revert_tolerant_call,
               test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT,
+              test_a_STAGE1_normal_path_counts_the_bare_call_as_R0,
               test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle,
               test_a_NON_rollback_path_is_BYTE_IDENTICAL_to_before,
               test_a_STAGE1_revert_path_ASSERTS_THE_REVERT_without_calling_it_rollback,

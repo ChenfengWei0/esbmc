@@ -7977,19 +7977,20 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     for ln in body[call_i + 1:]:
         out.append(ln)
     out.append("  }")
-    exit_kind_asserts = 1 if (
-        catch_assert_revert or insert_expect_revert or
-        (revert_layer1 and existing_expect_revert)) else 0
     original_call_body = list(body[:call_i]) + [new_call] + list(
         body[call_i + 1:])
-    if low_level_exit_asserted:
-        exit_kind_asserts += 1
+    normal_exit_asserted = (
+        exit_kind == "normal" and exit_kind_asserted(original_call_body))
+    exit_kind_asserts = 1 if (
+        catch_assert_revert or insert_expect_revert or
+        (revert_layer1 and existing_expect_revert) or normal_exit_asserted
+        or low_level_exit_asserted) else 0
     if exit_kind_asserts:
         oracle_details.append({
             "layer": "exit",
             "var": "exit",
             "text": ("path exits through revert"
-                     if revert_layer1 else "path exit kind asserted"),
+                     if revert_layer1 else "path exits normally"),
             "classes": ["R0"],
             "verdict": "HOLDS",
             "emitted_in_test": True,

@@ -131,6 +131,16 @@ INTERVAL_RE = re.compile(r"(\S+) in \[(\d+), (\d+)\](?: \\ \{([0-9, ]+)\})?")
 PIN_RE = re.compile(r"(\S+) == (\d+)")
 
 
+def claim_path_id_int(raw):
+    if raw is None:
+        return None
+    text = str(raw)
+    m = re.match(r"^(\d+)(?:#.*)?$", text)
+    if not m:
+        return None
+    return int(m.group(1))
+
+
 def parse_certified(text):
     region, holes = {}, {}
     for m in INTERVAL_RE.finditer(text):
@@ -166,9 +176,8 @@ def report_exit_kind(report_path, path_function, enc):
         try:
             d = json.load(open(report_path))
             for c in d.get("claims") or []:
-                try:
-                    pid = int(c.get("path_id"))
-                except (TypeError, ValueError):
+                pid = claim_path_id_int(c.get("path_id"))
+                if pid is None:
                     continue
                 pf = c.get("path_function")
                 found[(pf, pid)] = c.get("exit_kind")

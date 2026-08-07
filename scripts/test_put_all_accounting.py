@@ -125,6 +125,38 @@ def main():
                      put_all.recipe_requires_certified_details(
                          "veriput-strong/15-relation-establish"),
                      True)
+        bad += check("stage4-claim-path-id-suffix",
+                     put_all.claim_path_id_int("7#nonvacuous"), 7)
+        bad += check("stage4-claim-path-id-nonnumeric",
+                     put_all.claim_path_id_int("path:7#nonvacuous"), None)
+        with tempfile.NamedTemporaryFile("w", delete=False) as report_fh:
+            report_path = report_fh.name
+            json.dump({
+                "claims": [
+                    {
+                        "path_id": "7#nonvacuous",
+                        "path_function": "sol:@C@Cb7@F@f#31",
+                        "exit_kind": "normal",
+                    },
+                    {
+                        "path_id": "8",
+                        "path_function": "sol:@C@Cb7@F@f#31",
+                        "exit_kind": "revert",
+                    },
+                ],
+            }, report_fh)
+        try:
+            put_all.EXIT_KIND_CACHE.clear()
+            bad += check("stage4-report-exit-kind-suffixed-path-id",
+                         put_all.report_exit_kind(
+                             report_path, "sol:@C@Cb7@F@f#31", 7),
+                         "normal")
+            bad += check("stage4-report-exit-kind-plain-path-id",
+                         put_all.report_exit_kind(
+                             report_path, "sol:@C@Cb7@F@f#31", 8),
+                         "revert")
+        finally:
+            os.unlink(report_path)
         old_run_forge = put_all.run_forge
         old_binary = put_all.current_binary_identity
         try:
