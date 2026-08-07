@@ -129,6 +129,17 @@ DCF probe:
   needs either a skip-constructor/runtimeCode fixture for red target
   constructors, or a conservative refusal of raw tests whose target deployment
   is disabled/red.  Do not update official DCF RQ1 output until this is solved.
+- A second temp probe tried passing an explicit skip-constructor fixture:
+  `/tmp/veriput_dcf_skip_fixture_probe_1786140062`.
+  This is NOT a valid workaround as-is: forwarding
+  `--path-cov-fixture /tmp/veriput_dcf_skip_fixture.json` into the ESBMC emit
+  step made the emitted concrete cases say
+  `UNSUPPORTED: DCF.setDistributeAddress has an argument type ESBMC cannot yet
+  render as a literal`, so Stage4 refused with
+  `no call to setDistributeAddress found`.  A real fix must separate the two
+  concerns: keep ESBMC concrete emission on the original path, but apply
+  skip-constructor/runtimeCode only during Foundry assembly when the target
+  deployment is known red.
 
 ## 2026-08-08 RQ1 production accounting and timeout fallback state
 
