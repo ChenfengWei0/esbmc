@@ -14,11 +14,13 @@ import argparse
 import json
 import os
 import resource
+import signal
 import socket
 import subprocess
 import sys
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -204,6 +206,57 @@ def _maxrss_mb() -> float:
     return round(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1024.0, 1)
 
 
+def _proc_children(pid: int) -> list[int]:
+    try:
+        text = Path(f"/proc/{pid}/task/{pid}/children").read_text()
+    except OSError:
+        return []
+    out = []
+    for item in text.split():
+        try:
+            out.append(int(item))
+        except ValueError:
+            pass
+    return out
+
+
+def _proc_tree(pid: int) -> list[int]:
+    seen = set()
+    stack = [pid]
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        stack.extend(_proc_children(current))
+    return sorted(seen)
+
+
+def _rss_kb(pid: int) -> int:
+    try:
+        for line in Path(f"/proc/{pid}/status").read_text(errors="replace").splitlines():
+            if line.startswith("VmRSS:"):
+                parts = line.split()
+                return int(parts[1]) if len(parts) >= 2 else 0
+    except OSError:
+        return 0
+    return 0
+
+
+def _rss_tree_mb(pid: int) -> float:
+    return round(sum(_rss_kb(child) for child in _proc_tree(pid)) / 1024.0, 1)
+
+
+def _tail_file(path: Path, limit: int = 4000) -> str:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    if len(data) > limit:
+        data = data[-limit:]
+    return data.decode("utf-8", errors="replace")
+
+
 def _looks_oom(rc: int | None, text: str) -> bool:
     if rc in (-9, 137, -6, 134):
         return True
@@ -221,32 +274,46 @@ def _looks_oom(rc: int | None, text: str) -> bool:
 def run_command(argv: list[str], timeout_s: float, log_prefix: Path) -> dict:
     log_prefix.parent.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
+    stdout_path = log_prefix.with_suffix(".stdout.log")
+    stderr_path = log_prefix.with_suffix(".stderr.log")
     timed_out = False
+    maxrss_proc_mb = 0.0
     try:
-        cp = subprocess.run(argv,
-                            capture_output=True,
-                            text=True,
-                            timeout=max(1.0, timeout_s))
-        rc = cp.returncode
-        stdout = cp.stdout or ""
-        stderr = cp.stderr or ""
-    except subprocess.TimeoutExpired as exc:
-        timed_out = True
-        rc = None
-        stdout = exc.stdout or ""
-        stderr = exc.stderr or ""
-        if isinstance(stdout, bytes):
-            stdout = stdout.decode("utf-8", errors="replace")
-        if isinstance(stderr, bytes):
-            stderr = stderr.decode("utf-8", errors="replace")
+        with stdout_path.open("w") as stdout_stream, stderr_path.open("w") as stderr_stream:
+            proc = subprocess.Popen(argv,
+                                    stdout=stdout_stream,
+                                    stderr=stderr_stream,
+                                    text=True,
+                                    start_new_session=True)
+            deadline = start + max(1.0, timeout_s)
+            while proc.poll() is None:
+                maxrss_proc_mb = max(maxrss_proc_mb, _rss_tree_mb(proc.pid))
+                if time.monotonic() > deadline:
+                    timed_out = True
+                    try:
+                        os.killpg(proc.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        proc.wait()
+                    break
+                time.sleep(0.5)
+            maxrss_proc_mb = max(maxrss_proc_mb, _rss_tree_mb(proc.pid))
+            rc = proc.returncode
     except OSError as exc:
         rc = None
-        stdout = ""
-        stderr = f"could not start: {exc}"
+        stdout_path.write_text("")
+        stderr_path.write_text(f"could not start: {exc}")
     wall_s = round(time.monotonic() - start, 3)
-    (log_prefix.with_suffix(".stdout.log")).write_text(stdout)
-    (log_prefix.with_suffix(".stderr.log")).write_text(stderr)
-    combined = stdout + "\n" + stderr
+    stdout_tail = _tail_file(stdout_path)
+    stderr_tail = _tail_file(stderr_path)
+    combined = stdout_tail + "\n" + stderr_tail
     status = "timeout" if timed_out else ("ok" if rc == 0 else "error")
     if status == "error" and _looks_oom(rc, combined):
         status = "oom"
@@ -256,10 +323,11 @@ def run_command(argv: list[str], timeout_s: float, log_prefix: Path) -> dict:
         "status": status,
         "timed_out": timed_out,
         "wall_s": wall_s,
-        "stdout_log": str(log_prefix.with_suffix(".stdout.log")),
-        "stderr_log": str(log_prefix.with_suffix(".stderr.log")),
-        "stdout_tail": _tail(stdout),
-        "stderr_tail": _tail(stderr),
+        "stdout_log": str(stdout_path),
+        "stderr_log": str(stderr_path),
+        "stdout_tail": stdout_tail,
+        "stderr_tail": stderr_tail,
+        "maxrss_proc_mb": maxrss_proc_mb,
         "maxrss_mb_after": _maxrss_mb(),
     }
 
@@ -376,6 +444,30 @@ def summarize_put_artifacts(put_root: Path) -> dict:
 
 def _remaining(deadline: float) -> float:
     return max(0.0, deadline - time.monotonic())
+
+
+def _mem_available_gib() -> float:
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) / (1024.0 * 1024.0)
+    except OSError:
+        return 0.0
+    return 0.0
+
+
+def validate_jobs(args) -> None:
+    if args.jobs <= 0:
+        raise RQ1RunError("--jobs must be positive")
+    if args.jobs == 1:
+        return
+    available = _mem_available_gib()
+    committed = float(args.jobs * args.memlimit_gib)
+    if available and committed > available * args.mem_fraction:
+        raise RQ1RunError(
+            f"--jobs {args.jobs} x --memlimit-gib {args.memlimit_gib} = "
+            f"{committed:g}GiB exceeds {args.mem_fraction:.0%} of "
+            f"MemAvailable ({available:.1f}GiB)")
 
 
 def _certify_argv_for_remaining(job: dict, remaining_s: float, memlimit_gib: int) -> list[str]:
@@ -521,7 +613,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "ts": round(time.time(), 3),
         "generated_at": _utc_now(),
         "host": socket.gethostname(),
-        "n_concurrent": 1,
+        "n_concurrent": args.jobs,
         "mem_budget_mb": args.memlimit_gib * 1024,
         "tool_timeout_s": args.timeout,
         "wall_cap_s": args.timeout + args.wrapper_grace,
@@ -549,7 +641,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                                    if s.get("stage") == "put"), 3),
         "wall": wall_total_s,
         "wall_total_s": wall_total_s,
-        "maxrss_mb": _maxrss_mb(),
+        "maxrss_mb": max(
+            [stage.get("maxrss_proc_mb") or 0.0 for stage in stages] or [0.0]),
         "artifact_root": str(case_dir),
         "result_json": str(case_dir / "result.json"),
         "cert_jsonl": str(cert_path),
@@ -572,6 +665,83 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     }
     _write_json(case_dir / "result.json", detail)
     return row, detail
+
+
+def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
+                          done: dict[str, dict], args) -> int:
+    selected = [row for row in rows
+                if f"gen:veriput:{row['subject_id']}" not in done]
+    if not selected:
+        return 0
+    if args.jobs <= 1:
+        attempted = 0
+        for target_row in selected:
+            print(f"[rq1] {dataset_label} {target_row['subject_id']} "
+                  f"contract={target_row.get('contract')}", flush=True)
+            row, _detail = run_subject(target_row, dataset_label, args)
+            _append_jsonl(journal, row)
+            write_dataset_manifest(Path(args.result_root), dataset_label, journal)
+            attempted += 1
+            print(f"[rq1] -> status={row['status']} raw={row['raw']} "
+                  f"valid={row['valid']} put={row['put_valid']}/"
+                  f"{row['put_raw']} concrete={row['concrete_valid']}/"
+                  f"{row['concrete_raw']} wall={row['wall_total_s']}s",
+                  flush=True)
+        return attempted
+
+    attempted = 0
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+        futures = {}
+        for target_row in selected:
+            print(f"[rq1] queued {dataset_label} {target_row['subject_id']} "
+                  f"contract={target_row.get('contract')}", flush=True)
+            futures[executor.submit(run_subject, target_row, dataset_label, args)] = target_row
+        for future in as_completed(futures):
+            target_row = futures[future]
+            try:
+                row, _detail = future.result()
+            except Exception as exc:  # Subject-level fail-soft.
+                now = round(time.time(), 3)
+                row = {
+                    "key": f"gen:veriput:{target_row['subject_id']}",
+                    "stage": "gen_veriput",
+                    "schema": "veriput-rq1-result-row/v1",
+                    "ts": now,
+                    "generated_at": _utc_now(),
+                    "host": socket.gethostname(),
+                    "n_concurrent": args.jobs,
+                    "mem_budget_mb": args.memlimit_gib * 1024,
+                    "tool_timeout_s": args.timeout,
+                    "wall_cap_s": args.timeout + args.wrapper_grace,
+                    "status": "error",
+                    "completion_status": "error",
+                    "budget_exhausted": False,
+                    "reason": f"runner exception: {exc}",
+                    "subject_id": target_row["subject_id"],
+                    "benchmark": target_row.get("benchmark"),
+                    "dataset": dataset_label,
+                    "contract": target_row.get("contract"),
+                    "raw": 0,
+                    "valid": 0,
+                    "put_raw": 0,
+                    "put_valid": 0,
+                    "concrete_raw": 0,
+                    "concrete_valid": 0,
+                    "wall": 0.0,
+                    "wall_total_s": 0.0,
+                    "maxrss_mb": 0.0,
+                    "recipe_version": STRONG_RECIPE_VERSION,
+                }
+            _append_jsonl(journal, row)
+            write_dataset_manifest(Path(args.result_root), dataset_label, journal)
+            attempted += 1
+            print(f"[rq1] done {target_row['subject_id']} -> "
+                  f"status={row['status']} raw={row['raw']} valid={row['valid']} "
+                  f"put={row['put_valid']}/{row['put_raw']} "
+                  f"concrete={row['concrete_valid']}/{row['concrete_raw']} "
+                  f"wall={row['wall_total_s']}s",
+                  flush=True)
+    return attempted
 
 
 def write_dataset_manifest(root: Path, dataset_label: str, journal: Path) -> None:
@@ -638,6 +808,11 @@ def main(argv=None) -> int:
                     help="do not start another stage with less than this many seconds")
     ap.add_argument("--memlimit-gib", type=int, default=12,
                     help="per-ESBMC memory budget passed to Stage 2/4")
+    ap.add_argument("--jobs", type=int, default=1,
+                    help="number of prepared subjects to run concurrently")
+    ap.add_argument("--mem-fraction", type=float, default=0.70,
+                    help="refuse --jobs when jobs*memlimit exceeds this "
+                         "fraction of current MemAvailable")
     ap.add_argument("--forge-timeout", type=int, default=180)
     ap.add_argument("--resume", action="store_true",
                     help="skip subject keys already present in results.jsonl")
@@ -653,6 +828,7 @@ def main(argv=None) -> int:
         validate_roots(veriput_root, result_root, ast_cache_root)
         if args.timeout <= 0 or args.wrapper_grace < 0 or args.memlimit_gib <= 0:
             raise RQ1RunError("timeouts must be positive and --memlimit-gib must be positive")
+        validate_jobs(args)
         args.veriput_root = str(veriput_root)
         args.result_root = str(result_root)
         args.ast_cache_root = str(ast_cache_root)
@@ -664,23 +840,10 @@ def main(argv=None) -> int:
                                           args.subject_id, args.limit)
         journal = result_root / dataset_label / "results.jsonl"
         done = _latest_rows(journal) if args.resume and not args.redo else {}
-        attempted = 0
         for target_row in rows:
-            key = f"gen:veriput:{target_row['subject_id']}"
-            if key in done:
+            if f"gen:veriput:{target_row['subject_id']}" in done:
                 print(f"[rq1] skip recorded {target_row['subject_id']}")
-                continue
-            print(f"[rq1] {dataset_label} {target_row['subject_id']} "
-                  f"contract={target_row.get('contract')}", flush=True)
-            row, _detail = run_subject(target_row, dataset_label, args)
-            _append_jsonl(journal, row)
-            write_dataset_manifest(result_root, dataset_label, journal)
-            attempted += 1
-            print(f"[rq1] -> status={row['status']} raw={row['raw']} "
-                  f"valid={row['valid']} put={row['put_valid']}/"
-                  f"{row['put_raw']} concrete={row['concrete_valid']}/"
-                  f"{row['concrete_raw']} wall={row['wall_total_s']}s",
-                  flush=True)
+        attempted = run_selected_subjects(rows, dataset_label, journal, done, args)
         if attempted == 0:
             write_dataset_manifest(result_root, dataset_label, journal)
         return 0

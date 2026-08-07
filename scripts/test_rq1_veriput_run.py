@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import argparse
 import sys
 import tempfile
 from pathlib import Path
@@ -155,11 +156,27 @@ def test_real203_cache_uses_prepared_benchmark_namespace():
                  f"{cached.solast}")
 
 
+def test_jobs_admission_refuses_oversubscription():
+    old = rq1_veriput_run._mem_available_gib
+    rq1_veriput_run._mem_available_gib = lambda: 20.0
+    args = argparse.Namespace(jobs=2, memlimit_gib=8, mem_fraction=0.70)
+    try:
+        try:
+            rq1_veriput_run.validate_jobs(args)
+            refused = False
+        except rq1_veriput_run.RQ1RunError:
+            refused = True
+    finally:
+        rq1_veriput_run._mem_available_gib = old
+    return check(refused, "subject concurrency refuses memory oversubscription")
+
+
 def main():
     tests = [
         test_path_guard_allows_only_veriput_rq1_result_tree,
         test_put_artifact_summary_counts_raw_valid_and_oracle_classes,
         test_real203_cache_uses_prepared_benchmark_namespace,
+        test_jobs_admission_refuses_oversubscription,
     ]
     bad = 0
     for test in tests:

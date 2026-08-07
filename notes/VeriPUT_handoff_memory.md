@@ -11131,6 +11131,24 @@ Smoke and cleanup:
   the reference, correctly excluded from valid. `results_all.py --benchmark
   real203` reports veriput raw_u=16, valid_u=15, raw_c=1, valid_c=1.
 
+Speed-up added after the three-sample smoke:
+
+- `rq1_veriput_run.py` now accepts `--jobs N` for subject-level concurrency.
+  Default remains 1.
+- It refuses unsafe concurrency when
+  `jobs * memlimit_gib > mem_fraction * MemAvailable`; default
+  `--mem-fraction 0.70`.
+- Journal appends remain parent-owned and fsynced, so concurrent subjects do
+  not write `results.jsonl` directly.
+- Each subject still writes its own artifact directory under
+  `Results/RQ1/VeriPUT/<dataset>/subjects/<subject_id>`.
+- `run_command()` now writes stdout/stderr directly to log files and samples
+  the process tree RSS through `/proc`, so per-subject `maxrss_mb` is no longer
+  based only on process-global `RUSAGE_CHILDREN` and remains usable when
+  `--jobs > 1`.
+- Validation added in `scripts/test_rq1_veriput_run.py`:
+  real203 cache namespace and concurrency memory admission are covered.
+
 Validation:
 
 - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
