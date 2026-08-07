@@ -240,6 +240,61 @@ def test_certification_summary_identifies_inner_timeouts():
     return bad
 
 
+def test_subject_schedule_uses_separate_esbmc_run_timeout():
+    subject = rq1_veriput_run.PreparedSubject(
+        benchmark="bugfix124",
+        subject_id="s",
+        root="/prepared/s",
+        flat_sol="/prepared/s/flat.sol",
+        solast="/prepared/s/flat.sol.solast",
+        contract="C",
+        unit="",
+        solc_bin="/bin/solc",
+        solc_extra=(),
+        metadata={
+            "status": "ok",
+        },
+    )
+    old_manifest = rq1_veriput_run.subject_unit_manifest.manifest_for_subject
+    old_schedule = rq1_veriput_run.unit_schedule.build_schedule
+    captured = {}
+    rq1_veriput_run.subject_unit_manifest.manifest_for_subject = lambda *_a, **_kw: {
+        "status": "ok",
+        "units": {
+            "units": ["f"],
+        },
+    }
+
+    def fake_schedule(_manifest, **kwargs):
+        captured.update(kwargs)
+        return {
+            "jobs": [],
+            "summary": {},
+        }
+
+    rq1_veriput_run.unit_schedule.build_schedule = fake_schedule
+    try:
+        rq1_veriput_run.build_subject_schedule(
+            subject,
+            {
+                "units_hint": ["f"],
+            },
+            Path("/tmp/cache"),
+            Path("/tmp/case"),
+            timeout_s=600,
+            run_timeout_s=120,
+            memlimit_gib=12)
+    finally:
+        rq1_veriput_run.subject_unit_manifest.manifest_for_subject = old_manifest
+        rq1_veriput_run.unit_schedule.build_schedule = old_schedule
+    bad = 0
+    bad += check(captured.get("timeout_s") == 600,
+                 f"subject budget is preserved: {captured}")
+    bad += check(captured.get("run_timeout_s") == 120,
+                 f"per-ESBMC run budget is separate: {captured}")
+    return bad
+
+
 def main():
     tests = [
         test_path_guard_allows_only_veriput_rq1_result_tree,
@@ -248,6 +303,7 @@ def main():
         test_jobs_admission_refuses_oversubscription,
         test_target_rows_fast_first_sorts_before_limit,
         test_certification_summary_identifies_inner_timeouts,
+        test_subject_schedule_uses_separate_esbmc_run_timeout,
     ]
     bad = 0
     for test in tests:

@@ -11133,6 +11133,13 @@ Diagnosis:
   now gets a reason like
   `certification timed out before PUT artifacts: transfer` instead of the
   generic `no PUT or concrete replay emitted`.
+- Speed follow-up: RQ1 runner now separates the whole-subject budget from the
+  per-ESBMC invocation budget.  `--timeout` remains the case cap, default 600s.
+  New `--esbmc-run-timeout` defaults to 120s and is passed to
+  `certify_all.py --run-timeout`.  This prevents a single initial witness probe
+  from consuming the entire case budget; it would have cut the two long airdrop
+  no-output rows from about 600s each to about 120s each.  The cap is recorded
+  in dry-run and result rows as `esbmc_run_timeout_s`.
 
 ## 2026-08-07 RQ1 VeriPUT production runner contract
 

@@ -186,7 +186,8 @@ def _unit_hints(row: dict, units: list[str]) -> dict:
 
 def build_subject_schedule(subject: PreparedSubject, target_row: dict,
                            ast_cache_root: Path, case_dir: Path, *,
-                           timeout_s: int, memlimit_gib: int) -> dict:
+                           timeout_s: int, run_timeout_s: int,
+                           memlimit_gib: int) -> dict:
     row = subject_unit_manifest.manifest_for_subject(
         subject,
         generate_ast=True,
@@ -215,7 +216,7 @@ def build_subject_schedule(subject: PreparedSubject, target_row: dict,
         selection_strategy="priority",
         cert_out=cert_out,
         timeout_s=timeout_s,
-        run_timeout_s=timeout_s,
+        run_timeout_s=run_timeout_s,
         memlimit_gib=memlimit_gib,
         workdir=str((case_dir / "cert" / "work").resolve()))
 
@@ -627,6 +628,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                                           ast_cache_root,
                                           case_dir,
                                           timeout_s=args.timeout,
+                                          run_timeout_s=args.esbmc_run_timeout,
                                           memlimit_gib=args.memlimit_gib)
     except Exception as exc:  # Fail-soft at subject granularity.
         result_status = "error"
@@ -719,6 +721,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "n_concurrent": args.jobs,
         "mem_budget_mb": args.memlimit_gib * 1024,
         "tool_timeout_s": args.timeout,
+        "esbmc_run_timeout_s": args.esbmc_run_timeout,
         "wall_cap_s": args.timeout + args.wrapper_grace,
         "status": result_status,
         "completion_status": completion_status,
@@ -821,6 +824,7 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                     "n_concurrent": args.jobs,
                     "mem_budget_mb": args.memlimit_gib * 1024,
                     "tool_timeout_s": args.timeout,
+                    "esbmc_run_timeout_s": args.esbmc_run_timeout,
                     "wall_cap_s": args.timeout + args.wrapper_grace,
                     "status": "error",
                     "completion_status": "error",
@@ -887,6 +891,7 @@ def build_dry_run(args) -> dict:
         "result_root": args.result_root,
         "ast_cache_root": args.ast_cache_root,
         "timeout_s": args.timeout,
+        "esbmc_run_timeout_s": args.esbmc_run_timeout,
         "memlimit_gib": args.memlimit_gib,
         "jobs": args.jobs,
         "order": args.order,
@@ -917,6 +922,9 @@ def main(argv=None) -> int:
     ap.add_argument("--ast-cache-root", default=str(DEFAULT_AST_CACHE_ROOT))
     ap.add_argument("--timeout", type=int, default=600,
                     help="whole subject generation budget, seconds")
+    ap.add_argument("--esbmc-run-timeout", type=int, default=120,
+                    help="per ESBMC invocation budget inside certification, "
+                         "seconds. The whole subject still gets --timeout")
     ap.add_argument("--wrapper-grace", type=int, default=60,
                     help="subprocess cleanup/writeout slack outside the tool budget")
     ap.add_argument("--min-remaining-s", type=int, default=20,
@@ -941,8 +949,11 @@ def main(argv=None) -> int:
         result_root = Path(args.result_root).expanduser().resolve()
         ast_cache_root = Path(args.ast_cache_root).expanduser().resolve()
         validate_roots(veriput_root, result_root, ast_cache_root)
-        if args.timeout <= 0 or args.wrapper_grace < 0 or args.memlimit_gib <= 0:
+        if (args.timeout <= 0 or args.esbmc_run_timeout <= 0
+                or args.wrapper_grace < 0 or args.memlimit_gib <= 0):
             raise RQ1RunError("timeouts must be positive and --memlimit-gib must be positive")
+        if args.esbmc_run_timeout > args.timeout:
+            raise RQ1RunError("--esbmc-run-timeout must not exceed --timeout")
         validate_jobs(args)
         args.veriput_root = str(veriput_root)
         args.result_root = str(result_root)
