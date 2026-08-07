@@ -11283,6 +11283,81 @@ Aggregate bugfix124 VeriPUT state after this wave:
   median ok-wall 23.8s, `timeout/oom/error=0`, `raw>0 & valid==0=0`.
 - No residual VeriPUT/ESBMC worker processes remained after the wave.
 
+## 2026-08-07 bugfix124 fast-first 48-subject state
+
+Fourth fast-first wave command:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --limit 48 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume`
+
+Pre-run checks:
+
+- No residual VeriPUT/ESBMC worker processes.
+- About 37GiB available memory.
+- Latest ESBMC branch head before the run:
+  `1b67ddb584 [docs] Record VeriPUT bugfix 36-subject wave`.
+
+The runner skipped the first 36 fast-first rows and queued the next 12:
+
+- `rcx_unchecked_low_level_calls__0x4a66...__TIPS / EBU.transfer`:
+  no-output, 120.698s, timed-out transfer reason.
+- `rc_time_manipulation__ether_lotto__SolGPT__ether_lotto_2round / EtherLotto.play`:
+  ok, raw=1, valid=1, PUT 1/1, wall 37.122s, oracle R0=1.
+- `rcx_unchecked_low_level_calls__0xb37...__SmartFix / SimpleWallet.sendMoney`:
+  ok, raw=4, valid=3, PUT 3/4, wall 59.074s,
+  oracle R0=3, R1=1, R2=1.
+- `rc_unchecked_low_level_calls__0xa1fc...__SolGPT__..._1round / AirDropContract.transfer`:
+  no-output, 120.627s, timed-out transfer reason.
+- `rc_reentrancy__reentrancy_simple__SmartFix__reentrancy_simple / Reentrance.withdraw`:
+  ok, raw=2, valid=1, PUT 1/1, concrete 0/1, wall 93.607s,
+  oracle R1=1, R2=12.
+- `rcx_unchecked_low_level_calls__0x610...__SmartFix / SimpleWallet.withdrawAll`:
+  ok, raw=4, valid=4, PUT 4/4, wall 58.101s,
+  oracle R0=3, R1=1, R2=1.
+- `rcx_unchecked_low_level_calls__0x4a66...__SmartFix / EBU.transfer`:
+  no-output, 120.639s, timed-out transfer reason.
+- `rcx_unchecked_low_level_calls__0xb37...__sGuardPlus / SimpleWallet.sendMoney`:
+  ok, raw=3, valid=3, PUT 2/2, concrete 1/1, wall 102.636s,
+  oracle R0=2.
+- `rcx_unchecked_low_level_calls__0x5aa...__SmartFix / MultiplicatorX3`:
+  ok, raw=4, valid=3, PUT 3/4, wall 45.590s,
+  oracle R0=2, R1=1, R2=1.
+- `rcx_unchecked_low_level_calls__0x3e0...__SmartFix / MultiplicatorX4`:
+  ok, raw=4, valid=3, PUT 3/4, wall 42.603s,
+  oracle R0=2, R1=1, R2=1.
+- `rcx_unchecked_low_level_calls__0x610...__sGuardPlus / SimpleWallet.withdrawAll`:
+  ok, raw=3, valid=3, PUT 2/2, concrete 1/1, wall 99.155s,
+  oracle R0=2.
+- `rc_access_control__wallet_02_refund_nosub__SolGPT__wallet_02_refund_nosub_2round / Wallet`:
+  ok, raw=5, valid=2, PUT 2/4, concrete 0/1, wall 50.070s,
+  oracle R0=2, R1=2, R2=9.
+
+Wave-level outcome:
+
+- 9 / 12 subjects were `ok`.
+- 9 / 12 subjects produced at least one valid reference test.
+- New wave raw=30, valid=23.
+- New wave PUT 21/26; concrete replay 2/4.
+- New wave oracle additions: R0=17, R1=7, R2=25.
+- The EBU and AirDrop transfer failures exited at the intended 120s ESBMC
+  subquery cap.  EBU.transfer is now a stable slow/no-output cluster and is a
+  good candidate for a future cheap skip/refute classifier.
+
+Aggregate bugfix124 VeriPUT state after this wave:
+
+- Latest rows: 54.
+- Status counts: `ok=27`, `no-output=21`, `no-units=4`,
+  `budget-exhausted=2`.
+- Aggregate raw=75, valid=65.
+- Aggregate PUT 55/61; concrete replay 10/14.
+- Subjects with at least one valid test: 27 / 54.
+- Aggregate oracle counts: R0=45, R1=14, R2=36.
+- `Results/results_all.py --benchmark bugfix124` reports the VeriPUT arm as:
+  `ran=54`, `raw_u=75`, `valid_u=65`, `raw_c=27`, `valid_c=27`,
+  `coverage=21.8%`, `VT/case=0.52`.
+- `results_all.py` anomaly audit for VeriPUT:
+  median ok-wall 45.6s, `timeout/oom/error=0`, `raw>0 & valid==0=0`.
+- No residual VeriPUT/ESBMC worker processes remained after the wave.
+
 ## 2026-08-07 RQ1 VeriPUT production runner contract
 
 User tightened the output requirements before the benchmark wave:
