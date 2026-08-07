@@ -336,6 +336,9 @@ LADDER_ROW_RE = re.compile(
     r"^--path-cov-assert: (\S+): (.*?)  "
     r"(HOLDS|REFUTED|NO VERDICT \(solver unknown\)|"
     r"NO VERDICT \(never reached the solver\))(?:  \[|$)")
+LADDER_PARTIAL_ROW_RE = re.compile(
+    r"^--path-cov-assert: PARTIAL ROW before final table: (\S+): (.*?)  "
+    r"(HOLDS|REFUTED|NO VERDICT \(solver unknown\))(?:  \[|$)")
 LADDER_SUMMARY_RE = re.compile(
     r"^--path-cov-assert: ladder summary -- (\d+) candidate\(s\): (\d+) HOLDS, "
     r"(\d+) REFUTED, (\d+) no verdict \(solver unknown\), (\d+) no verdict "
@@ -501,12 +504,16 @@ def parse_ladder(log):
     second names a repair.  An unrecognised `RESULT:` token raises rather than
     being ignored; see LADDER_RESULT_MAP.
     """
-    rows, summary, refusal, blocker = [], None, None, None
+    rows, partial_rows, summary, refusal, blocker = [], [], None, None, None
     for line in log.splitlines():
         s = line.strip()
         m = LADDER_ROW_RE.match(s)
         if m:
             rows.append((m.group(1), m.group(2).strip(), m.group(3)))
+            continue
+        m = LADDER_PARTIAL_ROW_RE.match(s)
+        if m:
+            partial_rows.append((m.group(1), m.group(2).strip(), m.group(3)))
             continue
         m = LADDER_SUMMARY_RE.match(s)
         if m:
@@ -538,7 +545,7 @@ def parse_ladder(log):
         m = LADDER_REFUSAL_RE.search(s)
         if m and refusal is None:
             refusal = m.group(1)
-    return rows, summary, refusal, blocker
+    return (rows or partial_rows), summary, refusal, blocker
 
 
 def ladder_answer_gap(asked, rows):

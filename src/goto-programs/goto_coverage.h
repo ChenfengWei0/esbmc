@@ -1509,6 +1509,7 @@ public:
   };
   static bool path_cov_assert_mode;
   static std::vector<assert_candidatet> path_cov_assert_candidates;
+  static std::set<std::string> path_cov_assert_partial_rows_published;
 
   // ---- THE NON-VACUITY WITNESS, and why the ladder is worthless without it --
   //
@@ -1543,6 +1544,13 @@ public:
   // component order, rungs in a fixed order), never completion order, so the
   // printed table is identical under --parallel-solving.
   static void report_path_cov_assertions();
+
+  // Print a machine-readable per-candidate verdict as soon as the solver has
+  // one. Caller must hold claim_outcome_mutex; this is deliberately the same
+  // lock that protects claim_outcome so a crash between a verdict write and the
+  // final table still leaves at most one salvage row per candidate.
+  static void
+  publish_path_cov_assertion_partial_row_locked(const std::string &claim_sig);
 
   // Path to the cross-run covered-set JSON (--coverage-covered-set).
   // Empty => disabled (no load, no skip, no write-back; behaviour

@@ -975,6 +975,43 @@ def test_region_coordinate_ladder_refusal_is_read():
     return bad
 
 
+def test_partial_ladder_rows_are_used_only_when_final_table_is_missing():
+    """A crash after a candidate verdict must not erase the verdict.
+
+    ESBMC prints PARTIAL ROW lines as soon as individual assertion candidates
+    are decided.  They are a salvage channel for bad_alloc / signal exits before
+    report_path_cov_assertions() prints the final table, not a replacement for
+    that table when the run completes.
+    """
+    partial_only = (
+        "--path-cov-assert: PARTIAL ROW before final table: bal: post == pre  "
+        "HOLDS\n"
+        "terminate called after throwing an instance of 'std::bad_alloc'\n"
+    )
+    rows, summary, refusal, blocker = parse_ladder(partial_only)
+    bad = 0
+    bad += check(rows == [("bal", "post == pre", "HOLDS")],
+                 f"partial row survives a missing final table: {rows}")
+    bad += check(summary is None and refusal is None and blocker is None,
+                 "a salvaged row is not a vacuity/refusal gate")
+
+    final_table = (
+        "--path-cov-assert: PARTIAL ROW before final table: bal: post == pre  "
+        "HOLDS\n"
+        "--path-cov-assert: bal: post == pre  REFUTED\n"
+        "--path-cov-assert: ladder summary -- 1 candidate(s): 0 HOLDS, 1 "
+        "REFUTED, 0 no verdict (solver unknown), 0 no verdict (never reached "
+        "the solver)\n"
+    )
+    rows, summary, refusal, blocker = parse_ladder(final_table)
+    bad += check(rows == [("bal", "post == pre", "REFUTED")],
+                 f"final rows override partial salvage rows: {rows}")
+    bad += check(summary == (1, 0, 1, 0, 0) and refusal is None
+                 and blocker is None,
+                 f"the final summary is still parsed: {summary}")
+    return bad
+
+
 # ---------------------------------------------------------------------------
 # The unit's OWN RETURN VALUE as an oracle
 # ---------------------------------------------------------------------------
@@ -7681,6 +7718,114 @@ def test_source_access_slots_substitute_helper_and_modifier_actuals():
     return bad
 
 
+def test_source_access_slots_treat_msg_sender_helper_actual_as_sender():
+    from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
+    from solidity_path_put import source_access_slot_vars  # noqa: E402
+
+    def ident(ref, name, ty="address"):
+        return {"nodeType": "Identifier", "name": name,
+                "referencedDeclaration": ref,
+                "typeDescriptions": {"typeString": ty}}
+
+    msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
+                  "expression": {"nodeType": "Identifier", "name": "msg"},
+                  "typeDescriptions": {"typeString": "address"}}
+
+    def call(ref, name, args=None, ty="address"):
+        return {"nodeType": "FunctionCall", "arguments": list(args or []),
+                "expression": ident(ref, name, ty),
+                "typeDescriptions": {"typeString": ty}}
+
+    def index(base, key, ty="uint256"):
+        return {"nodeType": "IndexAccess",
+                "baseExpression": base,
+                "indexExpression": key,
+                "typeDescriptions": {"typeString": ty}}
+
+    allow_owner = index(
+        ident(10, "_allowances",
+              "mapping(address => mapping(address => uint256))"),
+        ident(31, "owner", "address"),
+        "mapping(address => uint256)")
+    allow_owner_spender = index(
+        allow_owner, ident(32, "spender", "address"), "uint256")
+    ast = {"nodeType": "SourceUnit", "nodes": [
+        {"nodeType": "ContractDefinition", "name": "Context", "id": 1,
+         "linearizedBaseContracts": [1], "nodes": [
+             {"nodeType": "FunctionDefinition", "id": 30,
+              "name": "_msgSender",
+              "parameters": {"parameters": []},
+              "returnParameters": {"parameters": [{
+                  "id": 34, "name": "",
+                  "typeDescriptions": {"typeString": "address"}}]},
+              "body": {"nodeType": "Block", "statements": [
+                  {"nodeType": "Return", "expression": msg_sender}]}}]},
+        {"nodeType": "ContractDefinition", "name": "Token", "id": 2,
+         "linearizedBaseContracts": [2, 1], "nodes": [
+             {"nodeType": "VariableDeclaration", "id": 10,
+              "name": "_allowances", "stateVariable": True},
+             {"nodeType": "FunctionDefinition", "id": 20, "name": "approve",
+              "parameters": {"parameters": [
+                  {"nodeType": "VariableDeclaration", "id": 21,
+                   "name": "spender",
+                   "typeDescriptions": {"typeString": "address"}},
+                  {"nodeType": "VariableDeclaration", "id": 22,
+                   "name": "amount",
+                   "typeDescriptions": {"typeString": "uint256"}}]},
+              "body": {"nodeType": "Block", "statements": [{
+                  "nodeType": "ExpressionStatement",
+                  "expression": call(40, "_approve", [
+                      call(30, "_msgSender", []),
+                      ident(21, "spender", "address"),
+                      ident(22, "amount", "uint256")], "tuple()")}]}},
+             {"nodeType": "FunctionDefinition", "id": 40, "name": "_approve",
+              "parameters": {"parameters": [
+                  {"nodeType": "VariableDeclaration", "id": 31,
+                   "name": "owner",
+                   "typeDescriptions": {"typeString": "address"}},
+                  {"nodeType": "VariableDeclaration", "id": 32,
+                   "name": "spender",
+                   "typeDescriptions": {"typeString": "address"}},
+                  {"nodeType": "VariableDeclaration", "id": 33,
+                   "name": "amount",
+                   "typeDescriptions": {"typeString": "uint256"}}]},
+              "body": {"nodeType": "Block", "statements": [{
+                  "nodeType": "ExpressionStatement",
+                  "expression": {
+                      "nodeType": "Assignment", "operator": "=",
+                      "leftHandSide": allow_owner_spender,
+                      "rightHandSide": ident(33, "amount", "uint256")}}]}}
+         ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        accesses, evidence = unit_mapping_slot_accesses(
+            path, "Token", "approve", declaration_id=20)
+    finally:
+        os.unlink(path)
+    slots, used, skipped = source_access_slot_vars(
+        accesses,
+        {"_allowances": (3, ("address", "address"), 32, 0,
+                         "_allowances", None)},
+        params=[("spender", "address"), ("amount", "uint256")])
+    bad = 0
+    bad += check(accesses == [("_allowances",
+                               ("msg.sender", "spender"))],
+                 f"_msgSender() actual is substituted before source slot "
+                 f"selection: {accesses}")
+    bad += check(any("state._allowances[msg.sender][spender]" in line
+                     for line in evidence),
+                 f"evidence names the exact ERC20 approval slot: {evidence}")
+    bad += check(slots == ["_allowances[msg.sender][spender]"],
+                 f"source slot filter asks the exact approval slot only: "
+                 f"{slots}")
+    bad += check(used == {"_allowances"} and skipped == [],
+                 f"accepted exact slot suppresses cross-product fallback: "
+                 f"{used}, {skipped}")
+    return bad
+
+
 def test_source_access_slots_follow_call_options_wrapped_helpers():
     from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
     from solidity_path_put import source_access_slot_vars  # noqa: E402
@@ -10225,6 +10370,7 @@ def main():
               test_the_ladder_widens_every_named_loop,
               test_a_retry_that_produced_no_ladder_is_not_adopted,
               test_region_coordinate_ladder_refusal_is_read,
+              test_partial_ladder_rows_are_used_only_when_final_table_is_missing,
               test_a_widened_ladder_says_which_half_it_applies_to,
               test_the_cell_is_named_and_an_unsettled_one_says_so,
               test_the_emitted_test_carries_its_cell,
@@ -10387,6 +10533,7 @@ def main():
               test_source_access_slots_fold_safe_constant_keys,
               test_source_access_slots_resolve_local_key_aliases_in_order,
               test_source_access_slots_substitute_helper_and_modifier_actuals,
+              test_source_access_slots_treat_msg_sender_helper_actual_as_sender,
               test_source_access_slots_follow_call_options_wrapped_helpers,
               test_source_access_slots_render_state_struct_member_keys,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,

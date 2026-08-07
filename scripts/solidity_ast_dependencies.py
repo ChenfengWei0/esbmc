@@ -165,7 +165,7 @@ def unit_state_dependencies(ast_path, contract, unit, arity=None, declaration_id
 
 
 def _expr_coord_name(expr, state_by_id=None, constant_by_id=None,
-                     alias_by_id=None, seen=None):
+                     alias_by_id=None, seen=None, msg_sender_alias_ids=None):
     if isinstance(expr, str):
         return expr
     if not isinstance(expr, dict):
@@ -198,7 +198,12 @@ def _expr_coord_name(expr, state_by_id=None, constant_by_id=None,
         if target in ("address", "address payable", "payable", "uint",
                       "uint256", "bool") and len(args) == 1:
             return _expr_coord_name(args[0], state_by_id, constant_by_id,
-                                    alias_by_id, seen)
+                                    alias_by_id, seen, msg_sender_alias_ids)
+    if expr.get("nodeType") == "FunctionCall" and not expr.get("arguments"):
+        call_expr = expr.get("expression") or {}
+        ref = call_expr.get("referencedDeclaration")
+        if isinstance(ref, int) and ref in (msg_sender_alias_ids or set()):
+            return "msg.sender"
     if expr.get("nodeType") == "Identifier" and expr.get("name"):
         ref = expr.get("referencedDeclaration")
         if alias_by_id and ref in alias_by_id:
@@ -206,31 +211,33 @@ def _expr_coord_name(expr, state_by_id=None, constant_by_id=None,
                 return None
             seen.add(ref)
             return _expr_coord_name(alias_by_id[ref], state_by_id,
-                                    constant_by_id, alias_by_id, seen)
+                                    constant_by_id, alias_by_id, seen,
+                                    msg_sender_alias_ids)
         if constant_by_id and ref in constant_by_id:
             return _expr_coord_name(
                 constant_by_id[ref], state_by_id, constant_by_id,
-                alias_by_id, seen)
+                alias_by_id, seen, msg_sender_alias_ids)
         if state_by_id and ref in state_by_id:
             return "state." + state_by_id[ref]
         return expr["name"]
     if expr.get("nodeType") == "MemberAccess" and expr.get("memberName"):
         base = expr.get("expression") or {}
         base_name = _expr_coord_name(
-            base, state_by_id, constant_by_id, alias_by_id, seen)
+            base, state_by_id, constant_by_id, alias_by_id, seen,
+            msg_sender_alias_ids)
         if base_name:
             return f"{base_name}.{expr['memberName']}"
     return None
 
 
 def _index_access_chain(node, state_by_id=None, constant_by_id=None,
-                        alias_by_id=None):
+                        alias_by_id=None, msg_sender_alias_ids=None):
     keys = []
     cur = node
     while isinstance(cur, dict) and cur.get("nodeType") == "IndexAccess":
         key = _expr_coord_name(
             cur.get("indexExpression"), state_by_id, constant_by_id,
-            alias_by_id)
+            alias_by_id, msg_sender_alias_ids=msg_sender_alias_ids)
         if key is None:
             return None
         keys.append(key)
@@ -243,7 +250,7 @@ def _index_access_chain(node, state_by_id=None, constant_by_id=None,
 
 
 def _struct_member_slot_chain(node, state_by_id=None, constant_by_id=None,
-                              alias_by_id=None):
+                              alias_by_id=None, msg_sender_alias_ids=None):
     tail = []
     cur = node
     while isinstance(cur, dict) and cur.get("nodeType") == "MemberAccess":
@@ -257,7 +264,8 @@ def _struct_member_slot_chain(node, state_by_id=None, constant_by_id=None,
     base_ty = ((cur.get("typeDescriptions") or {}).get("typeString") or "")
     if "struct " not in base_ty:
         return None
-    got = _index_access_chain(cur, state_by_id, constant_by_id, alias_by_id)
+    got = _index_access_chain(cur, state_by_id, constant_by_id, alias_by_id,
+                              msg_sender_alias_ids)
     if got is None:
         return None
     ref, keys = got
@@ -337,6 +345,41 @@ def unit_mapping_slot_accesses(
         if node.get("nodeType") in ("FunctionDefinition",
                                     "ModifierDefinition") and node.get("body") is not None
     }
+    msg_sender_alias_ids = set()
+
+    def direct_msg_sender(expr):
+        return (isinstance(expr, dict)
+                and expr.get("nodeType") == "MemberAccess"
+                and expr.get("memberName") == "sender"
+                and isinstance(expr.get("expression"), dict)
+                and expr["expression"].get("nodeType") == "Identifier"
+                and expr["expression"].get("name") == "msg")
+
+    def single_return_expr(fn):
+        body = fn.get("body") or {}
+        statements = body.get("statements") or []
+        if len(statements) != 1:
+            return None
+        stmt = statements[0]
+        if not isinstance(stmt, dict) or stmt.get("nodeType") != "Return":
+            return None
+        return stmt.get("expression")
+
+    for ref, fn in callables.items():
+        if fn.get("nodeType") != "FunctionDefinition":
+            continue
+        if ((fn.get("parameters") or {}).get("parameters") or []):
+            continue
+        rets = (fn.get("returnParameters") or {}).get("parameters") or []
+        if len(rets) != 1:
+            continue
+        rty = ((rets[0].get("typeDescriptions") or {}).get("typeString")
+               or "")
+        if rty.replace(" payable", "") != "address":
+            continue
+        if direct_msg_sender(single_return_expr(fn)):
+            msg_sender_alias_ids.add(ref)
+
     best_callable_depth = {}
     found = {}
 
@@ -378,7 +421,8 @@ def unit_mapping_slot_accesses(
                 ref = declaration_ref(formal)
                 if ref is not None:
                     name = _expr_coord_name(
-                        actual, state_by_id, constant_by_id, alias_by_id)
+                        actual, state_by_id, constant_by_id, alias_by_id,
+                        msg_sender_alias_ids=msg_sender_alias_ids)
                     if name is not None:
                         out[ref] = name
             return out
@@ -422,13 +466,16 @@ def unit_mapping_slot_accesses(
                         ref = declaration_ref(decls[0])
                         if ref is not None:
                             name = _expr_coord_name(
-                                init, state_by_id, constant_by_id, alias_by_id)
+                                init, state_by_id, constant_by_id,
+                                alias_by_id,
+                                msg_sender_alias_ids=msg_sender_alias_ids)
                             if name is not None:
                                 alias_by_id[ref] = name
                     return
                 if value.get("nodeType") == "IndexAccess":
                     chain_got = _index_access_chain(
-                        value, state_by_id, constant_by_id, alias_by_id)
+                        value, state_by_id, constant_by_id, alias_by_id,
+                        msg_sender_alias_ids)
                     if chain_got:
                         ref, keys = chain_got
                         if ref in state_by_id:
@@ -443,7 +490,8 @@ def unit_mapping_slot_accesses(
                     return
                 if value.get("nodeType") == "MemberAccess":
                     member_got = _struct_member_slot_chain(
-                        value, state_by_id, constant_by_id, alias_by_id)
+                        value, state_by_id, constant_by_id, alias_by_id,
+                        msg_sender_alias_ids)
                     if member_got:
                         ref, keys, tail = member_got
                         if ref in state_by_id:
@@ -466,7 +514,8 @@ def unit_mapping_slot_accesses(
                         if value.get("operator") == "=":
                             name = _expr_coord_name(
                                 value.get("rightHandSide"), state_by_id,
-                                constant_by_id, alias_by_id)
+                                constant_by_id, alias_by_id,
+                                msg_sender_alias_ids=msg_sender_alias_ids)
                             if name is not None:
                                 alias_by_id[ref] = name
                             elif ref in alias_by_id:

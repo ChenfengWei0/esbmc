@@ -111,6 +111,7 @@ std::map<std::string, std::string> goto_coveraget::path_cov_refused_coords;
 bool goto_coveraget::path_cov_assert_mode = false;
 std::vector<goto_coveraget::assert_candidatet>
   goto_coveraget::path_cov_assert_candidates;
+std::set<std::string> goto_coveraget::path_cov_assert_partial_rows_published;
 std::pair<std::string, std::string>
   goto_coveraget::path_cov_assert_nonvacuous_key;
 std::string goto_coveraget::path_cov_fingerprint;
@@ -2402,6 +2403,53 @@ void goto_coveraget::report_path_cov_assertions()
     nv_unreached);
 }
 
+void goto_coveraget::publish_path_cov_assertion_partial_row_locked(
+  const std::string &claim_sig)
+{
+  if (!path_cov_assert_mode)
+    return;
+
+  const std::string nonvacuous = path_cov_assert_nonvacuous_key.first.empty()
+                                   ? std::string()
+                                   : path_cov_assert_nonvacuous_key.first +
+                                       "\t" +
+                                       path_cov_assert_nonvacuous_key.second;
+  if (claim_sig == nonvacuous)
+    return;
+
+  const assert_candidatet *cand = nullptr;
+  for (const auto &c : path_cov_assert_candidates)
+  {
+    if (c.key.first + "\t" + c.key.second == claim_sig)
+    {
+      cand = &c;
+      break;
+    }
+  }
+  if (cand == nullptr)
+    return;
+
+  auto it = claim_outcome.find(claim_sig);
+  if (it == claim_outcome.end())
+    return;
+  if (!path_cov_assert_partial_rows_published.insert(claim_sig).second)
+    return;
+
+  std::string verdict;
+  if (it->second == 'P')
+    verdict = "HOLDS";
+  else if (it->second == 'F')
+    verdict = "REFUTED";
+  else
+    verdict = "NO VERDICT (solver unknown)";
+
+  log_status(
+    "--path-cov-assert: PARTIAL ROW before final table: {}: {}  {}",
+    cand->var,
+    cand->text,
+    verdict);
+}
+
 bool goto_coveraget::focus_selects_unit(
   const std::string &unit_id,
   const std::string &focus)
@@ -4448,6 +4496,7 @@ void goto_coveraget::solidity_path_coverage()
   bool assert_vars_state_exact = false;
   path_cov_assert_mode = false;
   path_cov_assert_candidates.clear();
+  path_cov_assert_partial_rows_published.clear();
   if (!path_cov_assert_path.empty())
   {
     std::ifstream ain(path_cov_assert_path);

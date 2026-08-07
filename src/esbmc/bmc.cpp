@@ -4293,6 +4293,8 @@ smt_convt::resultt bmct::multi_property_check(
          claim.claim_property == "division-by-zero"))
         goto_coveraget::path_cov_certify_safety_refutations.emplace(
           claim.claim_msg, claim.claim_loc);
+
+      goto_coveraget::publish_path_cov_assertion_partial_row_locked(claim_sig);
     }
     else if (is_probe_claim)
     {

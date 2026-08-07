@@ -10945,6 +10945,136 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 source-access `_msgSender()` slot narrowing
+
+Problem:
+
+- The post-string-fix Peer approve mini-wave showed Stage2 region generation was
+  healthy, but `Arcadia_Token.approve` still failed the B gate because it
+  emitted a fuzz PUT with no oracle.
+- The Stage4 log showed the direct source slot as
+  `state._allowances[owner][spender]`, then skipped it because local/formal key
+  `owner` was not nameable by the PUT.
+- The source-R2 pass already knew how to treat `_msgSender()` as `msg.sender`,
+  but the Stage1 source-access miner did not.  Therefore
+  `approve() -> _approve(_msgSender(), spender, amount)` degraded to the
+  cross-product fallback over `_allowances`, asking 16 slots on Arcadia and
+  aborting the assertion ladder with exit `-6`.
+
+Code change:
+
+- `scripts/solidity_ast_dependencies.py` now recognizes a very narrow helper
+  alias in `_expr_coord_name`: a no-argument function whose sole return
+  statement is directly `msg.sender` may be rendered as `msg.sender`.
+- `unit_mapping_slot_accesses()` passes this helper-alias set through local
+  alias substitution, function actual substitution, index-chain extraction, and
+  struct-member mapping extraction.
+- The rule is intentionally not a proof shortcut.  It only names the exact
+  mapping slot to ask ESBMC about; any region or oracle still has to be proved
+  by the normal Stage2/Stage4 ESBMC queries.
+
+Validation without spending a new ESBMC case:
+
+- Added `test_source_access_slots_treat_msg_sender_helper_actual_as_sender`.
+  It models the ERC20 shape
+  `approve() -> _approve(_msgSender(), spender, amount)` and proves that the
+  mined source slot is exactly `_allowances[msg.sender][spender]`, suppressing
+  the fallback cross product.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 235 / 235 declared tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `git diff --check -- scripts/solidity_ast_dependencies.py scripts/test_solidity_path_put.py`
+  passed.
+
+Real Peer AST zero-ESBMC check:
+
+- Generated temporary solc ASTs under
+  `/tmp/veriput_ast_mining_check_1786064791`; subject files were not modified.
+- `AIRBets.approve#578`,
+  `Arcadia_Token.approve#732`, and
+  `Animalia.approve#1624` now all mine:
+  `_allowances[msg.sender][spender]`.
+- `source_access_slot_vars()` accepts that exact slot for all three and marks
+  `_allowances` as used, so the cross-product fallback should no longer be
+  proposed for these units.
+
+Stage4 Arcadia rerun after source-slot narrowing:
+
+- Reran Stage4 only for `Arcadia_Token.approve` from the existing certified
+  region under:
+  `/tmp/veriput_arcadia_msgsender_slot_fix_1786064892`.
+- The source slot priority was now exact:
+  `state._allowances[msg.sender][spender]`.
+- The assert query sent only the resolved source slot:
+  `_allowances[msg.sender][spender]`; the fallback cross product was suppressed.
+- The dependency-selected state candidate was the intended one:
+  `_allowances[msg.sender][spender]`.
+- Result still did not pass the B gate:
+  PUT emitted, Forge green, 2 fuzz params, 0 oracle asserts.
+- Important diagnosis from
+  `/tmp/veriput_arcadia_msgsender_slot_fix_1786064892/put-all/_wd/peer182__peer_ccsolbmc__Address__approve__pf732__15__arcadia-cert/assert/run.1.log`:
+  ESBMC solved at least one precise candidate
+  `approve:path:15#eq__allowances[msg.sender][spender]` and printed it as
+  FAILED, then threw `std::bad_alloc` before the final
+  `--path-cov-assert:` verdict table.  The external parser therefore saw
+  `NO ROW` even though ESBMC had already made a candidate verdict.
+- So the `_msgSender()` slot-nameability problem is fixed.  The next bottleneck
+  is preserving assertion-ladder verdicts across OOM/signal exits, especially
+  before the final table is printed.  R1 refuting `post == pre` is not itself
+  enough for a B oracle; R2 still needs a HOLDS row such as `post == amount`,
+  but losing already-decided rows makes both R1 diagnosis and R2 extraction
+  weaker than the solver actually achieved.
+
+## 2026-08-07 path-cov-assert partial verdict salvage
+
+Problem:
+
+- On heavy contracts, `--path-cov-assert` can decide individual assertion
+  candidates and then die before `report_path_cov_assertions()` prints the
+  final per-candidate table.
+- The Arcadia rerun above is the measured case: after exact source-slot
+  narrowing, ESBMC solved a candidate over
+  `_allowances[msg.sender][spender]`, then hit `std::bad_alloc`.  Stage4 saw no
+  structured row and treated the slot as `NO ROW`.
+
+Code change:
+
+- `src/goto-programs/goto_coverage.{h,cpp}` now keeps
+  `path_cov_assert_partial_rows_published` and exposes
+  `publish_path_cov_assertion_partial_row_locked()`.
+- `src/esbmc/bmc.cpp` calls that helper immediately after merging a path
+  coverage claim verdict into `claim_outcome`.
+- The helper is a no-op unless the claim is an assertion-ladder candidate.  It
+  skips the non-vacuity witness and prints at most one line per candidate:
+  `--path-cov-assert: PARTIAL ROW before final table: <var>: <text>  <verdict>`.
+- `scripts/solidity_path_put.py` parses these partial rows only as a salvage
+  channel: if the normal final table exists, final rows win; if the final table
+  is missing, partial rows are returned to the caller.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_ast_dependencies.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 236 / 236 declared tests.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_generalise.py`
+  passed.
+- `cmake --build build --target esbmc -j2`
+  passed.
+- Targeted CTest passed:
+  `regression/esbmc-solidity/solidity_path_cov_assert_mapping_slot_delta_named`,
+  `..._named_refused`,
+  `solidity_path_cov_assert_r1_pair_written`, and
+  `solidity_path_cov_partial_report_on_oom`.
+- Direct fault-injection smoke under
+  `/tmp/veriput_partial_assert_reg_1786066021` with
+  `solidity_path_cov_assert_r1_pair_written` and
+  `--path-cov-fault-after 2` printed partial rows such as
+  `bal: post == pre  REFUTED` before the injected `bad_alloc`.
+
 ## 2026-08-07 post-string-fix Peer approve mini-wave
 
 Purpose:
