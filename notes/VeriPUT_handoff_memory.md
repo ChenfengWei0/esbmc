@@ -11232,6 +11232,69 @@ Validation:
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
   passed: all 13 tests.
 
+## 2026-08-07 real203 limit140 capped wave with Stage-4 stop
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark real203 --limit 140 --order fast-first --jobs 2 --memlimit-gib 12 --mem-fraction 0.98 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100 --stage2-unit-timeout-cap-s 180 --zero-output-stage4-stop-s 30`
+
+Reason:
+
+- Validate the new `--zero-output-stage4-stop-s 30` scheduling guard on the
+  next small real203 tail wave.
+- Do not rerun completed rows; resume skipped through limit130 and queued 10
+  new subjects.
+
+Incremental result for the 10 new rows:
+
+- Status: 10 `no-output`.
+- Raw/valid: 0 / 0.
+- PUT raw/valid: 0 / 0.
+- Concrete raw/valid: 0 / 0.
+- Total wall: about 532.501s.
+- No OOM/timeout/error status.
+- `--zero-output-stage4-stop-s` did not trigger, because none of the 10 rows
+  reached a Stage-4 candidate run.  The bottleneck in this slice is Stage-2
+  witness/candidate production, not PUT emission after certification.
+
+Rows:
+
+- `CometFactoryWithExtendedAssetList`: 120.764s, Stage2 120.622s,
+  `KILLED=1`, stopped by Stage-2 no-output threshold.
+- `TokenPairRegistry`: 98.008s,
+  `NO-WITNESS-UNDECIDED=4`, `NO-WITNESS-UNKNOWN=11`.
+- `ChainReverseResolver`: 84.810s, `NO-WITNESS-UNKNOWN=16`.
+- `UniversalResolver`: 74.237s, `NO-WITNESS-UNKNOWN=17`.
+- `ETHRegistrarController`: 50.979s, `NO-WITNESS-UNKNOWN=13`.
+- `ClaimSignatureRegistry`: 50.226s, `NO-WITNESS-UNDECIDED=2`.
+- `TREXFactory`: 19.383s, `NO-WITNESS-UNKNOWN=10`.
+- `OffchainDNSResolver`: 12.227s, `NO-WITNESS-UNKNOWN=3`.
+- `BulkRenewal`: 11.214s, `NO-WITNESS-UNKNOWN=3`.
+- `StaticBulkRenewal`: 10.653s, `NO-WITNESS-UNKNOWN=3`.
+
+Updated cumulative real203 latest-key totals after the wave:
+
+- latest rows: 139.
+- Status: 23 `ok`, 114 `no-output`, 2 `no-units`.
+- Raw/valid: 123 / 117.
+- PUT raw/valid: 115 / 109.
+- Concrete raw/valid: 8 / 8.
+- Official `results_all.py` real203 line:
+  `veriput rounds=1 ran=139 raw_u=123 valid_u=117 raw_c=23 valid_c=23 coverage=11.3% VT/case=0.58`.
+- Official cost line:
+  `veriput 139 total_h=4.10 wall/subj=106.2+-140.4 peakRSS=1189+-2022MB`.
+- Official anomaly audit for real203 VeriPUT:
+  timeout/oom/error 0, sub-5s ok 0, raw>0 & valid==0 0.
+
+Interpretation:
+
+- Do not expand real203 further in fast-first order before strategy work.  The
+  last 20 new rows produced only one productive subject; the latest 10 produced
+  none.
+- Next useful work is Stage-2 strategy: better unit/subject priority, cheaper
+  no-witness rejection, and region/candidate improvements for ENS resolver,
+  Balancer registry, and Comet factory tails.
+
 ## 2026-08-07 real203 fast-first limit36 wave
 
 Production policy for RQ1 waves:
