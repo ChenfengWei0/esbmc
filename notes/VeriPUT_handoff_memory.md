@@ -15346,6 +15346,78 @@ Operational note:
   similar.  Continue in small resume waves and do not rerun completed subjects
   unless a wrapper/accounting bug invalidates the row.
 
+## 2026-08-07 peer182 fast-first limit182 final wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 182 --order fast-first --jobs 3 --memlimit-gib 11 --mem-fraction 0.95 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Post-run process check:
+
+- No residual `rq1_veriput_run`, `certify_all`, `put_all`, `esbmc`, or
+  `forge test` workers remained after the run.
+- This completed the full peer182 / `contracts080` VeriPUT run:
+  `ran=182 / 182`.
+
+Newly completed subjects in this final wave:
+
+- `peer_ccsolbmc__WickedCraniums`: ok/budget-exhausted, raw=5, valid=5,
+  PUT=5/5, wall=599.831s.
+- `peer_syntest__CryptoGhost`: no-output/early-stop-no-output, raw=0,
+  valid=0, wall=103.018s, reason no output after 102.1s Stage 2.
+
+Final peer182 aggregate:
+
+- Rows:
+  `182`.
+- Status counts:
+  `ok=102`, `no-output=69`, `no-units=5`, `timeout=6`.
+- Completion counts:
+  `ok=105`, `budget-exhausted=40`, `early-stop-no-output=26`,
+  `no-units=5`, `timeout=6`.
+- Raw / valid tests:
+  `415 / 360`.
+- PUT raw / valid:
+  `354 / 339`.
+- Concrete replay raw / valid:
+  `61 / 52`.
+- Subjects with raw tests:
+  `108`.
+- Subjects with valid tests:
+  `101`.
+- Rows with `valid=None`:
+  `6`.
+- Rows with `raw>0 && valid==0`:
+  `1` (`peer_ccsolbmc__shibabread`).
+- Oracle class totals:
+  `R0=318`, `R1=341`, `R2=1596`.
+- Oracle class combination totals:
+  `R0=318`, `R1=272`, `R1+R2=69`, `R2=1527`.
+
+Official `results_all.py --benchmark peer182` final snapshot:
+
+- VeriPUT row:
+  `ran=182`, `raw_u=415`, `valid_u=360`, `raw_c=108`,
+  `valid_c=101`, `coverage=55.5%`, `VT/case=1.98`.
+- Cost row:
+  `ran=182`, `total=11.71h`, `wall/subj=231.5+-251.3s`,
+  `peakRSS=3263+-4338MB`.
+- Anomaly audit:
+  `timeout/oom/error=6`, `sub-5s ok=0`, `raw>0 & valid==0=1`.
+- The only invariant violations reported by `results_all.py` were unrelated
+  multi-host cost comparability issues for Solar and SynTest.
+
+Final peer182 artifact/accounting note:
+
+- Official output root:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182`.
+- Raw and valid artifacts are retained under each
+  `subjects/<subject_id>` directory.
+- The JSON rows preserve timing fields, artifact paths, raw/valid retention
+  flags, and PUT oracle class metadata (`R0/R1/R2` and combinations).
+- `valid=None` timeout rows are archived raw outputs only; they must not be
+  counted as reference-valid in downstream mutation or regression scoring.
+
 ## 2026-08-07 certification-first retry planning
 
 Attempt-2 diagnostic run:
