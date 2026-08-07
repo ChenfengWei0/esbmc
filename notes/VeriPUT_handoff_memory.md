@@ -11014,6 +11014,161 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 RQ1 peer182 wave to limit 120 and zero-oracle accounting
+
+User requirements still active:
+
+- RQ1 output root is
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`.
+- Raw and valid artifacts must both be retained.
+- JSON must include timing statistics and resource budgets.
+- JSON must retain PUT/concrete split and R0/R1/R2 oracle class metadata.
+- Peer benchmark only runs `contract080` / `source_080` target contracts.
+- Do not edit `/home/samson/workspace/VeriPUT/Datasets` or prepared subject
+  directories.
+
+Command run for the next peer wave:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py \
+  --benchmark peer182 \
+  --limit 120 \
+  --order fast-first \
+  --jobs 2 \
+  --memlimit-gib 12 \
+  --timeout 600 \
+  --wrapper-grace 60 \
+  --resume \
+  --no-output-stage2-stop-s 100
+```
+
+Result snapshot over latest rows after the wave:
+
+- Latest rows: 121.
+- Status buckets:
+  - `ok`: 70
+  - `no-output`: 44
+  - `no-units`: 5
+  - `timeout`: 2
+- Completion buckets:
+  - `ok`: 99
+  - `budget-exhausted`: 9
+  - `early-stop-no-output`: 6
+  - `no-units`: 5
+  - `timeout`: 2
+- Raw / valid tests:
+  - raw total: 314
+  - valid total: 260
+  - PUT raw / valid: 259 / 221
+  - concrete raw / valid: 55 / 46
+  - valid subjects: 66
+- Oracle classes counted in generated PUT metadata:
+  - `R2`: 1279
+  - `R1`: 211
+  - `R0`: 194
+- Oracle class combinations:
+  - `R2`: 1227
+  - `R1`: 159
+  - `R1+R2`: 52
+  - `R0`: 194
+- Resource metadata:
+  - 109 rows at 12GiB mem budget.
+  - 12 older rows at 10GiB mem budget.
+  - median ok wall time about 47.8s.
+  - max ok wall time 623.1s (`RBC`, within 600s + 60s wrapper cap).
+
+`results_all.py --benchmark peer182` snapshot:
+
+- ran: 121
+- raw_u: 314
+- valid_u: 260
+- raw_c: 72
+- valid_c: 66
+- coverage: 36.3%
+- VT/case: 1.43
+- timeout/oom/error: 2
+- raw>0 & valid==0: 4
+- Note: the two timeout rows have `valid=None` and are not scored as valid by
+  `results_all.py`.
+
+New rows added by this wave:
+
+- `peer_ccsolbmc__RBC / RBC`: `ok`, `budget-exhausted`, raw=5 valid=5,
+  PUT 5/5, wall=623.1s, Stage2=271.0s, Stage4=351.9s, oracles
+  R0=5/R1=3/R2=11.
+- `peer_ccsolbmc__AssetTransfer / AssetTransfer`: `ok`, raw=13 valid=13,
+  PUT 12/12, concrete 1/1, wall=214.2s, Stage2=107.8s, Stage4=106.3s,
+  oracles R0=10/R1=17/R2=27.
+- `peer_ccsolbmc__SimpleECR20 / SimpleERC20`: `ok`, `budget-exhausted`,
+  raw=13 valid=10, PUT 10/13, wall=588.7s, Stage2=506.0s, Stage4=82.6s,
+  oracles R0=10/R1=4/R2=12.
+- `peer_solar__theRun / theRun`: `ok`, raw=8 valid=7, PUT 7/7,
+  concrete 0/1, wall=227.8s, Stage2=24.5s, Stage4=203.2s, oracles
+  R0=7/R1=10/R2=31.
+- `peer_solar__Reentrance / Reentrance`: `ok`, raw=2 valid=2, PUT 2/2,
+  wall=166.7s, Stage2=156.2s, Stage4=10.5s, oracles R0=2/R1=5/R2=18.
+- `peer_solar__Rubixi / Rubixi`: `ok`, raw=17 valid=16, PUT 16/16,
+  concrete 0/1, wall=380.2s, Stage2=153.2s, Stage4=226.7s, oracles
+  R0=16/R1=15/R2=64.
+- `peer_syntest__INS / INS`: `no-output`, wall=7.5s, reason
+  `NO-PATH=5, NO-WITNESS-UNDECIDED=1`.
+- `peer_ccsolbmc__MJCoin_Token / MJCoin_Token`: `timeout`, raw=3,
+  valid=None, PUT 3/3, wall=660.2s, Stage2=274.3s, Stage4=385.9s,
+  reason `put buyToken: timeout`, oracles R0=2/R1=11/R2=16.
+- `peer_ccsolbmc__GOLIATH / GOLIATH`: `timeout`, raw=4, valid=None,
+  PUT 4/4, wall=660.3s, Stage2=262.2s, Stage4=397.9s,
+  reason `put burn: timeout`, oracles R0=4/R1=5/R2=16.
+- `peer_syntest__WOLF / WOLF`: `no-output`, early stop, wall=110.6s,
+  reason no output after 110.6s; certification row for `transfer` was
+  `NO-PATH` after about 110.3s.
+- `peer_solar__MyAdvancedToken / MyAdvancedToken`: `no-output`, early stop,
+  raw=0, wall=229.3s, Stage2=202.2s, Stage4=27.0s.  Certification found one
+  certified region for `transfer`, but all three PUT attempts were refused
+  because they produced zero unconditional assertions / no oracle.
+- `peer_syntest__FreakCoin / FreakCoin`: `no-output`, early stop,
+  wall=183.3s, Stage2=183.2s.  Certification rows:
+  `setUniswapAddress` not-certified 20.1s, `approve` not-certified 41.9s,
+  `transfer` killed/inner-timeout 120.3s.
+
+Diagnosis:
+
+- The wave was productive: compared with limit108, it added 6 valid subjects
+  and 53 valid tests despite two timeout rows.
+- Strong examples include `AssetTransfer` 13/13 valid, `Rubixi` 16/16 valid
+  PUT, `Reentrance` 2/2 valid, `RBC` 5/5 valid, and `theRun` 7/7 PUT valid.
+- `MJCoin_Token` and `GOLIATH` timed out after producing raw PUT artifacts.
+  Current wrapper marks the subject `status=timeout`, leaves `valid=None`, and
+  `results_all.py` excludes them from valid scoring.  This is honest but
+  conservative; preserving partial valid counts on timeout would require a
+  deliberate policy change.
+- `SimpleECR20` exposed a counting bug: some rows had `kind=put`,
+  `forge_status=Success`, `asserts=0`, and `oracle_classes=[]`.  These are
+  zero-oracle artifacts and should not count as raw PUT deliverables.
+
+Code change after that diagnosis:
+
+- `notes/coverage/scripts/put_all.py` now treats a PUT row with zero
+  unconditional assertions as refused, even if the emitter wrote a Foundry
+  test and exited 0.
+- `notes/coverage/scripts/rq1_veriput_run.py` skips refused rows when building
+  `raw_tests` and `valid_tests`.
+- `scripts/test_put_all_accounting.py` now covers a zero-assertion PUT with
+  successful Forge replay and expects it to be refused, with gates other than
+  fuzz left unknown.
+- `scripts/test_rq1_veriput_run.py` now checks that refused PUT rows are not
+  listed as raw deliverables.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/test_put_all_accounting.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/test_put_all_accounting.py scripts/test_rq1_veriput_run.py`
+  passed.
+
 ## 2026-08-07 RQ1 production runner artifact schema
 
 User requirement recorded:

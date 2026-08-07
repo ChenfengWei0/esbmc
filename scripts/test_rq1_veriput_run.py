@@ -111,6 +111,18 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
                         "valid_reference_test": False,
                         "b": False,
                     },
+                    {
+                        "kind": "put",
+                        "unit": "approve",
+                        "enc": 9,
+                        "piece": None,
+                        "test": "test_put_Token_approve_path9",
+                        "file": "zero.t.sol",
+                        "forge_status": "Success",
+                        "valid_reference_test": False,
+                        "b": False,
+                        "refused": True,
+                    },
                 ],
             },
         }))
@@ -131,6 +143,9 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
         bad += check(len(summary["assertion_oracles"]) == 2
                      and summary["raw_tests"][0]["oracle_classes"] == ["R1", "R2"],
                      f"assertion metadata remains tied to artifacts: {summary}")
+        bad += check(len(summary["raw_tests"]) == 2
+                     and all(t["enc"] != 9 for t in summary["raw_tests"]),
+                     f"refused PUT rows are not raw deliverables: {summary}")
         return bad
 
 

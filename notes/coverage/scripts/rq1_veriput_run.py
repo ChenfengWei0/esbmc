@@ -545,6 +545,8 @@ def summarize_put_artifacts(put_root: Path) -> dict:
     raw_tests = []
     valid_tests = []
     for row in rows:
+        if row.get("refused"):
+            continue
         rec = by_test.get(row.get("test"), {})
         entry = {
             "kind": row.get("kind"),

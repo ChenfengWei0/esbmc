@@ -176,6 +176,9 @@ def main():
                             "test_cov_0()": {
                                 "status": "Success"
                             },
+                            "test_put_C_target_path3()": {
+                                "status": "Success"
+                            },
                         }
                     }
                 }),
@@ -205,14 +208,25 @@ def main():
                         "rendered_width": {},
                     },
                 }, "/tmp/forge-project", {}, True, "C"),
+                ("bench", "target", 3, None, 0, {
+                    "test": "test_put_C_target_path3",
+                    "file": "/tmp/zero.t.sol",
+                    "binary": {"binaryMtime": 123},
+                    "stats": {
+                        "fuzz_params": 1,
+                        "asserts": 0,
+                        "guarded_asserts": 0,
+                        "rendered_width": {"x": 2},
+                    },
+                }, "/tmp/forge-project", {"x": [0, 2]}, True, "C"),
             ], 10)
             bad += check("stage4-b-summary-counts-b",
                          (summary["b"], summary["certified_region_rows"]),
-                         (1, 2))
+                         (1, 3))
             bad += check("stage4-b-summary-forge-seen",
                          (summary["forge_seen"]["put"]["Success"],
                           summary["forge_seen"]["concrete"]["Success"]),
-                         (1, 1))
+                         (2, 1))
             bad += check("stage4-b-summary-row-gates",
                          summary["rows"][0]["gates"],
                          {"fuzz": True, "width": True, "assert": True,
@@ -225,6 +239,13 @@ def main():
             bad += check("stage4-valid-reference-test-split",
                          summary["valid_reference_tests"],
                          {"total": 2, "put": 1, "concrete": 1})
+            bad += check("stage4-zero-assert-put-refused",
+                         (summary["rows"][2]["refused"],
+                          summary["rows"][2]["valid_reference_test"],
+                          summary["rows"][2]["gates"]),
+                         (True, False,
+                          {"fuzz": False, "width": None, "assert": None,
+                           "green": None, "corpus": None}))
         finally:
             put_all.run_forge = old_run_forge
             put_all.current_binary_identity = old_binary

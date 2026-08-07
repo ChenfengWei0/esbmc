@@ -914,15 +914,18 @@ def main():
         # 10 assertions and 2 pieces of decoration.
         gd = st.get("guarded_asserts", 0)
         ar_txt = f"{ar - gd}+{gd}c" if gd else str(ar)
+        uncond = ar - gd
         if rc == 0 and kind == "concrete":
             n_concrete += 1
             outcome = "CONCRETE " + os.path.basename(rec.get("file", ""))
-        elif rc == 0:
+        elif rc == 0 and uncond > 0:
             n_put += 1
             n_fuzz += 1 if fz else 0
-            n_oracle += 1 if (ar - gd) else 0
-            n_both += 1 if (fz and (ar - gd)) else 0
+            n_oracle += 1 if uncond else 0
+            n_both += 1 if (fz and uncond) else 0
             outcome = os.path.basename(rec.get("file", ""))
+        elif rc == 0:
+            outcome = "REFUSED: zero unconditional assertions"
         elif rc == 2:
             outcome = "REFUSED: " + str(rec.get("refused"))
         elif args.forge_only:
@@ -1232,7 +1235,11 @@ def b_report(results, forge_timeout):
                 n_refused += 1
             continue
 
-        g1 = rc == 0 and fz > 0
+        # A PUT with zero unconditional assertions is not a deliverable PUT,
+        # even if the emitter wrote a Foundry file and exited 0.  Treat it like
+        # a refusal so raw accounting does not count a green no-oracle test.
+        refused = refused or uncond <= 0
+        g1 = rc == 0 and not refused and fz > 0
         g2 = any(width > 1 for width in (st.get("rendered_width") or {}).values())
         g3 = uncond > 0
         # The PUT's own test function, named by the emitter as
@@ -1325,11 +1332,16 @@ def b_report(results, forge_timeout):
               + ("**B**" if ok else
                  ("REFUSED" if refused else ("STALE" if stale else ""))))
         if refused:
-            print(f"      ⛔ NOT COUNTED: the emitter exited {rc} and wrote no "
-                  f"PUT in this tree, so gates 2-5 above are UNKNOWN -- they "
-                  f"would have been read off the PREVIOUS run's put.json and "
-                  f"the .t.sol still on disk. See the per-region log for the "
-                  f"refusal.")
+            if rc == 0:
+                print("      ⛔ NOT COUNTED: this PUT has zero unconditional "
+                      "assertions, so it is a no-oracle artifact even though "
+                      "the emitter wrote a Foundry test.")
+            else:
+                print(f"      ⛔ NOT COUNTED: the emitter exited {rc} and "
+                      "wrote no PUT in this tree, so gates 2-5 above are "
+                      "UNKNOWN -- they would have been read off the PREVIOUS "
+                      "run's put.json and the .t.sol still on disk. See the "
+                      "per-region log for the refusal.")
             n_refused += 1
         if stale:
             print(f"      ⛔ NOT COUNTED: {stale}")
@@ -1347,8 +1359,8 @@ def b_report(results, forge_timeout):
           f"({valid_reference_tests['put']} PUT, "
           f"{valid_reference_tests['concrete']} concrete)")
     print(f"  {n_refused} row(s) were EXCLUDED as REFUSED -- the emitter "
-          f"produced no PUT for them in this tree, so nothing in their row was "
-          f"measured here. They are UNKNOWN, not failures.")
+          f"produced no deliverable PUT for them in this tree, so nothing in "
+          f"their row was measured here. They are UNKNOWN, not failures.")
     print(f"  {n_stale} row(s) were EXCLUDED as STALE -- their put.json names a "
           f"different executable, so nothing about them was measured by this "
           f"tree. Re-emit (drop --forge-only) to bring them back.")
