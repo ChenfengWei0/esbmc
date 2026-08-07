@@ -11164,6 +11164,70 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 FrontRunner PUT assembly fixes
+
+Targeted failing bucket:
+
+- Subject:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/peer_ccsolbmc__FrontRunner`.
+- Weak rows before this investigation:
+  `peer182__peer_ccsolbmc__FrontRunner` had `put_valid=2/6`;
+  both `ethToToken` PUTs and both `tokenToEth` PUTs were Forge `UNKNOWN`
+  because `forge test --json` could not parse compiler output.
+- First full error was Solidity type checking, not ESBMC certification:
+  replay calls passed plain `address(...)` to `address payable` parameters.
+
+Code changes:
+
+- `scripts/solidity_path_put.py` now repairs same-unit replay calls whose AST
+  parameter type is `address payable`, wrapping the argument as
+  `payable(...)`. This covers replay-prefix calls as well as the lifted target
+  call.
+- `assemble_put_source` now deletes all stale `test_cov_*` functions before
+  inserting the PUT and adjusts the insertion point. The old order inserted
+  first, then deleted using original line numbers, so stale concrete replays in
+  later test contracts survived and could kill Forge compilation.
+- Pre-target same-unit replay calls that were bare normal-exit concrete
+  assertions are converted to revert-tolerant setup calls. The generated PUT's
+  R0 oracle belongs only to the lifted target call.
+- `establish_env_sender` now inserts a target-local `vm.prank(...)` when an
+  earlier prank is separated from the target call by replay setup. Replacing
+  the earlier prank was wrong under Foundry semantics because `vm.prank` only
+  applies to the next call.
+
+Validation:
+
+- Pure checks passed:
+  - `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  - `python3 scripts/test_solidity_path_put.py` (`246` tests)
+  - `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  - `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+- Temporary Stage-4 probe, not official RQ1 output:
+  `/tmp/veriput_front_payable_probe2_1786135818`.
+  - After payable + stale replay fixes, `ethToToken` moved from Forge
+    `UNKNOWN` to measurable: `enc=6` green, `enc=7` red.
+- Temporary Stage-4 probe after target-local prank/setup fixes:
+  `/tmp/veriput_front_prank_probe_1786136109`.
+  - `ethToToken enc=6` remains green (`B`).
+  - `ethToToken enc=7` remains red, but for a different and now explicit
+    external-dependency reason:
+    `call to non-contract address 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D`
+    at `usi.WETH()`.
+
+Important remaining diagnosis:
+
+- The current red `ethToToken enc=7` is not a payable/type/stale-replay/prank
+  assembly failure. It is a Foundry reference environment mismatch: `usi` is a
+  mainnet router address in the contract state, but the local Foundry project
+  has no code at that address. ESBMC models external interface calls, while the
+  generated reference test needs an interface mock/etch for calls such as
+  `WETH()` and swap methods if we want normal-exit paths through router-like
+  dependencies to be green.
+- This likely generalizes beyond `FrontRunner`: normal-exit PUTs through
+  external interfaces can be red unless the test project installs a mock at the
+  tracked address. Treat this as the next separate repair class, not as a
+  region or R2 proof problem.
+
 ## 2026-08-08: normal-exit try/catch unwrap for return/R0 oracles
 
 Context:

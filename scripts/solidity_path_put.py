@@ -5143,6 +5143,97 @@ def call_arg_expr(sol_type, kind, width, var):
     return var
 
 
+def _payable_arg_expr(arg):
+    text = (arg or "").strip()
+    if text.startswith("payable("):
+        return arg
+    return f"payable({arg})"
+
+
+def _is_address_payable_type(sol_type):
+    return (sol_type or "").strip() == "address payable"
+
+
+def repair_payable_replay_call_args(lines, unit, params):
+    """Cast replay-call arguments whose declaration is `address payable`.
+
+    The main PUT call is rewritten from the AST-backed parameter table, but the
+    replay prefix is kept from ESBMC's concrete testcase.  Older ESBMC emitters
+    spell payable address literals as plain `address(...)`, which Solidity
+    refuses for high-level calls to `address payable` parameters.
+    """
+    if not params or not any(_is_address_payable_type(ty)
+                             for _name, ty in params):
+        return list(lines), 0
+    out, changed = [], 0
+    for line in lines:
+        span = call_arg_span(line, unit)
+        if span is None:
+            out.append(line)
+            continue
+        start, end, sig_offset, args = span
+        if sig_offset:
+            out.append(line)
+            continue
+        if len(args) != len(params):
+            out.append(line)
+            continue
+        repl = {}
+        for idx, (_name, ty) in enumerate(params):
+            if _is_address_payable_type(ty):
+                casted = _payable_arg_expr(args[idx])
+                if casted != args[idx]:
+                    repl[idx] = casted
+        if not repl:
+            out.append(line)
+            continue
+        new_args = list(args)
+        for idx, text in repl.items():
+            new_args[idx] = text
+        out.append(line[:start] + ", ".join(new_args) + line[end:])
+        changed += 1
+    return out, changed
+
+
+def _setup_try_call(line, unit):
+    stripped = line.strip()
+    if stripped.startswith("try ") or not stripped.endswith(";"):
+        return None
+    if ".call" in stripped or "=" in stripped:
+        return None
+    span = call_arg_span(line, unit)
+    if span is None or span[2]:
+        return None
+    indent = line[:len(line) - len(line.lstrip())]
+    return f"{indent}try {stripped[:-1]} {{}} catch {{}}"
+
+
+def tolerate_setup_unit_calls(lines, call_i, unit):
+    """Make pre-target same-unit replay calls non-oracular setup.
+
+    A PUT's R0 oracle belongs to the lifted target call.  Concrete replay
+    statements before it may still be useful setup, but their original
+    `[asserted]` normal-exit marker is a concrete-test oracle and must not make
+    the generated PUT fail before it reaches its own entry-state block.
+    """
+    out = list(lines)
+    changed = 0
+    for i in range(max(0, call_i)):
+        repl = _setup_try_call(out[i], unit)
+        if repl is None:
+            continue
+        out[i] = repl
+        changed += 1
+        j = i - 1
+        while j >= 0 and not out[j].strip():
+            j -= 1
+        if j >= 0 and "[asserted] path exits normally" in out[j]:
+            indent = out[j][:len(out[j]) - len(out[j].lstrip())]
+            out[j] = (indent + "// [revert-tolerant setup] prior replay "
+                      "call outcome is not asserted by this PUT")
+    return out, changed
+
+
 def named_params(params):
     """Stable names for anonymous or duplicate Solidity parameters."""
     out, used = [], set()
@@ -5776,11 +5867,20 @@ def establish_env_sender(body, call_i, region, holes, pins, used,
     for i in range(min(stmt_i, len(new_body))):
         if _PRANK_RE.search(new_body[i]):
             last = i
-    if last is None:
+    last_governs = False
+    if last is not None:
+        last_governs = all(
+            (not ln.strip()) or ln.strip().startswith("//")
+            for ln in new_body[last + 1:stmt_i])
+    if last is None or not last_governs:
         add = ([fund] if fund else []) + [prank]
         new_body[stmt_i:stmt_i] = add
         call_i += len(add)
-        note += " (no prank was present, so one was inserted)"
+        if last is None:
+            note += " (no prank was present, so one was inserted)"
+        else:
+            note += (" (the earlier prank is separated from this target call "
+                     "by replay setup, so a target-local prank was inserted)")
     else:
         note += f" (replacing `{new_body[last].strip()}`)"
         new_body[last] = prank
@@ -6578,6 +6678,20 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         notes.append(f"declared arity {len(params)} != emitted arity "
                      f"{len(args)}; refusing to rewrite positionally")
         return None, None
+    body, payable_replay_repairs = repair_payable_replay_call_args(
+        body, unit, params)
+    if payable_replay_repairs:
+        call_line = body[call_i]
+        notes.append(
+            f"repaired {payable_replay_repairs} replay call(s) to pass "
+            "`address payable` arguments with an explicit payable(...) cast")
+    body, setup_calls_tolerated = tolerate_setup_unit_calls(body, call_i, unit)
+    if setup_calls_tolerated:
+        call_line = body[call_i]
+        notes.append(
+            f"made {setup_calls_tolerated} pre-target replay call(s) "
+            "revert-tolerant setup; the PUT's exit oracle belongs only to "
+            "the lifted target call")
 
     lifted, repl, sig, pre_lines = [], {}, [], []
     implicit_full = set(implicit_full)
@@ -8535,16 +8649,20 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
     inserted = []
     for put in puts:
         inserted += put
-    lines[cend:cend] = inserted
     # The `test_cov_*` cases are the concrete replay source of truth, but they
     # are not part of the PUT deliverable. Keeping them in the assembled project
     # lets stale replay details fail compilation before forge can measure the
     # generated `test_put_*` row. Measured on st1inch disabled ERC20 entries:
     # the PUT call was repaired to `transfer(arg0,arg1)`, while the retained
     # concrete case still contained `transfer()` and killed the whole project.
+    insert_at = cend
+    for _ci, _name, _claims, (fs, fe) in emitted.cases:
+        if fs < cend:
+            insert_at -= fe - fs + 1
     for _ci, _name, _claims, (fs, fe) in sorted(
             emitted.cases, key=lambda item: item[3][0], reverse=True):
         del lines[fs:fe + 1]
+    lines[insert_at:insert_at] = inserted
     if fixture is not None and contract is not None and unit is not None:
         lines = apply_foundry_fixture(lines, emitted, case, unit, contract,
                                       fixture, layout)

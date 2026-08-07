@@ -590,6 +590,64 @@ def test_env_sender_disagreement_is_ESTABLISHED_not_refused():
     return bad
 
 
+def test_target_sender_prank_is_inserted_after_replay_setup():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Vault} from "./Vault.sol";
+contract VaultCovTest is Test {
+  Vault c1;
+  function setUp() public {
+    c1 = new Vault();
+  }
+  // claim: sol:@C@Vault@F@pay#41:path:7
+  function test_cov_0() public {
+    vm.prank(address(uint160(1)));
+    // [asserted] path exits normally; a revert fails the test
+    c1.pay(1);
+    // [revert-tolerant] outcome not asserted
+    try c1.pay(2) {} catch {}
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Vault@F@pay#41", 7)
+    notes = []
+    put, stats = build_put(
+        "Vault", "pay", 7, 1, "sol:@C@Vault@F@pay#41",
+        region={"msg.sender": (0, (1 << 160) - 1),
+                "amount": (0, 10)},
+        holes={}, pins={}, params=[("amount", "uint256")],
+        emitted=em, case=case, layout={}, ladder_rows=[], notes=notes)
+    text = "\n".join(put or [])
+    old_prank = text.find("vm.prank(address(uint160(1)));")
+    setup_call = text.find("try c1.pay(1) {} catch {}")
+    target_prank = text.rfind("vm.prank(p_msg_sender);")
+    target_call = text.rfind("try c1.pay(amount) {} catch {}")
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    bad += check(old_prank != -1 and setup_call != -1
+                 and old_prank < setup_call,
+                 "the original replay prank stays with the replay setup")
+    bad += check(target_prank != -1 and target_call != -1
+                 and setup_call < target_prank < target_call,
+                 "a target-local prank is inserted after replay setup")
+    bad += check("[revert-tolerant setup]" in text,
+                 "the prefix normal-exit assertion is not a PUT oracle")
+    bad += check(any("pre-target replay call" in n for n in notes),
+                 f"the setup tolerance is reported: {notes}")
+    bad += check(stats and "msg.sender" in stats.get("wide_fuzz_coords", []),
+                 f"sender fuzz width is still counted: {stats}")
+    return bad
+
+
 def test_env_value_pin_disagreement_refuses():
     """`msg.value == 7` against a call carrying no `{value:}`: REFUSE.
 
@@ -10494,6 +10552,57 @@ contract VaultCovTest is Test {
     return bad
 
 
+def test_address_payable_replay_prefix_calls_are_cast():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Vault} from "./Vault.sol";
+contract VaultCovTest is Test {
+  Vault c1;
+  function setUp() public {
+    c1 = new Vault();
+  }
+  // claim: sol:@C@Vault@F@pay#41:path:7
+  function test_cov_0() public {
+    // [revert-tolerant] outcome not asserted
+    try c1.pay(address(uint160(1))) {} catch {}
+    // [revert-tolerant] outcome not asserted
+    try c1.pay(address(uint160(2))) {} catch {}
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Vault@F@pay#41", 7)
+    notes = []
+    put, stats = build_put(
+        "Vault", "pay", 7, 1, "sol:@C@Vault@F@pay#41",
+        region={"to": (0, (1 << 160) - 1)}, holes={}, pins={},
+        params=[("to", "address payable")], emitted=em, case=case,
+        layout={}, ladder_rows=[], notes=notes,
+        lift_unconstrained_calldata=True)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    bad += check("try c1.pay(payable(address(uint160(1)))) {} catch {}"
+                 in text,
+                 "the replay prefix casts its payable literal")
+    bad += check("try c1.pay(payable(to)) {} catch {}" in text,
+                 "the lifted target call still casts the fuzz address")
+    bad += check(any("repaired 2 replay call" in n for n in notes),
+                 f"the repair is visible in notes: {notes}")
+    bad += check(stats and stats["fuzz_params"] == 1,
+                 f"the payable repair does not change PUT width accounting: "
+                 f"{stats}")
+    return bad
+
+
 def test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input():
     emitted = """\
 // SPDX-License-Identifier: MIT
@@ -10592,6 +10701,59 @@ def test_assembled_put_source_drops_stale_concrete_replays():
                  "the generated PUT remains")
     bad += check("try c1.approve(arg0, arg1) {} catch" in text,
                  "and the repaired PUT call is present")
+    return bad
+
+
+def test_assembled_put_source_drops_stale_replays_in_later_contracts():
+    """Deleting stale replays must use pre-insertion line numbers."""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Vault} from "./Vault.sol";
+contract VaultCovTest_0 is Test {
+  Vault c1;
+  function setUp() public {
+    c1 = new Vault();
+  }
+  // claim: sol:@C@Vault@F@pay#41:path:7
+  function test_cov_0() public {
+    try c1.pay(address(uint160(1))) {} catch {}
+  }
+}
+contract VaultCovTest_1 is Test {
+  Vault c1;
+  function setUp() public {
+    c1 = new Vault();
+  }
+  // claim: sol:@C@Vault@F@pay#41:path:6
+  function test_cov_1() public {
+    try c1.pay(address(uint160(2))) {} catch {}
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Vault@F@pay#41", 7)
+    put = [
+        "",
+        "  function test_put_Vault_pay_path7(address to) public {",
+        "    try c1.pay(payable(to)) {} catch {}",
+        "  }",
+    ]
+    text = assemble_put_source(em, case, [put], "VaultCovTest_0_put")
+    bad = 0
+    bad += check("function test_put_Vault_pay_path7" in text,
+                 "the generated PUT is inserted")
+    bad += check("function test_cov_" not in text,
+                 "stale concrete replays are removed across all contracts")
+    bad += check("address(uint160(2))" not in text,
+                 "the later contract's stale body is not left behind")
     return bad
 
 
@@ -10700,6 +10862,7 @@ def main():
               test_region_bound_still_wins_over_a_duplicate_pin,
               test_env_agreement_emits_when_the_preamble_matches,
               test_env_sender_disagreement_is_ESTABLISHED_not_refused,
+              test_target_sender_prank_is_inserted_after_replay_setup,
               test_env_value_pin_disagreement_refuses,
               test_msg_value_without_a_value_option_is_still_CHECKED_and_refuses,
               test_uncomparable_env_quantity_refuses_emission,
@@ -10902,9 +11065,11 @@ def main():
               test_missing_replay_args_become_full_domain_fuzz_inputs,
               test_unconstrained_replay_args_become_full_domain_fuzz_inputs,
               test_missing_address_payable_replay_arg_casts_at_the_unit_call,
+              test_address_payable_replay_prefix_calls_are_cast,
               test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input,
               test_missing_low_level_value_gate_args_update_abi_signature,
               test_assembled_put_source_drops_stale_concrete_replays,
+              test_assembled_put_source_drops_stale_replays_in_later_contracts,
               test_assembled_concrete_source_keeps_only_the_selected_replay,
               test_the_funding_line_precedes_the_prank,
               test_a_value_gate_certified_at_ZERO_still_REFUSES):
