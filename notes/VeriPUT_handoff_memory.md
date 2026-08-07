@@ -11164,6 +11164,75 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 FrontRunner Runtime Interface And R2 Arithmetic Fixes
+
+Context:
+
+- Temp probe before this fix:
+  `/tmp/veriput_front_runtime_mock_probe_1786136820`.
+- Target:
+  `peer182__peer_ccsolbmc__FrontRunner.ethToToken`.
+- The earlier payable/stale/prank fixes made enc=6 green, but enc=7 still
+  failed because the Foundry reference environment had no code at the literal
+  Uniswap router address that ESBMC models abstractly.
+
+Code changes:
+
+- `scripts/solidity_path_put.py` now detects literal-address interface state
+  variables in `src/flat.sol`, e.g.
+  `IUniswapV2Router02 usi = IUniswapV2Router02(0x...)`.
+- For actually-called interface methods on those variables, Stage 4 emits
+  Foundry runtime fixtures after target deployment:
+  - `vm.etch(address, hex"00")`;
+  - `vm.mockCall(address, abi.encodeWithSignature(...), abi.encode(...))`.
+- The ABI signature parser now keeps `returns (...)`; the first draft parsed
+  `WETH()` and swap signatures but lost return types, which would have mocked
+  them as empty returns.
+- Runtime mocks are inserted after any constructor `vm.clearMockedCalls()`.
+  Constructor staticcall mocks still live only around deployment; runtime
+  interface mocks must survive into the test call.
+- Runtime mock counts are recorded in `put.json` as:
+  - `runtime_interface_mocks`;
+  - `runtime_interface_mock_calls`.
+- `run_forge_r2_prefilter` now receives the same constructor/runtime mocks as
+  final PUT assembly, so fuzz-refutation probes run in the same replay
+  environment.
+- R2 assertion rendering now wraps any assertion line whose expression contains
+  Solidity arithmetic in `unchecked { ... }`.
+  This preserves the comparison oracle while preventing Solidity 0.8 checked
+  arithmetic from making the oracle expression itself panic.  The failure
+  observed on enc=7 was `_pre_manager * _pre_manager` over a 160-bit address
+  value, not a contract violation.
+
+Validation:
+
+- `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `python3 scripts/test_solidity_path_put.py` passed: 248 / 248 tests.
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- Temp probe after runtime mocks but before unchecked R2 arithmetic:
+  `/tmp/veriput_front_runtime_mock_probe_1786136820`.
+  Result: ethToToken enc=6 green, enc=7 still red with
+  `panic: arithmetic underflow or overflow (0x11)` inside generated oracle
+  arithmetic.
+- Temp probe after both fixes:
+  `/tmp/veriput_front_unchecked_r2_probe_1786137099`.
+  Result: `FrontRunner.ethToToken` 2 / 2 valid PUTs, 0 concrete replays.
+  Both generated tests have fuzz params and oracles and pass the reference
+  contract:
+  - enc=7: 3 fuzz params, 15 asserts, B;
+  - enc=6: 3 fuzz params, 1 assert, B.
+
+Implication:
+
+- This is not POC overfitting.  The runtime fixture handles a common benchmark
+  gap where ESBMC models external interface calls but local Foundry replay calls
+  a literal EOA-like address.  The unchecked R2 arithmetic fix is a generic
+  replay/oracle semantic alignment issue for Solidity 0.8.
+
 ## 2026-08-08 FrontRunner PUT assembly fixes
 
 Targeted failing bucket:

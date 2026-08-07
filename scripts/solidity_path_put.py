@@ -3642,6 +3642,13 @@ def post_rung_term_spellings(text):
     return []
 
 
+def _oracle_assert_line(line):
+    code = _strip_strings(line)
+    if "assert" in code and re.search(r"\s[+\-*/]\s", code):
+        return "    unchecked { " + line.strip() + " }"
+    return line
+
+
 def rung_assertions(text, pre, post, label, idents=None, idents_abs=None,
                     r2_terms=None):
     """Forge assertion lines for one rung, or None if it cannot be spelled.
@@ -3666,14 +3673,17 @@ def rung_assertions(text, pre, post, label, idents=None, idents_abs=None,
     if text.startswith("post == ") and text != "post == pre":
         expr = structured(text[len("post == "):], idents_abs)
         if expr is not None:
-            return [f"    assertEq({post}, {expr}, {lit});"]
+            return [_oracle_assert_line(
+                f"    assertEq({post}, {expr}, {lit});")]
     m = re.match(r"^post in \[(.*), (.*)\]$", text)
     if m:
         lo = structured(m.group(1), idents_abs)
         hi = structured(m.group(2), idents_abs)
         if lo is not None and hi is not None:
-            return [f"    assertGe({post}, {lo}, {lit});",
-                    f"    assertLe({post}, {hi}, {lit});"]
+            return [_oracle_assert_line(
+                f"    assertGe({post}, {lo}, {lit});"),
+                    _oracle_assert_line(
+                        f"    assertLe({post}, {hi}, {lit});")]
     m = re.match(r"^(post - pre|pre - post) in \[(.*), (.*)\] with "
                  r"(post >= pre|pre >= post)$", text)
     if m:
@@ -3682,9 +3692,11 @@ def rung_assertions(text, pre, post, label, idents=None, idents_abs=None,
         if lo is not None and hi is not None:
             lhs, rhs = ((post, pre) if m.group(1) == "post - pre"
                         else (pre, post))
-            return [f"    assertGe({lhs}, {rhs}, {lit});",
-                    f"    assertGe({lhs} - {rhs}, {lo}, {lit});",
-                    f"    assertLe({lhs} - {rhs}, {hi}, {lit});"]
+            return [_oracle_assert_line(f"    assertGe({lhs}, {rhs}, {lit});"),
+                    _oracle_assert_line(
+                        f"    assertGe({lhs} - {rhs}, {lo}, {lit});"),
+                    _oracle_assert_line(
+                        f"    assertLe({lhs} - {rhs}, {hi}, {lit});")]
     m = re.match(r"^post (==|!=|>=|<=|>|<) pre$", text)
     if m:
         op = m.group(1)
@@ -3708,26 +3720,30 @@ def rung_assertions(text, pre, post, label, idents=None, idents_abs=None,
         e = None if lo is None or hi is None else (lo, hi)
         if e is None:
             return None
-        return [f"    assertGe({post}, {e[0]}, {lit});",
-                f"    assertLe({post}, {e[1]}, {lit});"]
+        return [_oracle_assert_line(f"    assertGe({post}, {e[0]}, {lit});"),
+                _oracle_assert_line(f"    assertLe({post}, {e[1]}, {lit});")]
     m = re.match(r"^post - pre in \[%s, %s\] with post >= pre$" % (_BND, _BND),
                  text)
     if m:
         e = ends(m)
         if e is None:
             return None
-        return [f"    assertGe({post}, {pre}, {lit});",
-                f"    assertGe({post} - {pre}, {e[0]}, {lit});",
-                f"    assertLe({post} - {pre}, {e[1]}, {lit});"]
+        return [_oracle_assert_line(f"    assertGe({post}, {pre}, {lit});"),
+                _oracle_assert_line(
+                    f"    assertGe({post} - {pre}, {e[0]}, {lit});"),
+                _oracle_assert_line(
+                    f"    assertLe({post} - {pre}, {e[1]}, {lit});")]
     m = re.match(r"^pre - post in \[%s, %s\] with pre >= post$" % (_BND, _BND),
                  text)
     if m:
         e = ends(m)
         if e is None:
             return None
-        return [f"    assertGe({pre}, {post}, {lit});",
-                f"    assertGe({pre} - {post}, {e[0]}, {lit});",
-                f"    assertLe({pre} - {post}, {e[1]}, {lit});"]
+        return [_oracle_assert_line(f"    assertGe({pre}, {post}, {lit});"),
+                _oracle_assert_line(
+                    f"    assertGe({pre} - {post}, {e[0]}, {lit});"),
+                _oracle_assert_line(
+                    f"    assertLe({pre} - {post}, {e[1]}, {lit});")]
     return None
 
 
@@ -8460,6 +8476,123 @@ def _staticcall_return_types(source):
     return out
 
 
+def _function_sig_type(raw):
+    text = re.sub(r"\s+", " ", (raw or "").strip())
+    if not text:
+        return None
+    parts = text.split()
+    if len(parts) >= 2 and parts[-2] in ("memory", "calldata", "storage"):
+        parts = parts[:-2]
+    elif len(parts) >= 2:
+        parts = parts[:-1]
+    text = " ".join(p for p in parts
+                    if p not in ("memory", "calldata", "storage", "payable"))
+    return {"uint": "uint256", "int": "int256"}.get(text, text)
+
+
+def _function_return_types(raw):
+    if not raw:
+        return []
+    out = []
+    for item in split_top_level(raw):
+        typ = _function_sig_type(item)
+        if typ:
+            out.append(typ)
+    return out
+
+
+def _source_function_abis(source):
+    out = {}
+    rx = re.compile(r"\bfunction\s+([A-Za-z_]\w*)\s*\((.*?)\)\s*([^;{]*)[;{]",
+                    re.S)
+    for m in rx.finditer(source):
+        params = []
+        ok = True
+        for item in split_top_level(m.group(2)):
+            if not item:
+                continue
+            typ = _function_sig_type(item)
+            if not typ:
+                ok = False
+                break
+            params.append(typ)
+        if not ok:
+            continue
+        signature = f"{m.group(1)}({','.join(params)})"
+        returns = []
+        rm = re.search(r"\breturns\s*\((.*?)\)", m.group(3), re.S)
+        if rm:
+            returns = _function_return_types(rm.group(1))
+        out.setdefault(m.group(1), []).append(
+            (signature, returns))
+    return out
+
+
+def _literal_interface_state_addresses(source):
+    out = []
+    rx = re.compile(r"\b([A-Za-z_]\w*)\s+"
+                    r"(?:(?:public|private|internal|external)\s+)*"
+                    r"([A-Za-z_]\w*)\s*=\s*\1\s*\(\s*"
+                    r"(0x[0-9A-Fa-f]{40})\s*\)\s*;", re.S)
+    for typ, name, addr in rx.findall(source):
+        out.append((typ, name, addr))
+    return out
+
+
+def runtime_interface_mock_lines(forge_project, indent):
+    """Foundry mocks for literal-address interface state variables.
+
+    ESBMC models external interface calls; a local Foundry replay instead calls
+    an address with no code unless the test project installs a mock.  This
+    conservative pass only handles the common static shape
+    `IFace x = IFace(0x...)` and only mocks methods actually called as `x.f(...)`
+    in the flat source.
+    """
+    source = _flat_source_for_project(forge_project)
+    if not source:
+        return []
+    functions = _source_function_abis(source)
+    lines = []
+    seen = set()
+    for _typ, var, addr in _literal_interface_state_addresses(source):
+        called = sorted(set(re.findall(
+            r"\b" + re.escape(var) + r"\s*\.\s*([A-Za-z_]\w*)\s*\(",
+            source)))
+        if not called:
+            continue
+        mock_name = f"_esbmc_ext_mock_{len(lines)}"
+        local = [
+            f"{indent}// ESBMC runtime fixture: local Foundry has no code at "
+            f"{addr}.",
+            f"{indent}address {mock_name} = address({addr});",
+            f"{indent}vm.etch({mock_name}, hex\"00\");",
+        ]
+        added = 0
+        for fname in called:
+            choices = functions.get(fname) or []
+            if len(choices) != 1:
+                continue
+            signature, returns = choices[0]
+            key = (addr, signature)
+            if key in seen:
+                continue
+            seen.add(key)
+            if returns:
+                exprs = ", ".join(
+                    _abi_mock_expr_for_type(source, typ, "", {})
+                    for typ in returns)
+                ret = f"abi.encode({exprs})"
+            else:
+                ret = "bytes(\"\")"
+            local.append(
+                f"{indent}vm.mockCall({mock_name}, "
+                f"abi.encodeWithSignature(\"{signature}\"), {ret});")
+            added += 1
+        if added:
+            lines += local
+    return lines
+
+
 def _struct_owner(source, start):
     prefix = source[:start]
     lib = list(re.finditer(r"\blibrary\s+([A-Za-z_]\w*)\s*\{", prefix))
@@ -8587,6 +8720,37 @@ def apply_constructor_staticcall_mocks(lines, emitted, case, unit, contract,
     return out
 
 
+def apply_runtime_interface_mocks(lines, emitted, case, unit, contract,
+                                  mock_lines):
+    if not mock_lines:
+        return lines
+    body = emitted.lines[case[3][0] + 1:case[3][1]]
+    call_i = find_unit_call(body, unit)
+    inst = target_instance_for_call(body, call_i, unit)
+    if inst is None:
+        return lines
+    rx = re.compile(r"^(\s*)" + re.escape(inst) + r"\s*=\s*new\s+"
+                    + re.escape(contract) + r"\s*\(")
+    out, i, replaced = [], 0, False
+    while i < len(lines):
+        m = rx.match(lines[i])
+        if not replaced and m:
+            end = _statement_end(lines, i)
+            out.extend(lines[i:end + 1])
+            next_i = end + 1
+            while (next_i < len(lines)
+                   and lines[next_i].strip() == "vm.clearMockedCalls();"):
+                out.append(lines[next_i])
+                next_i += 1
+            out += mock_lines
+            replaced = True
+            i = next_i
+            continue
+        out.append(lines[i])
+        i += 1
+    return out
+
+
 def repair_pranked_constructor_origins(lines, contract):
     """Replay EOA-style constructor pranks with msg.sender == tx.origin."""
     out = []
@@ -8642,7 +8806,7 @@ def add_flat_import_symbols(lines, symbols):
 
 def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
                         layout=None, contract=None, unit=None,
-                        constructor_mocks=None):
+                        constructor_mocks=None, runtime_mocks=None):
     """Insert PUT functions into the emitter's contract and rename safely."""
     cname, _cstart, cend = emitted.blocks[case[0]]
     lines = list(emitted.lines)
@@ -8669,6 +8833,8 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
     if contract is not None and unit is not None:
         lines = apply_constructor_staticcall_mocks(
             lines, emitted, case, unit, contract, constructor_mocks or [])
+        lines = apply_runtime_interface_mocks(
+            lines, emitted, case, unit, contract, runtime_mocks or [])
         lines = repair_pranked_constructor_origins(lines, contract)
     source = "\n".join(lines) + "\n"
     source = source.replace(
@@ -8685,7 +8851,7 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
 
 def assemble_concrete_source(emitted, case, new_contract, fixture=None,
                              layout=None, contract=None, unit=None,
-                             constructor_mocks=None):
+                             constructor_mocks=None, runtime_mocks=None):
     """Keep exactly one concrete replay case and rename its test contract.
 
     This is the point-region fallback for a certified region that renders no
@@ -8707,6 +8873,8 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
     if contract is not None and unit is not None:
         lines = apply_constructor_staticcall_mocks(
             lines, emitted, case, unit, contract, constructor_mocks or [])
+        lines = apply_runtime_interface_mocks(
+            lines, emitted, case, unit, contract, runtime_mocks or [])
         lines = repair_pranked_constructor_origins(lines, contract)
     source = "\n".join(lines) + "\n"
     source = source.replace(
@@ -8724,7 +8892,8 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
                            enc, depth_, path_function, region, holes, pins,
                            params, layout, maps, specs, r2_terms, cell,
                            derived_by, timeout, fuzz_runs, candidate_budget,
-                           fixture=None, establish=None, log=print):
+                           fixture=None, constructor_mocks=None,
+                           runtime_mocks=None, establish=None, log=print):
     """Refute R2 candidates with one Forge run; never produce proof verdicts."""
     candidates = r2_candidates(specs)
     verdicts = {candidate["key"]: "NOT-RUN" for candidate in candidates}
@@ -8788,7 +8957,9 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
     base_contract = emitted.blocks[case[0]][0]
     probe_contract = f"{base_contract}_{contract}_{unit}_put{enc}_FuzzR2"
     source = assemble_put_source(emitted, case, puts, probe_contract, fixture,
-                                 layout, contract, unit)
+                                 layout, contract, unit,
+                                 constructor_mocks=constructor_mocks,
+                                 runtime_mocks=runtime_mocks)
     artifact = os.path.join(workdir, "fuzz-r2-prefilter.t.sol")
     with open(artifact, "w") as stream:
         stream.write(source)
@@ -9212,6 +9383,15 @@ def main():
         notes.append("constructor staticcall mocks inserted before deployment "
                      f"({len(constructor_mocks) // 2} address(es)); cleared "
                      "after constructor")
+    runtime_mocks = runtime_interface_mock_lines(a.forge_project, "    ")
+    runtime_mock_addresses = sum(1 for line in runtime_mocks
+                                 if "vm.etch(" in line)
+    runtime_mock_calls = sum(1 for line in runtime_mocks
+                             if "vm.mockCall(" in line)
+    if runtime_mocks:
+        notes.append("runtime interface mocks inserted after deployment "
+                     f"({runtime_mock_addresses} address(es), "
+                     f"{runtime_mock_calls} call(s))")
 
     if a.concrete_only:
         layout = None
@@ -9230,7 +9410,7 @@ def main():
                 f"{plabel}{a.test_suffix}")
         txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
                                        layout, a.contract, a.unit,
-                                       constructor_mocks)
+                                       constructor_mocks, runtime_mocks)
         dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
         with open(dest, "w") as f:
             f.write(txt)
@@ -9279,6 +9459,8 @@ def main():
                            + str(a.concrete_stage2_witness_check)),
                        "constructor_staticcall_mocks": len(
                            constructor_mocks) // 2,
+                       "runtime_interface_mocks": runtime_mock_addresses,
+                       "runtime_interface_mock_calls": runtime_mock_calls,
                        "stats": {
                            "fuzz_params": 0,
                            "lifted": [],
@@ -9720,6 +9902,7 @@ def main():
                     (cell_name, cell_rule), json.loads(a.derived_by or "{}"),
                     a.fuzz_r2_prefilter_timeout, a.fuzz_runs,
                     a.fuzz_r2_candidate_budget, foundry_fixture,
+                    constructor_mocks, runtime_mocks,
                     json.loads(a.establish or "[]"))
                 r2_fuzz_prefilter["enabled"] = True
                 _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
@@ -9833,8 +10016,12 @@ def main():
                        # What was TRIED, so "still truncated" is separable from
                        # "nobody widened anything". An empty list here with
                        # --auto-unwind 0 is the second case and says so.
-                       "unwind_attempts": unwind_attempts, "notes": notes},
-                      f, indent=2)
+                       "unwind_attempts": unwind_attempts,
+                       "constructor_staticcall_mocks": len(
+                           constructor_mocks) // 2,
+                       "runtime_interface_mocks": runtime_mock_addresses,
+                       "runtime_interface_mock_calls": runtime_mock_calls,
+                       "notes": notes}, f, indent=2)
         return 3
     if blocker == "vacuous":
         print("[put] REFUSED: the assertion ladder reports the certified "
@@ -9848,7 +10035,12 @@ def main():
         with open(os.path.join(a.workdir, "put.json"), "w") as f:
             json.dump({"contract": a.contract, "unit": a.unit, "enc": a.enc,
                        "depth": a.depth, "refused": "ladder-vacuous",
-                       "ladder_refusal": refusal, "notes": notes}, f, indent=2)
+                       "ladder_refusal": refusal,
+                       "constructor_staticcall_mocks": len(
+                           constructor_mocks) // 2,
+                       "runtime_interface_mocks": runtime_mock_addresses,
+                       "runtime_interface_mock_calls": runtime_mock_calls,
+                       "notes": notes}, f, indent=2)
         return 2
 
     # ---- 3. build ---------------------------------------------------------
@@ -9885,7 +10077,7 @@ def main():
                 f"{plabel}{a.test_suffix}")
         txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
                                        layout, a.contract, a.unit,
-                                       constructor_mocks)
+                                       constructor_mocks, runtime_mocks)
         dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
         with open(dest, "w") as f:
             f.write(txt)
@@ -9930,6 +10122,8 @@ def main():
                        "concrete_reason": fallback.reason,
                        "constructor_staticcall_mocks": len(
                            constructor_mocks) // 2,
+                       "runtime_interface_mocks": runtime_mock_addresses,
+                       "runtime_interface_mock_calls": runtime_mock_calls,
                        "stats": {
                            "fuzz_params": 0,
                            "lifted": [],
@@ -9954,7 +10148,8 @@ def main():
     cname, _cstart, _cend = emitted.blocks[case[0]]
     newc = f"{cname}_{a.contract}_{a.unit}_put{a.enc}{plabel}{a.test_suffix}"
     txt = assemble_put_source(emitted, case, [put], newc, foundry_fixture,
-                              layout, a.contract, a.unit, constructor_mocks)
+                              layout, a.contract, a.unit, constructor_mocks,
+                              runtime_mocks)
     dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
     with open(dest, "w") as f:
         f.write(txt)
@@ -10040,6 +10235,8 @@ def main():
                             "max_tx": a.max_tx, "rule": cell_rule},
                    "constructor_staticcall_mocks": len(
                        constructor_mocks) // 2,
+                   "runtime_interface_mocks": runtime_mock_addresses,
+                   "runtime_interface_mock_calls": runtime_mock_calls,
                    # WHICH EXECUTABLE PRODUCED THIS. Without it a reader
                    # that re-reads put.json (put_all --forge-only) cannot tell
                    # a row emitted by this tree from one left behind by a build

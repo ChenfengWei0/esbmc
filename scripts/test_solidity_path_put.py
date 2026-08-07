@@ -74,6 +74,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                path_decision_assumes,
                                rendered_env_coords_for_emitted_case,
                                parse_ladder, region_slot_vars, statement_start,
+                               runtime_interface_mock_lines,
                                target_instance_for_call, rewrite_call_args,
                                truncated_loops, unwrap_normal_try_call,
                                unwindset_args)
@@ -410,6 +411,109 @@ def test_constructor_staticcall_mock_is_scoped_to_deployment():
                  "the mock is active only for deployment")
     bad += check("function test_cov_0() public" in text,
                  "the concrete replay remains a concrete replay")
+    return bad
+
+
+def test_runtime_interface_mock_lines_cover_literal_address_calls():
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "src"), exist_ok=True)
+        with open(os.path.join(tmp, "src", "flat.sol"), "w") as f:
+            f.write("""\
+pragma solidity >=0.8.0;
+interface IRouter {
+  function WETH() external pure returns (address);
+  function swapETHForExactTokens(
+    uint256 amountOut,
+    address[] calldata path,
+    address to,
+    uint256 deadline
+  ) external payable returns (uint256[] memory amounts);
+}
+contract C {
+  IRouter usi =
+    IRouter(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
+  function f(address payable t) external {
+    address[] memory path = new address[](2);
+    path[0] = usi.WETH();
+    path[1] = t;
+    usi.swapETHForExactTokens(1, path, address(this), block.timestamp);
+  }
+}
+""")
+        lines = runtime_interface_mock_lines(tmp, "    ")
+    text = "\n".join(lines)
+    bad = 0
+    bad += check("vm.etch(_esbmc_ext_mock_0, hex\"00\");" in text,
+                 "the literal interface address is given code")
+    bad += check('abi.encodeWithSignature("WETH()")' in text,
+                 "the zero-argument address-returning call is mocked")
+    bad += check("abi.encode(address(0))" in text,
+                 "the address return is encoded with the right ABI shape")
+    bad += check('abi.encodeWithSignature("swapETHForExactTokens(uint256,'
+                 'address[],address,uint256)")' in text,
+                 "calldata arrays and uint aliases are canonicalized")
+    bad += check("abi.encode(new uint256[](0))" in text,
+                 "dynamic-array returns use an ABI-compatible empty array")
+    return bad
+
+
+def test_runtime_interface_mocks_survive_constructor_mock_clear():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Vault} from "./Vault.sol";
+contract VaultCovTest is Test {
+  Vault c1;
+  function setUp() public {
+    c1 = new Vault();
+  }
+  // claim: sol:@C@Vault@F@pay#41:path:7
+  function test_cov_0() public {
+    c1.pay();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Vault@F@pay#41", 7)
+    put = [
+        "",
+        "  function test_put_Vault_pay_path7() public {",
+        "    c1.pay();",
+        "  }",
+    ]
+    constructor_mocks = [
+        "    vm.mockCall(address(0x0000000000000000000000000000000000000004), "
+        "bytes(\"\"), abi.encode(uint256(1)));",
+    ]
+    runtime_mocks = [
+        "    address _esbmc_ext_mock_0 = "
+        "address(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);",
+        "    vm.etch(_esbmc_ext_mock_0, hex\"00\");",
+        "    vm.mockCall(_esbmc_ext_mock_0, "
+        "abi.encodeWithSignature(\"WETH()\"), abi.encode(address(0)));",
+    ]
+    text = assemble_put_source(
+        em, case, [put], "VaultCovTest_put", contract="Vault", unit="pay",
+        constructor_mocks=constructor_mocks, runtime_mocks=runtime_mocks)
+    bad = 0
+    bad += check(text.index("vm.mockCall(address(0x000000000000000000000000"
+                            "0000000000000004)")
+                 < text.index("c1 = new Vault();"),
+                 "constructor mocks still precede deployment")
+    bad += check(text.index("c1 = new Vault();")
+                 < text.index("vm.clearMockedCalls();")
+                 < text.index("vm.etch(_esbmc_ext_mock_0"),
+                 "runtime mocks are installed after constructor mock clearing")
+    bad += check(text.index("vm.etch(_esbmc_ext_mock_0")
+                 < text.index("function test_put_Vault_pay_path7"),
+                 "runtime mocks are in the setup preamble, not inside the PUT")
     return bad
 
 
@@ -6841,8 +6945,10 @@ def test_structured_R2_term_renders_with_the_lifted_coordinate():
         {"amount": "p_amount"}, {"amount": "p_amount"},
         {"(pre + amount)": term})
     return check(got == [
-        '    assertEq(_post_bal, (_pre_bal + p_amount), "bal: eq");'],
-        f"structured term uses the emitted identifier: {got}")
+        '    unchecked { assertEq(_post_bal, (_pre_bal + p_amount), '
+        '"bal: eq"); }'],
+        f"structured term uses unchecked arithmetic over emitted identifiers: "
+        f"{got}")
 
 
 def test_structured_R2_interval_accepts_literal_endpoint_without_lookup():
@@ -6857,7 +6963,7 @@ def test_structured_R2_interval_accepts_literal_endpoint_without_lookup():
     bad = 0
     bad += check(got == [
         '    assertGe(_post_bal, 0, "bal: abs");',
-        '    assertLe(_post_bal, (_pre_bal + 0), "bal: abs");'],
+        '    unchecked { assertLe(_post_bal, (_pre_bal + 0), "bal: abs"); }'],
         f"literal low endpoint and structured high endpoint both render: {got}")
     refused = rung_assertions(
         "post in [floor, (pre + msg.value)]", "_pre_bal", "_post_bal",
@@ -10857,6 +10963,8 @@ def main():
               test_storage_oracles_read_the_actual_target_instance_not_c0,
               test_path_cov_fixture_replays_constructor_then_pins_state,
               test_constructor_staticcall_mock_is_scoped_to_deployment,
+              test_runtime_interface_mock_lines_cover_literal_address_calls,
+              test_runtime_interface_mocks_survive_constructor_mock_clear,
               test_pranked_constructor_replay_sets_tx_origin_too,
               test_pin_without_a_slot_is_reported_not_dropped,
               test_region_bound_still_wins_over_a_duplicate_pin,
