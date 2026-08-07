@@ -11368,6 +11368,46 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py notes/coverage/scripts/unit_schedule.py scripts/test_unit_schedule.py notes/VeriPUT_handoff_memory.md`
   passed.
 
+RQ1 official rerun after the timing/rank fix:
+
+- Ran one bugfix124 subject:
+  `acfix_llama3_024_CVE_2019_15078`, target contract `XBORNID`.
+- Command shape:
+  `rq1_veriput_run.py --benchmark bugfix124 --subject-id acfix_llama3_024_CVE_2019_15078 --redo --timeout 600 --esbmc-run-timeout 120 --stage2-unit-timeout-cap-s 120 --wrapper-grace 60 --memlimit-gib 12 --jobs 1 --forge-timeout 300`.
+- Result:
+  - `status=ok`, `completion_status=budget-exhausted`;
+  - `raw=3`, `valid=3`;
+  - `put_raw=2`, `put_valid=2`;
+  - `concrete_raw=1`, `concrete_valid=1`;
+  - `generation_wall_s=590.274`, `stage2_wall_s=250.724`,
+    `stage4_generation_wall_s=339.55`, `foundry_replay_wall_s=4.14`,
+    `wall_total_s=595.148`;
+  - `maxrss_mb=12254.2`;
+  - units attempted: `XBornID`, `withdraw`, `getTokens`.
+- Valid tests:
+  - PUT `test_put_XBORNID_XBornID_path7`, oracle classes
+    `["R0", "R1", "R2"]`;
+  - PUT `test_put_XBORNID_XBornID_path6`, oracle classes `["R0"]`;
+  - concrete replay `test_cov_0` for `withdraw`.
+- Oracle aggregate:
+  `oracle_class_counts={"R0":2,"R1":5,"R2":6}`;
+  combos `{"R0":2,"R1":3,"R1+R2":2,"R2":4}`.
+- This replaced the old compatibility timeout row
+  (`raw=2`, `valid=null`, `put_valid=2`) with a double-oracle-scored row.
+
+Updated bugfix124 official summary after this rerun:
+
+- `results_all.py --benchmark bugfix124` reports VeriPUT:
+  `ran=124`, `raw_u=191`, `valid_u=166`, `raw_c=59`, `valid_c=59`,
+  coverage `47.6%`, `VT/case=1.34`.
+- VeriPUT status bucket:
+  `{"ok":59,"no-output":57,"no-units":5,"budget-exhausted":3}`.
+- Timeout/OOM/error bucket is now zero and `raw>0 & valid==0` remains zero.
+- Strict latest-journal split:
+  59 / 124 cases have `valid>0`, 65 / 124 still have no valid test;
+  valid artifacts split is 126 PUT + 40 concrete, so artifact-level PUT
+  generalization is 126 / 166 = 75.9%.
+
 ## 2026-08-08 GameItems concrete replay repair
 
 Context:
