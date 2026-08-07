@@ -11211,6 +11211,78 @@ Metadata repair and accounting fix:
   `cert_timed_out_units=["transfer"]`, instead of the older generic
   `no certified regions: KILLED=1`.
 
+## 2026-08-07 bugfix124 fast-first 36-subject state
+
+Third fast-first wave command:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --limit 36 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume`
+
+Pre-run checks:
+
+- No residual `rq1_veriput_run.py`, `certify_all.py`, `put_all.py`,
+  `solidity_path_generalise.py`, or `esbmc` process was running.
+- `free -h` showed about 36GiB available memory.
+- `Results/results_all.py --benchmark bugfix124` before the wave matched the
+  30-row baseline:
+  `ran=30`, `raw_u=24`, `valid_u=24`, `raw_c=9`, `valid_c=9`,
+  `coverage=7.3%`, `VT/case=0.19`.
+
+The runner skipped the first 24 fast-first rows and queued the next 12:
+
+- `rc_unchecked_low_level_calls__0x2972...__SolGPT__..._3round / demo.transfer`:
+  no-output, 120.859s, reason
+  `certification timed out before PUT artifacts: transfer`.
+- `rc_unchecked_low_level_calls__0xe894...__TIPS__...U1 / airDrop.transfer`:
+  no-output, 120.859s, same timed-out transfer reason.
+- `rcx_unchecked_low_level_calls__0xf29...__sGuardPlus / B`:
+  no-output, 50.661s, reason `no certified regions: NOT-CERTIFIED=1`.
+- `rc_reentrancy__reentrancy_dao__SolGPT__..._1round / ReentrancyDAO.withdrawAll`:
+  ok, raw=2, valid=1, PUT 0/0, concrete 1/2, wall 82.697s.
+- `rc_reentrancy__reentrancy_dao__SolGPT__..._4round / ReentrancyDAO.withdrawAll`:
+  ok, raw=2, valid=1, PUT 0/0, concrete 1/2, wall 85.595s.
+- `rcx_unchecked_low_level_calls__0xb37...__TIPS / SimpleWallet.sendMoney`:
+  ok, raw=3, valid=3, PUT 3/3, wall 97.118s, oracle R0=3.
+- `rc_access_control__simple_suicide__sGuardPlus__simple_suicide`:
+  ok, raw=1, valid=1, PUT 1/1, wall 6.016s, oracle R0=1.
+- `rcx_unchecked_low_level_calls__0xb37...__sGuard / SimpleWallet.sendMoney`:
+  ok, raw=4, valid=3, PUT 3/4, wall 56.074s,
+  oracle R0=3, R1=1, R2=1.
+- `rcx_unchecked_low_level_calls__0x610...__TIPS / SimpleWallet.withdrawAll`:
+  ok, raw=3, valid=3, PUT 3/3, wall 95.605s, oracle R0=3.
+- `rcx_unchecked_low_level_calls__0x610...__sGuard / SimpleWallet.withdrawAll`:
+  ok, raw=4, valid=4, PUT 4/4, wall 56.572s,
+  oracle R0=3, R1=1, R2=1.
+- `rc_time_manipulation__ether_lotto__SolGPT__ether_lotto_1round / EtherLotto.play`:
+  ok, raw=1, valid=1, PUT 1/1, wall 35.547s, oracle R0=1.
+- `rc_time_manipulation__ether_lotto__SolGPT__ether_lotto_3round / EtherLotto.play`:
+  ok, raw=1, valid=1, PUT 1/1, wall 34.044s, oracle R0=1.
+
+Wave-level outcome:
+
+- 9 / 12 subjects were `ok`.
+- 8 / 12 subjects produced at least one valid reference test.
+- New wave raw=21, valid=18.
+- New wave PUT 16/17; concrete replay 2/4.
+- New wave oracle additions: R0=15, R1=2, R2=2.
+- The two long transfer failures exited at the intended 120s ESBMC subquery cap,
+  not the 600s subject cap.
+
+Aggregate bugfix124 VeriPUT state after this wave:
+
+- Latest rows: 42.
+- Status counts: `ok=18`, `no-output=18`, `no-units=4`,
+  `budget-exhausted=2`.
+- Aggregate raw=45, valid=42.
+- Aggregate PUT 34/35; concrete replay 8/10.
+- Subjects with at least one valid test: 18 / 42.
+- Aggregate oracle counts: R0=28, R1=7, R2=11.
+- `Results/results_all.py --benchmark bugfix124` reports the VeriPUT arm as:
+  `ran=42`, `raw_u=45`, `valid_u=42`, `raw_c=18`, `valid_c=18`,
+  `coverage=14.5%`, `VT/case=0.34`.
+- `results_all.py` anomaly audit for VeriPUT:
+  median ok-wall 23.8s, `timeout/oom/error=0`, `raw>0 & valid==0=0`.
+- No residual VeriPUT/ESBMC worker processes remained after the wave.
+
 ## 2026-08-07 RQ1 VeriPUT production runner contract
 
 User tightened the output requirements before the benchmark wave:
