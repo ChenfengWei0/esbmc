@@ -367,6 +367,37 @@ def test_certify_argv_for_remaining_caps_only_run_timeout():
     return bad
 
 
+def test_certify_argv_for_remaining_honors_unit_timeout_cap():
+    job = {
+        "certify_argv": [
+            "python3",
+            "certify_all.py",
+            "--timeout",
+            "600",
+            "--run-timeout",
+            "600",
+            "--memlimit-gib",
+            "8",
+        ],
+        "certification_budget": {
+            "workdir": "/tmp/work",
+        },
+    }
+    argv = rq1_veriput_run._certify_argv_for_remaining(
+        job,
+        remaining_s=599.8,
+        run_timeout_s=120,
+        memlimit_gib=12,
+        unit_timeout_cap_s=90)
+    pairs = dict(zip(argv, argv[1:]))
+    bad = 0
+    bad += check(pairs.get("--timeout") == "90",
+                 f"whole certify budget follows unit cap: {argv}")
+    bad += check(pairs.get("--run-timeout") == "90",
+                 f"per-ESBMC run budget cannot exceed capped unit budget: {argv}")
+    return bad
+
+
 def test_prepare_case_dir_preserves_complete_and_quarantines_partial():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -423,6 +454,7 @@ def main():
         test_certification_summary_identifies_inner_timeouts,
         test_subject_schedule_uses_separate_esbmc_run_timeout,
         test_certify_argv_for_remaining_caps_only_run_timeout,
+        test_certify_argv_for_remaining_honors_unit_timeout_cap,
         test_prepare_case_dir_preserves_complete_and_quarantines_partial,
         test_stage2_no_output_stop_reason_is_audit_friendly,
     ]

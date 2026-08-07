@@ -650,8 +650,12 @@ def _format_stage2_no_output_stop(stage2_wall_s: float) -> str:
 
 
 def _certify_argv_for_remaining(job: dict, remaining_s: float, run_timeout_s: int,
-                                memlimit_gib: int) -> list[str]:
-    budget = max(1, int(remaining_s))
+                                memlimit_gib: int,
+                                unit_timeout_cap_s: int = 0) -> list[str]:
+    budget_source = remaining_s
+    if unit_timeout_cap_s > 0:
+        budget_source = min(budget_source, float(unit_timeout_cap_s))
+    budget = max(1, int(budget_source))
     run_budget = max(1, min(budget, int(run_timeout_s)))
     return unit_schedule.budgeted_certify_argv(
         [str(arg) for arg in job["certify_argv"]],
@@ -734,7 +738,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         units_attempted.append(unit)
         cert_argv = _certify_argv_for_remaining(job, _remaining(deadline),
                                                 args.esbmc_run_timeout,
-                                                args.memlimit_gib)
+                                                args.memlimit_gib,
+                                                args.stage2_unit_timeout_cap_s)
         cert_stage = run_command(cert_argv,
                                  _remaining(deadline) + args.wrapper_grace,
                                  case_dir / "logs" / f"{idx:03d}-{_safe_name(unit)}-certify")
@@ -824,6 +829,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "mem_budget_mb": args.memlimit_gib * 1024,
         "tool_timeout_s": args.timeout,
         "esbmc_run_timeout_s": args.esbmc_run_timeout,
+        "stage2_unit_timeout_cap_s": args.stage2_unit_timeout_cap_s,
         "no_output_stage2_stop_s": args.no_output_stage2_stop_s,
         "early_stop_reason": early_stop_reason,
         "wall_cap_s": args.timeout + args.wrapper_grace,
@@ -1032,6 +1038,12 @@ def main(argv=None) -> int:
     ap.add_argument("--esbmc-run-timeout", type=int, default=120,
                     help="per ESBMC invocation budget inside certification, "
                          "seconds. The whole subject still gets --timeout")
+    ap.add_argument("--stage2-unit-timeout-cap-s", type=int, default=0,
+                    help="if positive, cap each Stage-2 unit's whole "
+                         "certify_all.py budget to this many seconds while "
+                         "leaving --esbmc-run-timeout as the per-ESBMC-run "
+                         "cap. Default 0 preserves the old remaining-subject "
+                         "budget behavior")
     ap.add_argument("--wrapper-grace", type=int, default=60,
                     help="subprocess cleanup/writeout slack outside the tool budget")
     ap.add_argument("--min-remaining-s", type=int, default=20,
@@ -1062,9 +1074,12 @@ def main(argv=None) -> int:
         validate_roots(veriput_root, result_root, ast_cache_root)
         if (args.timeout <= 0 or args.esbmc_run_timeout <= 0
                 or args.wrapper_grace < 0 or args.memlimit_gib <= 0
-                or args.no_output_stage2_stop_s < 0):
+                or args.no_output_stage2_stop_s < 0
+                or args.stage2_unit_timeout_cap_s < 0):
             raise RQ1RunError("timeouts and --memlimit-gib must be positive; "
-                              "--no-output-stage2-stop-s must be non-negative")
+                              "--no-output-stage2-stop-s and "
+                              "--stage2-unit-timeout-cap-s must be "
+                              "non-negative")
         if args.esbmc_run_timeout > args.timeout:
             raise RQ1RunError("--esbmc-run-timeout must not exceed --timeout")
         validate_jobs(args)

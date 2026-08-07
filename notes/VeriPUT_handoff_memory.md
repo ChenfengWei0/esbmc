@@ -11357,6 +11357,76 @@ Diagnosis from this wave:
   production after optimization, consider either `jobs=2` for the heavy tail or
   adaptive scheduling by observed subject size / prior cluster.
 
+## 2026-08-07 Stage-2 unit timeout cap for faster heavy-tail runs
+
+Motivation from real203 limit120:
+
+- Several no-output rows consumed hundreds of seconds inside a single Stage-2
+  unit before the subject-level `--no-output-stage2-stop-s` check could fire:
+  `CometExtAssetList.approve` 554s, `CometExt.approve` 417s,
+  `CometProxyAdmin{,Old}.deployAndUpgradeTo` 361-411s, and
+  `ERC-3643.Token` 362s.
+- The existing early-stop condition worked only between units.  It could stop
+  after a slow unit, but it could not prevent one bad unit from consuming most
+  of the subject's 600s budget.
+- This is a scheduling/budget issue, not a proof rule.  The certification
+  query semantics remain unchanged.
+
+Code change:
+
+- `notes/coverage/scripts/rq1_veriput_run.py` now accepts
+  `--stage2-unit-timeout-cap-s N`.
+- Default `0` preserves the previous behavior exactly: each `certify_all.py`
+  unit receives the remaining subject budget.
+- When positive, the Stage-2 unit's whole `--timeout` is capped to `N`, and
+  `--run-timeout` is also reduced to at most that capped budget.
+- Result rows now record `stage2_unit_timeout_cap_s` for auditability.
+
+Test coverage:
+
+- `scripts/test_rq1_veriput_run.py` gained
+  `test_certify_argv_for_remaining_honors_unit_timeout_cap`.
+- Existing test `test_certify_argv_for_remaining_caps_only_run_timeout` still
+  proves the default behavior follows the remaining subject budget and only
+  caps per-ESBMC run timeout.
+
+Validation run:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  passed: all 11 tests.
+- `git diff --check -- notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+
+How to use next:
+
+- Do not rerun completed real203 rows just for this accounting/scheduling
+  change.
+- For the next production wave after strategy triage, use a moderate cap such
+  as `--stage2-unit-timeout-cap-s 180` or `240` to prevent Comet-like units
+  from monopolizing a 600s subject.
+- This can lose rare units that need nearly the full 600s to certify, so it is
+  a throughput/recall tradeoff.  It should be used for the heavy real203 tail,
+  not retroactively for the bridge-receiver cluster that already produced good
+  results.
+
+Concrete-fallback opportunity identified but not yet implemented:
+
+- Across the current real203 cert rows, there are 15 `not_certified_details`
+  entries with `concrete_fallback=true` and `witness_check=SUCCESSFUL`, 49 with
+  `UNKNOWN`, 57 with `FAILED`, and 2 with `NOT-PUT`.
+- Current `put_all.py` filters out all `bucket != CERTIFIED` rows, so a
+  zero-certified unit cannot emit those cleared concrete fallbacks.
+- A correct future implementation should only use
+  `witness_check=SUCCESSFUL` fallbacks, synthesize a point region from the
+  path's CE and row `coords`, preserve the Stage-2 pins, and preferably add a
+  `solidity_path_put.py --concrete-only` path so it does not run the assertion
+  ladder just to emit a replay.
+- Do NOT treat `witness_check=UNKNOWN` as proof.  At most, such candidates can
+  be tried as raw concrete tests and refuted by Forge/reference validation, but
+  that would be a different, explicitly labelled policy.
+
 ## 2026-08-07 RQ1 peer182 wave to limit 120 and zero-oracle accounting
 
 User requirements still active:
