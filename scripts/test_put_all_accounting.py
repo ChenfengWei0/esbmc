@@ -155,6 +155,11 @@ def main():
                         "path_function": "sol:@C@Cb7@F@f#31",
                         "exit_kind": "revert",
                     },
+                    {
+                        "path_id": "9",
+                        "path_function": "sol:@C@Cb7@F@f#31",
+                        "exit_kind": "undetermined",
+                    },
                 ],
             }, report_fh)
         try:
@@ -167,6 +172,10 @@ def main():
                          put_all.report_exit_kind(
                              report_path, "sol:@C@Cb7@F@f#31", 8),
                          "revert")
+            bad += check("stage4-report-exit-kind-undetermined-normalized",
+                         put_all.report_exit_kind(
+                             report_path, "sol:@C@Cb7@F@f#31", 9),
+                         "unknown")
         finally:
             os.unlink(report_path)
         old_run_forge = put_all.run_forge

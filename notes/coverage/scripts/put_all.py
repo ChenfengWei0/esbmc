@@ -143,6 +143,10 @@ def claim_path_id_int(raw):
     return int(m.group(1))
 
 
+def normalize_exit_kind(kind):
+    return "unknown" if kind == "undetermined" else kind
+
+
 def parse_certified(text):
     region, holes = {}, {}
     for m in INTERVAL_RE.finditer(text):
@@ -249,8 +253,9 @@ def report_exit_kind(report_path, path_function, enc):
                 if pid is None:
                     continue
                 pf = c.get("path_function")
-                found[(pf, pid)] = c.get("exit_kind")
-                found.setdefault((None, pid), c.get("exit_kind"))
+                exit_kind = normalize_exit_kind(c.get("exit_kind"))
+                found[(pf, pid)] = exit_kind
+                found.setdefault((None, pid), exit_kind)
         except (OSError, ValueError):
             found = {}
         EXIT_KIND_CACHE[report_path] = found
@@ -796,7 +801,7 @@ def main():
                   "their certified paths.")
             return 2
     def _exit_priority(kind):
-        return {"normal": 0, "undetermined": 1, None: 2, "revert": 3}.get(
+        return {"normal": 0, "unknown": 1, None: 2, "revert": 3}.get(
             kind, 2)
     ordered_rows = [r for _i, r in sorted(
         enumerate(rows), key=lambda ir: (_exit_priority(ir[1][10]), ir[0]))]

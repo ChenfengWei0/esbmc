@@ -11093,6 +11093,71 @@ Validation:
   verification concluded.  This keeps the official bugfix124 no-output result
   unchanged, but removes a reusable ESBMC crash class for future stress runs.
 
+## 2026-08-08 real203 wave and Stage-4 exit-kind fix
+
+Production wave:
+
+- Ran a 6-subject real203 / stress243 wave with the established production
+  parameters:
+  `--timeout 600 --esbmc-run-timeout 120 --stage2-unit-timeout-cap-s 180
+  --no-output-stage2-stop-s 90 --no-candidate-stage2-unit-stop-n 4
+  --zero-output-stage4-stop-s 30 --memlimit-gib 12 --wrapper-grace 60
+  --jobs 2 --resume`.
+- Subjects:
+  `balancer__balancer-v3-monorepo__PriceImpactHelper`,
+  `ProjectOpenSea__seaport__PausableZone`,
+  `balancer__balancer-v3-monorepo__WeightedLPOracle`,
+  `balancer__balancer-v3-monorepo__DynamicWeightedLPOracle`,
+  `euler-xyz__euler-vault-kit__ESynth`,
+  `balancer__balancer-v3-monorepo__CowRouter`.
+- All 6 completed as `no-output`, raw=0, valid=0.
+- real203 latest-key state after the wave:
+  `165 / 203` rows, status counts `no-output=140`, `ok=23`,
+  `no-units=2`; raw/valid `123 / 117`; PUT raw/valid `115 / 109`;
+  concrete raw/valid `8 / 8`.
+
+Diagnosis:
+
+- Five of the six were straightforward Stage-2 no-candidate cases, dominated
+  by `NO-WITNESS-UNKNOWN` and the no-candidate early stop.  Examples:
+  Balancer oracle/helper rows had four consecutive `NO-WITNESS-UNKNOWN`
+  units and stopped before the remaining units.
+- `ProjectOpenSea__seaport__PausableZone.cancelOrders` was different:
+  Stage 2 certified one region (`enc=7`) and then Stage 4 refused before
+  emission.  Its `put-summary.json` showed one candidate row with `rc=2`,
+  `asserts=0`, `refused=true`, and stdout showed the real cause:
+  `solidity_path_put.py: error: argument --exit-kind: invalid choice:
+  'undetermined'`.
+- This was a wrapper compatibility bug.  Stage-1 reports may use the historical
+  exit kind token `undetermined`, while `scripts/solidity_path_put.py` accepts
+  `normal`, `revert`, or `unknown`.
+
+Code change:
+
+- `notes/coverage/scripts/put_all.py` now normalizes
+  `undetermined -> unknown` when reading `exit_kind` from the enumeration
+  report.
+- The Stage-4 scheduling priority map now uses `unknown` instead of
+  `undetermined`.
+- `scripts/test_put_all_accounting.py` covers this with
+  `stage4-report-exit-kind-undetermined-normalized`.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  notes/coverage/scripts/put_all.py scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/put_all.py
+  scripts/test_put_all_accounting.py` passed.
+
+Operational note:
+
+- The already-recorded PausableZone row remains the official row for now; do
+  not hand-edit RQ1 JSON.  It is affected by the pre-fix Stage-4 wrapper bug.
+  Future real203 subjects should use the normalized `unknown` exit kind.
+
 ## 2026-08-07 ESBMC ABI decode tuple destructuring fix
 
 Strategy decision:
