@@ -8732,25 +8732,53 @@ def _literal_interface_state_addresses(source):
     return out
 
 
-def runtime_interface_mock_lines(forge_project, indent):
-    """Foundry mocks for literal-address interface state variables.
+def _literal_address_state_vars(source):
+    out = {}
+    rx = re.compile(r"\baddress\s+"
+                    r"(?:(?:public|private|internal|external)\s+)*"
+                    r"([A-Za-z_]\w*)\s*=\s*"
+                    r"(0x[0-9A-Fa-f]{40})\s*;", re.S)
+    for name, addr in rx.findall(source):
+        out[name] = addr
+    return out
 
-    ESBMC models external interface calls; a local Foundry replay instead calls
-    an address with no code unless the test project installs a mock.  This
-    conservative pass only handles the common static shape
-    `IFace x = IFace(0x...)` and only mocks methods actually called as `x.f(...)`
-    in the flat source.
-    """
-    source = _flat_source_for_project(forge_project)
-    if not source:
+
+def _interface_vars_from_literal_address_vars(source):
+    literal_addresses = _literal_address_state_vars(source)
+    if not literal_addresses:
         return []
+    out = []
+    rx = re.compile(r"\b([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*\(\s*"
+                    r"([A-Za-z_]\w*)\s*\)\s*;")
+    for var, typ, address_var in rx.findall(source):
+        addr = literal_addresses.get(address_var)
+        if addr:
+            out.append((typ, var, addr))
+    return out
+
+
+def _called_methods_on_var(source, var):
+    return sorted(set(re.findall(
+        r"\b" + re.escape(var) + r"\s*\.\s*([A-Za-z_]\w*)\s*\(",
+        source)))
+
+
+def _unique_function_choice(choices):
+    if not choices:
+        return None
+    first = choices[0]
+    if all(choice == first for choice in choices):
+        return first
+    return first if len(choices) == 1 else None
+
+
+def _mock_lines_for_interface_calls(source, iface_vars, indent, *,
+                                    mock_zero_chained_casts=False):
     functions = _source_function_abis(source)
     lines = []
     seen = set()
-    for _typ, var, addr in _literal_interface_state_addresses(source):
-        called = sorted(set(re.findall(
-            r"\b" + re.escape(var) + r"\s*\.\s*([A-Za-z_]\w*)\s*\(",
-            source)))
+    for _typ, var, addr in iface_vars:
+        called = _called_methods_on_var(source, var)
         if not called:
             continue
         mock_name = f"_esbmc_ext_mock_{len(lines)}"
@@ -8762,10 +8790,10 @@ def runtime_interface_mock_lines(forge_project, indent):
         ]
         added = 0
         for fname in called:
-            choices = functions.get(fname) or []
-            if len(choices) != 1:
+            choice = _unique_function_choice(functions.get(fname) or [])
+            if choice is None:
                 continue
-            signature, returns = choices[0]
+            signature, returns = choice
             key = (addr, signature)
             if key in seen:
                 continue
@@ -8781,9 +8809,67 @@ def runtime_interface_mock_lines(forge_project, indent):
                 f"{indent}vm.mockCall({mock_name}, "
                 f"abi.encodeWithSignature(\"{signature}\"), {ret});")
             added += 1
+            if mock_zero_chained_casts and returns == ["address"]:
+                local.extend(_zero_address_chained_cast_mock_lines(
+                    source, var, fname, indent, seen))
         if added:
             lines += local
     return lines
+
+
+def _zero_address_chained_cast_mock_lines(source, var, fname, indent, seen):
+    """Mock `IFace(var.f(...)).g(...)` after f() returns address(0)."""
+    out = []
+    rx = re.compile(r"\b([A-Za-z_]\w*)\s*\(\s*" + re.escape(var) +
+                    r"\s*\.\s*" + re.escape(fname) +
+                    r"\s*\([^)]*\)\s*\)\s*\.\s*([A-Za-z_]\w*)\s*\(")
+    functions = _source_function_abis(source)
+    for _typ, chained_name in rx.findall(source):
+        choice = _unique_function_choice(functions.get(chained_name) or [])
+        if choice is None:
+            continue
+        signature, returns = choice
+        key = ("address(0)", signature)
+        if key in seen:
+            continue
+        seen.add(key)
+        if returns:
+            exprs = ", ".join(
+                _abi_mock_expr_for_type(source, typ, "", {})
+                for typ in returns)
+            ret = f"abi.encode({exprs})"
+        else:
+            ret = "bytes(\"\")"
+        out.append(
+            f"{indent}vm.mockCall(address(0), "
+            f"abi.encodeWithSignature(\"{signature}\"), {ret});")
+    return out
+
+
+def runtime_interface_mock_lines(forge_project, indent):
+    """Foundry mocks for literal-address interface state variables.
+
+    ESBMC models external interface calls; a local Foundry replay instead calls
+    an address with no code unless the test project installs a mock.  This
+    conservative pass only handles the common static shape
+    `IFace x = IFace(0x...)` and only mocks methods actually called as `x.f(...)`
+    in the flat source.
+    """
+    source = _flat_source_for_project(forge_project)
+    if not source:
+        return []
+    return _mock_lines_for_interface_calls(
+        source, _literal_interface_state_addresses(source), indent)
+
+
+def constructor_external_interface_mock_lines(forge_project, indent):
+    source = _flat_source_for_project(forge_project)
+    if not source:
+        return []
+    return _mock_lines_for_interface_calls(
+        source, _interface_vars_from_literal_address_vars(source), indent,
+        mock_zero_chained_casts=True)
+
 
 
 def _struct_owner(source, start):
@@ -9582,12 +9668,18 @@ def main():
         print(f"[put]   exit kind read from this run's own report: "
               f"{path_exit_kind}")
     case_body, case_call_i = emitted_case_body_and_call(emitted, case, a.unit)
-    constructor_mocks = constructor_staticcall_mock_lines(
+    constructor_staticcall_mocks = constructor_staticcall_mock_lines(
         a.forge_project, claim, "    ")
+    constructor_external_mocks = constructor_external_interface_mock_lines(
+        a.forge_project, "    ")
+    constructor_mocks = constructor_staticcall_mocks + constructor_external_mocks
     if constructor_mocks:
-        notes.append("constructor staticcall mocks inserted before deployment "
-                     f"({len(constructor_mocks) // 2} address(es)); cleared "
-                     "after constructor")
+        mock_calls = sum(1 for line in constructor_mocks
+                         if "vm.mockCall(" in line)
+        etched = sum(1 for line in constructor_mocks if "vm.etch(" in line)
+        notes.append("constructor mocks inserted before deployment "
+                     f"({etched} mocked address(es), {mock_calls} call(s)); "
+                     "cleared after constructor")
     runtime_mocks = runtime_interface_mock_lines(a.forge_project, "    ")
     runtime_mock_addresses = sum(1 for line in runtime_mocks
                                  if "vm.etch(" in line)

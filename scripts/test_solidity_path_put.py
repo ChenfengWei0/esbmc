@@ -62,6 +62,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                assert_query_pins,
                                assert_query_region_entries, build_put,
                                check_esbmc_args, cell_of,
+                               constructor_external_interface_mock_lines,
                                constructor_staticcall_mock_lines,
                                effective_exit_kind,
                                exit_kind_asserted, find_unit_call,
@@ -454,6 +455,52 @@ contract C {
                  "calldata arrays and uint aliases are canonicalized")
     bad += check("abi.encode(new uint256[](0))" in text,
                  "dynamic-array returns use an ABI-compatible empty array")
+    return bad
+
+
+def test_constructor_external_interface_mocks_cover_router_factory_chain():
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, "src"), exist_ok=True)
+        with open(os.path.join(tmp, "src", "flat.sol"), "w") as f:
+            f.write("""\
+pragma solidity >=0.8.0;
+interface IRouter {
+  function factory() external view returns (address);
+}
+interface IRouterBase {
+  function factory() external view returns (address);
+}
+interface IFactory {
+  function createPair(address a, address b) external returns (address);
+}
+contract DCFLike {
+  address public router = 0x10ED43C718714eb63d5aA57B78B54704E256024E;
+  IRouter public uniswapV2Router;
+  address public pairAddress;
+  constructor() {
+    uniswapV2Router = IRouter(router);
+    pairAddress = IFactory(uniswapV2Router.factory()).createPair(
+      address(1),
+      address(this)
+    );
+  }
+}
+""")
+        lines = constructor_external_interface_mock_lines(tmp, "    ")
+    text = "\n".join(lines)
+    bad = 0
+    bad += check("address _esbmc_ext_mock_0 = "
+                 "address(0x10ED43C718714eb63d5aA57B78B54704E256024E);"
+                 in text,
+                 "the constructor router literal address is mocked")
+    bad += check('abi.encodeWithSignature("factory()")' in text,
+                 "the router factory() call is mocked")
+    bad += check("abi.encode(address(0))" in text,
+                 "factory() returns a mockable zero-address factory")
+    bad += check('vm.mockCall(address(0), '
+                 'abi.encodeWithSignature("createPair(address,address)")'
+                 in text,
+                 "the chained factory createPair call is mocked")
     return bad
 
 
@@ -11046,6 +11093,7 @@ def main():
               test_path_cov_fixture_replays_constructor_then_pins_state,
               test_constructor_staticcall_mock_is_scoped_to_deployment,
               test_runtime_interface_mock_lines_cover_literal_address_calls,
+              test_constructor_external_interface_mocks_cover_router_factory_chain,
               test_runtime_interface_mocks_survive_constructor_mock_clear,
               test_pranked_constructor_replay_sets_tx_origin_too,
               test_pin_without_a_slot_is_reported_not_dropped,

@@ -82,6 +82,54 @@ Updated bugfix124 aggregate after `Results/results_all.py --benchmark bugfix124`
   non-timeout `raw>0 & valid==0` rows: `reprod_DCFToken` and
   `pop_077_GameItems`.
 
+## 2026-08-08 constructor external interface mock probe
+
+Code change prepared after inspecting `bugfix124 / reprod_DCFToken`:
+
+- `scripts/solidity_path_put.py` now emits constructor-time Foundry mocks for
+  a common on-chain dependency shape:
+  `address router = 0x...; routerIface = IRouter(router); routerIface.f(...)`.
+- If a mocked call returns `address` and the source immediately casts that
+  result into another interface call, such as
+  `IFactory(router.factory()).createPair(...)`, the emitter also mocks the
+  chained call at `address(0)`.
+- Duplicate interface declarations with identical ABI, such as two inherited
+  `factory() returns (address)` declarations, are now treated as one callable
+  ABI instead of being skipped as ambiguous.
+- Unit test:
+  `test_constructor_external_interface_mocks_cover_router_factory_chain`.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 251 / 251.
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+
+DCF probe:
+
+- Temp Stage4 output:
+  `/tmp/veriput_dcf_constructor_mock_probe_1786139884`.
+- Command used existing official Stage2 cert only, for
+  `bugfix124__reprod_DCFToken.setDistributeAddress`, timeout 600s, Forge
+  timeout 660s, memlimit 12GiB.  Official RQ1 was NOT updated.
+- The generated setUp now contains constructor mocks for:
+  - router `factory() -> address(0)`;
+  - factory `createPair(address,address) -> address(0)`;
+  - router `swapExactTokensForTokensSupportingFeeOnTransferTokens(...)`.
+- This solved the missing-router/factory part, but DCF still fails setup:
+  Foundry reports `ERC20: mint to the zero address` because the ESBMC-emitted
+  constructor replay deploys `new DCF(...)` under `vm.startPrank(address(0))`.
+- Interpretation: the remaining DCF failure is not the PUT oracle; the target
+  instance is still not constructible under real EVM semantics.  It likely
+  needs either a skip-constructor/runtimeCode fixture for red target
+  constructors, or a conservative refusal of raw tests whose target deployment
+  is disabled/red.  Do not update official DCF RQ1 output until this is solved.
+
 ## 2026-08-08 RQ1 production accounting and timeout fallback state
 
 R0 normal-exit Stage4 accounting fix:
