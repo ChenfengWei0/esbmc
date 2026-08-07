@@ -65,6 +65,8 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                exit_kind_asserted, find_unit_call,
                                no_oracle_reason, observed_env,
                                normal_exit_region_retreat,
+                               oracle_class_summary,
+                               oracle_classes_for_rung,
                                partial_ladder_already_has_strict_oracle,
                                path_condition_from_branch_claim,
                                path_decision_assumes,
@@ -2753,6 +2755,24 @@ def test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle():
     bad += check(not partial_ladder_already_has_strict_oracle(rows, None,
                                                               no_assert),
                  "a reachability-only fuzz body cannot skip R2")
+    return bad
+
+
+def test_oracle_class_metadata_keeps_R0_R1_R2_apart():
+    bad = 0
+    bad += check(oracle_classes_for_rung("post >= pre") == ["R1"],
+                 "plain pre/post ordering is R1")
+    bad += check(oracle_classes_for_rung("post == amount") == ["R2"],
+                 "exact endpoint over an input is R2")
+    bad += check(oracle_classes_for_rung(
+        "post - pre in [amount, amount] with post >= pre") == ["R1", "R2"],
+        "a delta bound with a direction records the R1/R2 combination")
+    bad += check(oracle_classes_for_rung("return == 1") == ["R2"],
+                 "return endpoint assertions are R2")
+    details = [{"classes": ["R2", "R1"]}, {"classes": ["R0"]},
+               {"classes": ["R1"]}]
+    bad += check(oracle_class_summary(details) == ["R0", "R1", "R2"],
+                 "summary is stable, unique, and ordered")
     return bad
 
 
@@ -9126,6 +9146,10 @@ def test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle():
     bad += check(stats.get("exit_kind_asserts") == 1
                  and stats.get("asserts") == 1,
                  f"the expectRevert line counts as the path oracle: {stats}")
+    bad += check(stats.get("oracle_classes") == ["R0"]
+                 and [d.get("layer") for d in
+                      stats.get("assertion_oracles", [])] == ["exit"],
+                 "oracle metadata records only the emitted layer-1 assertion")
     bad += check(stats.get("rollback_exit") is True
                  and stats.get("exit_kind") == "revert",
                  f"the accounting keeps both rollback and exit kind: {stats}")
@@ -10490,6 +10514,7 @@ def main():
               test_typed_R2_candidate_budget_reaches_every_variable_before_second_laps,
               test_skipped_forge_R2_accounting_is_complete_and_conservative,
               test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle,
+              test_oracle_class_metadata_keeps_R0_R1_R2_apart,
               test_typed_R2_omits_bool_without_a_bool_endpoint,
               test_typed_R2_proposes_bool_equality_to_bool_coordinate,
               test_a_bool_region_parameter_is_lifted_and_can_feed_R2,

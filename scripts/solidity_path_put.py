@@ -3068,6 +3068,41 @@ def partial_ladder_already_has_strict_oracle(rows, summary, stats):
             and stats.get("asserts", 0) > 0)
 
 
+def oracle_classes_for_rung(text):
+    """R0/R1/R2 class labels for one emitted assertion source rung."""
+    out = []
+    if not text:
+        return out
+    stripped = text.strip()
+    if "retlive" in stripped:
+        return out
+    if re.search(r"\b(post|return)(\.\d+)?\s*(==|!=|>=|>|<=|<)\s*pre\b",
+                 stripped):
+        out.append("R1")
+    if re.search(r"\bpost\s*-\s*pre\s+in\s+\[", stripped):
+        out.append("R2")
+    elif re.search(r"\b(post|return)(\.\d+)?\s+in\s+\[", stripped):
+        out.append("R2")
+    else:
+        m = re.match(r"\s*(post|return)(?:\.\d+)?\s*(==|!=|>=|>|<=|<)\s*(.+?)\s*$",
+                     stripped)
+        if m:
+            rhs = m.group(3).strip()
+            if rhs != "pre":
+                out.append("R2")
+    return out
+
+
+def oracle_class_summary(details):
+    """Sorted unique R0/R1/R2 labels from emitted oracle metadata."""
+    order = {"R0": 0, "R1": 1, "R2": 2}
+    seen = set()
+    for d in details or []:
+        for c in d.get("classes") or []:
+            seen.add(c)
+    return sorted(seen, key=lambda x: order.get(x, 99))
+
+
 def _norm_ty(t):
     """A Solidity type spelled the one way, for comparing a parameter's type
     against a mapping's key type. Module level, not nested in `main()`, so the
@@ -7164,6 +7199,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     ret_rows_all = [(var, t, v) for var, t, v in ladder_rows
                     if var == RETURN_VAR or var.startswith(RETURN_VAR + ".")]
     ret_asserts, ret_skipped, ret_pre_reads = [], [], []
+    oracle_details = []
     if ret_rows_all:
         live = [v for var, t, v in ret_rows_all
                 if var == RETURN_VAR and t.startswith(RETLIVE_PREFIX)]
@@ -7335,6 +7371,15 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                                 f"for its declared type)")
                             continue
                         planned_ret_asserts += a
+                        oracle_details.append({
+                            "layer": "return",
+                            "var": label_var,
+                            "text": t,
+                            "classes": oracle_classes_for_rung(t),
+                            "verdict": "HOLDS",
+                            "emitted_in_test": True,
+                            "guarded": False,
+                        })
                 ret_asserts += planned_ret_asserts
                 if planned_ret_asserts:
                     ret_pre_reads += planned_ret_pre_reads
@@ -7514,11 +7559,21 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             if a is None:
                 oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
                 continue
+            detail = {
+                "layer": "state",
+                "var": var,
+                "text": text,
+                "classes": oracle_classes_for_rung(text),
+                "verdict": "HOLDS",
+                "emitted_in_test": True,
+                "guarded": bool(_chg),
+            }
             if _chg:
                 guarded += a
                 guard_notes.append(f"{var}: {text}")
             else:
                 asserts += a
+            oracle_details.append(detail)
             continue
         if var not in layout:
             msg = (f"{var} (no storage slot: solc's layout does not list it, "
@@ -7546,11 +7601,21 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         if a is None:
             oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
             continue
+        detail = {
+            "layer": "state",
+            "var": var,
+            "text": text,
+            "classes": oracle_classes_for_rung(text),
+            "verdict": "HOLDS",
+            "emitted_in_test": True,
+            "guarded": bool(_chg),
+        }
         if _chg:
             guarded += a
             guard_notes.append(f"{var}: {text}")
         else:
             asserts += a
+        oracle_details.append(detail)
     path_guard_lines, path_guard_skipped = path_decision_assumes(
         path_decisions, coord_ident_abs)
     # ---- THE CALL HAS TO CARRY THE FLAG, OR THE GUARD IS NOT A GUARD -------
@@ -7586,6 +7651,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             oracle_skipped.append(
                 f"{n_dropped} layer-2/3 rung(s) DROPPED ({why_drop})")
         asserts, guarded, guard_notes, ret_asserts = [], [], [], []
+        oracle_details = []
     if guarded or catch_assert_revert:
         if new_call.rstrip().endswith("catch {}"):
             new_call = (new_call.rstrip()[:-len("catch {}")]
@@ -7598,6 +7664,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                     f"is nowhere to clear the flag, and an always-true flag "
                     f"would make the assertion unconditional)")
             guarded, guard_notes = [], []
+            oracle_details = [d for d in oracle_details
+                              if not d.get("guarded")]
     oracle_skipped += ret_skipped
 
     # ---- ONE PATH, SEVERAL CERTIFIED BOXES: THE NAME HAS TO SAY WHICH -------
@@ -7916,6 +7984,17 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         body[call_i + 1:])
     if low_level_exit_asserted:
         exit_kind_asserts += 1
+    if exit_kind_asserts:
+        oracle_details.append({
+            "layer": "exit",
+            "var": "exit",
+            "text": ("path exits through revert"
+                     if revert_layer1 else "path exit kind asserted"),
+            "classes": ["R0"],
+            "verdict": "HOLDS",
+            "emitted_in_test": True,
+            "guarded": False,
+        })
     stats = {"fuzz_params": len(sig), "lifted": lifted,
              "rendered_width": dict(sorted(rendered_width.items())),
              "wide_fuzz_coords": sorted(
@@ -7942,6 +8021,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              "rollback_exit": bool(rollback_exit),
              "exit_kind": exit_kind,
              "return_asserts": len(ret_asserts),
+             "oracle_classes": oracle_class_summary(oracle_details),
+             "assertion_oracles": oracle_details,
              "oracle_skipped": oracle_skipped,
              # SEPARATE KEY, not folded into `oracle_skipped`. An implied rung
              # is oracle still fully present in a stronger form; a skipped one
@@ -9337,6 +9418,8 @@ def main():
                            "return_asserts": 0,
                            "exit_kind_asserts": 0,
                            "guarded_asserts": 0,
+                           "oracle_classes": [],
+                           "assertion_oracles": [],
                        },
                        "notes": notes}, f, indent=2)
         return 0

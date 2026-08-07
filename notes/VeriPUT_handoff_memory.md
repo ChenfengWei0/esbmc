@@ -42,6 +42,51 @@ Latest speed policy:
   - `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md`
     passed.
 
+RQ1 production-output policy:
+
+- Target output root requested by the user:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`.
+- Dataset source files must not be modified.  All produced tests, journals,
+  summaries, and copied artifacts go under the RQ1/VeriPUT result tree.
+- Peer is `contracts080` only.  The subject staging currently has:
+  - Peer182: 182 ok subjects, split by original peer population
+    (`ccsolbmc=70`, `solar=35`, `syntest=20`, `soltg=57`);
+  - Stress243: 203 ok subjects, 32 compile-failed, 7 flatten-failed;
+  - BugFix124: 124 ok subjects.
+- Every dataset run must use the target contract from the subject metadata;
+  non-target contracts present in the flat file are dependencies only.
+- The append-only RQ1 journal row for VeriPUT must retain at least:
+  - `raw` emitted test units;
+  - `valid` reference-valid test units;
+  - split counts for parameterized PUT vs concrete replay;
+  - `wall_total_s`, stage wall times, CPU, max RSS, memory budget, concurrency;
+  - final `status`, failure/loss reason, and whether a row is an OOM candidate;
+  - paths/cases attempted and certified where available.
+- Per-subject artifacts must retain the generated `.t.sol` files, each
+  `put.json`, `put-summary.json`, relevant logs, and validity/score JSON.
+- `put.json` now carries oracle-class metadata in `stats`:
+  - `oracle_classes`: sorted unique class labels among emitted assertions;
+  - `assertion_oracles`: one object per assertion source that actually remains
+    in the emitted test, with `layer`, `var`, `text`, `classes`, `verdict`,
+    `emitted_in_test`, and `guarded`.
+- Class meaning:
+  - `R0`: exit-kind / revert / low-level value-gate layer;
+  - `R1`: pre/post frame, ordering, or change relation;
+  - `R2`: exact endpoint, interval, or delta endpoint relation.
+  Combined assertions are represented as e.g. `["R1", "R2"]`.
+- Fuzz remains refute-only.  A Forge pass can remove bad R2 candidates by
+  counterexample, but it is never recorded as proof.
+- Commit discipline in `/home/samson/workspace/VeriPUT`: another experiment is
+  running and may commit periodically.  Do not auto commit/pull/rebase there;
+  write only the requested result files and keep ESBMC implementation commits
+  on the `feat/veriput-fuzz-first` branch pushed to `E-SOL`.
+- Validation for the oracle-class code:
+  - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+    passed: 238 / 238.
+  - `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md`
+    passed.
+
 Current 600s / 8GiB breadth smoke:
 
 - Root: `/tmp/veriput_current_smoke_20260807_065046`.
