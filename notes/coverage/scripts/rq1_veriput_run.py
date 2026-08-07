@@ -684,6 +684,21 @@ def _format_stage2_no_output_stop(stage2_wall_s: float) -> str:
             "stopped before remaining units")
 
 
+def _format_stage4_no_output_stop(stage4_wall_s: float) -> str:
+    return (f"no output after {stage4_wall_s:.1f}s Stage 4; "
+            "stopped before remaining units")
+
+
+def _should_stop_after_zero_output_stage4(stages: list[dict],
+                                          put_summary: dict,
+                                          threshold_s: int) -> bool:
+    if threshold_s <= 0:
+        return False
+    if int(put_summary.get("raw") or 0) > 0:
+        return False
+    return _stage_wall_s(stages, "put") >= float(threshold_s)
+
+
 def _certify_argv_for_remaining(job: dict, remaining_s: float, run_timeout_s: int,
                                 memlimit_gib: int,
                                 unit_timeout_cap_s: int = 0) -> list[str]:
@@ -835,9 +850,16 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             result_status = put_stage["status"]
             failure_reason = f"put {unit}: {put_stage['status']}"
             break
+        partial_put = summarize_put_artifacts(case_dir / "put")
+        if _should_stop_after_zero_output_stage4(
+                stages, partial_put, args.zero_output_stage4_stop_s):
+            early_stop_reason = _format_stage4_no_output_stop(
+                _stage_wall_s(stages, "put"))
+            result_status = "early-stop-no-output"
+            failure_reason = early_stop_reason
+            break
         stop_s = args.no_output_stage2_stop_s
         if stop_s > 0 and _stage_wall_s(stages, "certify") >= stop_s:
-            partial_put = summarize_put_artifacts(case_dir / "put")
             if partial_put["raw"] == 0:
                 early_stop_reason = _format_stage2_no_output_stop(
                     _stage_wall_s(stages, "certify"))
@@ -872,6 +894,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "stage2_unit_timeout_cap_s": args.stage2_unit_timeout_cap_s,
         "cleared_concrete_fallbacks_enabled": True,
         "no_output_stage2_stop_s": args.no_output_stage2_stop_s,
+        "zero_output_stage4_stop_s": args.zero_output_stage4_stop_s,
         "early_stop_reason": early_stop_reason,
         "wall_cap_s": args.timeout + args.wrapper_grace,
         "status": result_status,
@@ -1046,6 +1069,7 @@ def build_dry_run(args) -> dict:
         "timeout_s": args.timeout,
         "esbmc_run_timeout_s": args.esbmc_run_timeout,
         "no_output_stage2_stop_s": args.no_output_stage2_stop_s,
+        "zero_output_stage4_stop_s": args.zero_output_stage4_stop_s,
         "memlimit_gib": args.memlimit_gib,
         "jobs": args.jobs,
         "order": args.order,
@@ -1093,6 +1117,11 @@ def main(argv=None) -> int:
                     help="if positive, stop trying remaining units in a subject "
                          "after this many cumulative Stage-2 seconds when no "
                          "raw artifact has been produced")
+    ap.add_argument("--zero-output-stage4-stop-s", type=int, default=0,
+                    help="if positive, stop trying remaining units in a subject "
+                         "after this many cumulative Stage-4 seconds when "
+                         "Stage 4 has run candidate rows but no raw artifact "
+                         "has been produced. Default 0 preserves old scheduling")
     ap.add_argument("--memlimit-gib", type=int, default=12,
                     help="per-ESBMC memory budget passed to Stage 2/4")
     ap.add_argument("--jobs", type=int, default=1,
@@ -1116,10 +1145,12 @@ def main(argv=None) -> int:
         if (args.timeout <= 0 or args.esbmc_run_timeout <= 0
                 or args.wrapper_grace < 0 or args.memlimit_gib <= 0
                 or args.no_output_stage2_stop_s < 0
-                or args.stage2_unit_timeout_cap_s < 0):
+                or args.stage2_unit_timeout_cap_s < 0
+                or args.zero_output_stage4_stop_s < 0):
             raise RQ1RunError("timeouts and --memlimit-gib must be positive; "
                               "--no-output-stage2-stop-s and "
-                              "--stage2-unit-timeout-cap-s must be "
+                              "--stage2-unit-timeout-cap-s and "
+                              "--zero-output-stage4-stop-s must be "
                               "non-negative")
         if args.esbmc_run_timeout > args.timeout:
             raise RQ1RunError("--esbmc-run-timeout must not exceed --timeout")

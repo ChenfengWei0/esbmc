@@ -11177,6 +11177,61 @@ Interpretation:
   subject-level early stop for repeated no-candidate units, better priority
   ordering, and region/candidate improvements for ENS/Comet/Balancer tails.
 
+## 2026-08-07 zero-output Stage-4 early-stop knob
+
+Motivation:
+
+- real203 limit130 showed a new low-ROI pattern:
+  `FeeBurnerAuthentication.transferOwnership` had 2 certified Stage-4
+  candidates, but `put_all.py` emitted raw=0 after 49.554s of Stage 4.
+- The RQ1 runner then continued with `pendingOwner` and `acceptOwnership`; the
+  latter consumed the 180s Stage-2 unit cap and the subject still ended
+  no-output.
+- Total for that subject was 265.930s; stopping after the zero-output Stage-4
+  run would have saved about 188s with no lost output in this observed case.
+
+Read-only counterfactual scan over existing RQ1 result.json files:
+
+- Pattern searched:
+  a Stage-4 put stage with candidate rows and raw=0, followed by later unit
+  attempts.
+- Result:
+  only one matching subject:
+  `real203/balancer__balancer-v3-monorepo__FeeBurnerAuthentication`.
+- That subject had final raw=0 and no later positive Stage-4 output.
+- No existing successful subject would have lost later raw output under this
+  heuristic in the current result set.
+
+Code change:
+
+- `notes/coverage/scripts/rq1_veriput_run.py` now accepts
+  `--zero-output-stage4-stop-s N`.
+- Default `0` preserves previous scheduling.
+- When positive, after each Stage-4 run the runner summarizes current PUT
+  artifacts; if raw remains 0 and cumulative Stage-4 wall time is at least N,
+  it records `early-stop-no-output` with reason
+  `no output after <N>s Stage 4; stopped before remaining units`.
+- Result rows and dry-run JSON record `zero_output_stage4_stop_s`.
+
+Recommended next small wave:
+
+- Do not rerun completed rows.
+- For the next real203 tail sample, use:
+  `--stage2-unit-timeout-cap-s 180 --zero-output-stage4-stop-s 30`
+  with `jobs=2`.
+- This is intentionally a throughput heuristic, not a proof rule.  It should
+  be used only for production scheduling and audited via the recorded early
+  stop reason.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  passed: all 13 tests.
+
 ## 2026-08-07 real203 fast-first limit36 wave
 
 Production policy for RQ1 waves:

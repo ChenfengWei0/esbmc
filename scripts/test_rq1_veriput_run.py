@@ -490,6 +490,28 @@ def test_stage2_no_output_stop_reason_is_audit_friendly():
     return bad
 
 
+def test_zero_output_stage4_stop_is_thresholded_and_raw_sensitive():
+    stages = [
+        {
+            "stage": "put",
+            "wall_s": 49.5,
+        },
+    ]
+    bad = 0
+    bad += check(not rq1_veriput_run._should_stop_after_zero_output_stage4(
+        stages, {"raw": 0}, 0), "Stage-4 zero-output stop defaults off")
+    bad += check(not rq1_veriput_run._should_stop_after_zero_output_stage4(
+        stages, {"raw": 1}, 30), "Stage-4 zero-output stop keeps raw outputs")
+    bad += check(not rq1_veriput_run._should_stop_after_zero_output_stage4(
+        stages, {"raw": 0}, 60), "Stage-4 zero-output stop waits for threshold")
+    bad += check(rq1_veriput_run._should_stop_after_zero_output_stage4(
+        stages, {"raw": 0}, 30), "Stage-4 zero-output stop fires after threshold")
+    bad += check(rq1_veriput_run._format_stage4_no_output_stop(49.5) ==
+                 "no output after 49.5s Stage 4; stopped before remaining units",
+                 "Stage-4 early-stop reason is stable")
+    return bad
+
+
 def main():
     tests = [
         test_path_guard_allows_only_veriput_rq1_result_tree,
@@ -504,6 +526,7 @@ def main():
         test_certify_argv_for_remaining_honors_unit_timeout_cap,
         test_prepare_case_dir_preserves_complete_and_quarantines_partial,
         test_stage2_no_output_stop_reason_is_audit_friendly,
+        test_zero_output_stage4_stop_is_thresholded_and_raw_sensitive,
     ]
     bad = 0
     for test in tests:
