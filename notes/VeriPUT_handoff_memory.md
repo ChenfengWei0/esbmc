@@ -11070,6 +11070,35 @@ Validation:
   existing Bitwuzla 0.8.2 package. Do not chase this unless future clean
   configure/builds fail.
 
+Clean-head RQ1 representative rerun after commit `9251357fd3`:
+
+- Command:
+  `python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark real203 --redo --jobs 1 --timeout 600 --esbmc-run-timeout 120 --stage2-unit-timeout-cap-s 180 --no-output-stage2-stop-s 90 --no-candidate-stage2-unit-stop-n 4 --zero-output-stage4-stop-s 30 --memlimit-gib 12 --wrapper-grace 60 --subject-id balancer__balancer-v3-monorepo__HyperEVMRateProvider`.
+- Result path:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/real203/subjects/balancer__balancer-v3-monorepo__HyperEVMRateProvider/result.json`.
+- RQ1 status remained `no-output`, but the failure mode changed materially:
+  no `driver_diagnostic`, no `esbmc-no-cov-report`, no abort.
+- All four scheduled units enumerated coverage witnesses and then landed in
+  `NO-COORDINATE`:
+  - `getSpotPriceMultiplier`: 2 witnessed, `NO-COORDINATE`, 1.5s.
+  - `getTokenIndex`: 2 witnessed, `NO-COORDINATE`, 0.9s.
+  - `getPairIndex`: 2 witnessed, `NO-COORDINATE`, 0.8s.
+  - `getRate`: 3 witnessed, `NO-COORDINATE`, 2.7s.
+- Common reason:
+  `3 coordinate(s) are fixed at deployment (immutable/constant) and no test can set them: state._pairIndex, state._spotPriceMultiplier, state._tokenIndex`.
+- Ground truth from the flat contract:
+  `_spotPriceMultiplier`, `_pairIndex`, and `_tokenIndex` are `immutable`;
+  `_spotPriceMultiplier` is derived in the constructor from
+  `HyperTokenInfoPrecompile.szDecimals(tokenIndex)`, and the getter units only
+  read these constructor-fixed values.
+- Interpretation:
+  the ABI decode fix moved this subject from an ESBMC/internal-modeling abort
+  to a region/coordinate-policy bottleneck. Extra solver time will not help
+  this specific case. A potential future strengthening path is to treat
+  constructor parameters as establishable deployment coordinates and generate
+  constructor-parameter PUTs or at least retain concrete constructor replay
+  tests for `NO-COORDINATE` rows whose witnesses are complete.
+
 ## 2026-08-08 inherited state name collision fix
 
 Context:
