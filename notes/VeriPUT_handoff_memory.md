@@ -11297,6 +11297,117 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 GameItems concrete replay repair
+
+Context:
+
+- Official RQ1 subject:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_077_GameItems`.
+- Before this repair, `pop_077_GameItems.transferOwnership` had `raw=3`,
+  `valid=0`, all concrete fallback, no PUT. This was the last
+  `raw>0 && valid==0` anomaly in the bugfix124 official results.
+
+Diagnosis:
+
+- ESBMC emitted three concrete fallback tests in two generated Foundry test
+  contracts.
+- Each generated `setUp()` deployed both the target `GameItems c0` and helper
+  `Neuron c1`.
+- `Neuron` mints during construction, and the concrete replay fixture supplied
+  zero addresses. Foundry reverted in `setUp()` before the concrete path body
+  could run.
+- The existing replay repair disabled `setUp()` after self-check failure, which
+  left `c0` undeployed and made every replay invalid.
+- The intended helper-deployment tolerance did not fire because
+  `tolerate_unused_setup_deployments()` only processed the first `setUp()`, and
+  its outside-use scan was whole-file rather than contract-scoped. Reusing the
+  same helper variable name in another generated test contract looked like a
+  real outside reference.
+
+Code fix:
+
+- `scripts/solidity_path_put.py` now enumerates all `setUp()` bodies.
+- The outside-use scan for a `setUp()` is scoped to the enclosing generated
+  test contract.
+- Unused non-target helper deployments in every `setUp()` are wrapped as:
+  `try new Helper(...) returns (Helper _esbmc_setup_var) { var = ...; } catch {}`
+  while target contract deployments remain strict.
+- `scripts/test_solidity_path_put.py` adds a multi-test-contract fixture with
+  the same helper variable name in both contracts, checking both wrappers are
+  emitted and both target deployments stay strict.
+
+Official result after rerun:
+
+- Old put directory backup:
+  `/tmp/veriput_gameitems_old_put_1786141556`.
+- Clean subject backup after moving the old put directory:
+  `/tmp/veriput_gameitems_subject_after_putmove_1786141568`.
+- Partial/racy backup path from an earlier concurrent copy+move attempt:
+  `/tmp/veriput_gameitems_official_backup_1786141556`; do not treat this as a
+  complete backup.
+- Rerun command used `--timeout 600 --forge-timeout 660 --memlimit-gib 12`.
+- New `put-summary.json`: `raw=3`, `valid=3`, `concrete_raw=3`,
+  `concrete_valid=3`, `put_raw=0`, `put_valid=0`.
+- New generated Foundry tests keep `setUp()` enabled and wrap the unused
+  `Neuron` deployment with revert tolerance.
+- Updated official files:
+  - `.../bugfix124/subjects/pop_077_GameItems/result.json`
+  - `.../bugfix124/results.jsonl` with a last-write-wins appended row
+  - `.../bugfix124/manifest.json`
+
+Global status after this repair:
+
+- Authoritative command:
+  `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark bugfix124`.
+- VeriPUT bugfix124 now reports:
+  `raw_u=189`, `valid_u=164`, `raw_c=58`, `valid_c=58`,
+  `coverage=46.8%`, `VT/case=1.32`.
+- Case-level progress by `results_all.py`: 58 / 124 cases have valid tests,
+  so 66 / 124 still have no valid test.
+- `raw>0 && valid==0` is now 0.
+- Remaining no-valid status buckets:
+  58 `no-output`, 5 `no-units`, 2 `budget-exhausted`, 2 `timeout`.
+
+Double-oracle accounting rule:
+
+- A PUT is trusted only when the assertion/region is first certified by ESBMC.
+- The generated Foundry test is a second oracle for engineering sanity: it runs
+  on the reference contract `P` to catch verifier false positives, instrumentation
+  mismatches, fixture errors, and Solidity/Foundry semantic drift.
+- Foundry replay is refutation-only. Passing Foundry does not prove the PUT
+  property; it only fails to find a violation on that concrete replay/project.
+- Therefore the official 600s generation timeout applies to certification and
+  test generation, not to the final Foundry validity replay. JSON must still
+  record Foundry replay wall time/status separately so cost can be audited.
+
+Code accounting fix:
+
+- `notes/coverage/scripts/put_all.py` now records Stage-4 emission wall time,
+  Foundry replay wall time, total wall time, and a
+  `foundry_replay_outside_generation_timeout` marker in `put-summary.json`.
+- `deliverable_b.foundry_replay` records Foundry self-check/final-gate runs,
+  timeouts, and wall time. Both Foundry invocations are replay/validity
+  insurance, not proof.
+- `notes/coverage/scripts/rq1_veriput_run.py` lifts those timing fields to the
+  case-level row and gives Stage 4's outer process enough extra wrapper time
+  for Foundry replay (`2 * forge_timeout`) while still passing only the
+  remaining generation budget into `put_all.py`.
+
+Checks already run before committing this repair:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 252 declared tests ran.
+- Lightweight GameItems assembly probe against the old emitted concrete file
+  passed: two `try new Neuron` wrappers emitted and `setUp()` was not disabled.
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md`
+  passed.
+
 ## 2026-08-08 DCF RQ1 repair: Foundry-only fixture and state-scalar ladder superset
 
 Problem:

@@ -5331,28 +5331,57 @@ def repair_payable_constructor_args(lines, contract, constructor_params):
 
 
 def _setup_body_span(lines):
-    start = None
+    spans = _setup_body_spans(lines)
+    return spans[0] if spans else None
+
+
+def _setup_body_spans(lines):
+    spans = []
+    starts = []
     for i, line in enumerate(lines):
         if re.match(r"^\s*function\s+setUp\s*\(\s*\)\s+public\b", line):
-            start = i
-            break
-    if start is None:
-        return None
-    depth = 0
-    seen_open = False
-    for i in range(start, len(lines)):
-        stripped = _strip_strings(lines[i])
-        if "{" in stripped:
-            seen_open = True
-        depth += stripped.count("{") - stripped.count("}")
-        if seen_open and depth == 0:
-            return start, i
+            starts.append(i)
+    for start in starts:
+        depth = 0
+        seen_open = False
+        for i in range(start, len(lines)):
+            stripped = _strip_strings(lines[i])
+            if "{" in stripped:
+                seen_open = True
+            depth += stripped.count("{") - stripped.count("}")
+            if seen_open and depth == 0:
+                spans.append((start, i))
+                break
+    return spans
+
+
+def _enclosing_contract_span(lines, pos):
+    contract_rx = re.compile(r"^\s*(?:abstract\s+)?contract\s+")
+    for start in range(pos, -1, -1):
+        if not contract_rx.match(lines[start]):
+            continue
+        depth = 0
+        seen_open = False
+        for end in range(start, len(lines)):
+            stripped = _strip_strings(lines[end])
+            if "{" in stripped:
+                seen_open = True
+            depth += stripped.count("{") - stripped.count("}")
+            if seen_open and depth == 0:
+                if start <= pos <= end:
+                    return start, end
+                break
     return None
 
 
 def _outside_setup_without_declarations(lines, setup_span):
     start, end = setup_span
-    outside = lines[:start] + lines[end + 1:]
+    contract_span = _enclosing_contract_span(lines, start)
+    if contract_span is None:
+        outside = lines[:start] + lines[end + 1:]
+    else:
+        cstart, cend = contract_span
+        outside = lines[cstart:start] + lines[end + 1:cend + 1]
     kept = []
     for line in outside:
         if re.match(r"^\s*[A-Za-z_]\w*(?:\s*\[\s*\])?\s+"
@@ -5371,52 +5400,55 @@ def tolerate_unused_setup_deployments(lines, target_contract=None):
     referenced outside setUp are wrapped; anything the test body uses stays
     strict.
     """
-    setup_span = _setup_body_span(lines)
-    if setup_span is None:
+    setup_spans = _setup_body_spans(lines)
+    if not setup_spans:
         return list(lines), 0
-    outside = _outside_setup_without_declarations(lines, setup_span)
-    start, end = setup_span
-    out = list(lines[:start])
+    out = []
     changed = 0
-    i = start
+    cursor = 0
     deploy_rx = re.compile(
         r"^(\s*)([A-Za-z_]\w*)\s*=\s*new\s+([A-Za-z_]\w*)"
         r"((?:\s*\{[^{}]*\})?)\s*\(")
-    while i <= end:
-        line = lines[i]
-        m = deploy_rx.match(line)
-        if m is None:
-            out.append(line)
-            i += 1
-            continue
-        var, typ = m.group(2), m.group(3)
-        if target_contract and typ == target_contract:
-            out.append(line)
-            i += 1
-            continue
-        if re.search(r"\b" + re.escape(var) + r"\b", outside):
-            out.append(line)
-            i += 1
-            continue
-        stmt_end = _statement_end(lines, i)
-        if stmt_end > end:
-            out.append(line)
-            i += 1
-            continue
-        stmt = "\n".join(lines[i:stmt_end + 1]).strip()
-        if not stmt.endswith(";"):
-            out.extend(lines[i:stmt_end + 1])
+    for start, end in setup_spans:
+        out.extend(lines[cursor:start])
+        outside = _outside_setup_without_declarations(lines, (start, end))
+        i = start
+        while i <= end:
+            line = lines[i]
+            m = deploy_rx.match(line)
+            if m is None:
+                out.append(line)
+                i += 1
+                continue
+            var, typ = m.group(2), m.group(3)
+            if target_contract and typ == target_contract:
+                out.append(line)
+                i += 1
+                continue
+            if re.search(r"\b" + re.escape(var) + r"\b", outside):
+                out.append(line)
+                i += 1
+                continue
+            stmt_end = _statement_end(lines, i)
+            if stmt_end > end:
+                out.append(line)
+                i += 1
+                continue
+            stmt = "\n".join(lines[i:stmt_end + 1]).strip()
+            if not stmt.endswith(";"):
+                out.extend(lines[i:stmt_end + 1])
+                i = stmt_end + 1
+                continue
+            indent = m.group(1)
+            rhs = stmt.split("=", 1)[1].strip().rstrip(";")
+            tmp = f"_esbmc_setup_{var}"
+            out.append(f"{indent}try {rhs} returns ({typ} {tmp}) {{")
+            out.append(f"{indent}  {var} = {tmp};")
+            out.append(f"{indent}}} catch {{}}")
+            changed += 1
             i = stmt_end + 1
-            continue
-        indent = m.group(1)
-        rhs = stmt.split("=", 1)[1].strip().rstrip(";")
-        tmp = f"_esbmc_setup_{var}"
-        out.append(f"{indent}try {rhs} returns ({typ} {tmp}) {{")
-        out.append(f"{indent}  {var} = {tmp};")
-        out.append(f"{indent}}} catch {{}}")
-        changed += 1
-        i = stmt_end + 1
-    out.extend(lines[end + 1:])
+        cursor = end + 1
+    out.extend(lines[cursor:])
     return out, changed
 
 

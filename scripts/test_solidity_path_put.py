@@ -10854,6 +10854,18 @@ contract TargetCovTest is Test {
     c1.run();
   }
 }
+contract TargetCovTest_1 is Test {
+  Helper c0;
+  Target c1;
+  function setUp() public {
+    c0 = new Helper(address(uint160(0)));
+    c1 = new Target();
+  }
+  // claim: sol:@C@Target@F@run#41:path:8
+  function test_cov_1() public {
+    c1.run();
+  }
+}
 """
     fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
     with os.fdopen(fd, "w") as f:
@@ -10868,12 +10880,13 @@ contract TargetCovTest is Test {
                    "    c1.run();", "  }"],
         "TargetCovTest_Target_run_put7", contract="Target", unit="run")
     bad = 0
-    bad += check("try new Helper(address(uint160(0))) returns "
-                 "(Helper _esbmc_setup_c0)" in text,
-                 "unused helper deployment is revert-tolerant")
-    bad += check("c0 = _esbmc_setup_c0;" in text,
-                 "successful helper construction still assigns the instance")
-    bad += check("c1 = new Target();" in text,
+    bad += check(text.count("try new Helper(address(uint160(0))) returns "
+                            "(Helper _esbmc_setup_c0)") == 2,
+                 "unused helper deployments are revert-tolerant in every "
+                 "test contract, without cross-contract name collisions")
+    bad += check(text.count("c0 = _esbmc_setup_c0;") == 2,
+                 "successful helper construction still assigns each instance")
+    bad += check(text.count("c1 = new Target();") == 2,
                  "target deployment remains strict")
     return bad
 

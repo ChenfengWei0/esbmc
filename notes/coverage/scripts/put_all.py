@@ -25,6 +25,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from collections import Counter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -614,6 +615,7 @@ def cells_of(results):
 
 def run_forge(project, timeout):
     """Run Forge with a hard timeout over its whole process group."""
+    start = time.monotonic()
     proc = subprocess.Popen(["forge", "test", "--json"], cwd=project,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, start_new_session=True)
@@ -632,7 +634,8 @@ def run_forge(project, timeout):
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except (OSError, ProcessLookupError):
             pass
-    return proc.returncode, stdout, stderr, timed_out
+    return (proc.returncode, stdout, stderr, timed_out,
+            round(time.monotonic() - start, 3))
 
 
 def main():
@@ -740,6 +743,7 @@ def main():
                     help="project and scratch root. A single POC should point "
                          "this at its own output directory.")
     args = ap.parse_args()
+    main_start = time.monotonic()
     stage4_recipe_version = apply_strong_put_recipe(args)
     if args.timeout <= 0:
         sys.exit("--timeout must be positive")
@@ -1203,7 +1207,9 @@ def main():
     print("  EMITTED TEXT; B additionally requires the test to be GREEN on the")
     print("  unmodified contract, which only forge can say. See the gate below.")
 
+    emission_wall_s = round(time.monotonic() - main_start, 3)
     b_summary = b_report(results, args.forge_timeout)
+    total_wall_s = round(time.monotonic() - main_start, 3)
     summary_path = os.path.join(OUT, "put-summary.json")
     with open(summary_path, "w") as stream:
         json.dump({
@@ -1229,6 +1235,15 @@ def main():
                 "with_fuzz_parameters": n_fuzz,
                 "with_oracle": n_oracle,
                 "with_both": n_both,
+            },
+            "timing": {
+                "generation_timeout_s": args.timeout,
+                "forge_timeout_s_per_run": args.forge_timeout,
+                "emission_wall_s": emission_wall_s,
+                "foundry_replay_wall_s":
+                    b_summary.get("foundry_replay", {}).get("wall_s", 0.0),
+                "total_wall_s": total_wall_s,
+                "foundry_replay_outside_generation_timeout": True,
             },
             "deliverable_b": b_summary,
         }, stream, indent=2, sort_keys=True)
@@ -1277,8 +1292,17 @@ def disable_red_replays(projects, forge_timeout):
     -- not a defect in the region under test -- and the roundtrip already
     decided that such a case is kept, renamed, and not counted.
     """
+    timing = {
+        "runs": 0,
+        "timeouts": 0,
+        "wall_s": 0.0,
+    }
     for proj in projects:
-        _rc, stdout, _stderr, timed_out = run_forge(proj, forge_timeout)
+        _rc, stdout, _stderr, timed_out, wall_s = run_forge(
+            proj, forge_timeout)
+        timing["runs"] += 1
+        timing["timeouts"] += 1 if timed_out else 0
+        timing["wall_s"] += wall_s
         if timed_out:
             print(f"  [self-check] {os.path.basename(proj)}: forge timed out "
                   f"after {forge_timeout}s; no replay was disabled")
@@ -1332,6 +1356,8 @@ def disable_red_replays(projects, forge_timeout):
                 print(f"  [self-check] {os.path.basename(full)}: disabled "
                       f"{len(changed)} red concrete replay(s): "
                       + ", ".join(changed))
+    timing["wall_s"] = round(timing["wall_s"], 3)
+    return timing
 
 
 def b_report(results, forge_timeout):
@@ -1339,7 +1365,9 @@ def b_report(results, forge_timeout):
     print("=" * 84)
     print("DELIVERABLE B — all five WORKORDER gates, per PUT")
     print("=" * 84)
-    disable_red_replays(sorted({r[6] for r in results if r[6]}), forge_timeout)
+    replay_timing = disable_red_replays(
+        sorted({r[6] for r in results if r[6]}), forge_timeout)
+    final_gate_wall_s = 0.0
 
     # forge, once per project, and the verdict per TEST FUNCTION. Running it per
     # row would recompile the benchmark flat once per region (70-180 KB each),
@@ -1350,7 +1378,11 @@ def b_report(results, forge_timeout):
         "concrete": {"Success": 0, "Failure": 0, "other": 0},
     }
     for proj in sorted({r[6] for r in results if r[6]}):
-        _rc, stdout, stderr, timed_out = run_forge(proj, forge_timeout)
+        _rc, stdout, stderr, timed_out, wall_s = run_forge(proj, forge_timeout)
+        replay_timing["runs"] += 1
+        replay_timing["timeouts"] += 1 if timed_out else 0
+        replay_timing["wall_s"] += wall_s
+        final_gate_wall_s += wall_s
         if timed_out:
             print(f"  [forge] {os.path.basename(proj)}: timed out after "
                   f"{forge_timeout}s; every row in this project is UNKNOWN")
@@ -1626,6 +1658,16 @@ def b_report(results, forge_timeout):
         "stale": n_stale,
         "valid_reference_tests": valid_reference_tests,
         "stage2_source_counts": dict(stage2_sources),
+        "foundry_replay": {
+            "outside_generation_timeout": True,
+            "timeout_s_per_run": forge_timeout,
+            "runs": replay_timing["runs"],
+            "timeouts": replay_timing["timeouts"],
+            "wall_s": round(replay_timing["wall_s"], 3),
+            "self_check_wall_s": round(
+                replay_timing["wall_s"] - final_gate_wall_s, 3),
+            "final_gate_wall_s": round(final_gate_wall_s, 3),
+        },
         "rows": row_summaries,
     }
 

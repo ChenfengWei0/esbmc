@@ -623,6 +623,7 @@ def _row_is_disabled_concrete(row: dict) -> bool:
 def summarize_put_artifacts(put_root: Path) -> dict:
     emission = Counter()
     valid = Counter()
+    timing = Counter()
     rows = []
     summary_paths = []
     for path in sorted(put_root.rglob("put-summary.json")):
@@ -638,6 +639,12 @@ def summarize_put_artifacts(put_root: Path) -> dict:
         emission["concrete"] += int(em.get("concrete_replays_emitted") or 0)
         valid["put"] += int(v.get("put") or 0)
         valid["concrete"] += int(v.get("concrete") or 0)
+        tm = doc.get("timing") or {}
+        timing["stage4_emission_wall_s"] += float(
+            tm.get("emission_wall_s") or 0.0)
+        timing["foundry_replay_wall_s"] += float(
+            tm.get("foundry_replay_wall_s") or 0.0)
+        timing["put_all_wall_s"] += float(tm.get("total_wall_s") or 0.0)
         rows.extend(b.get("rows") or [])
 
     put_jsons = _load_put_jsons(put_root)
@@ -728,6 +735,11 @@ def summarize_put_artifacts(put_root: Path) -> dict:
         "raw_tests": raw_tests,
         "valid_tests": valid_tests,
         "put_json_count": len(put_jsons),
+        "stage4_emission_wall_s": round(
+            timing["stage4_emission_wall_s"], 3),
+        "foundry_replay_wall_s": round(
+            timing["foundry_replay_wall_s"], 3),
+        "put_all_wall_s": round(timing["put_all_wall_s"], 3),
         "oracle_class_counts": dict(sorted(oracle_label_counts.items())),
         "oracle_class_combo_counts": dict(sorted(oracle_combo_counts.items())),
         "assertion_oracles": assertion_oracles,
@@ -970,19 +982,30 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             failure_reason = "case budget exhausted before Stage 4"
             break
         put_root = case_dir / "put" / _safe_name(unit)
+        put_generation_budget_s = _remaining(deadline)
         put_argv = _put_argv(cert_path,
                              unit,
                              subject.benchmark_key,
                              put_root,
-                             _remaining(deadline),
+                             put_generation_budget_s,
                              args.memlimit_gib,
                              args.forge_timeout)
+        # Stage 4's ESBMC/emission work is budgeted by --timeout and the
+        # remaining case deadline passed above.  put_all.py then runs Foundry
+        # as a second, refutation-only replay oracle; let that finish outside
+        # the generation timeout so a slow replay does not reclassify completed
+        # generation as a tool timeout.
+        put_wrapper_timeout_s = (put_generation_budget_s + args.wrapper_grace
+                                 + 2 * args.forge_timeout)
         put_stage = run_command(put_argv,
-                                _remaining(deadline) + args.wrapper_grace,
+                                put_wrapper_timeout_s,
                                 case_dir / "logs" / f"{idx:03d}-{_safe_name(unit)}-put")
         put_stage.update({
             "stage": "put",
             "unit": unit,
+            "generation_budget_s": round(put_generation_budget_s, 3),
+            "foundry_replay_outside_generation_timeout": True,
+            "foundry_replay_timeout_s_per_run": args.forge_timeout,
             "certified_regions_for_unit": n_certified,
             "cleared_concrete_fallbacks_for_unit": n_cleared_fallback,
             "timeout_concrete_fallbacks_for_unit": n_timeout_fallback,
@@ -1079,6 +1102,10 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "units_scheduled": len(jobs),
         "stage2_wall_s": round(_stage_wall_s(stages, "certify"), 3),
         "stage4_wall_s": round(_stage_wall_s(stages, "put"), 3),
+        "stage4_emission_wall_s": put_summary["stage4_emission_wall_s"],
+        "foundry_replay_wall_s": put_summary["foundry_replay_wall_s"],
+        "put_all_wall_s": put_summary["put_all_wall_s"],
+        "foundry_replay_outside_generation_timeout": True,
         "wall": wall_total_s,
         "wall_total_s": wall_total_s,
         "maxrss_mb": max(
