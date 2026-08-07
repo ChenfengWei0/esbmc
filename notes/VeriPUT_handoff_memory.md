@@ -11591,6 +11591,98 @@ Interpretation:
 - No immediate code fix is obvious from this wave; keep moving unless the same
   no-certified-region pattern starts dominating slower datasets.
 
+## 2026-08-07 peer182 fast-first limit84 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 84 --order fast-first --jobs 2 --memlimit-gib 12 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Execution:
+
+- The runner skipped the first 72 fast-first peer rows and queued the next 12.
+- No OOM, wrapper timeout, or residual worker processes after completion.
+- This wave is the first one with several ERC20-like token subjects in the
+  fast-first prefix.  Those cases are slow but highly productive.
+- `Token`, `DogeMojo`, `VamprireDoge`, and `ShibaAstronaut` each produced
+  4 / 4 valid PUTs, with no concrete replay tests.
+- The main cost on those four subjects is split between Stage2 and Stage4:
+  about 220s Stage2 plus 253-259s Stage4 per subject.
+- Peak memory stayed under the 12GiB limit.  `VamprireDoge` briefly reached
+  roughly 7.5GiB RSS during Stage2.
+
+Latest peer182 aggregate after this wave:
+
+- Latest rows: 85.  This includes earlier `peer_ccsolbmc__AIRBets` plus
+  fast-first prefix 84.
+- Status counts: 50 `ok`, 32 `no-output`, 3 `no-units`.
+- Completion counts: 1 `budget-exhausted`, 80 `ok`, 3 `no-units`,
+  1 `early-stop-no-output`.
+- Valid subjects: 46 / 85.
+- Generated tests: raw/valid 147 / 113.
+- PUT tests: raw/valid 117 / 90.
+- Concrete replay tests: raw/valid 30 / 23.
+- Raw>0 but valid==0 subjects: 4.  This did not increase.
+- Oracle classes: `R2: 833`, `R1: 71`, `R0: 69`.
+- Oracle combinations: `R2: 806`, `R1: 44`, `R1+R2: 27`, `R0: 69`.
+- Median ok-wall: 29.802s.  Max ok-wall remains AIRBets at 585.465s.
+- `results_all.py --benchmark peer182` reports VeriPUT `ran=85`,
+  `raw_u=147`, `valid_u=113`, `raw_c=50`, `valid_c=46`,
+  `coverage=25.3%`, `VT/case=0.62`, median ok-wall 29.8s, and
+  `raw>0 & valid==0=4`.
+
+New rows in fast-first 73-84:
+
+- `peer_soltg__branches_in_modifiers_2 / Ci2`: ok, raw=1, valid=1,
+  PUT 1/1, wall 12.558s, oracle classes `R0:1, R1:4, R2:6`.
+- `peer_solar__DosAuction / DosAuction`: ok, raw=2, valid=1,
+  concrete 1/2 only, wall 11.057s.
+- `peer_solar__SecureAuction / SecureAuction`: ok, raw=3, valid=2,
+  PUT 1/1, concrete 1/2, wall 29.063s, oracle classes `R0:1, R1:1, R2:4`.
+- `peer_ccsolbmc__payments / Payments`: ok, raw=2, valid=2,
+  PUT 2/2, wall 27.062s, oracle classes `R0:2, R2:8`.
+- `peer_ccsolbmc__SimpleMarketplace / SimpleMarketplace`: ok, raw=2,
+  valid=2, PUT 2/2, wall 33.590s, oracle classes `R0:2, R1:1, R2:1`.
+- `peer_ccsolbmc__Token / Token`: ok, raw=4, valid=4,
+  PUT 4/4, wall 472.548s, oracle classes `R0:4, R1:4, R2:37`.
+- `peer_ccsolbmc__escrow / escrow`: ok, raw=6, valid=6,
+  PUT 3/3, concrete 3/3, wall 69.592s, oracle classes `R0:3`.
+- `peer_ccsolbmc__DogeMojo / DogeMojo`: ok, raw=4, valid=4,
+  PUT 4/4, wall 477.156s, oracle classes `R0:4, R1:4, R2:37`.
+- `peer_ccsolbmc__VamprireDoge / VamprireDoge`: ok, raw=4, valid=4,
+  PUT 4/4, wall 478.659s, oracle classes `R0:4, R1:4, R2:37`.
+- `peer_ccsolbmc__ShibaAstronaut / ShibaAstronaut`: ok, raw=4, valid=4,
+  PUT 4/4, wall 472.651s, oracle classes `R0:4, R1:4, R2:37`.
+- `peer_solar__LotteryMultipleWinners / LotteryMultipleWinners`: ok,
+  raw=1, valid=1, PUT 1/1, wall 279.946s, oracle classes `R0:1`.
+- `peer_solar__EzToken / EzToken`: no-output, wall 213.720s,
+  reason `no output after 213.7s Stage 2; stopped before remaining units`.
+
+`EzToken` diagnosis:
+
+- This is not a wrapper or Stage4 replay failure.  There are no raw artifacts
+  because Stage2 produced no certified region.
+- `transfer`: `NOT-CERTIFIED`, 0 certified / 3 not / 3 witnessed,
+  8 free coordinates, 90.3s.
+- `transferFrom`: `NOT-CERTIFIED`, 0 certified / 1 not / 1 witnessed,
+  6 free coordinates, 122.9s.
+- Direct enumeration for `transfer` covered 3 / 3 paths with 24 witnesses.
+  Direct enumeration for `transferFrom` was partial: 1 / 31 paths covered.
+- This looks like a region/state-precondition limitation, probably interacting
+  with token allowance/state and multi-transaction reachability.  Do not add
+  an EzToken-specific rule.  Treat it as a later generic region/multi-state
+  improvement target.
+
+Interpretation:
+
+- This wave is very strong on valid output: 11 / 12 new subjects got valid
+  tests, adding 31 valid tests.
+- It also confirms that strong R2 generation works on ERC20-like contracts,
+  but the cost is high.  If speed becomes critical, optimize generic R2
+  candidate pruning or fuzz-refutation for token-style `approve` paths rather
+  than weakening the whole recipe.
+- The unchanged `raw>0 valid==0` count means the recent R0 and report
+  preservation fixes are not causing invalid-only subjects.
+
 ## 2026-08-07 RQ1 production runner and early benchmark samples
 
 Production output contract:
