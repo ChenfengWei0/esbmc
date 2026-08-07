@@ -11169,6 +11169,64 @@ Validation:
 - `git diff --check -- notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/test_put_all_accounting.py scripts/test_rq1_veriput_run.py`
   passed.
 
+Follow-up compatibility fix:
+
+- Old `put-summary.json` rows may not have the new `refused` flag even when
+  their `put.json` says `asserts=0`, `guarded_asserts=0`, and
+  `oracle_classes=[]`.
+- `rq1_veriput_run.summarize_put_artifacts()` now detects such legacy
+  zero-oracle PUT rows directly from `put.json` stats, falling back to
+  `row.gates.assert == false` when counters are absent.
+- When row-level `deliverable_b.rows` exist, wrapper raw/valid counts now come
+  from deliverable rows rather than blindly trusting old `emission.puts_emitted`.
+- Oracle metadata counts are also tied to deliverable rows, so stale/refused
+  `put.json` files cannot inflate R0/R1/R2 counts.
+- The compatibility test simulates a legacy no-`refused` zero-assertion PUT
+  with `puts_emitted=2`; the expected wrapper summary is still only one PUT
+  raw/valid plus one concrete raw.
+
+Validation after compatibility fix:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  passed.
+- `git diff --check -- notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+
+JSON-only refresh of existing peer182 RQ1 output:
+
+- No ESBMC rerun was used.
+- Source artifacts used for refresh were the retained per-subject
+  `put-summary.json` and `put.json` files under
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects`.
+- Refreshed `result.json` and appended last-write-wins correction rows to
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/results.jsonl`.
+- 16 latest rows carry `stat_refresh_reason`:
+  `drop zero-unconditional-assertion PUTs from deliverable accounting`.
+- Notable corrected rows:
+  - `peer_ccsolbmc__SimpleECR20`: raw 13 -> 10, valid stays 10.
+  - `peer_solar__Greeter`: raw 12 -> 10, valid stays 10.
+  - `peer_solar__Greeter2`: raw 7 -> 5, valid stays 5.
+  - `peer_solar__Greeter3`: raw 12 -> 10, valid stays 10.
+  - Several small `peer_soltg__*` rows with only zero-oracle PUTs now have
+    raw 0 and `status=no-output`.
+- Current latest-row aggregate after refresh:
+  - latest rows: 121
+  - status: `ok` 66, `no-output` 48, `no-units` 5, `timeout` 2
+  - completion: `ok` 99, `budget-exhausted` 9, `early-stop-no-output` 6,
+    `no-units` 5, `timeout` 2
+  - raw / valid: 284 / 260
+  - PUT raw / valid: 229 / 221
+  - concrete raw / valid: 55 / 46
+  - valid subjects: 66
+  - valid None: 2 timeout rows
+  - oracle classes remain `R0=194`, `R1=211`, `R2=1279`
+  - oracle combos remain `R0=194`, `R1=159`, `R1+R2=52`, `R2=1227`
+- Current official `results_all.py --benchmark peer182` VeriPUT line:
+  `veriput 1 121 284 260 68 66 36.3% 1.43`.
+- The official anomaly audit now reports VeriPUT `raw>0 & valid==0 = 0`.
+
 ## 2026-08-07 RQ1 production runner artifact schema
 
 User requirement recorded:

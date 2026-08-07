@@ -503,6 +503,18 @@ def _load_put_jsons(put_root: Path) -> list[dict]:
     return out
 
 
+def _row_is_no_oracle_put(row: dict, rec: dict) -> bool:
+    if row.get("kind") != "put":
+        return False
+    stats = rec.get("stats") or {}
+    if "asserts" in stats or "guarded_asserts" in stats:
+        asserts = int(stats.get("asserts") or 0)
+        guarded = int(stats.get("guarded_asserts") or 0)
+        return asserts - guarded <= 0
+    gates = row.get("gates") or {}
+    return gates.get("assert") is False
+
+
 def summarize_put_artifacts(put_root: Path) -> dict:
     emission = Counter()
     valid = Counter()
@@ -525,29 +537,16 @@ def summarize_put_artifacts(put_root: Path) -> dict:
 
     put_jsons = _load_put_jsons(put_root)
     by_test = {rec.get("test"): rec for rec in put_jsons if rec.get("test")}
-    oracle_label_counts = Counter()
-    oracle_combo_counts = Counter()
-    assertion_oracles = []
-    for rec in put_jsons:
-        details = rec.get("stats", {}).get("assertion_oracles") or []
-        for detail in details:
-            classes = tuple(detail.get("classes") or [])
-            if not classes:
-                continue
-            for label in classes:
-                oracle_label_counts[label] += 1
-            oracle_combo_counts["+".join(classes)] += 1
-            enriched = dict(detail)
-            enriched["test"] = rec.get("test")
-            enriched["put_json"] = rec.get("_put_json_path")
-            assertion_oracles.append(enriched)
 
     raw_tests = []
     valid_tests = []
+    deliverable_raw = Counter()
+    deliverable_valid = Counter()
+    deliverable_tests = set()
     for row in rows:
-        if row.get("refused"):
-            continue
         rec = by_test.get(row.get("test"), {})
+        if row.get("refused") or _row_is_no_oracle_put(row, rec):
+            continue
         entry = {
             "kind": row.get("kind"),
             "unit": row.get("unit"),
@@ -562,8 +561,38 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             "put_json": rec.get("_put_json_path"),
         }
         raw_tests.append(entry)
+        if entry["kind"]:
+            deliverable_raw[entry["kind"]] += 1
+        if entry["test"]:
+            deliverable_tests.add(entry["test"])
         if entry["valid_reference_test"]:
             valid_tests.append(entry)
+            if entry["kind"]:
+                deliverable_valid[entry["kind"]] += 1
+
+    if rows:
+        emission = deliverable_raw
+        valid = deliverable_valid
+
+    oracle_label_counts = Counter()
+    oracle_combo_counts = Counter()
+    assertion_oracles = []
+    for rec in put_jsons:
+        test = rec.get("test")
+        if rows and test not in deliverable_tests:
+            continue
+        details = rec.get("stats", {}).get("assertion_oracles") or []
+        for detail in details:
+            classes = tuple(detail.get("classes") or [])
+            if not classes:
+                continue
+            for label in classes:
+                oracle_label_counts[label] += 1
+            oracle_combo_counts["+".join(classes)] += 1
+            enriched = dict(detail)
+            enriched["test"] = test
+            enriched["put_json"] = rec.get("_put_json_path")
+            assertion_oracles.append(enriched)
 
     return {
         "raw": int(emission["put"] + emission["concrete"]),

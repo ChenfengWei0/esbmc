@@ -76,10 +76,23 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
                 ],
             },
         }))
+        zero_wd = unit / "_wd" / "zero"
+        zero_wd.mkdir(parents=True)
+        (zero_wd / "put.json").write_text(json.dumps({
+            "kind": "put",
+            "test": "test_put_Token_approve_path9",
+            "file": "zero.t.sol",
+            "stats": {
+                "oracle_classes": [],
+                "asserts": 0,
+                "guarded_asserts": 0,
+                "assertion_oracles": [],
+            },
+        }))
         (unit / "put-summary.json").write_text(json.dumps({
             "schema": "veriput-put-summary/1",
             "emission": {
-                "puts_emitted": 1,
+                "puts_emitted": 2,
                 "concrete_replays_emitted": 1,
             },
             "deliverable_b": {
@@ -121,7 +134,6 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
                         "forge_status": "Success",
                         "valid_reference_test": False,
                         "b": False,
-                        "refused": True,
                     },
                 ],
             },
