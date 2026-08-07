@@ -11014,6 +11014,83 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 Cleared concrete fallback emission
+
+Reason for the change:
+
+- Stage 2 already records `not_certified_details` rows where
+  `concrete_fallback=true` and the single-point `witness_check=SUCCESSFUL`.
+- These rows are not PUT proofs and must never count as certified regions, but
+  they are authenticated concrete replay opportunities.
+- Before this change, `put_all.py` consumed only `bucket == CERTIFIED` rows, and
+  the RQ1 runner only launched Stage 4 when `_certified_count(...) > 0`.
+  Therefore a zero-certified unit with a cleared concrete fallback could never
+  emit even a concrete replay.
+
+Semantics:
+
+- Fuzz / Forge / concrete replay remains refutation or validation only.  It
+  does not prove a region.
+- Only `witness_check=SUCCESSFUL` is accepted.  `UNKNOWN` is not proof and is
+  not emitted through this path.
+- Output kind is `concrete`, with
+  `stage2_source=cleared_not_certified_fallback`; it contributes only to
+  concrete raw/valid accounting, not to PUT B.
+
+Code changes:
+
+- `scripts/solidity_path_put.py` gained `--concrete-only`.
+  It still runs Step 1 ESBMC emission to get the concrete suite and path id, but
+  skips storage layout, assertion ladder, R2, and PUT construction.
+- `notes/coverage/scripts/put_all.py` gained
+  `--emit-cleared-concrete-fallbacks`.
+  Default behavior is unchanged; the RQ1 wrapper enables it explicitly.
+- `put_all.py` parses Stage-2 `coords`, CE values, and pinned values into a
+  point region for audit metadata, then calls `solidity_path_put.py
+  --concrete-only --test-suffix _fb`.
+- `notes/coverage/scripts/rq1_veriput_run.py` now launches Stage 4 when a unit
+  has either certified regions or cleared concrete fallbacks, and records
+  `cleared_concrete_fallbacks_for_unit`,
+  `stage4_candidates_for_unit`, and
+  `cleared_concrete_fallbacks_enabled=true`.
+- RQ1 raw/valid test rows now preserve `stage2_source`.
+
+Existing-results opportunity count, read-only over
+`/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`:
+
+- `peer182`: 50 cleared fallback candidates.
+- `bugfix124`: 17 cleared fallback candidates.
+- `real203`: 15 cleared fallback candidates.
+- By Stage-2 bucket: 40 candidates came from `CERTIFIED` rows' not-certified
+  side, and 42 came from pure `NOT-CERTIFIED` rows.
+
+Validation run:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/test_put_all_accounting.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `git diff --check -- scripts/solidity_path_put.py notes/coverage/scripts/put_all.py notes/coverage/scripts/rq1_veriput_run.py scripts/test_put_all_accounting.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_put_all_accounting.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py`
+  passed: all 12 tests.
+
+End-to-end smoke test:
+
+- Built a temporary cert file at
+  `/tmp/veriput_cleared_fb_smoke_cert.jsonl` from the existing
+  `peer182__peer_solar__DateTime.isLeapYear` Stage-2 row, keeping only one
+  cleared fallback and zero certified regions.
+- Ran:
+  `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/put_all.py --cert /tmp/veriput_cleared_fb_smoke_cert.jsonl --only peer182__peer_solar__DateTime.isLeapYear --emit-cleared-concrete-fallbacks --out-root /tmp/veriput_cleared_fb_smoke_1786113989 --timeout 60 --forge-timeout 60 --memlimit-gib 8`
+- Result:
+  - 0 certified regions, 1 cleared concrete fallback selected.
+  - `solidity_path_put.py --concrete-only` ran one ESBMC emission in 0.7s.
+  - Wrote
+    `/tmp/veriput_cleared_fb_smoke_1786113989/peer182__peer_solar__DateTime__veriput_cleared_fb_smoke_cert/test/DateTimeCovTest_DateTime_isLeapYear_concrete6_fb.t.sol`.
+  - Forge reported the concrete replay green.
+  - Summary counted `B=0`, `PUT=0`, `valid concrete=1`.
+
 ## 2026-08-07 real203 fast-first limit36 wave
 
 Production policy for RQ1 waves:

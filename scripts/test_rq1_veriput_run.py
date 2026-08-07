@@ -283,6 +283,52 @@ def test_certification_summary_identifies_inner_timeouts():
     return bad
 
 
+def test_cleared_concrete_fallbacks_trigger_stage4():
+    with tempfile.TemporaryDirectory() as td:
+        cert = Path(td) / "certify-results.jsonl"
+        rows = [
+            {
+                "benchmark": "bench",
+                "unit": "approve",
+                "bucket": "NOT-CERTIFIED",
+                "certified": {},
+                "not_certified": {"7": "single point cleared"},
+                "not_certified_details": {
+                    "7": {
+                        "enc": 7,
+                        "concrete_fallback": True,
+                        "witness_check": "SUCCESSFUL",
+                    },
+                },
+            },
+            {
+                "benchmark": "bench",
+                "unit": "approve",
+                "bucket": "NOT-CERTIFIED",
+                "certified": {},
+                "not_certified": {"8": "unknown point"},
+                "not_certified_details": {
+                    "8": {
+                        "enc": 8,
+                        "concrete_fallback": True,
+                        "witness_check": "UNKNOWN",
+                    },
+                },
+            },
+        ]
+        cert.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        count = rq1_veriput_run._cleared_concrete_fallback_count(
+            cert, "bench", "approve")
+    argv = rq1_veriput_run._put_argv(
+        cert, "approve", "bench", Path("/tmp/out"), 600, 12, 300)
+    bad = 0
+    bad += check(count == 1,
+                 "only SUCCESSFUL concrete fallbacks trigger Stage 4")
+    bad += check("--emit-cleared-concrete-fallbacks" in argv,
+                 f"RQ1 Stage 4 enables cleared concrete fallback emission: {argv}")
+    return bad
+
+
 def test_subject_schedule_uses_separate_esbmc_run_timeout():
     subject = rq1_veriput_run.PreparedSubject(
         benchmark="bugfix124",
@@ -452,6 +498,7 @@ def main():
         test_jobs_admission_refuses_oversubscription,
         test_target_rows_fast_first_sorts_before_limit,
         test_certification_summary_identifies_inner_timeouts,
+        test_cleared_concrete_fallbacks_trigger_stage4,
         test_subject_schedule_uses_separate_esbmc_run_timeout,
         test_certify_argv_for_remaining_caps_only_run_timeout,
         test_certify_argv_for_remaining_honors_unit_timeout_cap,

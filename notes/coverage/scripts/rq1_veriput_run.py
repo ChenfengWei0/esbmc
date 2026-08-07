@@ -395,6 +395,40 @@ def _certified_count(cert_path: Path, benchmark_key: str, unit: str) -> int:
     return count
 
 
+def _cleared_concrete_fallback_count(cert_path: Path, benchmark_key: str,
+                                     unit: str) -> int:
+    if not cert_path.exists():
+        return 0
+    count = 0
+    for line in cert_path.read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("unit") != unit:
+            continue
+        if (row.get("benchmark") or row.get("poc")) != benchmark_key:
+            continue
+        not_certified = row.get("not_certified") or {}
+        details = row.get("not_certified_details") or {}
+        if isinstance(details, list):
+            detail_rows = {str(d.get("enc")): d for d in details
+                           if isinstance(d, dict)}
+        elif isinstance(details, dict):
+            detail_rows = {str(k): v for k, v in details.items()
+                           if isinstance(v, dict)}
+        else:
+            detail_rows = {}
+        for enc in not_certified:
+            detail = detail_rows.get(str(enc)) or {}
+            if (detail.get("concrete_fallback") is True
+                    and detail.get("witness_check") == "SUCCESSFUL"):
+                count += 1
+    return count
+
+
 def summarize_certification(cert_path: Path) -> dict:
     summary = {
         "rows": 0,
@@ -549,6 +583,7 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             continue
         entry = {
             "kind": row.get("kind"),
+            "stage2_source": row.get("stage2_source"),
             "unit": row.get("unit"),
             "enc": row.get("enc"),
             "piece": row.get("piece"),
@@ -676,6 +711,7 @@ def _put_argv(cert_path: Path, unit: str, benchmark_key: str, out_root: Path,
         "--only",
         f"{benchmark_key}.{unit}",
         "--strong-recipe",
+        "--emit-cleared-concrete-fallbacks",
         "--timeout",
         str(budget),
         "--forge-timeout",
@@ -758,7 +794,9 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             failure_reason = f"certify {unit}: {cert_stage['status']}"
             break
         n_certified = _certified_count(cert_path, subject.benchmark_key, unit)
-        if n_certified <= 0:
+        n_cleared_fallback = _cleared_concrete_fallback_count(
+            cert_path, subject.benchmark_key, unit)
+        if n_certified + n_cleared_fallback <= 0:
             stop_s = args.no_output_stage2_stop_s
             if stop_s > 0 and _stage_wall_s(stages, "certify") >= stop_s:
                 partial_put = summarize_put_artifacts(case_dir / "put")
@@ -788,6 +826,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             "stage": "put",
             "unit": unit,
             "certified_regions_for_unit": n_certified,
+            "cleared_concrete_fallbacks_for_unit": n_cleared_fallback,
+            "stage4_candidates_for_unit": n_certified + n_cleared_fallback,
             "put_out_root": str(put_root),
         })
         stages.append(put_stage)
@@ -830,6 +870,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "tool_timeout_s": args.timeout,
         "esbmc_run_timeout_s": args.esbmc_run_timeout,
         "stage2_unit_timeout_cap_s": args.stage2_unit_timeout_cap_s,
+        "cleared_concrete_fallbacks_enabled": True,
         "no_output_stage2_stop_s": args.no_output_stage2_stop_s,
         "early_stop_reason": early_stop_reason,
         "wall_cap_s": args.timeout + args.wrapper_grace,

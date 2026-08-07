@@ -18,12 +18,14 @@ esbmc invocations and this loop is serial.
 """
 
 import argparse
+import ast
 import json
 import os
 import re
 import signal
 import subprocess
 import sys
+from collections import Counter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
@@ -157,6 +159,73 @@ def parse_certified(text):
             continue
         pins[m.group(1)] = int(m.group(2))
     return region, holes, pins
+
+
+def parse_pins(raw):
+    if not raw:
+        return {}
+    data = raw
+    if isinstance(raw, str):
+        try:
+            data = ast.literal_eval(raw)
+        except (SyntaxError, ValueError):
+            return {}
+    if not isinstance(data, dict):
+        return {}
+    pins = {}
+    for key, value in data.items():
+        try:
+            pins[str(key)] = int(str(value), 0)
+        except (TypeError, ValueError):
+            continue
+    return pins
+
+
+def cleared_concrete_fallback_rows(record):
+    """Stage-2 NOT_CERTIFIED paths whose concrete replay is authenticated.
+
+    This is intentionally narrower than `concrete_fallback=true`: the replay is
+    usable only when the single-point witness check returned SUCCESSFUL.  UNKNOWN
+    is not proof and FAILED is a refutation of the concrete point.
+    """
+    rows = []
+    not_certified = record.get("not_certified") or {}
+    details = record.get("not_certified_details") or {}
+    if isinstance(details, list):
+        by_enc = {str(d.get("enc")): d for d in details if isinstance(d, dict)}
+    elif isinstance(details, dict):
+        by_enc = {str(k): v for k, v in details.items() if isinstance(v, dict)}
+    else:
+        by_enc = {}
+    coords = [str(c) for c in (record.get("coords") or [])]
+    row_pins = parse_pins(record.get("pins"))
+    for enc, reason in not_certified.items():
+        detail = by_enc.get(str(enc)) or {}
+        if detail.get("concrete_fallback") is not True:
+            continue
+        if detail.get("witness_check") != "SUCCESSFUL":
+            continue
+        ce = detail.get("ce") or {}
+        if not isinstance(ce, dict):
+            continue
+        region = {}
+        for coord in coords:
+            if coord not in ce:
+                continue
+            try:
+                value = int(str(ce[coord]), 0)
+            except (TypeError, ValueError):
+                continue
+            region[coord] = [value, value]
+        pins = {k: v for k, v in row_pins.items() if k not in region}
+        rows.append({
+            "enc": str(enc),
+            "region": region,
+            "pins": pins,
+            "reason": reason,
+            "detail": detail,
+        })
+    return rows
 
 
 def report_exit_kind(report_path, path_function, enc):
@@ -499,6 +568,12 @@ def main():
                          "print the five-gate B table. Costs no esbmc run, so "
                          "B can be re-measured after a forge/solc change or "
                          "after a PUT is edited by hand.")
+    ap.add_argument("--emit-cleared-concrete-fallbacks", action="store_true",
+                    help="also emit concrete-only replay tests for "
+                         "NOT_CERTIFIED paths whose Stage-2 detail has "
+                         "concrete_fallback=true and witness_check=SUCCESSFUL. "
+                         "These are raw/valid concrete tests only, never PUTs "
+                         "or region proofs.")
     ap.add_argument("--max-tx", type=int, default=1)
     ap.add_argument("--auto-unwind", type=int, default=0,
                     help="passed to the driver: on an UNDECIDED-TRUNCATED "
@@ -555,13 +630,12 @@ def main():
         sys.exit(f"no certify sweep at {cert_path}")
     rows = []
     n_certified = 0   # BEFORE --only, so the header can say what was filtered
+    n_cleared_fallback = 0
     for line in open(cert_path):
         line = line.strip()
         if not line:
             continue
         r = json.loads(line)
-        if r.get("bucket") != "CERTIFIED":
-            continue
         # WHICH SWEEP A ROW CAME FROM IS READ OFF THE ROW, not off the flag.
         # certify_poc.py keys its records on `poc`, certify_all.py on
         # `benchmark`. Detecting it here means pointing --cert at the wrong file
@@ -573,6 +647,26 @@ def main():
             row_subject = subject_from_record(r)
         except SubjectError as exc:
             print(f"  SKIP {key}.{r.get('unit')} cert row: {exc}")
+            continue
+        if args.emit_cleared_concrete_fallbacks:
+            for fb in cleared_concrete_fallback_rows(r):
+                try:
+                    enc_i = int(fb["enc"])
+                except ValueError:
+                    print(f"  SKIP {key}.{r['unit']} enc={fb['enc']}: the "
+                          "not-certified key is not numeric, so this concrete "
+                          "fallback cannot be resolved to a path")
+                    continue
+                n_cleared_fallback += 1
+                if args.only and args.only not in f"{key}.{r['unit']}":
+                    continue
+                exit_kind = report_exit_kind(
+                    r.get("enumeration_report"), r.get("path_function"), enc_i)
+                rows.append((key, is_poc, r["unit"], r.get("path_function"),
+                             enc_i, None, None, [], False, {}, exit_kind,
+                             row_subject, "cleared-concrete-fallback",
+                             fb["region"], {}, fb["pins"]))
+        if r.get("bucket") != "CERTIFIED":
             continue
         certified_details = r.get("certified_details") or {}
         for enc, text in (r.get("certified") or {}).items():
@@ -646,7 +740,7 @@ def main():
             rows.append((key, is_poc, r["unit"], r.get("path_function"),
                          enc_i, piece or None, text,
                          establish, bool(r.get("pin_extcall")), deriv, exit_kind,
-                         row_subject))
+                         row_subject, "certified-region", None, None, None))
 
     # ---- THE ARM OWNS ITS OWN PROJECT AND WORKDIR ----
     #
@@ -667,8 +761,11 @@ def main():
     # sweep's own filter, and exactly the kind of line that gets quoted later.
     print(f"=== {n_certified} CERTIFIED region(s) recorded by stage 2 "
           f"({os.path.basename(cert_path)}) ==="
+          + (f"\n=== {n_cleared_fallback} cleared concrete fallback(s) "
+             "available from Stage 2 ==="
+             if args.emit_cleared_concrete_fallbacks else "")
           + (f"\n=== --only '{args.only}' keeps {len(rows)} of them; the "
-             f"other {n_certified - len(rows)} were NOT measured by this run "
+             f"other {(n_certified + n_cleared_fallback) - len(rows)} were NOT measured by this run "
              f"and their absence is a filter, not a result ==="
              if args.only else ""))
     stage2_accounting = stage2_path_accounting(cert_path, args.only)
@@ -684,10 +781,11 @@ def main():
     # which is a different fact entirely. Same shape as poc_funnel's --only,
     # and it is here because that one was found by being read wrong first.
     if args.only and not rows:
-        print(f"⛔ --only '{args.only}' selected NONE of the {n_certified} "
-              f"region(s) in this arm. It matches against `<benchmark>.<unit>`. "
-              f"Refusing to print an empty sweep, which reads exactly like a "
-              f"real measurement of nothing.")
+        total_rows = n_certified + n_cleared_fallback
+        print(f"⛔ --only '{args.only}' selected NONE of the {total_rows} "
+              f"Stage-4 candidate row(s) in this arm. It matches against "
+              f"`<benchmark>.<unit>`. Refusing to print an empty sweep, which "
+              f"reads exactly like a real measurement of nothing.")
         return 2
     if args.scope not in ("focus", "whole"):
         scope_names = set(args.scope.split(","))
@@ -707,7 +805,8 @@ def main():
               "the Stage-1 report's exit_kind. This changes scheduling only; "
               "regions and certification are unchanged")
     for (bench, is_poc, unit, path_function, enc, piece, text, establish,
-         pin_extcall, deriv, exit_kind, row_subject) in ordered_rows:
+         pin_extcall, deriv, exit_kind, row_subject, stage2_source,
+         region_override, holes_override, pins_override) in ordered_rows:
         # The label every downstream name is built from, derived ONCE and in
         # the same shape the emitter builds it (`p<K>`). Two derivations is how
         # the gate below comes to look up a function the emitted file does not
@@ -802,7 +901,12 @@ def main():
                   f"whose behaviour matches the pinned value -- after which "
                   f"this row becomes emittable unchanged")
             continue
-        region, holes, pins = parse_certified(text)
+        if stage2_source == "cleared-concrete-fallback":
+            region = dict(region_override or {})
+            holes = dict(holes_override or {})
+            pins = dict(pins_override or {})
+        else:
+            region, holes, pins = parse_certified(text)
         if not region and not pins:
             print(f"  SKIP {bench}.{unit} enc={encs}: the recorded region "
                   f"parsed EMPTY, which is a PARSER failure, not an empty "
@@ -838,16 +942,19 @@ def main():
             cmd += ["--path-function", path_function]
         if exit_kind:
             cmd += ["--exit-kind", exit_kind]
-        if args.propose_r2:
+        if args.propose_r2 and stage2_source != "cleared-concrete-fallback":
             cmd += ["--propose-r2", "--r2-depth", str(args.r2_depth),
                     "--r2-term-budget", str(args.r2_term_budget),
                     "--r2-candidate-budget", str(args.r2_candidate_budget)]
-        if args.fuzz_r2_prefilter:
+        if (args.fuzz_r2_prefilter
+                and stage2_source != "cleared-concrete-fallback"):
             cmd += ["--fuzz-r2-prefilter", "--fuzz-runs",
                     str(args.fuzz_runs), "--fuzz-r2-candidate-budget",
                     str(args.fuzz_r2_candidate_budget),
                     "--fuzz-r2-prefilter-timeout",
                     str(args.forge_timeout)]
+        if stage2_source == "cleared-concrete-fallback":
+            cmd += ["--concrete-only", "--test-suffix", "_fb"]
         for extra in args.esbmc_arg:
             cmd.append(f"--esbmc-arg={extra}")
         # ONLY when this row IS a piece, so an unsplit region's command line is
@@ -943,7 +1050,7 @@ def main():
               f"{outcome}")
     print()
     print(f"  PUTs emitted                     : {n_put} of {len(results)} "
-          f"certified region(s)")
+          f"Stage-4 candidate row(s)")
     print(f"  Concrete replays emitted         : {n_concrete}")
     print(f"  ... of which carry FUZZ parameters: {n_fuzz}")
     print(f"  ... of which carry an ORACLE      : {n_oracle}")
@@ -977,6 +1084,7 @@ def main():
                 "mixed": len(cells) > 1,
             },
             "emission": {
+                "stage4_candidate_rows": len(results),
                 "certified_region_rows": len(results),
                 "puts_emitted": n_put,
                 "concrete_replays_emitted": n_concrete,
@@ -1147,6 +1255,7 @@ def b_report(results, forge_timeout):
           f"srcDirty={_now_binary['srcDirty']} "
           f"binaryMtime={_now_binary['binaryMtime']}")
     valid_reference_tests = {"total": 0, "put": 0, "concrete": 0}
+    stage2_sources = Counter()
     for bench, unit, enc, piece, rc, rec, proj, region, is_corpus, \
             contract_name in results:
         # SAME shape the emitter builds, and the reason it is here rather than
@@ -1158,6 +1267,8 @@ def b_report(results, forge_timeout):
         encs = f"{enc}#{piece}" if piece else str(enc)
         st = rec.get("stats") or {}
         kind = rec.get("kind") or "put"
+        stage2_source = rec.get("stage2_source") or "certified_region"
+        stage2_sources[stage2_source] += 1
         fz, ar = st.get("fuzz_params", 0), st.get("asserts", 0)
         # ---- GATE 3 COUNTS UNCONDITIONAL ASSERTIONS ONLY ------------------
         #
@@ -1197,6 +1308,7 @@ def b_report(results, forge_timeout):
                 valid_reference_tests["concrete"] += 1
             row_summaries.append({
                 "kind": "concrete",
+                "stage2_source": stage2_source,
                 "benchmark": bench,
                 "unit": unit,
                 "enc": enc,
@@ -1299,6 +1411,7 @@ def b_report(results, forge_timeout):
             valid_reference_tests["put"] += 1
         row_summaries.append({
             "kind": "put",
+            "stage2_source": stage2_source,
             "benchmark": bench,
             "unit": unit,
             "enc": enc,
@@ -1347,7 +1460,7 @@ def b_report(results, forge_timeout):
             print(f"      ⛔ NOT COUNTED: {stale}")
             n_stale += 1
     print()
-    print(f"  B = {b} of {len(results)} certified region row(s)")
+    print(f"  B = {b} of {len(results)} Stage-4 candidate row(s)")
     print(f"  Forge-visible PUT test functions: "
           f"{forge_seen['put']['Success']} green / "
           f"{sum(forge_seen['put'].values())} total")
@@ -1368,11 +1481,13 @@ def b_report(results, forge_timeout):
     print("  UNKNOWN, not a failure, and it is not counted toward B either.")
     return {
         "b": b,
+        "stage4_candidate_rows": len(results),
         "certified_region_rows": len(results),
         "forge_seen": forge_seen,
         "refused": n_refused,
         "stale": n_stale,
         "valid_reference_tests": valid_reference_tests,
+        "stage2_source_counts": dict(stage2_sources),
         "rows": row_summaries,
     }
 

@@ -8551,6 +8551,12 @@ def main():
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--memlimit", default="8g")
     ap.add_argument("--test-suffix", default="")
+    ap.add_argument("--concrete-only", action="store_true",
+                    help="emit only the authenticated concrete replay for this "
+                         "path and skip storage layout, assertion ladder, R2 "
+                         "and PUT construction. This is for Stage-2 paths "
+                         "whose single-point witness check was already "
+                         "SUCCESSFUL; it never proves a parameterized region.")
     ap.add_argument("--piece", default=None, metavar="K",
                     help="which PIECE of a split certified region this is. "
                          "stage 2 may certify one path as a UNION of boxes "
@@ -8779,6 +8785,85 @@ def main():
         return 1
     print(f"[put]   concrete case: {case[1]} in contract {emitted.blocks[case[0]][0]}")
     case_body, case_call_i = emitted_case_body_and_call(emitted, case, a.unit)
+
+    if a.concrete_only:
+        layout = None
+        if foundry_fixture and foundry_fixture.get("skip_constructor"):
+            layout, _maps, err = storage_layout(a.forge_project, a.contract)
+            if layout is None:
+                print(f"[put] REFUSED: {err}. The concrete-only replay needs "
+                      "the fixture's storage writes to mirror ESBMC's skipped "
+                      "constructor state.")
+                return 1
+        overload_label = overload_artifact_label(
+            a.ast, a.contract, a.unit, declaration_id)
+        plabel = overload_label + (f"p{a.piece}" if a.piece else "")
+        cname, _cstart, _cend = emitted.blocks[case[0]]
+        newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
+                f"{plabel}{a.test_suffix}")
+        txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
+                                       layout, a.contract, a.unit)
+        dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
+        with open(dest, "w") as f:
+            f.write(txt)
+        print(f"[put] WROTE concrete-only replay {dest}")
+        print("[put]   concrete replay : " + case[1])
+        print("[put]   note: Stage-2 witness_check=SUCCESSFUL authenticated "
+              "this point as a concrete replay only; no PUT proof or oracle "
+              "ladder was run here")
+        with open(os.path.join(a.workdir, "put.json"), "w") as f:
+            json.dump({"kind": "concrete",
+                       "stage2_source": "cleared_not_certified_fallback",
+                       "contract": a.contract, "unit": a.unit, "enc": a.enc,
+                       "depth": a.depth, "path_function": pf,
+                       "artifact_identity": overload_label,
+                       "file": dest, "test": case[1], "piece": a.piece,
+                       "region": {k: [str(v[0]), str(v[1])]
+                                  for k, v in region.items()},
+                       "holes": {k: [str(x) for x in v]
+                                 for k, v in holes.items()},
+                       "establish": json.loads(a.establish or "[]"),
+                       "pins": {k: str(v) for k, v in pins.items()},
+                       "ladder": [], "ladder_summary": None,
+                       "ladder_refusal": "not run: concrete-only fallback",
+                       "r2_requested": False,
+                       "r2_depth": None,
+                       "r2_term_budget": None,
+                       "r2_candidate_budget": None,
+                       "r2_fuzz_prefilter": {"enabled": False},
+                       "oracle_dependency_policy": SLOT_DEPENDENCY_POLICY,
+                       "oracle_dependency_state": [],
+                       "oracle_vars": [],
+                       "slot_candidates": {
+                           "asked": [],
+                           "unanswered": [],
+                           "rows_for_unasked_names": []},
+                       "esbmc_extra_args": a.esbmc_arg,
+                       "unwind_applied_to_ladder_only": [],
+                       "unwind_attempts": [],
+                       "cell": {"name": cell_name, "scope": a.scope,
+                                "max_tx": a.max_tx, "rule": cell_rule},
+                       "binary": binary_identity(a.esbmc),
+                       "concrete_reason": (
+                           "Stage-2 concrete_fallback with "
+                           "witness_check=SUCCESSFUL"),
+                       "stats": {
+                           "fuzz_params": 0,
+                           "lifted": [],
+                           "rendered_width": {},
+                           "wide_fuzz_coords": [],
+                           "asserts": 0,
+                           "state_asserts": 0,
+                           "return_asserts": 0,
+                           "exit_kind_asserts": 0,
+                           "guarded_asserts": 0,
+                           "oracle_classes": [],
+                           "assertion_oracles": [],
+                       },
+                       "notes": [
+                           "concrete-only fallback; no assertion ladder or "
+                           "PUT proof was run in Stage 4"]}, f, indent=2)
+        return 0
 
     # ---- 2a. storage layout and declared parameters ------------------------
     #

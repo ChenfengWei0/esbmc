@@ -34,6 +34,8 @@ def main():
         {
             "benchmark": "bench",
             "unit": "target",
+            "coords": ["x"],
+            "pins": "{'msg.sender': 5}",
             "witnessed": 4,
             "certified": {"1": "x in [0, 9]"},
             "not_certified": {
@@ -41,7 +43,12 @@ def main():
                 "3": "STATICALLY INSEPARABLE: differs only on external-call behavior",
             },
             "not_certified_details": {
-                "2": {"enc": 2, "concrete_fallback": True},
+                "2": {
+                    "enc": 2,
+                    "concrete_fallback": True,
+                    "witness_check": "SUCCESSFUL",
+                    "ce": {"x": "7", "msg.sender": "5"},
+                },
                 "3": {"enc": 3, "concrete_fallback": False},
             },
         },
@@ -77,6 +84,11 @@ def main():
                      target["not_certified"], 2)
         bad += check("structured-concrete-fallback",
                      target["concrete_fallback"], 1)
+        fallback_rows = put_all.cleared_concrete_fallback_rows(records[0])
+        bad += check("cleared-fallback-point-region",
+                     [(r["enc"], r["region"], r["pins"])
+                      for r in fallback_rows],
+                     [("2", {"x": [7, 7]}, {"msg.sender": 5})])
         bad += check("structured-method-unsupported",
                      target["method_unsupported"], 1)
         bad += check("selected-no-verdict", target["no_verdict"], 1)
@@ -239,6 +251,9 @@ def main():
             bad += check("stage4-valid-reference-test-split",
                          summary["valid_reference_tests"],
                          {"total": 2, "put": 1, "concrete": 1})
+            bad += check("stage4-source-counts",
+                         summary["stage2_source_counts"],
+                         {"certified_region": 3})
             bad += check("stage4-zero-assert-put-refused",
                          (summary["rows"][2]["refused"],
                           summary["rows"][2]["valid_reference_test"],
