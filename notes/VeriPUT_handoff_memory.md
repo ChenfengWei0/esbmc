@@ -11014,6 +11014,59 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 inherited state name collision fix
+
+Context:
+
+- In the real203 RQ1 wave, `balancer__balancer-v3-monorepo__MevCaptureHook`
+  failed at GOTO creation for `onRegister` with:
+  `ERROR: Name "_vault" matches more than one member in struct/union
+  "MevCaptureHook"`.
+- The contract has two different inherited state variables named `_vault`
+  (`VaultGuard` and `Authentication`). Solidity permits this, but ESBMC
+  flattens inherited state variables into one struct and previously kept the
+  raw source name as the component name.
+
+Code change:
+
+- `get_state_var_decl_name` now appends `$<AST declaration id>` to every
+  inherited state variable component name, not only inherited private
+  `__gap`.
+- Direct references still resolve through the same declaration AST id, so
+  state-variable reads/writes in copied inherited functions keep using the
+  correct component.
+- `move_inheritance_to_ctor` now matches base and derived components by equal
+  component name or, after inherited-name mangling, by the Solidity declaration
+  id suffix after `#`. This keeps base constructor state copies intact.
+- Struct/member access keeps the source-name assertion for ordinary fields, but
+  allows inherited state-variable references whose internal component name was
+  mangled.
+
+Regression:
+
+- Added `regression/esbmc-solidity/inherited_state_name_collision_pass`.
+- The test uses two bases with state variable `x` (`internal` and `private`),
+  constructs `C is A, B`, and asserts that inherited helper methods read
+  distinct constructor-initialized slots (`1` and `2`).
+
+Validation:
+
+- `cmake --build build --target esbmc -j2` passed.
+- Direct new regression with:
+  `build/src/esbmc/esbmc regression/esbmc-solidity/inherited_state_name_collision_pass/contract.solast --sol regression/esbmc-solidity/inherited_state_name_collision_pass/contract.sol --contract C --focus-function check --bound --no-standard-checks --unwind 2 --no-unwinding-assertions`
+  returned `VERIFICATION SUCCESSFUL`.
+- MevCaptureHook smoke:
+  `build/src/esbmc/esbmc /tmp/veriput_rq1_ast_cache/stress243/stress243__balancer__balancer-v3-monorepo__MevCaptureHook/flat.sol.solast --sol /home/samson/workspace/VeriPUT/Results/Stress243/subjects/balancer__balancer-v3-monorepo__MevCaptureHook/flat.sol --contract MevCaptureHook --goto-functions-only --focus-function onRegister --solidity-max-tx 1 --memlimit 12g`
+  returned 0 and generated GOTO in about 6s. The previous `_vault` duplicate
+  abort is gone.
+- `cd build && cmake -DESBMC_REGRESS_TIMEOUT=90 .. && ctest -R '(inherited_state_name_collision_pass|inheritance_1|esol_clone_inherited_mapping_pass)' --output-on-failure`
+  passed 9/9 because the regex also matched the inheritance family.
+- `cppcheck --enable=style,warning` on changed Solidity frontend C++ files
+  passed.
+- `git diff --check` on changed non-`.solast` files passed. The `.solast`
+  header line intentionally looks like a conflict marker and is excluded from
+  diff-check.
+
 ## 2026-08-08 nested tuple-array solver crash fix
 
 Context:

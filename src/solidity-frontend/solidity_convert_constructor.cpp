@@ -2156,6 +2156,29 @@ void solidity_convertert::flush_pending_into_body(
   body = wrapper;
 }
 
+static std::string get_sol_decl_id_suffix(const irep_idt &identifier)
+{
+  const std::string id = identifier.as_string();
+  const std::string::size_type pos = id.rfind('#');
+  if (pos == std::string::npos || pos + 1 >= id.size())
+    return "";
+  return id.substr(pos + 1);
+}
+
+static bool same_sol_state_component(
+  const struct_typet::componentt &lhs,
+  const struct_typet::componentt &rhs)
+{
+  if (lhs.name() == rhs.name())
+    return true;
+
+  const std::string lhs_decl_id = get_sol_decl_id_suffix(lhs.identifier());
+  if (lhs_decl_id.empty())
+    return false;
+
+  return lhs_decl_id == get_sol_decl_id_suffix(rhs.identifier());
+}
+
 bool solidity_convertert::move_inheritance_to_ctor(
   const nlohmann::json *based_contracts,
   const std::string contract_name,
@@ -2290,7 +2313,7 @@ bool solidity_convertert::move_inheritance_to_ctor(
         {
           for (const auto &comp : type_complete.components())
           {
-            if (c_comp.name() == comp.name())
+            if (same_sol_state_component(c_comp, comp))
             {
               assert(!comp.name().empty());
               assert(!c_comp.name().empty());

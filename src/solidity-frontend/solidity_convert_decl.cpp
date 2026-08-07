@@ -2074,14 +2074,12 @@ void solidity_convertert::get_state_var_decl_name(
   //  - For state variable name, just use the ast_node["name"], e.g. sol:@C@Base@x#11
   //  - For state variable id, add prefix "sol:@"
   name = ast_node["name"].get<std::string>();
-  if (
-    ast_node.contains("is_inherited") &&
-    ast_node.value("visibility", "") == "private" && name == "__gap")
+  if (ast_node.contains("is_inherited"))
   {
-    // OpenZeppelin upgradeable bases commonly reserve private storage gaps with
-    // the same source name in several base contracts. ESBMC flattens inherited
-    // state into one struct, so keep these otherwise-unreferenced storage slots
-    // distinct at the component-name level.
+    // Solidity permits different base contracts to declare state variables
+    // with the same source name. ESBMC flattens inherited state into one
+    // struct, so keep every inherited slot distinct at the component-name
+    // level while preserving references through the declaration AST id.
     name += "$" + i2string(ast_node["id"].get<int>());
   }
   if (!cname.empty())

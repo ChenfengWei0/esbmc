@@ -1,0 +1,4 @@
+CORE
+contract.solast
+--sol contract.sol --contract C --focus-function check --bound --no-standard-checks --unwind 2 --no-unwinding-assertions
+^VERIFICATION SUCCESSFUL$

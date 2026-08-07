@@ -299,7 +299,13 @@ bool solidity_convertert::get_expr(
     if (get_var_decl_ref(struct_var_ref, true, comp))
       return true;
 
-    assert(comp.name() == expr["memberName"]);
+    if (
+      comp.name() != expr["memberName"] &&
+      !(struct_var_ref.value("stateVariable", false) &&
+        struct_var_ref.contains("is_inherited")))
+    {
+      assert(comp.name() == expr["memberName"]);
+    }
 
     // If the member is a mapping (infinite array in --bound mode),
     // it was skipped from the struct type definition (breaks padding/gen_zero).
