@@ -11014,6 +11014,89 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 real203 fast-first limit36 wave
+
+Production policy for RQ1 waves:
+
+- Run small waves to completion, then inspect aggregate failures.
+- Do not stop and patch for an individual `no-output`, `timeout`, or
+  `raw=0` row unless it exposes a systemic harness/accounting/artifact bug.
+- Stop immediately only for issues such as missing raw/valid artifacts, broken
+  resume semantics, malformed JSON, invalid timing/memory accounting, or wrapper
+  behavior that makes the row untrustworthy.
+- Per-subject failures are data.  They are triaged after the wave into
+  reasonable empty results vs. region/certification strategy gaps.
+
+Command:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py \
+  --benchmark real203 --limit 36 --order fast-first --jobs 2 \
+  --memlimit-gib 12 --mem-fraction 0.98 --timeout 600 \
+  --wrapper-grace 60 --resume --no-output-stage2-stop-s 100
+```
+
+Notes:
+
+- The pre-existing `ERC-3643__ERC-3643__AgentRole` row was skipped by
+  `--resume`, so this wave added 35 rows.
+- `pgrep -af 'rq1_veriput_run|veriput|esbmc'` after completion showed no
+  residual VeriPUT/ESBMC runner processes.  Only the separate ganache experiment
+  from another run was present.
+
+Latest-key aggregate after the wave:
+
+- Rows: 35.
+- Status: 10 `ok`, 23 `no-output`, 2 `no-units`.
+- Completion reasons: 32 `ok`, 2 `no-units`, 1 `early-stop-no-output`.
+- Raw/valid tests: 56 / 52.
+- PUT raw/valid: 51 / 47.
+- Concrete raw/valid: 5 / 5.
+- Subjects with raw tests: 10.
+- Subjects with valid tests: 10.
+- `valid=None`: 0.
+- `raw>0 && valid==0`: 0.
+- Oracle class counts: `R0=47`, `R1=18`, `R2=48`.
+- Oracle combo counts: `R0=47`, `R1=18`, `R2=48`.
+
+Official `Results/results_all.py --benchmark real203` snapshot:
+
+- `veriput ran=35 raw_u=56 valid_u=52 raw_c=10 valid_c=10 coverage=4.9% VT/case=0.26`.
+- Cost: `total=0.35h`, `wall/subj=35.5+-54.8s`, `peakRSS=337+-244MB`.
+- Anomaly audit for VeriPUT: `timeout/oom/error=0`, `sub-5s ok=0`,
+  `raw>0 & valid==0=0`.
+- Remaining invariant violations are the existing multi-host comparability
+  issues for other tools (`cc-solbmc`, `solar`, `syntest`), not VeriPUT rows.
+
+Useful successful rows in this wave:
+
+- `ensdomains__ens-contracts__Owned`: 2 raw / 2 valid, all PUT.
+- `ensdomains__ens-contracts__Ownable`: 2 raw / 2 valid, all PUT.
+- `ensdomains__ens-contracts__SimplePublicSuffixList`: 1 / 1 PUT.
+- `ensdomains__ens-contracts__StandaloneReverseRegistrar`: 1 / 1 PUT.
+- Two `ensdomains__ens-contracts__Controllable` rows: 7/6 and 8/7 PUT.
+- `safe-fndn__safe-smart-account__SafeToL2Setup`: 1 / 1 PUT.
+- `ensdomains__ens-contracts__ERC20Recoverable`: 8 raw / 6 valid PUT.
+- `euler-xyz__euler-vault-kit__IRMLinearKink`: 2 / 2 PUT, 185s wall.
+- `compound-finance__comet__MarketAdminPermissionChecker`: 15 / 15 PUT,
+  176s wall.
+
+Diagnosis from this wave:
+
+- The pipeline is not generally broken: valid PUTs were produced for 10/35
+  rows, and there were no `raw>0 && valid==0` anomalies.
+- The dominant empty-result reasons are certification/region coverage buckets:
+  `NO-WITNESS-UNKNOWN`, `NO-COORDINATE`, and `NOT-CERTIFIED`.
+- Many Compound price-feed contracts finished quickly with no output.  This is
+  probably a candidate/oracle mismatch for pure feed/getter-style contracts
+  rather than an artifact-retention or validation bug.
+- Slower no-output examples such as `ShuffledGatewayProvider`,
+  `FIFSRegistrar`, `P256SHA256Algorithm`, and some price feeds should be used
+  later to tune candidate ordering, coordinate extraction, or Stage-2 early
+  stop behavior.
+- Because no harness/accounting failure appeared, the next action should be
+  another real203 wave instead of rerunning or patching this wave.
+
 ## 2026-08-07 RQ1 peer182 wave to limit 120 and zero-oracle accounting
 
 User requirements still active:
