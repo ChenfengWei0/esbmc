@@ -11092,9 +11092,12 @@ Smoke and cleanup:
   It certified `approve` in 231s, emitted and validated one R2 PUT for
   `approve`, then produced one valid concrete replay for `initialize2`.
   Journal row: raw=2, valid=2, PUT=1/1, concrete=1/1, wall=585.465s,
-  peak RSS about 12.2GiB. The row on disk predates the later
-  `completion_status` field and has `status=budget-exhausted`; do not rerun it
-  just to rename the status.
+  peak RSS about 12.2GiB.
+- The AIRBets sample row was metadata-repaired without rerunning ESBMC after
+  the runner status semantics were fixed: `status=ok`,
+  `completion_status=budget-exhausted`, `budget_exhausted=true`, same
+  raw/valid/artifacts. `results.jsonl` is append-only, so this is a new
+  last-write-wins row.
 - `/home/samson/workspace/VeriPUT/Results/results_all.py` was patched outside
   the ESBMC repo to add a `veriput` arm that reads
   `Results/RQ1/VeriPUT/<dataset>/results.jsonl` directly. On the AIRBets-only
