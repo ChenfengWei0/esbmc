@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import resource
 import signal
 import socket
@@ -602,6 +603,23 @@ def _row_is_no_oracle_put(row: dict, rec: dict) -> bool:
     return gates.get("assert") is False
 
 
+def _row_is_disabled_concrete(row: dict) -> bool:
+    if row.get("kind") != "concrete":
+        return False
+    test = row.get("test")
+    file_name = row.get("file")
+    if not test or not file_name:
+        return False
+    try:
+        text = Path(str(file_name)).read_text(errors="replace")
+    except OSError:
+        return False
+    enabled_rx = re.compile(r"\bfunction\s+" + re.escape(str(test)) + r"\s*\(")
+    disabled_rx = re.compile(r"\bfunction\s+disabled_"
+                             + re.escape(str(test)) + r"\s*\(")
+    return enabled_rx.search(text) is None and disabled_rx.search(text) is not None
+
+
 def summarize_put_artifacts(put_root: Path) -> dict:
     emission = Counter()
     valid = Counter()
@@ -648,7 +666,8 @@ def summarize_put_artifacts(put_root: Path) -> dict:
         rec = by_file_test.get((str(file_name), str(test_name)), {})
         if not rec and not file_name:
             rec = by_unique_test.get(str(test_name), {})
-        if row.get("refused") or _row_is_no_oracle_put(row, rec):
+        if (row.get("refused") or _row_is_no_oracle_put(row, rec)
+                or _row_is_disabled_concrete(row)):
             continue
         entry = {
             "kind": row.get("kind"),

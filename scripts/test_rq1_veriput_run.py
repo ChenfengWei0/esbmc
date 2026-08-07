@@ -48,6 +48,9 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
         put_file = unit / "Project" / "test" / "TokenCovTest_Token_approve_put7.t.sol"
         put_file.parent.mkdir(parents=True)
         put_file.write_text("contract T {}\n")
+        disabled_file = unit / "Project" / "test" / "TokenCovTest_disabled.t.sol"
+        disabled_file.write_text(
+            "contract T { function disabled_test_cov_disabled() public {} }\n")
         (wd / "put.json").write_text(json.dumps({
             "kind": "put",
             "test": "test_put_Token_approve_path7",
@@ -104,7 +107,7 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
             "schema": "veriput-put-summary/1",
             "emission": {
                 "puts_emitted": 2,
-                "concrete_replays_emitted": 1,
+                "concrete_replays_emitted": 2,
             },
             "deliverable_b": {
                 "valid_reference_tests": {
@@ -146,6 +149,17 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
                         "valid_reference_test": False,
                         "b": False,
                     },
+                    {
+                        "kind": "concrete",
+                        "unit": "approve",
+                        "enc": 10,
+                        "piece": None,
+                        "test": "test_cov_disabled",
+                        "file": str(disabled_file),
+                        "forge_status": None,
+                        "valid_reference_test": False,
+                        "b": False,
+                    },
                 ],
             },
         }))
@@ -174,6 +188,8 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
         bad += check(len(summary["raw_tests"]) == 2
                      and all(t["enc"] != 9 for t in summary["raw_tests"]),
                      f"refused PUT rows are not raw deliverables: {summary}")
+        bad += check(all(t["enc"] != 10 for t in summary["raw_tests"]),
+                     f"disabled concrete replays are not raw deliverables: {summary}")
         return bad
 
 
