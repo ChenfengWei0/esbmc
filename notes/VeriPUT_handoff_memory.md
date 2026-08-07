@@ -11067,6 +11067,38 @@ Validation:
   header line intentionally looks like a conflict marker and is excluded from
   diff-check.
 
+## 2026-08-08 RQ1 redo artifact freshness fix
+
+Context:
+
+- After the inherited-state-slot ESBMC fix, rerunning
+  `balancer__balancer-v3-monorepo__MevCaptureHook` with
+  `rq1_veriput_run.py --redo` returned quickly with `status=error`.
+- Root cause: RQ1 `--redo` disabled top-level `results.jsonl` resume skipping
+  but reused the existing subject artifact directory. Stage 2 then saw the old
+  `cert/certify-results.jsonl`, detected rows from a different ESBMC binary
+  (`3ae6c1a402` / old binary mtime), and correctly refused to resume them.
+
+Code change:
+
+- `prepare_case_dir(case_dir, force_fresh=False)` now accepts
+  `force_fresh=True`.
+- `run_subject` passes `force_fresh=bool(args.redo)`.
+- Subject-level RQ1 redo now archives the entire old subject directory as
+  `<subject>.redo.<timestamp>.<pid>` before any schedule/cert/put work starts.
+- This is intentionally not implemented by forwarding `--redo` to every
+  per-unit `certify_all.py` invocation, because doing that would make later
+  units move aside freshly generated rows from earlier units.
+
+Validation:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_run.py` passed
+  all 14 tests, including the new redo case-directory archival check.
+- `git diff --check -- notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+
 ## 2026-08-08 nested tuple-array solver crash fix
 
 Context:

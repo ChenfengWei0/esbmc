@@ -453,14 +453,21 @@ def test_prepare_case_dir_preserves_complete_and_quarantines_partial():
         partial = root / "partial"
         partial.mkdir()
         (partial / "unit-schedule.json").write_text("{}\n")
+        redo = root / "redo"
+        redo.mkdir()
+        (redo / "result.json").write_text("{}\n")
         rq1_veriput_run.prepare_case_dir(complete)
         rq1_veriput_run.prepare_case_dir(partial)
+        rq1_veriput_run.prepare_case_dir(redo, force_fresh=True)
         quarantined = list(root.glob("partial.incomplete.*"))
+        redone = list(root.glob("redo.redo.*"))
         bad = 0
         bad += check(complete.exists() and complete.joinpath("result.json").exists(),
                      "complete case directory is preserved")
         bad += check(not partial.exists() and len(quarantined) == 1,
                      f"partial case directory is quarantined: {quarantined}")
+        bad += check(not redo.exists() and len(redone) == 1,
+                     f"redo case directory is archived fresh: {redone}")
         return bad
 
 

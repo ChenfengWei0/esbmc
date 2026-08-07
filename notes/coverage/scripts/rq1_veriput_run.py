@@ -109,8 +109,13 @@ def _append_jsonl(path: Path, row: dict) -> None:
         os.fsync(stream.fileno())
 
 
-def prepare_case_dir(case_dir: Path) -> None:
+def prepare_case_dir(case_dir: Path, *, force_fresh: bool = False) -> None:
     if not case_dir.exists():
+        return
+    if force_fresh:
+        suffix = f".redo.{int(time.time())}.{os.getpid()}"
+        target = case_dir.with_name(case_dir.name + suffix)
+        case_dir.rename(target)
         return
     if case_dir.joinpath("result.json").exists():
         return
@@ -757,7 +762,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     start = time.monotonic()
     subject_id = target_row["subject_id"]
     case_dir = Path(args.result_root) / dataset_label / "subjects" / _safe_name(subject_id)
-    prepare_case_dir(case_dir)
+    prepare_case_dir(case_dir, force_fresh=bool(args.redo))
     cert_path = case_dir / "cert" / "certify-results.jsonl"
     ast_cache_root = Path(args.ast_cache_root).expanduser().resolve()
     subject = subject_unit_manifest.resolve_subject(
