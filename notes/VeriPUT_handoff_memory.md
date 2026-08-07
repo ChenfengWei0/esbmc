@@ -8,6 +8,80 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-08 unused setup helper deployment repair
+
+Code state:
+
+- ESBMC branch `feat/veriput-fuzz-first` was pushed to
+  `E-SOL/feat/veriput-fuzz-first`.
+- Commit `bc37a9ca22 [scripts] Tolerate unused setup helpers` is the current
+  implementation commit for this repair.
+- The emitter now wraps unused, non-target helper deployments in `setUp()` with
+  `try new Helper(...) returns (...) { ... } catch {}`.  A helper is considered
+  unused only when its instance variable is not referenced outside `setUp()`
+  after ignoring plain contract field declarations.
+- The target contract deployment remains strict, so constructor/setup failures
+  on the subject under test are still surfaced.
+- The hook is applied to both PUT assembly and concrete replay assembly, after
+  constructor/prank/payable repairs.
+
+Validation:
+
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  passed.
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 250 / 250.
+
+Official RQ1 updates made after the repair:
+
+- `bugfix124 / acfix_088_EmergencyOracleFactory`
+  - Problem: two generated PUTs were raw but Forge-red because the generated
+    self-check disabled `setUp()` after a non-target helper constructor
+    reverted (`EmergencyOracle(address(0), "")`), so `c1` stayed at address 0.
+  - Stage4-only rerun used the existing Stage2 certificate, timeout 600s,
+    Forge timeout 660s, memlimit 12GiB.
+  - Backup: `/tmp/veriput_acfix088_emergency_backup_1786139267`.
+  - New official result: `raw=2`, `valid=2`, `put_raw=2`, `put_valid=2`,
+    `concrete=0/0`.
+  - Oracle accounting: `R0=2`, `R1=1`, `R2=1`; combos `R0=2`, `R1=1`,
+    `R2=1`.
+- `bugfix124 / acfix_3_5_088_EmergencyOracleFactory`
+  - Same setup-helper root cause, but the certified region renders no wide
+    coordinate, so the correct deliverable is a concrete replay rather than a
+    PUT.
+  - Backup: `/tmp/veriput_acfix35_088_emergency_backup_1786139411`.
+  - New official result: `raw=1`, `valid=1`, `put=0/0`, `concrete=1/1`.
+
+Updated bugfix124 aggregate after `Results/results_all.py --benchmark bugfix124`:
+
+- VeriPUT generation funnel now reports:
+  - raw units: 186
+  - valid units: 154 in `results_all.py`'s funnel table.  This uses the
+    compatibility rule that counts `put_valid + concrete_valid` for older rows
+    whose top-level `valid` is null.
+  - valid cases: 56 / 124 = 45.2%
+  - VT/case: 1.24
+- VeriPUT RQ1 manifest now reports:
+  - `raw=186`, `valid=152` by the top-level `valid` field.  The split counts
+    sum to 154 because `acfix_llama3_024_CVE_2019_15078` is a pre-existing
+    timeout row with `valid=null`, `put_valid=2`.
+  - `put_raw=137`, `put_valid=122`
+  - `concrete_raw=49`, `concrete_valid=32`
+  - status counts unchanged: 57 `ok`, 58 `no-output`, 5 `no-units`,
+    2 `budget-exhausted`, 2 `timeout`.
+- The remaining raw-positive/top-level-valid-zero rows by direct manifest audit
+  are:
+  - `acfix_llama3_024_CVE_2019_15078`: timeout row, `raw=2`, `valid=0`,
+    `put_raw=2`, but compatibility split accounting has `put_valid=2`.
+  - `reprod_DCFToken`: `raw=4`, `valid=0`, `put_raw=4`.
+  - `pop_077_GameItems`: `raw=3`, `valid=0`, concrete timeout fallback setup
+    mismatch.
+- In `results_all.py` anomaly output, VeriPUT now has only two
+  non-timeout `raw>0 & valid==0` rows: `reprod_DCFToken` and
+  `pop_077_GameItems`.
+
 ## 2026-08-08 RQ1 production accounting and timeout fallback state
 
 R0 normal-exit Stage4 accounting fix:
