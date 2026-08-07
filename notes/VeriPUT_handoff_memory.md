@@ -11781,6 +11781,101 @@ Interpretation:
   fuzz-refutation before expensive ESBMC assertion batches, not POC- or
   subject-specific rules.
 
+## 2026-08-07 peer182 fast-first limit108 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 108 --order fast-first --jobs 2 --memlimit-gib 10 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Execution:
+
+- The runner skipped the first 96 fast-first peer rows and queued the next 12.
+- This wave used 10GiB instead of 12GiB because current `MemAvailable` was
+  about 33.3GiB and the wrapper's 70% guard rejected `jobs=2` at 12GiB.
+- No OOM, wrapper crash, or residual worker processes after completion.
+- The 10GiB limit was sufficient for this wave, including token-like
+  `EIP20StandardToken` and `FixedSupplyToken`.
+- `MultiSigWallet (1)`, `MultiSigWallet (2)`, and `FixedSupplyToken` were
+  budget-edge valid rows near 600s.
+
+Latest peer182 aggregate after this wave:
+
+- Latest rows: 109.  This includes earlier `peer_ccsolbmc__AIRBets` plus
+  fast-first prefix 108.
+- Status counts: 64 `ok`, 40 `no-output`, 5 `no-units`.
+- Completion counts: 7 `budget-exhausted`, 94 `ok`, 5 `no-units`,
+  3 `early-stop-no-output`.
+- Valid subjects: 60 / 109.
+- Generated tests: raw/valid 249 / 207.
+- PUT tests: raw/valid 197 / 162.
+- Concrete replay tests: raw/valid 52 / 45.
+- Raw>0 but valid==0 subjects: 4.  Still unchanged.
+- Oracle classes: `R2: 1084`, `R1: 141`, `R0: 138`.
+- Oracle combinations: `R2: 1050`, `R1: 107`, `R1+R2: 34`, `R0: 138`.
+- Mem budgets in latest rows: 97 rows at 12GiB, 12 rows at 10GiB.
+- Median ok-wall: 36.306s.  Max ok-wall is `MultiSigWallet (2)` at
+  600.171s.
+- `results_all.py --benchmark peer182` reports VeriPUT `ran=109`,
+  `raw_u=249`, `valid_u=207`, `raw_c=64`, `valid_c=60`,
+  `coverage=33.0%`, `VT/case=1.14`, median ok-wall 36.3s, and
+  `raw>0 & valid==0=4`.
+
+New rows in fast-first 97-108:
+
+- `peer_solar__IdentityManager / IdentityManager`: ok, raw=9, valid=8,
+  PUT 8/9, wall 369.578s, stage2 305.851s, stage4 63.587s,
+  oracle classes `R0:9, R1:10, R2:55`.
+- `peer_solar__OpenAddressLottery / OpenAddressLottery`: no-output,
+  early-stop-no-output, wall 204.807s, reason
+  `no output after 204.8s Stage 2`.
+- `peer_solar__LotteryFor10 / LotteryFor10`: no-units, wall 0.016s.
+- `peer_ccsolbmc__DigitalLocker / DigitalLocker`: ok, raw=21, valid=21,
+  PUT 21/21, wall 163.747s, oracle classes `R0:16, R1:23, R2:50`.
+- `peer_ccsolbmc__RefrigeratedTransportation / RefrigeratedTransportation`:
+  ok, raw=7, valid=7, PUT 5/5, concrete 2/2, wall 218.275s,
+  oracle classes `R0:5, R1:11, R2:26`.
+- `peer_syntest__EdenCoin / EdenCoin`: no-output, wall 7.551s,
+  reason `NO-PATH=7`.
+- `peer_solar__MultiSigWallet (1) / MultiSigWallet`: ok,
+  budget-exhausted, raw=4, valid=4, PUT 4/4, wall 599.617s,
+  stage2 572.532s, stage4 27.028s, oracle classes `R0:4`.
+- `peer_solar__MultiSigWallet (2) / MultiSigWallet`: ok,
+  budget-exhausted, raw=4, valid=4, PUT 4/4, wall 600.171s,
+  stage2 573.565s, stage4 26.527s, oracle classes `R0:4`.
+- `peer_syntest__ThriftToken / ThriftToken`: no-output, wall 11.070s,
+  reason `NO-PATH=9`.
+- `peer_solar__EIP20StandardToken / EIP20StandardToken`: ok,
+  raw=5, valid=5, PUT 5/5, wall 482.292s, oracle classes
+  `R0:5, R1:5, R2:41`.
+- `peer_solar__FixedSupplyToken / FixedSupplyToken`: ok,
+  budget-exhausted, raw=3, valid=3, PUT 3/3, wall 584.388s,
+  stage2 343.063s, stage4 241.280s, oracle classes `R0:3, R1:4, R2:22`.
+- `peer_ccsolbmc__Ballot / Ballot`: ok, raw=3, valid=3,
+  PUT 3/3, wall 265.803s, oracle classes `R0:3, R1:7, R2:20`.
+
+Diagnostics:
+
+- `OpenAddressLottery.participate` is the expensive no-output row:
+  `NOT-CERTIFIED`, 0 certified / 1 witnessed, 204.4s.
+- `EdenCoin` and `ThriftToken` are cheap no-output rows caused by `NO-PATH`
+  across their scheduled units.
+- `IdentityManager.convertAddress` has the only invalid PUT in this wave:
+  it is a real R0/R1/R2 oracle candidate with 13 emitted assertions and failed
+  reference replay.  The same subject still produced 8 valid PUTs.
+- `IdentityManager` also had one `KILLED` certification row, but no OOM was
+  reported and the subject completed `ok`.
+- The 10GiB wave produced no OOM rows.  If later memory pressure stays high,
+  `jobs=2, memlimit=10GiB` is a usable compromise; otherwise prefer 12GiB for
+  consistency with previous rows.
+
+Interpretation:
+
+- This wave added 55 valid tests and 8 valid subjects, a strong gain.
+- `DigitalLocker` is a high-value example: 21 / 21 valid PUTs with many
+  R1/R2 oracle labels.
+- The 600s subject timeout remains important.  Multiple valid subjects in
+  this wave would be lost under a 300s cap.
+
 ## 2026-08-07 RQ1 production runner and early benchmark samples
 
 Production output contract:
