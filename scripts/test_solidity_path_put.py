@@ -65,6 +65,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                exit_kind_asserted, find_unit_call,
                                no_oracle_reason, observed_env,
                                normal_exit_region_retreat,
+                               partial_ladder_already_has_strict_oracle,
                                path_condition_from_branch_claim,
                                path_decision_assumes,
                                rendered_env_coords_for_emitted_case,
@@ -2728,6 +2729,30 @@ def test_skipped_forge_R2_accounting_is_complete_and_conservative():
                  f"selection and execution counts stay distinct: {got}")
     bad += check(got["candidates"][0]["verdict"] == "NOT-RUN",
                  f"the per-candidate evidence agrees: {got}")
+    return bad
+
+
+def test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle():
+    rows = [("bal", "post >= pre", "HOLDS")]
+    good = {"fuzz_params": 1, "asserts": 1}
+    no_fuzz = {"fuzz_params": 0, "asserts": 1}
+    no_assert = {"fuzz_params": 1, "asserts": 0}
+    bad = 0
+    bad += check(partial_ladder_already_has_strict_oracle(rows, None, good),
+                 "a partial ladder with a fuzz oracle can skip the larger R2 "
+                 "batch")
+    bad += check(not partial_ladder_already_has_strict_oracle(rows,
+                                                              (1, 1, 0, 0, 0),
+                                                              good),
+                 "a complete ladder still gets the normal R2 chance")
+    bad += check(not partial_ladder_already_has_strict_oracle([], None, good),
+                 "no salvaged row means no R1 basis for skipping R2")
+    bad += check(not partial_ladder_already_has_strict_oracle(rows, None,
+                                                              no_fuzz),
+                 "a non-fuzz point oracle is not a strict PUT")
+    bad += check(not partial_ladder_already_has_strict_oracle(rows, None,
+                                                              no_assert),
+                 "a reachability-only fuzz body cannot skip R2")
     return bad
 
 
@@ -10464,6 +10489,7 @@ def main():
               test_typed_R2_candidate_budget_caps_claims_and_shares_them,
               test_typed_R2_candidate_budget_reaches_every_variable_before_second_laps,
               test_skipped_forge_R2_accounting_is_complete_and_conservative,
+              test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle,
               test_typed_R2_omits_bool_without_a_bool_endpoint,
               test_typed_R2_proposes_bool_equality_to_bool_coordinate,
               test_a_bool_region_parameter_is_lifted_and_can_feed_R2,

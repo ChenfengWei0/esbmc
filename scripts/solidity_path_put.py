@@ -3055,6 +3055,19 @@ def maybe_run_r2_passes(specs, base_spec, write_spec, runner, parse,
     return []
 
 
+def partial_ladder_already_has_strict_oracle(rows, summary, stats):
+    """Whether a partial first ladder already renders a strict PUT oracle.
+
+    A missing summary with rows means the driver is consuming per-candidate
+    salvage rows rather than the final table.  If those rows already render a
+    fuzz PUT with an oracle, a larger R2 batch is a poor next query: it adds
+    candidates to a run that has just failed to finish its smaller table.
+    """
+    return (bool(rows) and summary is None and bool(stats)
+            and stats.get("fuzz_params", 0) > 0
+            and stats.get("asserts", 0) > 0)
+
+
 def _norm_ty(t):
     """A Solidity type spelled the one way, for comparing a parameter's type
     against a mapping's key type. Module level, not nested in `main()`, so the
@@ -8991,120 +9004,147 @@ def main():
     r2_term_lookup = {}
     r2_fuzz_prefilter = {"enabled": bool(a.fuzz_r2_prefilter)}
     path_reverts = a.exit_kind == "revert"
+    skip_r2_after_partial_oracle = False
+    if a.propose_r2 and rows and summary is None:
+        try:
+            _probe_put, _probe_stats = build_put(
+                a.contract, a.unit, a.enc, a.depth, pf, region, holes, pins,
+                params, emitted, case, layout, rows, [],
+                cell=(cell_name, cell_rule), rettypes=rettypes, maps=maps,
+                unwind=unwind_applied,
+                derived_by=json.loads(a.derived_by or "{}"),
+                rollback_exit=rollback_here, r2_terms={},
+                establish=json.loads(a.establish or "[]"))
+        except ConcreteFallback:
+            _probe_stats = {}
+        skip_r2_after_partial_oracle = partial_ladder_already_has_strict_oracle(
+            rows, summary, _probe_stats)
     if a.propose_r2:
-        # ---- THE CANDIDATE WIDTH TABLE, FROM solc's OWN LAYOUT --------------
-        #
-        # Built here rather than inside the proposer because this is where the
-        # layout lives, and guessed nowhere: a candidate absent from BOTH
-        # dicts has no storage slot at all (a constant/immutable), and it is
-        # left out so the proposer excludes it rather than spending a solver
-        # query on a row that is discarded downstream anyway.
-        _var_bytes = {}
-        for _v, (_slot, _off, _nb) in (layout or {}).items():
-            _var_bytes[_v] = _nb
-        for _v, _t, _d in rows:
-            _mn, _keys, _tail = parse_slot_name(_v)
-            if _mn is None:
-                continue
-            _mk = _mn + _tail
-            if query_maps and _mk in query_maps:
-                _var_bytes[_v] = query_maps[_mk][2]
-        _source_literals, _source_evidence = source_r2_literals(
-            a.ast, a.contract, a.unit, arity=len(params or []),
-            declaration_id=declaration_id)
-        for _evidence in _source_evidence:
-            print(f"[put]   {_evidence}")
-        _rendered_coords = []
-        for _pn, _pt in params or []:
-            if _pn not in region:
-                continue
-            _kind = lift_kind(_pt)
-            if _kind is None:
-                continue
-            _coord_kind = {
-                "address": "id",
-                "bytes": "id",
-                "bool": "bool",
-            }.get(_kind[0], "num")
-            _rendered_coords.append(
-                (_pn, _coord_kind,
-                 (20 if _kind[0] == "address" else
-                  (_kind[1] // 8 if _kind[0] == "bytes" else None))))
-        _rendered_coords += rendered_env_coords_for_emitted_case(
-            emitted, case, a.unit, region)
-        for _sn in sorted({n for n in list(region) + list(pins)
-                           if n.startswith("state.")}):
-            _sv = _sn[len("state."):]
-            if parse_slot_name(_sv)[0] is not None:
-                continue
-            if _sv not in layout:
-                continue
-            _nb = layout[_sv][2]
-            _rendered_coords.append(
-                (_sn, "id" if _nb == 20 else "num",
-                 _nb if _nb == 20 else None))
-        _r2, _source_assignment_evidence = source_assignment_r2_specs(
-            a.ast, a.contract, a.unit, params, layout, _rendered_coords,
-            arity=len(params or []), declaration_id=declaration_id,
-            rettypes=rettypes, maps=query_maps, log=print)
-        _typed_r2 = propose_r2_batch(
-            rows, params, source_literals=_source_literals,
-            depth=a.r2_depth, var_bytes=_var_bytes, rettypes=rettypes,
-            rendered_coords=_rendered_coords,
-            term_budget=a.r2_term_budget,
-            candidate_budget=a.r2_candidate_budget, log=print)
-        _r2 = merge_source_r2_specs(
-            _r2, _typed_r2, candidate_budget=a.r2_candidate_budget, log=print)
-        _r2, _ = dedup_r2_specs_by_normalized_text(
-            _r2, point_value_texts(region, pins), log=print)
-        r2_term_lookup = r2_terms_from_specs(_r2)
-        r2_requested = True
-        if unwind_applied:
-            print("[put]   R2 ESBMC passes inherit ladder repair args: "
-                  + " ".join(unwind_applied))
+        if skip_r2_after_partial_oracle:
+            r2_requested = False
+            print("[put]   R2 ESBMC pass NOT RUN: the first assertion ladder "
+                  "did not reach a final summary, but its salvaged rows "
+                  "already render a strict fuzz PUT oracle. A larger R2 batch "
+                  "would add candidates to a query that just failed to finish; "
+                  "keeping the bounded R1 oracle and avoiding the heavier "
+                  "follow-on run")
+            notes.append("R2 ESBMC skipped: partial R1 ladder already rendered "
+                         "a strict fuzz PUT oracle")
+        else:
+            # ---- THE CANDIDATE WIDTH TABLE, FROM solc's OWN LAYOUT ----------
+            #
+            # Built here rather than inside the proposer because this is where
+            # the layout lives, and guessed nowhere: a candidate absent from
+            # BOTH dicts has no storage slot at all (a constant/immutable), and
+            # it is left out so the proposer excludes it rather than spending a
+            # solver query on a row that is discarded downstream anyway.
+            _var_bytes = {}
+            for _v, (_slot, _off, _nb) in (layout or {}).items():
+                _var_bytes[_v] = _nb
+            for _v, _t, _d in rows:
+                _mn, _keys, _tail = parse_slot_name(_v)
+                if _mn is None:
+                    continue
+                _mk = _mn + _tail
+                if query_maps and _mk in query_maps:
+                    _var_bytes[_v] = query_maps[_mk][2]
+            _source_literals, _source_evidence = source_r2_literals(
+                a.ast, a.contract, a.unit, arity=len(params or []),
+                declaration_id=declaration_id)
+            for _evidence in _source_evidence:
+                print(f"[put]   {_evidence}")
+            _rendered_coords = []
+            for _pn, _pt in params or []:
+                if _pn not in region:
+                    continue
+                _kind = lift_kind(_pt)
+                if _kind is None:
+                    continue
+                _coord_kind = {
+                    "address": "id",
+                    "bytes": "id",
+                    "bool": "bool",
+                }.get(_kind[0], "num")
+                _rendered_coords.append(
+                    (_pn, _coord_kind,
+                     (20 if _kind[0] == "address" else
+                      (_kind[1] // 8 if _kind[0] == "bytes" else None))))
+            _rendered_coords += rendered_env_coords_for_emitted_case(
+                emitted, case, a.unit, region)
+            for _sn in sorted({n for n in list(region) + list(pins)
+                               if n.startswith("state.")}):
+                _sv = _sn[len("state."):]
+                if parse_slot_name(_sv)[0] is not None:
+                    continue
+                if _sv not in layout:
+                    continue
+                _nb = layout[_sv][2]
+                _rendered_coords.append(
+                    (_sn, "id" if _nb == 20 else "num",
+                     _nb if _nb == 20 else None))
+            _r2, _source_assignment_evidence = source_assignment_r2_specs(
+                a.ast, a.contract, a.unit, params, layout, _rendered_coords,
+                arity=len(params or []), declaration_id=declaration_id,
+                rettypes=rettypes, maps=query_maps, log=print)
+            _typed_r2 = propose_r2_batch(
+                rows, params, source_literals=_source_literals,
+                depth=a.r2_depth, var_bytes=_var_bytes, rettypes=rettypes,
+                rendered_coords=_rendered_coords,
+                term_budget=a.r2_term_budget,
+                candidate_budget=a.r2_candidate_budget, log=print)
+            _r2 = merge_source_r2_specs(
+                _r2, _typed_r2, candidate_budget=a.r2_candidate_budget,
+                log=print)
+            _r2, _ = dedup_r2_specs_by_normalized_text(
+                _r2, point_value_texts(region, pins), log=print)
+            r2_term_lookup = r2_terms_from_specs(_r2)
+            r2_requested = True
+            if unwind_applied:
+                print("[put]   R2 ESBMC passes inherit ladder repair args: "
+                      + " ".join(unwind_applied))
 
-        if rollback_here or path_reverts:
-            reason = ("rollback path has no observable R2 post-state"
-                      if rollback_here else
-                      "revert path has no observable R2 post-state")
-            if a.fuzz_r2_prefilter:
-                r2_fuzz_prefilter.update(skipped_forge_r2_evidence(
-                    _r2, a.fuzz_r2_candidate_budget, reason,
-                    a.fuzz_runs))
-                print(f"[put]   Forge R2 prefilter NOT RUN: {reason}")
-        elif a.fuzz_r2_prefilter:
-            _fuzz_verdicts, r2_fuzz_prefilter = run_forge_r2_prefilter(
-                a.forge_project, a.workdir, emitted, case, a.contract,
-                a.unit, a.enc, a.depth, pf, region, holes, pins, params,
-                layout, maps, _r2, r2_term_lookup,
-                (cell_name, cell_rule), json.loads(a.derived_by or "{}"),
-                a.fuzz_r2_prefilter_timeout, a.fuzz_runs,
-                a.fuzz_r2_candidate_budget, foundry_fixture,
-                json.loads(a.establish or "[]"))
-            r2_fuzz_prefilter["enabled"] = True
-            _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
-            survivors = len(r2_candidates(_r2))
-            print(f"[put]   Forge R2 survivors sent to ESBMC: "
-                  f"{survivors}; a Forge pass was NOT counted as proof")
+            if rollback_here or path_reverts:
+                reason = ("rollback path has no observable R2 post-state"
+                          if rollback_here else
+                          "revert path has no observable R2 post-state")
+                if a.fuzz_r2_prefilter:
+                    r2_fuzz_prefilter.update(skipped_forge_r2_evidence(
+                        _r2, a.fuzz_r2_candidate_budget, reason,
+                        a.fuzz_runs))
+                    print(f"[put]   Forge R2 prefilter NOT RUN: {reason}")
+            elif a.fuzz_r2_prefilter:
+                _fuzz_verdicts, r2_fuzz_prefilter = run_forge_r2_prefilter(
+                    a.forge_project, a.workdir, emitted, case, a.contract,
+                    a.unit, a.enc, a.depth, pf, region, holes, pins, params,
+                    layout, maps, _r2, r2_term_lookup,
+                    (cell_name, cell_rule), json.loads(a.derived_by or "{}"),
+                    a.fuzz_r2_prefilter_timeout, a.fuzz_runs,
+                    a.fuzz_r2_candidate_budget, foundry_fixture,
+                    json.loads(a.establish or "[]"))
+                r2_fuzz_prefilter["enabled"] = True
+                _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
+                survivors = len(r2_candidates(_r2))
+                print(f"[put]   Forge R2 survivors sent to ESBMC: "
+                      f"{survivors}; a Forge pass was NOT counted as proof")
 
-        def _write_r2(suffix, spec_dict):
-            p = os.path.join(assert_dir, "spec" + suffix + ".json")
-            with open(p, "w") as f:
-                json.dump(spec_dict, f)
-            return p
+            def _write_r2(suffix, spec_dict):
+                p = os.path.join(assert_dir, "spec" + suffix + ".json")
+                with open(p, "w") as f:
+                    json.dump(spec_dict, f)
+                return p
 
-        def _run_r2(spec_path):
-            o, _rc, _w = run_esbmc(
-                a.esbmc, a.sol, a.ast, a.contract, a.unit,
-                ["--path-cov-assert", spec_path, "--cov-report-json"]
-                + a.esbmc_arg + unwind_applied,
-                assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
-            return o
+            def _run_r2(spec_path):
+                o, _rc, _w = run_esbmc(
+                    a.esbmc, a.sol, a.ast, a.contract, a.unit,
+                    ["--path-cov-assert", spec_path, "--cov-report-json"]
+                    + a.esbmc_arg + unwind_applied,
+                    assert_dir, a.max_tx, a.timeout, a.memlimit, a.scope)
+                return o
 
-        rows += maybe_run_r2_passes(
-            _r2, spec, _write_r2, _run_r2, parse_ladder,
-            rollback_here=rollback_here, revert_here=path_reverts,
-            notes=notes)
+            rows += maybe_run_r2_passes(
+                _r2, spec, _write_r2, _run_r2, parse_ladder,
+                rollback_here=rollback_here, revert_here=path_reverts,
+                notes=notes)
     else:
         # ---- AN R2 CLASS THAT WAS NEVER ASKED FOR MUST NOT READ AS ONE ------
         #

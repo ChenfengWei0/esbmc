@@ -19,6 +19,29 @@ User budget update:
 - Fuzz is still refute-only.  It can cheaply find counterexamples for bad
   assertions/regions/instrumentation, but it cannot prove a region or a PUT.
 
+Latest speed policy:
+
+- When `--propose-r2` is on, the PUT driver now probes the first ladder rows
+  before launching the R2 ESBMC batch.
+- If the first ladder is partial (`rows` exist but no final summary) and those
+  salvaged R1 rows already render a strict fuzz PUT oracle (`fuzz_params > 0`
+  and `asserts > 0`), the driver skips the larger R2 batch.
+- This is deliberately conservative:
+  - complete first ladders still get the normal R2 chance;
+  - partial ladders with no rendered fuzz parameter still run R2;
+  - partial ladders with no rendered assertion still run R2.
+- Motivation: Arcadia 12GiB `approve` showed the first 9-candidate ladder
+  already salvaged a useful R1 oracle, while the subsequent 32-candidate R2
+  batch spent several more minutes and failed with the same `bad_alloc` shape
+  without producing any R2 row.  Skipping only this partial-oracle shape avoids
+  wasting the next solver query while preserving the strict PUT.
+- Validation:
+  - `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+    passed: 237 / 237.
+  - `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md`
+    passed.
+
 Current 600s / 8GiB breadth smoke:
 
 - Root: `/tmp/veriput_current_smoke_20260807_065046`.
