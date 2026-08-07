@@ -15024,6 +15024,117 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 peer182 fast-first limit156 wave
+
+Command:
+
+`PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark peer182 --limit 156 --order fast-first --jobs 3 --memlimit-gib 11 --mem-fraction 0.95 --timeout 600 --wrapper-grace 60 --resume --no-output-stage2-stop-s 100`
+
+Why this wave used `jobs=3 --memlimit-gib 11`:
+
+- `jobs=3 --memlimit-gib 12 --mem-fraction 0.95` was refused by the runner
+  because 36GiB exceeded the admission check against current `MemAvailable`.
+- 11GiB per case let three subjects run concurrently while preserving a
+  practical WSL margin.  The heaviest observed ESBMC child was
+  `peer_ccsolbmc__Address` around 10.9GiB RSS, close to but under the cap.
+- No residual `rq1_veriput_run`, `certify_all`, `put_all`, `esbmc`, or
+  `forge test` processes remained after the run.
+
+Newly completed subjects in this wave:
+
+- `peer_ccsolbmc__shibabread`: ok/budget-exhausted, raw=1, valid=0,
+  PUT=0/1, wall=599.960s.  This is currently the only VeriPUT raw>0 and
+  valid==0 peer row; raw artifact is retained, but it is not valid on the
+  reference contract.
+- `peer_ccsolbmc__KizunaInu`: ok/budget-exhausted, raw=1, valid=1,
+  PUT=1/1, wall=599.966s.
+- `peer_ccsolbmc__AnyswapV5ERC20`: ok/budget-exhausted, raw=6, valid=6,
+  PUT=6/6, wall=600.367s.
+- `peer_ccsolbmc__KOALA`: ok/budget-exhausted, raw=1, valid=1, PUT=1/1,
+  wall=599.986s.
+- `peer_ccsolbmc__DogeRocket`: ok/budget-exhausted, raw=1, valid=1,
+  PUT=1/1, wall=600.441s.
+- `peer_ccsolbmc__Kyuseishu`: timeout, raw=3, valid=None, PUT=3/3,
+  wall=660.375s, reason `put approve: timeout`.  Raw artifacts are retained,
+  but reference validity was not completed, so it is not counted as valid.
+- `peer_syntest__TetherToken`: no-output/early-stop-no-output, raw=0,
+  valid=0, wall=321.420s, reason no output after 321.3s Stage 2.
+- `peer_ccsolbmc__TOAD`: ok/budget-exhausted, raw=1, valid=1, PUT=1/1,
+  wall=599.600s.
+- `peer_ccsolbmc__LILY`: ok/budget-exhausted, raw=1, valid=1, PUT=1/1,
+  wall=600.428s.
+- `peer_ccsolbmc__PONY`: ok/budget-exhausted, raw=1, valid=1, PUT=1/1,
+  wall=600.041s.
+- `peer_ccsolbmc__HOTDOGE`: ok/budget-exhausted, raw=1, valid=1, PUT=1/1,
+  wall=599.573s.
+- `peer_ccsolbmc__Address` / `Arcadia_Token`: no-output/early-stop-no-output,
+  raw=0, valid=0, wall=626.978s, reason no output after 312.8s Stage 2.
+
+Latest peer182 aggregate after this wave:
+
+- Rows: 156.
+- Status counts:
+  `ok=90`, `no-output=58`, `no-units=5`, `timeout=3`.
+- Completion counts:
+  `ok=104`, `budget-exhausted=28`, `early-stop-no-output=16`,
+  `no-units=5`, `timeout=3`.
+- Raw / valid tests:
+  `352 / 319`.
+- PUT raw / valid:
+  `291 / 277`.
+- Concrete replay raw / valid:
+  `61 / 52`.
+- Subjects with raw tests:
+  `93`.
+- Subjects with valid tests:
+  `89`.
+- Rows with `valid=None`:
+  `3`.
+- Rows with `raw>0 && valid==0`:
+  `1` (`peer_ccsolbmc__shibabread`).
+- Oracle class totals:
+  `R0=256`, `R1=300`, `R2=1516`.
+- Oracle class combination totals:
+  `R0=256`, `R1=239`, `R1+R2=61`, `R2=1455`.
+
+Official `results_all.py --benchmark peer182` snapshot:
+
+- VeriPUT row:
+  `ran=156`, `raw_u=352`, `valid_u=319`, `raw_c=93`,
+  `valid_c=89`, `coverage=48.9%`, `VT/case=1.75`.
+- Cost row:
+  `ran=156`, `total=8.52h`, `wall/subj=196.7+-238.9s`,
+  `peakRSS=2693+-4087MB`.
+- Anomaly audit:
+  `timeout/oom/error=3`, `sub-5s ok=0`, `raw>0 & valid==0=1`.
+- The only invariant violations reported by `results_all.py` were unrelated
+  multi-host cost comparability issues for Solar and SynTest.
+
+Artifact/accounting contract after this wave:
+
+- `results.jsonl` rows include timing fields:
+  `wall_total_s`, `wall`, `stage2_wall_s`, `stage4_wall_s`,
+  `tool_timeout_s`, `wall_cap_s`, `esbmc_run_timeout_s`, `generated_at`, and
+  `ts`.
+- Each row includes `artifact_root`, `result_json`, `cert_jsonl`,
+  `put_summary_paths`, `raw_tests`, `valid_tests`,
+  `raw_artifacts_retained`, and `valid_artifacts_retained`.
+- PUT oracle metadata is preserved both in aggregate and per assertion:
+  `oracle_class_counts`, `oracle_class_combo_counts`, and
+  `assertion_oracles[]` with `classes`, `layer`, `text`, `verdict`,
+  `test`, and source `put_json`.
+- Raw and valid artifacts are both kept under
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/<subject_id>`.
+  Timeout rows may have raw artifacts and `valid=None`; they must not be
+  counted as proven/valid.
+
+Operational note:
+
+- `jobs=3 --memlimit-gib 11` materially improved throughput and did not leave
+  residual workers in this wave.  It is acceptable for the next peer182 wave
+  if `MemAvailable` is similar.  If available memory drops, fall back to
+  `jobs=2 --memlimit-gib 12`.
+
 ## 2026-08-07 certification-first retry planning
 
 Attempt-2 diagnostic run:
