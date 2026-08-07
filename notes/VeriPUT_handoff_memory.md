@@ -11014,6 +11014,87 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-07 ESBMC ABI decode tuple destructuring fix
+
+Strategy decision:
+
+- Do not blindly finish a large benchmark batch and then fix scripts. Run small
+  batches to expose the failure distribution, then stop immediately on reusable
+  tool-level failures.
+- Keep individual benchmark retries scarce. If a failure is local weakness in
+  one contract, record it and move on; if it is a common ESBMC/VeriPUT failure
+  signature, fix the common path before continuing the next small batch.
+
+Observed common RQ1 failure signatures before this fix:
+
+- `Unexpected tuple` was already addressed by commit
+  `2927090216 [solidity] Handle conditional tuple returns`.
+- The next high-frequency frontend failure was:
+  `expecting struct type for tuple RHS, got symbol`.
+- Sample contracts included `pop_070_PhiNFT1155` and
+  `ensdomains__ens-contracts__NameWrapper`.
+
+Root cause:
+
+- Solidity source such as
+  `(a, b, c) = abi.decode(data, (T1, T2, T3));`
+  is source-level tuple producing.
+- Some ABI/hash-table lowering paths produce a non-struct scalar expression
+  instead of an ESBMC tuple struct. `construct_tuple_assigments` then tried to
+  split the RHS as a struct and failed.
+- For `abi.decode(msg.data[4:], ...)`, a second frontend crash came from
+  `msg.data` being source-level `bytes calldata` while the C runtime model still
+  exposes `msg_data` as a scalar `uint256_t`. The range-access code built
+  `msg_data.length`, which later tripped migration.
+
+Code change:
+
+- `src/solidity-frontend/solidity_convert_tuple.cpp`
+  - Detect source-level tuple-typed function calls through the RHS JSON
+    `typeDescriptions`.
+  - If the lowered RHS is non-struct but the source RHS is tuple-producing
+    (e.g. ABI decode), treat the RHS as a nondet tuple and assign each LHS
+    component from a typed nondet value.
+  - This matches the existing ABI over-approximation intent and the sibling
+    tuple-return fallback.
+- `src/solidity-frontend/solidity_convert_expr.cpp`
+  - For bytes range access, only build `.length` when the lowered base is a
+    struct.
+  - For scalar-modelled builtins like `msg.data`, create a stable nondet
+    uint256 length and keep the same slice-bound assumptions instead of forming
+    an invalid member expression.
+
+New regression tests:
+
+- `regression/esbmc-solidity/abi_decode_tuple_destructure_pass`
+  covers `abi.decode(data, (uint256, address, string))` tuple destructuring.
+- `regression/esbmc-solidity/abi_decode_msg_data_slice_pass`
+  covers `abi.decode(msg.data[4:], (uint256, address))`.
+
+Validation:
+
+- `cmake --build build --target esbmc -j2` passed.
+- Direct ESBMC runs for both new regressions returned
+  `VERIFICATION SUCCESSFUL`.
+- `ctest -R 'abi_decode_(tuple_destructure|msg_data_slice)_pass' --output-on-failure`
+  passed both tests.
+- `cppcheck --enable=style,warning` on the two changed Solidity frontend files
+  was clean.
+- `git diff --check` on changed code and new regressions passed.
+
+Targeted smoke:
+
+- Ran the old PhiNFT1155 `initialize` path-coverage command with 12GiB memlimit
+  and a 90s wrapper timeout.
+- It no longer fails with `expecting struct type for tuple RHS, got symbol`.
+- It no longer fails with `member msg_data.length`.
+- It now reaches GOTO generation, path-coverage instrumentation, symex, slicing,
+  and solver encoding. The next failure is a Bitwuzla sort mismatch during
+  encoding after simplification:
+  `terms with mismatching sort at indices 0 and 1`.
+- Treat this as the next independent common ESBMC backend/path-coverage issue,
+  not as part of the ABI tuple frontend fix.
+
 ## 2026-08-07 Cleared concrete fallback emission
 
 Reason for the change:

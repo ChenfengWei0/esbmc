@@ -4710,8 +4710,21 @@ bool solidity_convertert::get_index_range_access_expr(
       // bytes calldata / memory: BytesDynamic has a `length` field.
       if (base_tid.compare(0, 8, "t_bytes_") == 0)
       {
-        base_length = member_exprt(base_expr, "length", size_type());
-        solidity_gen_typecast(ns, base_length, unsignedbv_typet(256));
+        if (base_expr.type().is_struct())
+        {
+          base_length = member_exprt(base_expr, "length", size_type());
+          solidity_gen_typecast(ns, base_length, unsignedbv_typet(256));
+        }
+        else
+        {
+          // Some builtins, notably msg.data, are still modelled as scalar
+          // placeholders in the C runtime even though the source-level type is
+          // bytes calldata. Preserve the slice-bounds shape with an
+          // unconstrained but stable length instead of building `.length` on a
+          // scalar and crashing during migration.
+          get_nondet_expr(unsignedbv_typet(256), base_length);
+          base_length = make_aux_var(base_length, location);
+        }
         have_base_length = true;
       }
       // T[] calldata / memory: similar path; member name 'length' on

@@ -18,6 +18,32 @@
 #include <util/message.h>
 #include <fstream>
 
+namespace
+{
+const nlohmann::json *get_tuple_assignment_rhs_json(const nlohmann::json &expr)
+{
+  if (expr.contains("rightHandSide"))
+    return &expr["rightHandSide"];
+  if (expr.contains("initialValue"))
+    return &expr["initialValue"];
+  return nullptr;
+}
+
+bool is_tuple_typed_function_call(const nlohmann::json *rhs_json)
+{
+  if (
+    rhs_json == nullptr || !rhs_json->is_object() ||
+    rhs_json->value("nodeType", "") != "FunctionCall" ||
+    !rhs_json->contains("typeDescriptions"))
+    return false;
+
+  const auto &td = (*rhs_json)["typeDescriptions"];
+  const std::string type_id = td.value("typeIdentifier", "");
+  const std::string type_str = td.value("typeString", "");
+  return type_id.find("t_tuple") == 0 || type_str.find("tuple(") == 0;
+}
+} // namespace
+
 bool solidity_convertert::get_tuple_definition(const nlohmann::json &ast_node)
 {
   log_debug("solidity", "\t@@@ Parsing tuple...");
@@ -88,9 +114,7 @@ bool solidity_convertert::get_tuple_definition(const nlohmann::json &ast_node)
     if (arg.value().contains("typeName"))
     {
       if (get_type_description(
-            arg.value(),
-            arg.value()["typeName"]["typeDescriptions"],
-            mem_type))
+            arg.value(), arg.value()["typeName"]["typeDescriptions"], mem_type))
         return true;
     }
     else
@@ -358,8 +382,9 @@ bool solidity_convertert::get_tuple_function_ref(
     fn_def.contains("returnParameters"))
   {
     typet rt;
-    if (!get_type_description(fn_def["returnParameters"], rt) &&
-        get_sol_type(rt) == SolidityGrammar::SolType::TUPLE_RETURNS)
+    if (
+      !get_type_description(fn_def["returnParameters"], rt) &&
+      get_sol_type(rt) == SolidityGrammar::SolType::TUPLE_RETURNS)
     {
       exprt dump;
       if (!get_tuple_definition(fn_def) && !get_tuple_instance(fn_def, dump))
@@ -500,16 +525,19 @@ bool solidity_convertert::construct_tuple_assigments(
   assert(lhs.type().is_code() && to_code(lhs).statement() == "block");
   exprt new_rhs = rhs;
   bool rhs_is_nondet = false;
+  const nlohmann::json *rhs_call_json = get_tuple_assignment_rhs_json(expr);
 
-  // If the RHS is already a non-struct sideeffect (e.g. abi.decode(data,
-  // (T,U,...)) lowered by the builtin path to a single-uint256 identity
-  // call), we cannot split it into tuple members the normal way. Treat
-  // it as a fully nondet tuple RHS — matches the over-approximation
-  // documented in src/c2goto/library/solidity/solidity_abi.c and the
-  // sibling fallback in the return-statement tuple path.
+  // If a source-level tuple-producing builtin was lowered to a non-struct
+  // expression (e.g. abi.decode(data, (T,U,...)) through the ABI/hash table
+  // path), we cannot split it into tuple members the normal way. Treat it as a
+  // fully nondet tuple RHS. This matches the over-approximation documented in
+  // src/c2goto/library/solidity/solidity_abi.c and the sibling fallback in the
+  // return-statement tuple path.
   if (
     rt_sol != SolidityGrammar::SolType::TUPLE_RETURNS &&
-    !new_rhs.type().is_struct() && new_rhs.id() == "sideeffect")
+    !new_rhs.type().is_struct() &&
+    (new_rhs.id() == "sideeffect" ||
+     is_tuple_typed_function_call(rhs_call_json)))
   {
     rhs_is_nondet = true;
   }
@@ -518,12 +546,6 @@ bool solidity_convertert::construct_tuple_assigments(
     // (x,y) = func();
     // => func() populates tuple instance; then extract members
     // The function call JSON is in "rightHandSide" (Assignment) or "initialValue" (VarDeclStmt)
-    const nlohmann::json *rhs_call_json = nullptr;
-    if (expr.contains("rightHandSide"))
-      rhs_call_json = &expr["rightHandSide"];
-    else if (expr.contains("initialValue"))
-      rhs_call_json = &expr["initialValue"];
-
     // Conditional RHS: (x, y) = cond ? (a, b) : (c, d);
     // The rest of this block only understands FunctionCall-shaped RHS
     // (looking up the callee via `.expression`). For a Conditional whose
@@ -716,13 +738,15 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
   // we'd recurse into the leaf branch with a non-tuple RHS and crash on
   // rhs["components"]. Unwrap whenever a single-element tuple contains a
   // tuple (or until LHS/RHS arity matches).
-  auto unwrap_paren_tuple = [](const nlohmann::json &n) -> const nlohmann::json & {
+  auto unwrap_paren_tuple =
+    [](const nlohmann::json &n) -> const nlohmann::json & {
     const nlohmann::json *cur = &n;
-    while (cur->is_object() && cur->value("nodeType", "") == "TupleExpression" &&
-           cur->contains("components") && (*cur)["components"].is_array() &&
-           (*cur)["components"].size() == 1 && !(*cur)["components"][0].is_null() &&
-           (*cur)["components"][0].is_object() &&
-           (*cur)["components"][0].value("nodeType", "") == "TupleExpression")
+    while (
+      cur->is_object() && cur->value("nodeType", "") == "TupleExpression" &&
+      cur->contains("components") && (*cur)["components"].is_array() &&
+      (*cur)["components"].size() == 1 && !(*cur)["components"][0].is_null() &&
+      (*cur)["components"][0].is_object() &&
+      (*cur)["components"][0].value("nodeType", "") == "TupleExpression")
       cur = &(*cur)["components"][0];
     return *cur;
   };
@@ -766,8 +790,7 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
       // otherwise misclassify as TUPLE_RETURNS and trip on the absent
       // `.expression` field inside get_tuple_function_ref.
       const bool rhs_is_fn_call =
-        rhs_val.is_object() &&
-        rhs_val.value("nodeType", "") == "FunctionCall";
+        rhs_val.is_object() && rhs_val.value("nodeType", "") == "FunctionCall";
       if (
         rhs_is_fn_call &&
         get_sol_type(rhs_t) == SolidityGrammar::SolType::TUPLE_RETURNS)
@@ -812,8 +835,7 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
                 return true;
 
               exprt member;
-              if (get_tuple_member_call(
-                    tuple_inst.identifier(), comp, member))
+              if (get_tuple_member_call(tuple_inst.identifier(), comp, member))
                 return true;
 
               get_tuple_assignment(expr, target, member);
@@ -841,13 +863,11 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
     {
       // Leaf LHS target — direct assignment
       exprt target;
-      if (get_expr(
-            lhs_comps[i], lhs_comps[i]["typeDescriptions"], target))
+      if (get_expr(lhs_comps[i], lhs_comps[i]["typeDescriptions"], target))
         return true;
 
       exprt value;
-      if (get_expr(
-            rhs_comps[i], rhs_comps[i]["typeDescriptions"], value))
+      if (get_expr(rhs_comps[i], rhs_comps[i]["typeDescriptions"], value))
         return true;
 
       get_tuple_assignment(expr, target, value);
