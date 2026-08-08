@@ -22057,3 +22057,47 @@ Update after MigrationHelper mock-overload diagnosis:
   Expected official RQ1 rerun should turn this subject from no-valid into four
   valid PUTs, with enc=7 rows carrying R1/R2 post-state assertions and enc=6
   rollback rows carrying only R0 exit-kind assertions.
+
+Update after TREXFactory constructor-harness diagnosis:
+
+- `ERC-3643__ERC-3643__TREXFactory` had certified Stage2 regions for
+  `setIdFactory` but official RQ1 showed `raw=0`, `valid=0`: the full subject
+  left only about 48s for Stage4 emit, so both certified rows timed out before
+  producing `.cov.t.sol`.
+- A Stage4-only probe with larger per-unit budget produced two raw PUTs, but
+  Foundry replay failed in `setUp()`.  The generated constructor call used
+  `new TREXFactory(address(0), ...)`; the source constructor delegates to
+  `setImplementationAuthority` and `setIdFactory`, which both reject zero
+  address arguments.  After replacing guarded zero constructor args with stable
+  nonzero placeholders, the constructor still reverted because
+  `setImplementationAuthority` calls
+  `(ITREXImplementationAuthority(implementationAuthority_)).get*Implementation()`
+  and Foundry had no code/mock at that constructor address.  The existing
+  constructor-param interface mock finder only saw casts directly in the
+  constructor body and did not see this one-hop setter pattern or parenthesized
+  casts.
+- Fixed `scripts/solidity_path_put.py`:
+  `constructor_param_nonzero_specs` now detects both direct
+  `param != address(0)` guards and one-hop constructor-param flows into a
+  same-contract function whose parameter is guarded.  Assembly replaces only
+  zero address replay args for such guarded address/address-payable constructor
+  params.
+  `constructor_param_interface_mock_specs` now also follows one-hop constructor
+  calls into same-contract functions and recognizes parenthesized interface
+  casts like `(IFace(param)).f()`.  When an address-returning constructor-time
+  interface call is itself checked against `address(0)`, the mock returns a
+  stable nonzero address instead of `address(0)`.
+- Added/updated tests:
+  `test_constructor_nonzero_address_guards_repair_zero_defaults` covers the
+  one-hop nonzero constructor guard repair;
+  `test_constructor_param_interface_calls_are_mocked_before_deploy` now covers
+  one-hop parenthesized interface casts and nonzero address return mocks.
+  Verification passed:
+  `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `python3 scripts/test_solidity_path_put.py` -> 279/279;
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`.
+- Stage4-only TREXFactory probe from the existing cert now succeeds:
+  `setIdFactory` -> `B = 2/2`.
+  enc=15 emits a strong PUT with four fuzz coordinates and 12 oracle asserts,
+  including R2 `_idFactory: post == idFactory_`; enc=14 is rollback and carries
+  only an R0 exit-kind oracle.

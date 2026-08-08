@@ -504,10 +504,15 @@ def test_constructor_param_interface_calls_are_mocked_before_deploy():
 pragma solidity >=0.8.0;
 interface IERC20 { function decimals() external view returns (uint8); }
 interface IOracle { function getQuote(uint256 x) external view returns (uint256); }
+interface IAuthority { function getImpl() external view returns (address); }
 contract C {
-  constructor(address token, address oracle) {
+  constructor(address token, address oracle, address authority) {
     IERC20(token).decimals();
     require(IOracle(oracle).getQuote(1) != 0);
+    setAuthority(authority);
+  }
+  function setAuthority(address authority) public {
+    require((IAuthority(authority)).getImpl() != address(0));
   }
   function f() external {}
 }
@@ -520,7 +525,7 @@ import {C} from "./flat.sol";
 contract CCovTest_0 is Test {
   C c0;
   function setUp() public {
-    c0 = new C(address(uint160(1)), address(uint160(2)));
+    c0 = new C(address(uint160(1)), address(uint160(2)), address(uint160(3)));
   }
   // claim: sol:@C@C@F@f#9:path:1
   function test_cov_0() public {
@@ -530,7 +535,7 @@ contract CCovTest_0 is Test {
 contract CCovTest_1 is Test {
   C c0;
   function setUp() public {
-    c0 = new C(address(uint160(1)), address(uint160(2)));
+    c0 = new C(address(uint160(1)), address(uint160(2)), address(uint160(3)));
   }
 }
 """
@@ -552,14 +557,21 @@ contract CCovTest_1 is Test {
         em, case, [put], "CCovTest_0_put", contract="C", unit="f",
         constructor_param_mocks=specs, flat_source=flat)
     bad = 0
-    new_at = text.find("c0 = new C(address(uint160(1)), address(uint160(2)));")
+    new_at = text.find("c0 = new C(address(uint160(1)), "
+                       "address(uint160(2)), address(uint160(3)));")
     decimals_at = text.find('abi.encodeWithSignature("decimals()")')
     quote_at = text.find('abi.encodeWithSignature("getQuote(uint256)")')
-    bad += check(len(specs) == 2, f"two constructor arg mocks found: {specs}")
+    impl_at = text.find('abi.encodeWithSignature("getImpl()")')
+    bad += check(len(specs) == 3, f"three constructor arg mocks found: {specs}")
     bad += check(0 <= decimals_at < new_at,
                  "token decimals mock is inserted before deployment")
     bad += check(0 <= quote_at < new_at,
                  "oracle quote mock is inserted before deployment")
+    bad += check(0 <= impl_at < new_at,
+                 "indirect parenthesized interface mock is inserted before "
+                 "deployment")
+    bad += check("abi.encode(address(uint160(3000)))" in text,
+                 "address return used by a constructor guard is nonzero")
     bad += check("address _esbmc_ctor_arg_mock" in text,
                  "constructor argument address is materialized for mockCall")
     bad += check("vm.etch(_esbmc_ctor_arg_mock" not in text,
@@ -618,6 +630,61 @@ contract CCovTest_0 is Test {
                  "the payable hasCode constructor arg is etched before deploy")
     bad += check(text.count("vm.etch(_esbmc_ctor_code_") == 2,
                  "only hasCode constructor address args are etched")
+    return bad
+
+
+def test_constructor_nonzero_address_guards_repair_zero_defaults():
+    flat = """\
+pragma solidity >=0.8.0;
+contract C {
+  constructor(address implementationAuthority_, address idFactory_) {
+    setImplementationAuthority(implementationAuthority_);
+    require(idFactory_ != address(0), "invalid argument - zero address");
+  }
+  function setImplementationAuthority(address implementationAuthority_) public {
+    require(implementationAuthority_ != address(0), "invalid argument - zero address");
+  }
+  function setIdFactory(address idFactory_) external {}
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C(address(uint160(0)), address(uint160(1)));
+  }
+  // claim: sol:@C@C@F@setIdFactory#9:path:15
+  function test_cov_0() public {
+    c0.setIdFactory(address(uint160(2)));
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@setIdFactory#9", 15)
+    put = [
+        "",
+        "  function test_put_C_setIdFactory_path15(address idFactory_) public {",
+        "    c0.setIdFactory(idFactory_);",
+        "  }",
+    ]
+    text = assemble_put_source(
+        em, case, [put], "CCovTest_put", contract="C",
+        unit="setIdFactory", flat_source=flat)
+    bad = 0
+    bad += check("new C(address(uint160(1000)), address(uint160(1)))" in text,
+                 "zero constructor arg rejected by source guard is repaired")
+    bad += check("new C(address(uint160(0)), address(uint160(1)))" not in text,
+                 "the guarded zero constructor arg is gone")
     return bad
 
 
@@ -12370,6 +12437,7 @@ def main():
               test_constructor_staticcall_mock_is_scoped_to_deployment,
               test_constructor_param_interface_calls_are_mocked_before_deploy,
               test_constructor_param_hascode_args_are_etched_before_deploy,
+              test_constructor_nonzero_address_guards_repair_zero_defaults,
               test_unsupported_skeleton_is_synthesized_for_certified_put_lift,
               test_esbmc_interface_mock_completion_adds_inherited_overloads,
               test_runtime_interface_mock_lines_cover_literal_address_calls,

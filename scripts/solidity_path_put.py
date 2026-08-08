@@ -5433,8 +5433,7 @@ def source_constructor_param_types(forge_project, contract):
         forge_project, contract)]
 
 
-def source_constructor_params(forge_project, contract):
-    source = _flat_source_for_project(forge_project)
+def _source_constructor_params_from_source(source, contract):
     chunk = _source_contract_chunk(source, contract)
     if not chunk:
         return []
@@ -5448,6 +5447,11 @@ def source_constructor_params(forge_project, contract):
         if typ and name:
             params.append((name, typ))
     return params
+
+
+def source_constructor_params(forge_project, contract):
+    return _source_constructor_params_from_source(
+        _flat_source_for_project(forge_project), contract)
 
 
 def _constructor_body_text(chunk):
@@ -5522,6 +5526,146 @@ def repair_payable_constructor_args(lines, contract, constructor_params):
                 if casted != args[idx]:
                     new_args[idx] = casted
                     touched = True
+        if not touched:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        new_stmt = stmt[:start] + ", ".join(new_args) + stmt[close:]
+        out.extend(new_stmt.split("\n"))
+        changed += 1
+        i = end + 1
+    return out, changed
+
+
+def _is_zero_address_expr(expr):
+    text = (expr or "").strip()
+    if text.startswith("payable(") and text.endswith(")"):
+        text = text[len("payable("):-1].strip()
+    return _address_expr_literal_int(text) == 0
+
+
+def _body_has_nonzero_address_guard(body, name):
+    plain = re.escape(name)
+    guarded = [
+        r"\b" + plain + r"\b\s*!=\s*address\s*\(\s*0\s*\)",
+        r"address\s*\(\s*\b" + plain +
+        r"\b\s*\)\s*!=\s*address\s*\(\s*0\s*\)",
+        r"address\s*\(\s*0\s*\)\s*!=\s*\b" + plain + r"\b",
+        r"address\s*\(\s*0\s*\)\s*!=\s*address\s*\(\s*\b" +
+        plain + r"\b\s*\)",
+    ]
+    return any(re.search(pat, body) for pat in guarded)
+
+
+def _source_function_decls(chunk, fname):
+    rx = re.compile(r"\bfunction\s+" + re.escape(fname) +
+                    r"\s*\((.*?)\)\s*[^;{]*\{", re.S)
+    out = []
+    for m in rx.finditer(chunk or ""):
+        params = []
+        for item in split_top_level(m.group(1)):
+            typ = _source_sol_param_type(item)
+            name = _source_sol_param_name(item)
+            if typ and name:
+                params.append((name, typ))
+        start = m.end()
+        depth, i = 1, start
+        while i < len(chunk) and depth:
+            if chunk[i] == "{":
+                depth += 1
+            elif chunk[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        if depth == 0:
+            out.append((params, chunk[start:i]))
+    return out
+
+
+def _constructor_arg_flows_to_nonzero_guard(chunk, ctor_body, pname):
+    call_rx = re.compile(r"\b([A-Za-z_]\w*)\s*\((.*?)\)\s*;?", re.S)
+    for m in call_rx.finditer(ctor_body or ""):
+        args = [a.strip() for a in split_top_level(m.group(2))]
+        for arg_idx, arg in enumerate(args):
+            if arg != pname:
+                continue
+            for params, body in _source_function_decls(chunk, m.group(1)):
+                if arg_idx >= len(params):
+                    continue
+                callee_name, callee_type = params[arg_idx]
+                if _norm_ty(callee_type) not in ("address", "address payable"):
+                    continue
+                if _body_has_nonzero_address_guard(body, callee_name):
+                    return True
+    return False
+
+
+def _interface_call_result_has_nonzero_guard(body, iface, pname, fname):
+    call = (r"\(?\s*" + re.escape(iface) + r"\s*\(\s*" +
+            re.escape(pname) + r"\s*\)\s*\)?\s*\.\s*" +
+            re.escape(fname) + r"\s*\([^)]*\)")
+    return bool(re.search(call + r"\s*!=\s*address\s*\(\s*0\s*\)", body or "")
+                or re.search(r"address\s*\(\s*0\s*\)\s*!=\s*" + call,
+                             body or ""))
+
+
+def constructor_param_nonzero_specs(source, contract):
+    """Address constructor parameters guarded by param != address(0)."""
+    chunk = _source_contract_chunk(source, contract)
+    if not source or not chunk:
+        return []
+    params = _source_constructor_params_from_source(source, contract)
+    body = _constructor_body_text(chunk)
+    if not params or not body:
+        return []
+    specs = []
+    for idx, (pname, ptype) in enumerate(params):
+        if _norm_ty(ptype) not in ("address", "address payable"):
+            continue
+        if (not _body_has_nonzero_address_guard(body, pname) and
+                not _constructor_arg_flows_to_nonzero_guard(
+                    chunk, body, pname)):
+            continue
+        specs.append({
+            "param_index": idx,
+            "param_name": pname,
+            "param_type": ptype,
+        })
+    return specs
+
+
+def apply_constructor_param_nonzero_args(lines, contract, specs):
+    """Replace zero address constructor replay args rejected by source guards."""
+    if not contract or not specs:
+        return list(lines), 0
+    out, changed, i = [], 0, 0
+    rx = re.compile(r"\bnew\s+" + re.escape(contract) + r"\s*\(")
+    while i < len(lines):
+        if not rx.search(lines[i]):
+            out.append(lines[i])
+            i += 1
+            continue
+        end = _statement_end(lines, i)
+        stmt = "\n".join(lines[i:end + 1])
+        span = _constructor_arg_span(stmt, contract)
+        if span is None:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        start, close, args = span
+        new_args = list(args)
+        touched = False
+        for spec in specs:
+            idx = spec["param_index"]
+            if idx >= len(args) or not _is_zero_address_expr(args[idx]):
+                continue
+            seed = 1000 + idx
+            addr = f"address(uint160({seed}))"
+            if _is_address_payable_type(spec.get("param_type", "")):
+                addr = f"payable({addr})"
+            new_args[idx] = addr
+            touched = True
         if not touched:
             out.extend(lines[i:end + 1])
             i = end + 1
@@ -9666,9 +9810,59 @@ def constructor_param_interface_mock_specs(forge_project, contract):
         return []
     functions = _source_function_abis(source)
     specs, seen = [], set()
+
+    def add_cast_calls(scan_body, ctor_pname, spec_pname, idx):
+        for iface, cast_name, fname in re.findall(
+                r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
+                r"\s*\)?\s*\.\s*([A-Za-z_]\w*)\s*\(", scan_body):
+            if cast_name != spec_pname:
+                continue
+            choice = _unique_function_choice(functions.get(fname) or [])
+            if choice is None:
+                continue
+            signature, returns = choice
+            key = (idx, iface, signature)
+            if key in seen:
+                continue
+            seen.add(key)
+            specs.append({
+                "param_index": idx,
+                "param_name": ctor_pname,
+                "interface": iface,
+                "signature": signature,
+                "returns": returns,
+                "nonzero_address_returns":
+                    returns == ["address"] and
+                    _interface_call_result_has_nonzero_guard(
+                        scan_body, iface, spec_pname, fname),
+            })
+
+    for pname, (idx, ptype) in by_name.items():
+        if _norm_ty(ptype) not in ("address", "address payable"):
+            continue
+        add_cast_calls(body, pname, pname, idx)
+
+    call_rx = re.compile(r"\b([A-Za-z_]\w*)\s*\((.*?)\)\s*;?", re.S)
+    for m in call_rx.finditer(body):
+        args = [a.strip() for a in split_top_level(m.group(2))]
+        for arg_idx, arg in enumerate(args):
+            found = by_name.get(arg)
+            if found is None:
+                continue
+            idx, ptype = found
+            if _norm_ty(ptype) not in ("address", "address payable"):
+                continue
+            for params2, body2 in _source_function_decls(chunk, m.group(1)):
+                if arg_idx >= len(params2):
+                    continue
+                callee_name, callee_type = params2[arg_idx]
+                if _norm_ty(callee_type) not in ("address", "address payable"):
+                    continue
+                add_cast_calls(body2, arg, callee_name, idx)
+
     for iface, pname, fname in re.findall(
-            r"\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
-            r"\s*\.\s*([A-Za-z_]\w*)\s*\(", body):
+            r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
+            r"\s*\)?\s*\.\s*([A-Za-z_]\w*)\s*\(", body):
         found = by_name.get(pname)
         if found is None:
             continue
@@ -9689,6 +9883,10 @@ def constructor_param_interface_mock_specs(forge_project, contract):
             "interface": iface,
             "signature": signature,
             "returns": returns,
+            "nonzero_address_returns":
+                returns == ["address"] and
+                _interface_call_result_has_nonzero_guard(
+                    body, iface, pname, fname),
         })
     return specs
 
@@ -9802,9 +10000,15 @@ def apply_constructor_param_interface_mocks(lines, contract, specs, source,
             mock_name = f"_esbmc_ctor_arg_mock_{changed}_{len(local)}"
             returns = spec.get("returns") or []
             if returns:
-                exprs = ", ".join(
-                    _abi_mock_expr_for_type(source, typ, "", {})
-                    for typ in returns)
+                exprs = []
+                for ret_idx, typ in enumerate(returns):
+                    if (spec.get("nonzero_address_returns") and
+                            _norm_ty(typ) == "address"):
+                        exprs.append(f"address(uint160({3000 + ret_idx}))")
+                    else:
+                        exprs.append(_abi_mock_expr_for_type(
+                            source, typ, "", {}))
+                exprs = ", ".join(exprs)
                 ret = f"abi.encode({exprs})"
             else:
                 ret = "bytes(\"\")"
@@ -10092,6 +10296,11 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
         lines = apply_foundry_fixture(lines, emitted, case, unit, contract,
                                       fixture, layout)
     if contract is not None and unit is not None:
+        constructor_param_nonzero_mocks = constructor_param_nonzero_specs(
+            flat_source or "", contract)
+        lines, _constructor_param_nonzero_repairs = \
+            apply_constructor_param_nonzero_args(
+                lines, contract, constructor_param_nonzero_mocks)
         lines = apply_constructor_staticcall_mocks(
             lines, emitted, case, unit, contract, constructor_mocks or [])
         lines = apply_runtime_interface_mocks(
@@ -10157,6 +10366,11 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
         lines = apply_foundry_fixture(lines, emitted, case, unit, contract,
                                       fixture, layout)
     if contract is not None and unit is not None:
+        constructor_param_nonzero_mocks = constructor_param_nonzero_specs(
+            flat_source or "", contract)
+        lines, _constructor_param_nonzero_repairs = \
+            apply_constructor_param_nonzero_args(
+                lines, contract, constructor_param_nonzero_mocks)
         lines = apply_constructor_staticcall_mocks(
             lines, emitted, case, unit, contract, constructor_mocks or [])
         lines = apply_runtime_interface_mocks(
