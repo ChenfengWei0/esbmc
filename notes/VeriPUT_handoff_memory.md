@@ -19644,3 +19644,95 @@ Additional triage detail after inspecting representative `valid-no-PUT` and
   classes are exit reason/custom error, event absence/presence where observable,
   return values on normal paths, or ETH/accounting effects when the model and
   Foundry fixture both support them.
+
+## 2026-08-08 journal-safe RQ1 triage script
+
+User further clarified that debugging must not focus only on `no-valid`.
+The active priority classes are now:
+
+- `no-valid`: no reference-valid artifact.
+- `valid-no-PUT`: reference-valid artifacts exist, but all are concrete
+  replays.
+- `valid-PUT-no-R1R2`: reference-valid PUTs exist, but none carry R1/R2
+  oracle classes.  In current outputs this mostly means R0-only rollback or
+  exit-kind tests.
+
+Added `notes/coverage/scripts/rq1_veriput_triage.py` as a read-only
+journal-safe triage tool.  It reads only
+`/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/<dataset>/results.jsonl`
+with last-write-wins semantics.  It does not scan
+`subjects/*/result.json`, because `.redo.*` backup directories preserve stale
+rows and inflated the earlier ad hoc count.
+
+`python3 -m py_compile notes/coverage/scripts/rq1_veriput_triage.py` passed.
+`python3 notes/coverage/scripts/rq1_veriput_triage.py --benchmark bugfix124
+--sample-limit 5` passed.
+
+Corrected latest `bugfix124` snapshot from `results.jsonl`:
+
+- Subjects: 124 (`results.jsonl` lines: 256, bad JSON lines: 0).
+- Subject buckets:
+  - `no-valid`: 53
+  - `valid-no-PUT`: 15
+  - `valid-PUT-no-R1R2`: 21
+  - `valid-PUT-with-R2`: 35
+- Artifact totals:
+  - `raw`: 281
+  - `valid`: 250
+  - `put_raw`: 158
+  - `put_valid`: 145
+  - `concrete_raw`: 123
+  - `concrete_valid`: 105
+- Artifact PUT/valid ratio: `145/250 = 0.580`.
+- Valid-subject any-PUT ratio: `56/71 = 0.789`.
+- Valid PUT oracle class counts, computed from `valid_tests` when present:
+  - `R0`: 121
+  - `R1`: 64
+  - `R2`: 59
+- Valid PUT oracle combos:
+  - `R0`: 80
+  - `R0+R1`: 2
+  - `R0+R1+R2`: 38
+  - `R0+R2`: 1
+  - `R1`: 4
+  - `R1+R2`: 20
+
+Implication:
+
+- `no-valid` is still the largest absolute failure bucket, but improving only
+  that bucket is insufficient for the PUT methodology claim.
+- The next optimization loop must score fixes by expected movement on all
+  three axes: recover no-valid subjects, turn concrete-only successes into
+  certified PUTs, and strengthen R0-only PUTs when a real observable R1/R2 or
+  non-state oracle exists.
+- Do not relabel point-certified/concrete rows as PUTs unless there is at
+  least one rendered coordinate with certified width.  Fuzz is still
+  refute-only; ESBMC certification is required for PUT proof.
+
+Same script over all three current journals (`--benchmark all --sample-limit
+3`) gives the following high-level priorities:
+
+- `bugfix124`: 124 subjects.
+  - Subject buckets: 53 `no-valid`, 15 `valid-no-PUT`,
+    21 `valid-PUT-no-R1R2`, 35 `valid-PUT-with-R2`.
+  - Artifact PUT/valid ratio: 0.580.
+  - Valid-subject any-PUT ratio: 0.789.
+- `real203`: 203 subjects.
+  - Subject buckets: 176 `no-valid`, 4 `valid-no-PUT`,
+    9 `valid-PUT-no-R1R2`, 14 `valid-PUT-with-R2`.
+  - Artifact PUT/valid ratio: 0.820.
+  - Valid-subject any-PUT ratio: 0.852.
+- `peer182`: 182 subjects.
+  - Subject buckets: 69 `no-valid`, 4 `valid-no-PUT`,
+    23 `valid-PUT-no-R1R2`, 86 `valid-PUT-with-R2`.
+  - Artifact PUT/valid ratio: 0.847.
+  - Valid-subject any-PUT ratio: 0.965.
+
+Practical interpretation:
+
+- `real203` needs broad no-valid recovery first.
+- `peer182` is good on no-PUT, but still useful for debugging R0-only/no-R1R2
+  oracle strength.
+- `bugfix124` remains the best near-term optimization target because all
+  three weakness classes are substantial at once, and the PUT/valid artifact
+  ratio is currently below the paper-methodology comfort line.
