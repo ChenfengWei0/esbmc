@@ -11318,13 +11318,17 @@ Recent official BugFix124 status:
 
 - Strict latest journal over
   `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/results.jsonl`:
-  124 cases, 60 cases with at least one valid test, 64 with no valid test.
-- Artifact totals: raw 195, valid 170, valid PUT 126, valid concrete 44.
-  PUT share among valid artifacts: 74.1%.
+  124 cases, 61 cases with at least one valid test, 63 with no valid test.
+- Artifact totals: raw 201, valid 176, valid PUT 126, valid concrete 50.
+  PUT share among valid artifacts: 71.6%.
 - `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark bugfix124`
-  reports VeriPUT `raw_u=195`, `valid_u=170`, `raw_c=60`, `valid_c=60`,
-  coverage `48.4%`, `VT/case=1.37`, status
+  reported after `pop_018`: VeriPUT `raw_u=195`, `valid_u=170`,
+  `raw_c=60`, `valid_c=60`, coverage `48.4%`, `VT/case=1.37`, status
   `{'ok': 60, 'no-output': 56, 'no-units': 5, 'budget-exhausted': 3}`.
+- After the `pop_009` rerun, the same command reports VeriPUT `raw_u=201`,
+  `valid_u=176`, `raw_c=61`, `valid_c=61`, coverage `49.2%`,
+  `VT/case=1.42`, status
+  `{'ok': 61, 'no-output': 55, 'no-units': 5, 'budget-exhausted': 3}`.
 
 Recent official case observations:
 
@@ -11339,6 +11343,14 @@ Recent official case observations:
   Stage4 generation 278.371s, Foundry replay 9.19s, wall 649.94s,
   maxrss 1194.0 MB.  Units attempted:
   `setMerkleRoot`, `setFeeRate`, `setUseStolenNftOracle`.
+- `pop_009_PrivatePool` rerun after the same scheduler/runner changes:
+  old row was no-output after `buy`, `sell`, `execute`; new row is status ok,
+  completion budget-exhausted, raw 6, valid 6, PUT 0/0, concrete 6/6,
+  generation 587.968s, Stage2 303.276s, Stage4 generation 284.692s,
+  Foundry replay 9.442s, wall 600.293s, maxrss 1204.5 MB.  Units attempted:
+  `flashFeeAndProtocolFee`, `flashFee`, `setMerkleRoot`, `setFeeRate`.
+  `low_budget_concrete_only_stage4_skip_count=0` because the emitted rows
+  included cleared concrete fallbacks and had enough generation budget.
 
 Diagnosis from `pop_018_PrivatePool`:
 
