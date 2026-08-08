@@ -21419,3 +21419,44 @@ Update after `bugfix124/pop_020_GSPFunding.adjustPriceLimit`:
   `_PRICE_LIMIT_: post == priceLimit`; rollback paths `enc=6` and `enc=14`
   have fuzz params plus exit-kind oracle.  `put-summary.json` reports
   generation wall 83.193s and Foundry replay outside generation timeout.
+
+Update after continuing the `pop_020_GSPFunding` batch:
+
+- `adjustMtFeeRate` is the same high-yield shape as `adjustPriceLimit`:
+  `onlyMaintainer`, `mtFeeRate <= 10**18`, then `_MT_FEE_RATE_ = mtFeeRate`.
+  Strong Stage2 probe
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_020_GSPFunding.adjustMtFeeRate_strong_probe.1786189744`
+  certified 3 of 4 witnessed paths in 68s.  Stage4 under
+  `put/adjustMtFeeRate` produced `B=3/3`, all PUT, zero concrete.  Normal
+  path `enc=15` has two fuzz parameters (`msg.sender`, `mtFeeRate`) and five
+  assertions including semantic R2 `_MT_FEE_RATE_: post == mtFeeRate`; rollback
+  paths `enc=6` and `enc=14` have fuzz params plus exit-kind oracle.
+- `adjustPrice` is materially harder.  Ground truth normal path should require
+  `msg.sender == _MAINTAINER_`, `_I_ != 0`, and
+  `(abs(i - _I_) * 1e6 / _I_) <= _PRICE_LIMIT_`, then set `_I_ = i`.
+  Strong Stage2 probe
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_020_GSPFunding.adjustPrice_strong_probe.1786189968`
+  certified only 1 of 4 witnessed paths in 171s.  The certified path is the
+  access-denied rollback (`enc=6`), not the normal setter path.  Stage4 produced
+  `B=1/1`, one PUT, zero concrete, two fuzz params (`msg.sender`, `i`), and an
+  exit-kind oracle.  Normal/arithmetic paths `enc=28/30` hit coordinate-gate /
+  shrink-budget obstacles involving `extcall.i`, arithmetic checks, and
+  quantities outside the rendered coordinate set.  Treat this as an arithmetic
+  region/parser issue, not a scalar alias emitter issue.
+- real203 valid-no-PUT triage after this patch:
+  `HyperEVMRateProvider` is mostly constructor immutable/constant getters; old
+  Stage2 is `NO-COORDINATE` because `_pairIndex`, `_spotPriceMultiplier`, and
+  `_tokenIndex` are fixed at deployment and no test can set them.  Turning this
+  into PUT likely needs constructor-argument lifting or immutable-aware return
+  oracles, not another ESBMC rerun.  `ShuffledGatewayProvider` returns
+  `string[]` and old Stage2 also has no generalisable coordinates; likely needs
+  dynamic return/oracle support.  Do not burn 600s on these before adding
+  relevant code support.
+- Important accounting detail: `Results/results_all.py` does NOT scan
+  `subjects/*` or probe directories.  It reads only
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/<dataset>/results.jsonl`
+  via `load_veriput()`.  The successful probe artifacts above are under the
+  correct RQ1 tree, but they will not affect final tables until adopted into
+  the dataset `results.jsonl` as same-schema last-write-wins journal rows.
+  Do this with a small script or the existing RQ1 runner path; do not hand-edit
+  old rows in place.
