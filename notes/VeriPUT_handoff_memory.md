@@ -20970,3 +20970,51 @@ Update after the no-PUT / no-R1R2 tightening pass on 2026-08-08:
   `gates.width=false`).  Therefore it is no longer a `no-R1/R2` failure, but it
   is also not a valid reference PUT by current RQ1 accounting.  Treat this as a
   region/width problem, not an oracle-mining problem.
+
+Update after the RQ1 quality-triage script pass:
+
+- `notes/coverage/scripts/rq1_veriput_triage.py` was tightened so it can derive
+  quality buckets from old `result.json` rows and from fresh Stage4-only
+  artifacts even when `result.json` was not refreshed.  It now scans
+  `put/**/put-summary.json` and matching `put.json` files under the subject
+  directory and recognizes the intermediate bucket
+  `PUT-with-R1R2-but-no-width`.
+- The triage priority is now:
+  fixable normal `valid-PUT-no-R1R2`, then `valid-no-PUT`, then
+  `PUT-with-R1R2-but-no-width`, then `no-valid`; rollback/revert-only
+  no-R1/R2 paths are lower priority because post-state R1/R2 is semantically
+  unobservable.
+- Current derived bugfix124 summary after the acfix_021 Stage4-only rerun:
+  `PUT-with-R1R2-but-no-width=1`, `no-valid=53`,
+  `valid-PUT-no-R1R2=25`, `valid-PUT-with-R1R2=38`,
+  `valid-no-PUT=7`.  The moved no-width row is
+  `acfix_021_CVE_2018_19832`.
+- `real203/ensdomains__ens-contracts__StandaloneReverseRegistrar.nameForAddr`
+  is not a good R1/R2 repair target: its only state is
+  `mapping(address => string) _names`, and `nameForAddr(address)` returns
+  `string memory`.  The driver did not propose `_names[addr]` because solc
+  storage layout cannot report that as a scalar mapping entry, and even the
+  return value is dynamic string.  Treat this as an unsupported string
+  mapping/return ceiling, not an immediate numeric R1/R2 fix.
+- `real203/balancer__balancer-v3-monorepo__HyperEVMRateProvider` illustrates a
+  major `valid-no-PUT` subtype: Stage2 reports
+  `COMPLETE-WITNESS-NO-COORDINATE` because every harvested coordinate is an
+  immutable/constant constructor value such as `_pairIndex`,
+  `_spotPriceMultiplier`, `_tokenIndex`.  Re-running or widening cannot create
+  a fuzz dimension; at best it yields concrete replays or zero-width oracle
+  text.  Do not spend scarce solver time there when the goal is PUT
+  generalization.
+- One full RQ1 rerun was performed for
+  `real203/ERC-3643__ERC-3643__DefaultCompliance` with 600s timeout, 16 GiB,
+  one job, and official output root via `rq1_veriput_run.py --redo`.  It moved
+  the subject from old `no-valid/raw=0` to `valid-no-PUT`: `raw=16`,
+  `valid=16`, `put_raw=0`, `put_valid=0`, `concrete_raw=16`,
+  `concrete_valid=16`, `wall_total_s=555.715`, `stage2_wall_s=453.901`,
+  `stage4_wall_s=101.599`, `foundry_replay_wall_s=32.407`, `maxrss_mb=695.1`.
+  This proves some no-valid-with-fallback rows are recoverable with the full
+  600s subject budget, but it did not improve PUT/generalization.
+- Current real203 derived triage after that rerun: `no-valid=174`,
+  `valid-no-PUT=5`, `valid-PUT-no-R1R2=8`,
+  `valid-PUT-with-R1R2=16`.  The next no-valid-with-fallback candidates should
+  be screened for whether a certified region exists; pure no-coordinate
+  fallback rows improve raw/valid concrete only, not PUT ratio.

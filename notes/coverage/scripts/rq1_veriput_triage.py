@@ -60,16 +60,101 @@ def valid_put_tests(result: dict) -> list[dict]:
     ]
 
 
-def quality_bucket(result: dict) -> str:
-    put = result.get("put", {})
-    valid = put.get("valid") or result.get("row", {}).get("valid") or 0
-    put_valid = put.get("put_valid") or result.get("row", {}).get("put_valid") or 0
+def _count(result: dict, key: str) -> int:
+    for section in (result.get("put") or {}, result.get("row") or {}):
+        if key not in section:
+            continue
+        try:
+            return int(section.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
+def _has_r1r2(classes) -> bool:
+    return bool({"R1", "R2"} & set(classes or []))
+
+
+def _summary_paths(result: dict, result_path: Path | None = None) -> list[Path]:
+    paths = []
+    for section in (result.get("put") or {}, result.get("row") or {}):
+        for raw in section.get("summary_paths") or section.get("put_summary_paths") or []:
+            path = Path(raw)
+            if path not in paths:
+                paths.append(path)
+    if result_path is not None:
+        for path in sorted(result_path.parent.joinpath("put").rglob("put-summary.json")):
+            if path not in paths:
+                paths.append(path)
+    return paths
+
+
+def _raw_test_has_r1r2(result: dict, test: str | None) -> bool:
+    if not test:
+        return False
+    for section in (result.get("put") or {}, result.get("row") or {}):
+        for raw_test in section.get("raw_tests") or []:
+            if raw_test.get("test") == test:
+                return _has_r1r2(raw_test.get("oracle_classes"))
+    return False
+
+
+def _put_json_has_r1r2(summary_path: Path, test: str | None) -> bool:
+    if not test:
+        return False
+    put_root = summary_path.parent
+    for path in sorted(put_root.rglob("put.json")):
+        doc = _load_json(path)
+        if doc.get("test") != test:
+            continue
+        stats = doc.get("stats") or {}
+        if _has_r1r2(stats.get("oracle_classes")):
+            return True
+    return False
+
+
+def green_r1r2_no_width_rows(
+        result: dict, result_path: Path | None = None) -> list[dict]:
+    out = []
+    for path in _summary_paths(result, result_path):
+        doc = _load_json(path)
+        for row in ((doc.get("deliverable_b") or {}).get("rows") or []):
+            gates = row.get("gates") or {}
+            if row.get("kind") != "put":
+                continue
+            if row.get("valid_reference_test"):
+                continue
+            if row.get("forge_status") != "Success":
+                continue
+            if not gates.get("assert"):
+                continue
+            if gates.get("width") or gates.get("fuzz"):
+                continue
+            # The summary row tells us that assertions exist and the only B
+            # blockers are fuzz/width.  The corresponding put.json carries the
+            # oracle-class labels.
+            test = row.get("test")
+            has_r1r2 = (_raw_test_has_r1r2(result, test)
+                        or _put_json_has_r1r2(path, test))
+            if not has_r1r2:
+                continue
+            enriched = dict(row)
+            enriched["summary_path"] = str(path)
+            out.append(enriched)
+    return out
+
+
+def quality_bucket(result: dict, result_path: Path | None = None) -> str:
+    valid = _count(result, "valid")
+    put_valid = _count(result, "put_valid")
+    if put_valid <= 0 and green_r1r2_no_width_rows(result, result_path):
+        return "PUT-with-R1R2-but-no-width"
     if valid <= 0:
         return "no-valid"
     if put_valid <= 0:
         return "valid-no-PUT"
     for test in valid_put_tests(result):
-        if {"R1", "R2"} & set(test.get("oracle_classes") or []):
+        if _has_r1r2(test.get("oracle_classes")):
             return "valid-PUT-with-R1R2"
     return "valid-PUT-no-R1R2"
 
@@ -145,7 +230,9 @@ def classify_no_r1r2(result: dict) -> str:
     return causes.most_common(1)[0][0]
 
 
-def classify(result: dict, bucket: str) -> str:
+def classify(result: dict, bucket: str, result_path: Path | None = None) -> str:
+    if bucket == "PUT-with-R1R2-but-no-width":
+        return "green-r1r2-put-no-fuzz-width"
     if bucket == "no-valid":
         return classify_no_valid(result)
     if bucket == "valid-no-PUT":
@@ -199,7 +286,7 @@ def triage_rows(result_root: Path, datasets: list[str]) -> list[dict]:
     rows = []
     for dataset, subject_id, path in latest_result_paths(result_root, datasets):
         result = _load_json(path)
-        bucket = quality_bucket(result)
+        bucket = quality_bucket(result, path)
         row = result.get("row", {})
         cert = result.get("certification", {})
         rows.append({
@@ -207,7 +294,7 @@ def triage_rows(result_root: Path, datasets: list[str]) -> list[dict]:
             "subject_id": subject_id,
             "contract": row.get("contract") or result.get("subject", {}).get("contract"),
             "quality_bucket": bucket,
-            "triage_cause": classify(result, bucket),
+            "triage_cause": classify(result, bucket, path),
             "completion_status": row.get("completion_status"),
             "early_stop_reason": row.get("early_stop_reason"),
             "cert_bucket_counts": cert.get("bucket_counts") or row.get("cert_bucket_counts") or {},
@@ -266,12 +353,14 @@ def queue_order(row: dict) -> tuple[int, str, str, str]:
         bucket_rank = 0
     elif row["quality_bucket"] == "valid-no-PUT":
         bucket_rank = 1
-    elif row["quality_bucket"] == "no-valid":
+    elif row["quality_bucket"] == "PUT-with-R1R2-but-no-width":
         bucket_rank = 2
-    elif row["quality_bucket"] == "valid-PUT-no-R1R2":
+    elif row["quality_bucket"] == "no-valid":
         bucket_rank = 3
-    elif row["quality_bucket"] == "valid-PUT-with-R1R2":
+    elif row["quality_bucket"] == "valid-PUT-no-R1R2":
         bucket_rank = 4
+    elif row["quality_bucket"] == "valid-PUT-with-R1R2":
+        bucket_rank = 5
     else:
         bucket_rank = 9
     cause_rank = {
