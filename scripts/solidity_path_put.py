@@ -5001,6 +5001,27 @@ def function_returns(ast_path, contract, unit, arity=None,
     return None if d is None else _decl_list(d, "returnParameters")
 
 
+def function_state_mutability(ast_path, contract, unit, arity=None,
+                              declaration_id=None):
+    """State mutability of the resolved unit declaration, or None.
+
+    `msg.value` can be established on a high-level Solidity call only when the
+    target declaration is payable. Non-payable value paths must keep using the
+    low-level ABI gate shape the concrete emitter writes, otherwise the lifted
+    test changes the entry-gate semantics before it reaches the contract.
+    """
+    d = _select_def(_function_defs(ast_path, contract, unit), arity,
+                    declaration_id)
+    if d is None:
+        return None
+    mut = d.get("stateMutability")
+    if mut:
+        return mut
+    if d.get("payable") is True:
+        return "payable"
+    return None
+
+
 def contract_state_types(ast_path, contract):
     """{state_name: solidity_type} visible in `contract`, base-first."""
     ast = _load_ast(ast_path)
@@ -6150,13 +6171,44 @@ def establish_env_sender(body, call_i, region, holes, pins, used,
     return new_body, call_i, "msg.sender", sig_add, pre_add, note, sender_expr
 
 
-def planned_env_value(body, call_i, region, used):
+def _fresh_env_value_var(used):
+    var = "p_msg_value"
+    while var in used:
+        var += "_"
+    return var
+
+
+def _high_level_value_call_statement(statement, unit):
+    if ".call" in statement:
+        return False
+    return member_call_re(unit).search(statement) is not None
+
+
+def _add_value_option_to_high_level_call(line, unit, value_var):
+    """Insert `{value: value_var}` on a high-level member call line."""
+    m = re.search(r"(\.\s*" + re.escape(unit)
+                  + r"\s*)(?:\{([^{}]*)\}\s*)?\(", line)
+    if m is None:
+        return None
+    options = m.group(2)
+    if options is None:
+        repl = m.group(1) + "{value: " + value_var + "}("
+    else:
+        body = options.strip()
+        sep = ", " if body else ""
+        repl = m.group(1) + "{" + "value: " + value_var + sep + body + "}("
+    return line[:m.start()] + repl + line[m.end():]
+
+
+def planned_env_value(body, call_i, region, used, unit=None,
+                      allow_high_level_value=False):
     """Return the fuzz variable for a renderable wide msg.value interval.
 
-    This intentionally recognises only an existing low-level `.call{value:}`.
-    Changing another call shape into a value-bearing call would be a separate
-    semantic transformation; leaving it unhandled keeps env_disagreements as
-    the fail-closed gate.
+    Low-level `.call{value:}` is always renderable because the concrete emitter
+    already wrote that value-bearing statement. A high-level member call is
+    renderable only when the caller has established from the AST that the
+    target unit is payable; otherwise env_disagreements remains the fail-closed
+    gate.
     """
     if "msg.value" not in region:
         return None
@@ -6165,19 +6217,20 @@ def planned_env_value(body, call_i, region, used):
         return None
     stmt_i = statement_start(body, call_i)
     statement = "\n".join(body[stmt_i:call_i + 1])
-    if ".call" not in statement or not _VALUE_RE.search(statement):
-        return None
-    var = "p_msg_value"
-    while var in used:
-        var += "_"
-    return var
+    if ".call" in statement and _VALUE_RE.search(statement):
+        return _fresh_env_value_var(used)
+    if (allow_high_level_value and unit
+            and _high_level_value_call_statement(statement, unit)):
+        return _fresh_env_value_var(used)
+    return None
 
 
 def establish_env_value(body, call_i, region, holes, value_var,
-                        sender_expr=None):
-    """Fuzz an existing low-level call's certified msg.value interval.
+                        sender_expr=None, unit=None,
+                        allow_high_level_value=False):
+    """Fuzz a certified msg.value interval the emitted call can realize.
 
-    Returns `(body, call_i, established, sig_add, pre_add, note)`.  A missing
+    Returns `(body, call_i, established, sig_add, pre_add, note)`. A missing
     plan is a no-op; the caller then checks the concrete value exactly as it did
     before this mechanism existed.
     """
@@ -6189,11 +6242,19 @@ def establish_env_value(body, call_i, region, holes, value_var,
     new_body = list(body)
     stmt_i = statement_start(new_body, call_i)
     replaced = False
+    inserted_high_level_value = False
     for i in range(stmt_i, call_i + 1):
         if not replaced and _VALUE_RE.search(new_body[i]):
             new_body[i] = _VALUE_RE.sub(
                 "{value: " + value_var + "}", new_body[i], count=1)
             replaced = True
+    if not replaced and allow_high_level_value and unit:
+        changed = _add_value_option_to_high_level_call(
+            new_body[call_i], unit, value_var)
+        if changed is not None:
+            new_body[call_i] = changed
+            replaced = True
+            inserted_high_level_value = True
     if not replaced:
         return body, call_i, None, None, [], None
 
@@ -6216,8 +6277,11 @@ def establish_env_value(body, call_i, region, holes, value_var,
     note = (f"msg.value in [{lo}, {hi}]"
             + ("  \\ {" + ", ".join(str(h) for h in value_holes) + "}"
                if value_holes else "")
-            + f" is ESTABLISHED and FUZZED: the existing low-level call now "
-              f"takes the bound() fuzz parameter `{value_var}`"
+            + " is ESTABLISHED and FUZZED: "
+            + ("the payable high-level call now carries "
+               if inserted_high_level_value else "the existing value-bearing "
+               "call now takes ")
+            + f"the bound() fuzz parameter `{value_var}`"
             + (f", and the {len(value_holes)} punched value(s) are excluded "
                f"by vm.assume" if value_holes else ""))
     return (new_body, call_i, "msg.value", ("uint256", value_var),
@@ -6895,7 +6959,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               derived_by=None, rollback_exit=False, r2_terms=None,
               oracle_label_prefix="", exit_kind=None, state_types=None,
               lift_unconstrained_calldata=False, path_decisions=None,
-              establish=None):
+              establish=None, unit_payable=False):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -6978,14 +7042,18 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
 
     # The environment the emitted case runs under must be the one certified.
     # Foundry can establish msg.sender with prank and can establish msg.value
-    # when the emitted statement already carries a low-level `{value: ...}`
-    # option. Everything else is checked and a disagreement still refuses.
+    # when the emitted statement already carries a `{value: ...}` option. For
+    # high-level member calls it may also add the option, but only for an AST-
+    # confirmed payable target; non-payable value gates keep the low-level ABI
+    # call shape the concrete emitter writes.
     #
     # ORDER MATTERS: establishment rewrites the very line the check reads, so
     # it has to happen first, and the rewritten body is what everything below
     # -- the call rewrite, the head/pre-state slices, the emitted text -- must
     # use. `call_i` can move, because a missing prank is inserted.
-    env_value_var = planned_env_value(body, call_i, region, used)
+    env_value_var = planned_env_value(
+        body, call_i, region, used, unit=unit,
+        allow_high_level_value=unit_payable)
     (body, call_i, env_est, sig_add, pre_add, env_note,
      env_sender_expr) = establish_env_sender(
         body, call_i, region, holes, pins, used,
@@ -7022,7 +7090,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
 
     (body, call_i, value_est, value_sig, value_pre,
      value_note) = establish_env_value(
-        body, call_i, region, holes, env_value_var, env_sender_expr)
+        body, call_i, region, holes, env_value_var, env_sender_expr,
+        unit=unit, allow_high_level_value=unit_payable)
     if value_est is not None:
         env_established.append(value_note)
         sig.append(value_sig)
@@ -9236,7 +9305,8 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
                            params, layout, maps, specs, r2_terms, cell,
                            derived_by, timeout, fuzz_runs, candidate_budget,
                            fixture=None, constructor_mocks=None,
-                           runtime_mocks=None, establish=None, log=print):
+                           runtime_mocks=None, establish=None,
+                           unit_payable=False, log=print):
     """Refute R2 candidates with one Forge run; never produce proof verdicts."""
     candidates = r2_candidates(specs)
     verdicts = {candidate["key"]: "NOT-RUN" for candidate in candidates}
@@ -9271,7 +9341,8 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
                 [(candidate["var"], candidate["text"], "HOLDS")], [],
                 cell=cell, rettypes=None, maps=maps, piece_label=piece,
                 derived_by=derived_by, rollback_exit=False, r2_terms=r2_terms,
-                oracle_label_prefix=marker + " ", establish=establish)
+                oracle_label_prefix=marker + " ", establish=establish,
+                unit_payable=unit_payable)
         except ConcreteFallback as exc:
             evidence[candidate["key"]]["reason"] = (
                 "candidate probe was not parameterized: " + exc.reason)
@@ -9887,6 +9958,7 @@ def main():
     # Both come from _select_def with the SAME arity, so an overload cannot be
     # resolved one way for the arguments and another way for the return value.
     params, rettypes, arity, state_types = None, None, None, {}
+    unit_mutability = None
     if a.ast:
         if case_call_i is not None:
             _n, args0 = rewrite_call_args(case_body[case_call_i], a.unit, {})
@@ -9895,6 +9967,8 @@ def main():
                                  declaration_id)
         rettypes = function_returns(a.ast, a.contract, a.unit, arity,
                                     declaration_id)
+        unit_mutability = function_state_mutability(
+            a.ast, a.contract, a.unit, arity, declaration_id)
         try:
             state_types = contract_state_types(a.ast, a.contract)
         except (OSError, ValueError):
@@ -10176,7 +10250,8 @@ def main():
                 derived_by=json.loads(a.derived_by or "{}"),
                 rollback_exit=rollback_here, r2_terms={},
                 establish=json.loads(a.establish or "[]"),
-                exit_kind=path_exit_kind)
+                exit_kind=path_exit_kind,
+                unit_payable=(unit_mutability == "payable"))
         except ConcreteFallback:
             _probe_stats = {}
         skip_r2_after_partial_oracle = partial_ladder_already_has_strict_oracle(
@@ -10283,7 +10358,8 @@ def main():
                     a.fuzz_r2_prefilter_timeout, a.fuzz_runs,
                     a.fuzz_r2_candidate_budget, foundry_fixture,
                     constructor_mocks, runtime_mocks,
-                    json.loads(a.establish or "[]"))
+                    json.loads(a.establish or "[]"),
+                    unit_payable=(unit_mutability == "payable"))
                 r2_fuzz_prefilter["enabled"] = True
                 _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
                 survivors = len(r2_candidates(_r2))
@@ -10451,7 +10527,8 @@ def main():
                                lift_unconstrained_calldata=(
                                    a.lift_unconstrained_calldata),
                                path_decisions=claim.get("decisions") or [],
-                               establish=json.loads(a.establish or "[]"))
+                               establish=json.loads(a.establish or "[]"),
+                               unit_payable=(unit_mutability == "payable"))
     except ConcreteFallback as fallback:
         cname, _cstart, _cend = emitted.blocks[case[0]]
         newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"

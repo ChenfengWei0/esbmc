@@ -286,7 +286,8 @@ def main():
                     }
                 }),
                 "",
-                False)
+                False,
+                0.01)
             summary = put_all.b_report([
                 ("bench", "target", 1, None, 0, {
                     "test": "test_put_C_target_path1",
@@ -388,7 +389,8 @@ contract Probe {
                         }
                     }),
                     "",
-                    False)
+                    False,
+                    0.01)
                 put_all.disable_red_replays([proj], 10)
             finally:
                 put_all.run_forge = old_run_forge

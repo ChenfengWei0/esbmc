@@ -10464,6 +10464,90 @@ def test_high_level_value_call_is_parsed_and_rewritten():
     return bad
 
 
+PAYABLE_HIGH_LEVEL_EMITTED = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+
+import {Test} from "forge-std/Test.sol";
+import {PrivateBank} from "./PrivateBank.sol";
+
+contract PrivateBankCovTest is Test {
+  PrivateBank c0;
+  function setUp() public {
+    c0 = new PrivateBank();
+  }
+  // claim: sol:@C@PrivateBank@F@Deposit#68:path:5
+  function test_cov_0() public {
+    c0.Deposit();
+  }
+}
+"""
+
+
+def _payable_high_level_case():
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(PAYABLE_HIGH_LEVEL_EMITTED)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@PrivateBank@F@Deposit#68", 5)
+    assert case is not None, "fixture: payable Deposit enc=5 was missing"
+    return em, case
+
+
+def test_payable_high_level_call_can_establish_msg_value():
+    """A certified payable msg.value range should become a real PUT input."""
+    em, case = _payable_high_level_case()
+    notes = []
+    put, stats = build_put(
+        "PrivateBank", "Deposit", 5, 1,
+        "sol:@C@PrivateBank@F@Deposit#68",
+        region={"msg.value": (1, UINT256_MAX)}, holes={}, pins={},
+        params=[], emitted=em, case=case,
+        layout={"total": (0, 0, 32)},
+        ladder_rows=[("total", "post >= pre", "HOLDS")],
+        notes=notes, unit_payable=True)
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    if put is None:
+        return bad + 6
+    txt = "\n".join(put)
+    bad += check("uint256 p_msg_value" in txt,
+                 "msg.value is lifted into the PUT signature")
+    bad += check(f"p_msg_value = bound(p_msg_value, 1, {UINT256_MAX});" in txt,
+                 "msg.value is bounded to the certified payable interval")
+    bad += check("vm.deal(address(this), p_msg_value);" in txt,
+                 "the payer is funded before the value-bearing call")
+    bad += check("c0.Deposit{value: p_msg_value}();" in txt,
+                 "the high-level payable target call carries the fuzzed value")
+    bad += check(stats["fuzz_params"] == 1
+                 and stats["wide_fuzz_coords"] == ["msg.value"],
+                 f"the B ledger counts msg.value as the PUT dimension: {stats}")
+    bad += check("payable high-level call" in txt,
+                 "the transformation is reported in the PUT header")
+    return bad
+
+
+def test_nonpayable_high_level_call_still_refuses_wide_msg_value():
+    """Without an AST-payable proof, high-level `{value:}` is not invented."""
+    em, case = _payable_high_level_case()
+    notes = []
+    put, _stats = build_put(
+        "PrivateBank", "Deposit", 5, 1,
+        "sol:@C@PrivateBank@F@Deposit#68",
+        region={"msg.value": (1, UINT256_MAX)}, holes={}, pins={},
+        params=[], emitted=em, case=case, layout={}, ladder_rows=[],
+        notes=notes, unit_payable=False)
+    bad = 0
+    bad += check(put is None, "unconfirmed high-level value establishment REFUSES")
+    bad += check(any("msg.value is certified over [1" in n
+                     and "OUTSIDE that range" in n for n in notes),
+                 f"the old fail-closed refusal remains: {notes}")
+    return bad
+
+
 def test_only_the_low_level_value_gate_assertion_counts_as_exit_kind():
     from solidity_path_put import (find_unit_call,  # noqa: E402
                                    low_level_value_gate_asserts_exit)
@@ -11350,6 +11434,8 @@ def main():
               test_a_piece_label_distinguishes_two_boxes_of_one_path,
               test_the_value_gate_statement_is_read_as_ONE_statement,
               test_high_level_value_call_is_parsed_and_rewritten,
+              test_payable_high_level_call_can_establish_msg_value,
+              test_nonpayable_high_level_call_still_refuses_wide_msg_value,
               test_only_the_low_level_value_gate_assertion_counts_as_exit_kind,
               test_a_single_line_call_still_reports_its_own_statement,
               test_the_low_level_value_gate_emits_a_PUT,

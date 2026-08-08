@@ -19413,3 +19413,97 @@ Checks:
   passed.
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
+
+## 2026-08-08 payable msg.value PUT emission
+
+User priority:
+
+- PUT ratio matters methodologically.  Do not optimize only for raw
+  reference-valid tests by falling back to concrete replays.
+- Double oracle remains mandatory: ESBMC certifies the region/assertions, but
+  the generated Foundry test must still run green on the reference contract as
+  a guard against verifier/model false positives.  Forge is refute-only here,
+  never proof.
+
+Root cause fixed:
+
+- Some Stage-2 rows already had CERTIFIED regions with wide `msg.value`, but
+  Stage 4 emitted no PUT because the concrete replay's target call was a
+  high-level payable call with no `{value: ...}` option.
+- Example official no-output case before this fix:
+  `bugfix124__rcx_reentrancy__0x23a91059fdc9579a9fbd0edc5f2ea0bfdb70deb4__SmartFix.Deposit`.
+- Its certified enc=5 region included:
+  `msg.value in [2449958197289549820, UINT256_MAX]`, but Stage4 observed the
+  target replay call as `c0.Deposit()` and refused:
+  no `{value:}` option means `msg.value == 0`, outside the certified interval.
+- The old Stage4 code could fuzz `msg.value` only when an existing low-level
+  `.call{value: ...}` was already present.  That was correct for non-payable
+  ABI value gates but too weak for payable high-level calls.
+
+Code change:
+
+- `scripts/solidity_path_put.py` now reads the resolved unit's
+  `stateMutability` from the solc AST via `function_state_mutability`.
+- `build_put(..., unit_payable=True)` allows `planned_env_value` /
+  `establish_env_value` to insert `{value: p_msg_value}` on a high-level
+  member call only when the target declaration is AST-confirmed `payable`.
+- Non-payable high-level calls remain fail-closed; non-payable value-gate
+  paths still rely on the emitter's low-level `.call{value: ...}` shape.
+- R2 Forge prefilter probes receive the same `unit_payable` flag, so the probe
+  builder and final builder agree.
+- `scripts/test_solidity_path_put.py` added regression coverage for:
+  - payable high-level `c0.Deposit()` becoming
+    `c0.Deposit{value: p_msg_value}()`;
+  - the same call refusing when `unit_payable=False`.
+- `scripts/test_put_all_accounting.py` was synchronized with the current
+  `put_all.run_forge` 5-tuple interface by adding fake `wall_s` values.
+
+Validation:
+
+- `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_put_all_accounting.py notes/coverage/scripts/put_all.py`
+  passed.
+- `python3 scripts/test_solidity_path_put.py` passed:
+  254 / 254 declared checks.
+- `python3 scripts/test_solidity_path_put_forge.py` passed.
+- `python3 scripts/test_put_all_accounting.py` passed.
+- `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py scripts/test_put_all_accounting.py`
+  passed.
+
+Non-official Stage4 validation:
+
+- Command shape:
+  `python3 notes/coverage/scripts/put_all.py --cert <official reentrancy cert> --only bugfix124__rcx_reentrancy__0x23a91059fdc9579a9fbd0edc5f2ea0bfdb70deb4__SmartFix.Deposit --strong-recipe --timeout 600 --forge-timeout 300 --memlimit-gib 12 --out-root /tmp/veriput_payable_msg_value_stage4_20260808a`
+- This was deliberately a `/tmp` run, not an official RQ1 overwrite.
+- Result for the selected unit:
+  - Stage4 candidate rows: 2.
+  - PUTs emitted: 2 / 2.
+  - Both emitted PUTs carry fuzzed `msg.value` and oracles.
+  - Foundry/Reference-valid generated tests: 1 PUT, 0 concrete.
+  - enc=3 passed all five B gates.
+  - enc=5 generated a PUT but failed gate 4.
+
+enc=5 double-oracle diagnosis:
+
+- `forge test --match-test test_put_PrivateBank_Deposit_path5 -vvvv` failed
+  before assertions: `Deposit` reverted with
+  `call to non-contract address 0x0000000000000000000000000000000000000000`.
+- Source shape:
+  `PrivateBank` constructor stores `TransferLog = Log(_log)`, official replay
+  constructs `new PrivateBank(address(uint160(0)))`, and the high-value
+  `Deposit` path calls `TransferLog.AddMessage(...)`.
+- This is not a reason to relax the generated oracle.  It is a separate
+  runtime constructor/external-contract modelling gap: the reference Foundry
+  environment has no `Log` code at address 0, while ESBMC's model allowed the
+  path.
+- Future fix class: constructor/runtime mock for state-held contract instance
+  addresses, or a safer constructor replay repair when the constructor expects
+  a contract address.  Keep the double oracle red until such a model/fixture
+  repair is explicit.
+
+Throughput implication:
+
+- This is the kind of high-yield fix needed for the 24h RQ1 target: one
+  generic Stage4 capability can recover multiple no-output rows as PUTs.
+- Do not spend hours trying to make one red PUT green by weakening assertions.
+  Cluster remaining no-valid rows by refusal/failure reason and prefer fixes
+  that improve many rows or PUT ratio.
