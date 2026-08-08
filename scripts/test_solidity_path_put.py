@@ -3708,6 +3708,36 @@ def test_path_decision_guard_handles_double_negated_branch_claim():
     return bad
 
 
+def test_path_decision_guard_renders_unary_bool_mapping_relation():
+    bad = 0
+    bad += check(path_condition_from_branch_claim("!(!_isBlackListedBot[account])") ==
+                 ("_isBlackListedBot[account]", "==", "0"),
+                 "double-negated unary bool claim becomes a false guard")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "!(!_isBlackListedBot[account])"}],
+        {"state._isBlackListedBot[account]": "_pre_blacklisted_account"})
+    bad += check(lines == [
+        ("!(!_isBlackListedBot[account])",
+         "    vm.assume(_pre_blacklisted_account == 0);")
+    ], f"unary bool mapping guard rendered: {lines}")
+    bad += check(skipped == [], f"nothing skipped: {skipped}")
+    return bad
+
+
+def test_path_decision_guard_negates_plain_unary_bool_claim():
+    bad = 0
+    bad += check(path_condition_from_branch_claim("paused") ==
+                 ("paused", "==", "0"),
+                 "plain bool branch claim is negated into the walked condition")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "paused"}],
+        {"state.paused": "_pre_paused"})
+    bad += check(lines == [("paused", "    vm.assume(_pre_paused == 0);")],
+                 f"plain unary bool guard rendered: {lines}")
+    bad += check(skipped == [], f"nothing skipped: {skipped}")
+    return bad
+
+
 def test_path_decision_guard_skips_true_constant_relation():
     lines, skipped = path_decision_assumes(
         [{"branch_claim": "!(msg.value == 0)"}],
@@ -12642,6 +12672,8 @@ def main():
               test_path_decision_guard_renders_mapping_slot_relation,
               test_path_decision_guard_negates_plain_branch_claim,
               test_path_decision_guard_handles_double_negated_branch_claim,
+              test_path_decision_guard_renders_unary_bool_mapping_relation,
+              test_path_decision_guard_negates_plain_unary_bool_claim,
               test_path_decision_guard_skips_true_constant_relation,
               test_typed_R2_term_budget_is_VISIBLE_not_a_second_query,
               test_typed_R2_candidate_budget_caps_claims_and_shares_them,

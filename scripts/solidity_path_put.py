@@ -7477,10 +7477,19 @@ def path_condition_from_branch_claim(branch_claim):
     """Return the source condition this path walked, when it is simple."""
     inner, negated = unwrap_decision_not(branch_claim)
     m = SIMPLE_DECISION_RE.match(inner)
-    if not m:
+    if m:
+        lhs, op, rhs = (m.group(1).strip(), m.group(2), m.group(3).strip())
+        return lhs, (op if negated else DECISION_NEGATE_OP[op]), rhs
+    term = inner.strip()
+    term_negated = False
+    if term.startswith("!") and not term.startswith("!="):
+        term = term[1:].strip()
+        term_negated = True
+    if (not term or term.startswith("(") or term.endswith(")")
+            or any(op in term for op in DECISION_NEGATE_OP)):
         return None
-    lhs, op, rhs = (m.group(1).strip(), m.group(2), m.group(3).strip())
-    return lhs, (op if negated else DECISION_NEGATE_OP[op]), rhs
+    walked_truth = term_negated if not negated else not term_negated
+    return term, ("!=" if walked_truth else "=="), "0"
 
 
 def render_path_decision_term(term, coord_ident_abs):
