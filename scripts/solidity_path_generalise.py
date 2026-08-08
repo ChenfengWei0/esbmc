@@ -67,7 +67,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from solidity_path_put import (ESTABLISHABLE_ENV_COORDS,  # noqa: E402,F401
                                STRATEGY_FLAGS_REFUSED,
-                               check_esbmc_args)
+                               check_esbmc_args,
+                               contract_state_types)
 from solidity_ast_dependencies import (  # noqa: E402,F401
     SLOT_DEPENDENCY_POLICY, contract_state_esbmc_store_names,
     path_function_declaration_id, unit_mapping_slot_accesses,
@@ -1157,6 +1158,26 @@ def _unwrap_not(expr):
     return expr, False
 
 
+def _boolean_decision_relation(inner, was_not):
+    """Path condition for a bare boolean branch term, as term == 0/1."""
+    term = (inner or "").strip()
+    if not term:
+        return None
+    negated = False
+    if term.startswith("!"):
+        term = term[1:].strip()
+        negated = True
+    if not term:
+        return None
+    if SIMPLE_BRANCH_RE.match(term):
+        return None
+    # branch_claim is the assertion used to witness the arm; the path condition
+    # is its negation.  For a boolean term, that flips the truth value unless
+    # the claim was already printed as an outer `!(...)` arm.
+    want_true = negated if not was_not else not negated
+    return term, "==", "1" if want_true else "0"
+
+
 def _decision_relation(branch_claim):
     """Return the path condition encoded by a coverage decision.
 
@@ -1168,7 +1189,7 @@ def _decision_relation(branch_claim):
     inner, was_not = _unwrap_not(branch_claim)
     m = SIMPLE_BRANCH_RE.match(inner)
     if not m:
-        return None
+        return _boolean_decision_relation(inner, was_not)
     lhs, op, rhs = (m.group(1).strip(), m.group(2), m.group(3).strip())
     if not was_not:
         op = {"==": "!=", "!=": "==", "<": ">=", "<=": ">",
@@ -1197,11 +1218,18 @@ def _compare_values(lhs, op, rhs):
     raise ValueError(f"unsupported comparison operator: {op}")
 
 
-def _decision_term(term, ce, pins, constants=None):
+def _decision_term(term, ce, pins, constants=None, coord_set=None):
     """Resolve a simple branch term to either a coordinate or a constant."""
     term = term.strip()
     if term in ce:
         return "coord", term
+    state_term = "state." + term
+    if coord_set and state_term in coord_set:
+        return "coord", state_term
+    if state_term in ce:
+        return "coord", state_term
+    if state_term in pins:
+        return "const", pins[state_term]
     if term == "return_value$__msgSender$2" or \
        re.match(r"^return_value\$__msgSender\$\d+$", term):
         return "coord", "msg.sender"
@@ -1379,8 +1407,8 @@ def _structural_decision_region(decisions, ce, pins, coords, coord_types=None,
         if rel is None:
             return None
         lhs, op, rhs = rel
-        lt = _decision_term(lhs, ce, pins, constants)
-        rt = _decision_term(rhs, ce, pins, constants)
+        lt = _decision_term(lhs, ce, pins, constants, coord_set=coord_set)
+        rt = _decision_term(rhs, ce, pins, constants, coord_set=coord_set)
         if lt is None or rt is None:
             return None
         if lt[0] == "coord" and lt[1] in alias:
@@ -1555,8 +1583,8 @@ def relation_establishable_state_targets(paths, path_decisions, pins, coords,
             lhs, op, rhs = rel
             if op != "==":
                 continue
-            lt = _decision_term(lhs, ce, pins, constants)
-            rt = _decision_term(rhs, ce, pins, constants)
+            lt = _decision_term(lhs, ce, pins, constants, coord_set=coord_set)
+            rt = _decision_term(rhs, ce, pins, constants, coord_set=coord_set)
             if lt is None or rt is None:
                 continue
             if lt[0] != "coord" or rt[0] != "coord":
@@ -2718,6 +2746,28 @@ def prefer_esbmc_mapping_aliases(maps):
             continue
         preferred[name] = spec
     return preferred
+
+
+def state_coord_type_ranges(ast_path, contract, coords, state_store_names=None):
+    """Elementary type ranges for source and ESBMC-alias state coordinates."""
+    wanted = set(coords or [])
+    try:
+        state_types = contract_state_types(ast_path, contract)
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for name, ty in (state_types or {}).items():
+        tr = elementary_type_range(ty)
+        if tr is None:
+            continue
+        candidates = ["state." + name]
+        alias = (state_store_names or {}).get(name)
+        if alias:
+            candidates.append("state." + alias)
+        for coord in candidates:
+            if coord in wanted:
+                out[coord] = tr
+    return out
 
 
 def unit_params(ast_path, contract, unit, declaration_id=None):
@@ -7115,6 +7165,10 @@ def main():
     coord_types = dict(unit_params(args.ast, args.contract, args.unit,
                                    declaration_id=declaration_id))
     constants = literal_state_constants(args.ast, args.contract)
+    state_store_names_for_ranges, _state_store_range_evidence = \
+        contract_state_esbmc_store_names(args.ast, args.contract)
+    state_type_ranges = state_coord_type_ranges(
+        args.ast, args.contract, coords, state_store_names_for_ranges)
     structural_seed_regions, structural_seed_holes, structural_seed_source, \
         structural_seed_retreats, structural_seed_establishes = {}, {}, {}, {}, {}
 
@@ -7177,7 +7231,7 @@ def main():
     for enc, _depth, ce in paths:
         got = _structural_decision_region(
             path_decisions.get(enc), ce, pins, coords,
-            coord_types=coord_types, type_ranges={},
+            coord_types=coord_types, type_ranges=state_type_ranges,
             constants=constants, allow_relation_retreat=True,
             allow_relation_establish=True)
         if got is None:
@@ -7276,7 +7330,8 @@ def main():
     # Learned from the tool, round by round, and never guessed. Empty until a
     # round has published one, so the FIRST ladder falls back to the full 256-bit
     # range exactly as before -- there is nothing to know it from yet.
-    type_ranges = dict(static_slot_type_ranges)
+    type_ranges = dict(state_type_ranges)
+    type_ranges.update(static_slot_type_ranges)
     # Coordinates whose level-0 point rests on a ONE-VALUE candidate list, i.e.
     # the ones the round's own warning says cannot be told apart from a vacuous
     # antecedent. Union across paths, because the candidate list is laid per

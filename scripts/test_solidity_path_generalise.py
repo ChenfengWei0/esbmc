@@ -69,6 +69,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       propose_slot_coords,
                                       add_esbmc_mapping_aliases,
                                       prefer_esbmc_mapping_aliases,
+                                      state_coord_type_ranges,
                                       bytes_static_mapping_key_from_ce,
                                       agreed_bytes_mapping_key_literals,
                                       empty_enumeration_reason,
@@ -1699,6 +1700,11 @@ _MAPS = {
                                        "typeDescriptions": {
                                            "typeString": "address"}},
                            "valueType": {"nodeType": "Mapping"}}},
+             {"nodeType": "VariableDeclaration", "name": "_owner",
+              "stateVariable": True,
+              "typeDescriptions": {"typeString": "address"},
+              "typeName": {"nodeType": "ElementaryTypeName",
+                           "typeDescriptions": {"typeString": "address"}}},
              {"nodeType": "VariableDeclaration", "name": "_total",
               "stateVariable": True,
               "typeName": {"nodeType": "ElementaryTypeName",
@@ -1733,6 +1739,11 @@ check("slot-a-nested-mapping-is-refused-by-name",
 check("slot-a-foreign-contract-mapping-is-not-offered", "ghost" in _m, False)
 check("slot-the-foreign-mapping-is-visible-to-its-own-contract",
       "ghost" in mapping_state_vars(_p4, "Other")[0], True)
+check("state-alias-type-range-keeps-address-width",
+      state_coord_type_ranges(
+          _p4, "Pool", ["state._owner$117"],
+          {"_owner": "_owner$117"}),
+      {"state._owner$117": (0, (1 << 160) - 1)})
 
 check("slot-the-units-parameters-are-read-in-order",
       unit_params(_p4, "Pool", "balanceOf"), [("account", "address")])
@@ -3495,6 +3506,39 @@ check("decision-relation-inverts-ordered-claim",
       _decision_relation("x > 5"), ("x", "<=", "5"))
 check("decision-relation-keeps-negated-ordered-claim",
       _decision_relation("!(x > 5)"), ("x", ">", "5"))
+check("decision-relation-boolean-false-guard",
+      _decision_relation("!(!m[k])"), ("m[k]", "==", "0"))
+check("decision-relation-boolean-true-guard",
+      _decision_relation("!(m[k])"), ("m[k]", "==", "1"))
+check("decision-term-mapping-slot-state-coord",
+      _decision_term("_tokenAgentsList$322[_agentAddress]", {}, {},
+                     coord_set={"state._tokenAgentsList$322[_agentAddress]"}),
+      ("coord", "state._tokenAgentsList$322[_agentAddress]"))
+
+_owner_map_rel_paths = [
+    (13, 3, {"msg.value": 0, "msg.sender": 7, "state._owner": 7,
+             "_agentAddress": 9}),
+]
+_owner_map_rel_decisions = {
+    13: [{"branch_claim": "!(msg.value == 0)"},
+         {"branch_claim":
+          "!(return_value$_owner$1 == return_value$__msgSender$2)"},
+         {"branch_claim": "!(!_tokenAgentsList$322[_agentAddress])"}],
+}
+_owner_map_boxes, _owner_map_holes, _owner_map_reasons, \
+    _owner_map_retreats, _owner_map_establishes = \
+    structural_decision_regions_with_relations(
+        _owner_map_rel_paths, _owner_map_rel_decisions, {"msg.value": 0},
+        ["msg.sender", "_agentAddress", "state._owner",
+         "state._tokenAgentsList$322[_agentAddress]"],
+        coord_types={"_agentAddress": "address"})
+check("owner-mapping-boolean-guard-establishes-owner-sender",
+      _owner_map_establishes[13], {"state._owner": "msg.sender"})
+check("owner-mapping-boolean-guard-fixes-empty-slot",
+      _owner_map_boxes[13]["state._tokenAgentsList$322[_agentAddress]"],
+      (0, 0))
+check("owner-mapping-boolean-guard-keeps-agent-wide",
+      _owner_map_boxes[13]["_agentAddress"], (0, (1 << 160) - 1))
 
 _setmax_normal_decisions = [
     {"synthetic_abi_gate": True, "arm": "taken",

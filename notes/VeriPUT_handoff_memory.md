@@ -21260,3 +21260,60 @@ Update after Stage-2 certification-region fixes:
   prioritize rerunning cases with role/auth mappings and then regenerate PUTs
   for newly certified regions to check R1/R2 strength and Foundry double
   oracle validity.
+
+Update after boolean-guard and state-alias range fixes:
+
+- Stage-2 structural decision seeding now handles bare boolean branch terms as
+  relations (`term == 0/1`) instead of dropping them.  This is important for
+  auth/list guards such as `require(!_tokenAgentsList[_agentAddress])` and
+  `require(_tokenAgentsList[_agentAddress])`, whose ESBMC branch payloads are
+  printed as boolean claims rather than binary comparisons.  Fuzz remains
+  refute-only; this is a seed for certification, not a proof.
+- Decision-term resolution now recognizes verifier-side state coordinates by
+  prefixing bare branch terms with `state.` before falling back to source names.
+  A branch term like `_tokenAgentsList$322[_agentAddress]` can therefore bind
+  to the proposed coordinate
+  `state._tokenAgentsList$322[_agentAddress]`.
+- Stage-2 certification now carries elementary type ranges for both source
+  state coordinates and ESBMC store aliases.  The motivating failure was
+  `state._owner$117`, an address-typed alias that previously received the
+  default uint256 high bound and made ESBMC refuse the query.  The new helper
+  `state_coord_type_ranges()` maps aliases such as `_owner$117` back to their
+  AST elementary type and constrains them to the address range.
+- Pure regressions added in `scripts/test_solidity_path_generalise.py` cover:
+  boolean false/true guard relation extraction, state-coordinate lookup for
+  mapping aliases, owner/sender relation establishment, fixed empty mapping
+  slot guards, and address-width ranges for state aliases.
+- Validation after this patch:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py
+  scripts/solidity_ast_dependencies.py`,
+  `PYTHONDONTWRITEBYTECODE=1 python3
+  scripts/test_solidity_path_generalise.py`,
+  `pylint --errors-only scripts/solidity_path_generalise.py
+  scripts/test_solidity_path_generalise.py`, and `git diff --check` all pass.
+- Benchmark probe upgrade:
+  `bugfix124/pop_077_GameItems.transferOwnership`, previously valid only via
+  timeout concrete fallback, is now Stage-2 `CERTIFIED` in 372s under
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_077_GameItems.alias_probe.1786185367`
+  (`2 certified / 1 not / 3 witnessed`).  Stage4 emits two Foundry/corpus-green
+  PUTs with two fuzz parameters each; the normal-path PUT has two assertions
+  including semantic R2 `_ownerAddress: post == newOwnerAddress`.
+- Benchmark probe upgrade:
+  `real203/DefaultCompliance.addTokenAgent` should be run through the prepared
+  subject root
+  `/home/samson/workspace/VeriPUT/Results/Stress243/subjects/ERC-3643__ERC-3643__DefaultCompliance`
+  with `--subject-benchmark stress243` and cert key
+  `stress243__ERC-3643__ERC-3643__DefaultCompliance.addTokenAgent`.
+  After mapping alias + boolean guard + state-alias range fixes, Stage-2 is
+  `CERTIFIED` in 35s under
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/real203/subjects/ERC-3643__ERC-3643__DefaultCompliance.range_probe.1786186734`
+  (`2 certified / 1 not / 3 witnessed`).  Stage4 emits two Foundry/corpus-green
+  PUTs.  The normal path has two fuzz parameters, five assertions, and useful
+  R2 including `_tokenAgentsList$322[_agentAddress]: post == true`,
+  `_tokenAgentsList$322[_agentAddress]: post != pre`, and
+  `_owner: post == msg.sender`.
+- Manual probing note: `put_all.py --strong-recipe` already supplies the strong
+  ESBMC arguments.  Do not also add duplicate manual `--esbmc-arg` copies of
+  those flags during probes; duplicate flags caused one avoidable Stage4
+  failure before rerunning without the duplicates.
