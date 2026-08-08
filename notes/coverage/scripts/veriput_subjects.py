@@ -309,6 +309,15 @@ def _function_units(contract_node: dict, owner_name: str):
             continue
         if visibility not in ("public", "external"):
             continue
+        if not bool(node.get("implemented", True)):
+            yield None, {
+                "contract": owner_name,
+                "kind": "unimplemented-function",
+                "name": name,
+                "reason": (
+                    "public/external declaration has no FunctionDefinition body"),
+            }, None
+            continue
         if not name:
             yield None, {
                 "contract": owner_name,

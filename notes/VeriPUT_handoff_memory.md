@@ -21805,3 +21805,31 @@ Update after two small concurrent real203 sweeps:
   deploys the target inside the test body using those fuzzed parameters, plus
   matching constructor-time interface mocks.  Simply treating immutable fields
   as ordinary runtime state coordinates would be unsound/misleading.
+
+Update after unit scheduler speed fix:
+
+- Found a cheap false-work source in the pricefeed batch.  The unit manifest
+  included inherited interface declarations with `implemented=false`, e.g.
+  `IPriceFeed.decimals`, `IPriceFeed.description`, and `IPriceFeed.version`.
+  The target contract implements these via public state-variable getters, but
+  they are not AST `FunctionDefinition` bodies that ESBMC `--focus-function`
+  can enumerate.  Path coverage therefore returned fast
+  `NO-WITNESS-UNKNOWN` rows with
+  `driver_diagnostic.tag=esbmc-no-cov-report` and messages like
+  `--focus-function 'decimals' matched NONE ... available:
+  latestRoundData`.
+- Fixed `notes/coverage/scripts/veriput_subjects.py` so public/external
+  `FunctionDefinition` nodes with `implemented=false` are recorded under
+  `skipped` as `unimplemented-function` instead of scheduled as units.  Added a
+  regression to `scripts/test_veriput_subjects.py` for an inherited interface
+  declaration implemented by a public state getter.
+- Verification:
+  `python3 scripts/test_veriput_subjects.py` passed (22 tests);
+  `python3 -m py_compile notes/coverage/scripts/veriput_subjects.py
+  scripts/test_veriput_subjects.py` passed; rebuilding a WBTCPriceFeed schedule
+  now yields only `latestRoundData`.
+- Targeted RQ1 verification after the fix:
+  `compound-finance__comet__WBTCPriceFeed` rerun with 600s/8GiB produced the
+  same useful result (`raw=2`, `valid=2`, concrete-only) but scheduled only one
+  unit and reduced Stage2 to about 7.0s / total wall to about 14.5s.  This is a
+  throughput fix, not a PUT-rate fix.

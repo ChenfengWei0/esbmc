@@ -77,10 +77,31 @@ def compact_ast():
             },
             {
                 "nodeType": "ContractDefinition",
+                "id": 3,
+                "name": "Iface",
+                "contractKind": "interface",
+                "linearizedBaseContracts": [3],
+                "nodes": [
+                    {
+                        "nodeType": "FunctionDefinition",
+                        "kind": "function",
+                        "name": "ifaceValue",
+                        "visibility": "external",
+                        "stateMutability": "view",
+                        "implemented": False,
+                        "parameters": {"parameters": []},
+                        "returnParameters": {"parameters": [
+                            {"nodeType": "VariableDeclaration"},
+                        ]},
+                    },
+                ],
+            },
+            {
+                "nodeType": "ContractDefinition",
                 "id": 2,
                 "name": "C",
                 "contractKind": "contract",
-                "linearizedBaseContracts": [2, 1],
+                "linearizedBaseContracts": [2, 3, 1],
                 "nodes": [
                     {
                         "nodeType": "FunctionDefinition",
@@ -109,6 +130,11 @@ def compact_ast():
                         "kind": "receive",
                         "name": "",
                         "visibility": "external",
+                    },
+                    {
+                        "nodeType": "VariableDeclaration",
+                        "name": "ifaceValue",
+                        "visibility": "public",
                     },
                 ],
             },
@@ -221,6 +247,8 @@ def test_ast_unit_enumeration_is_target_contract_scoped():
                  f"target and inherited public/external units: {enum.units}")
     bad += check(not any(u == "hidden" for u in enum.units),
                  "internal inherited function is excluded")
+    bad += check(not any(u == "ifaceValue" for u in enum.units),
+                 "unimplemented inherited interface declaration is excluded")
     bad += check(sum(1 for u in enum.units if u == "baseOnly") == 1,
                  "override/base duplicate unit name is emitted once")
     info = {row["name"]: row for row in enum.unit_info}
@@ -238,6 +266,9 @@ def test_ast_unit_enumeration_is_target_contract_scoped():
     bad += check(reasons.get("public-state-getter") ==
                  "public state getter is not a FunctionDefinition",
                  f"public getter is skipped with a reason: {enum.skipped}")
+    bad += check(reasons.get("unimplemented-function") ==
+                 "public/external declaration has no FunctionDefinition body",
+                 f"unimplemented inherited declaration is skipped: {enum.skipped}")
     return bad
 
 
