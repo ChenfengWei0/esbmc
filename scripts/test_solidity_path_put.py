@@ -69,6 +69,7 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                constructor_external_interface_mock_lines,
                                constructor_staticcall_mock_lines,
                                add_esbmc_mapping_aliases,
+                               canonical_state_coord_name,
                                effective_exit_kind,
                                exit_kind_asserted, find_unit_call,
                                fixture_from_esbmc_args, load_fixture_json,
@@ -2541,6 +2542,24 @@ def test_scalar_assert_vars_use_esbmc_names_then_restore_source_rows():
                      ("_pendingOwner", "post == newOwner", "HOLDS"),
                      ("return", "return == 0", "HOLDS")],
                  "ladder rows are restored for solc-layout Foundry rendering")
+    return bad
+
+
+def test_state_store_aliases_have_one_canonical_entry_coordinate():
+    aliases = {"_owner": "_owner$32"}
+    bad = 0
+    bad += check(canonical_state_coord_name("state._owner", aliases)
+                 == "state._owner",
+                 "source state coordinates are already canonical")
+    bad += check(canonical_state_coord_name("state._owner$32", aliases)
+                 == "state._owner",
+                 "ESBMC store-name coordinates canonicalize to source names")
+    bad += check(canonical_state_coord_name("state.bal[msg.sender]", aliases)
+                 == "state.bal[msg.sender]",
+                 "mapping slot coordinates are not scalar-alias collapsed")
+    bad += check(canonical_state_coord_name("msg.sender", aliases)
+                 == "msg.sender",
+                 "non-state coordinates are unchanged")
     return bad
 
 
@@ -12700,6 +12719,7 @@ def main():
               test_mapping_aliases_keep_struct_member_tails_queryable,
               test_scalar_layout_aliases_use_source_slots_for_foundry_rendering,
               test_scalar_assert_vars_use_esbmc_names_then_restore_source_rows,
+              test_state_store_aliases_have_one_canonical_entry_coordinate,
               test_contract_state_store_aliases_read_solc_declaration_ids,
               test_assert_query_keeps_state_pins_for_the_certified_slice,
               test_assert_query_region_keeps_slots_but_drops_state_scalars,

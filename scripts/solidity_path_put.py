@@ -3275,6 +3275,19 @@ def restore_ladder_row_names(rows, state_store_names=None):
     return restored
 
 
+def canonical_state_coord_name(name, state_store_names=None):
+    """Return the source-level spelling for a scalar state coordinate."""
+    if not name.startswith("state."):
+        return name
+    svar = name[len("state."):]
+    if parse_slot_name(svar)[0] is not None:
+        return name
+    source_by_store = {
+        store: source for source, store in (state_store_names or {}).items()
+    }
+    return "state." + source_by_store.get(svar, svar)
+
+
 def prefer_esbmc_mapping_aliases(maps):
     """Drop source-name rows when an ESBMC store-name alias exists."""
     aliases_by_source = {}
@@ -8170,12 +8183,15 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         stored.append(f"{target} := {source}")
         established_relations.append({"target": target, "source": source})
         established_state_targets.add(target)
+        established_state_targets.add(
+            canonical_state_coord_name(target, state_store_names))
     state_items = [(n, b) for n, b in region.items()]
     state_items += [(n, (v, v)) for n, v in pins.items() if n not in region]
     for name, (lo, hi) in sorted(state_items):
         if not name.startswith("state."):
             continue
-        if name in established_state_targets:
+        canonical_name = canonical_state_coord_name(name, state_store_names)
+        if canonical_name in established_state_targets:
             continue
         v = name[6:]
         # ---- A MAPPING SLOT PIN, `state.<m>[<key>]` -------------------------
@@ -8339,6 +8355,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             if chk:
                 store_lines += chk
                 stored.append(f"{name} in [{lo}, {hi}] (checked, not set)")
+                established_state_targets.add(canonical_name)
                 continue
             state_skipped.append(
                 f"{name} in [{lo}, {hi}] (width > 1, DROPPED: the entry state "
@@ -8358,6 +8375,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         store_lines += slot_landing_check(target_addr, slot, off, nb, val,
                                           name)
         stored.append(f"{name} := {val}")
+        established_state_targets.add(canonical_name)
 
     # --- the oracle: the unit's OWN RETURN VALUE ----------------------------
     #

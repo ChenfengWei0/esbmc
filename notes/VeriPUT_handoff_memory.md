@@ -22182,3 +22182,23 @@ Update after FeeBurnerAuthentication scalar store-alias repair:
   parameters (`msg.sender`, `newOwner`) and one R0 exit-kind oracle.  R1/R2
   remains impossible for that row because the path is a rollback revert and
   post-state is unobservable.
+- Official RQ1 rerun after scalar store-alias repair:
+  `raw=4`, `valid=2`, `put=2/4`, `concrete=0/0`,
+  `bucket=valid-PUT-no-R1R2`, wall `679.223s`.  This improved the subject from
+  `valid-no-PUT` to valid PUT, but the R1/R2 rows for `acceptOwnership` and
+  `transferOwnership` enc=7 were red in Foundry.
+- Diagnosed the red `transferOwnership` enc=7 row: the emitted Foundry test
+  established the same slot twice under two coordinate names,
+  `state._owner := msg.sender` and then `state._owner$32 := 1`.  The second
+  write used ESBMC's store alias for the same scalar source field and
+  overwrote the relation-backed entry state.  Added
+  `canonical_state_coord_name` and canonical duplicate suppression in
+  `build_put`, so relation-backed source names dominate store-alias pins for
+  the same scalar slot.  Added
+  `test_state_store_aliases_have_one_canonical_entry_coordinate`.
+- Stage4-only probe after canonical entry-coordinate repair:
+  `transferOwnership` now emits 2 green PUTs / 2 total (`B=2/2`); enc=7 carries
+  four post-state assertions including R1/R2 (`_pendingOwner: post == newOwner`
+  and `_owner: post == msg.sender`), enc=6 remains the rollback R0 PUT.
+  A separate `acceptOwnership` probe hit the 240s wrapper timeout without
+  output, so no conclusion was recorded for that unit.
