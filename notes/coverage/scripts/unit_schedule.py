@@ -194,9 +194,30 @@ def budgeted_certify_argv(argv: list[str],
     return filtered
 
 
+def _zero_interface_sender_arm(unit_info: dict | None) -> bool:
+    """Promote msg.sender for state-changing units with no ABI coordinates."""
+
+    if not unit_info:
+        return False
+    mutability = unit_info.get("state_mutability") or ""
+    params = int(unit_info.get("parameter_count") or 0)
+    return mutability not in ("view", "pure") and params == 0
+
+
+def _region_strategy(unit_info: dict | None) -> dict:
+    sender_arm = _zero_interface_sender_arm(unit_info)
+    return {
+        "zero_interface_sender_arm": sender_arm,
+        "env_coords": ["msg.sender"] if sender_arm else [],
+        "reason": ("state-changing unit has no ABI parameter coordinate"
+                   if sender_arm else "shared strong recipe"),
+    }
+
+
 def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path: str | None,
                   dry_run: bool, *, timeout_s: int, run_timeout_s: int,
-                  memlimit_gib: int, workdir: str) -> list[str]:
+                  memlimit_gib: int, workdir: str,
+                  unit_info: dict | None = None) -> list[str]:
     argv = [
         sys.executable,
         str(CERTIFY_ALL),
@@ -212,6 +233,8 @@ def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path
     if out_path:
         argv.extend(["--out", out_path])
     argv.extend(strong_certify_args())
+    for coord in _region_strategy(unit_info)["env_coords"]:
+        argv.extend(["--env-coord", coord])
     argv = budgeted_certify_argv(argv,
                                  timeout_s=timeout_s,
                                  run_timeout_s=run_timeout_s,
@@ -309,6 +332,7 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
         "target": row.get("target"),
         "unit_hints": row.get("unit_hints"),
         "unit_info": unit_info,
+        "region_strategy": _region_strategy(unit_info),
         "static_obstacles": static_obstacles,
         "certification_budget": {
             "timeout_s": timeout_s or None,
@@ -324,7 +348,8 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
                                       timeout_s=timeout_s,
                                       run_timeout_s=run_timeout_s,
                                       memlimit_gib=memlimit_gib,
-                                      workdir=workdir),
+                                      workdir=workdir,
+                                      unit_info=unit_info),
         "dry_run_argv": _certify_argv(subject,
                                       unit,
                                       ast_cache_root,
@@ -333,7 +358,8 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
                                       timeout_s=timeout_s,
                                       run_timeout_s=run_timeout_s,
                                       memlimit_gib=memlimit_gib,
-                                      workdir=workdir),
+                                      workdir=workdir,
+                                      unit_info=unit_info),
     }
 
 

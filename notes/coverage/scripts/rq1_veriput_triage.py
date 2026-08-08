@@ -255,6 +255,14 @@ def summarize_dataset(root: Path, dataset: str,
     if valid_subjects:
         valid_subject_put_ratio = (
             valid_subjects - buckets["valid-no-PUT"]) / valid_subjects
+    backlog = {
+        "no_valid": buckets["no-valid"],
+        "valid_no_put": buckets["valid-no-PUT"],
+        "valid_put_no_r1r2_actionable": (
+            buckets["valid-PUT-no-R1R2-normal-or-unknown"]),
+        "valid_put_no_r1r2_rollback_accounting_only": (
+            buckets["valid-PUT-no-R1R2-rollback"]),
+    }
 
     return {
         "dataset": dataset,
@@ -266,6 +274,7 @@ def summarize_dataset(root: Path, dataset: str,
         "artifact_totals": dict(sorted(artifact.items())),
         "artifact_put_valid_ratio": round(put_ratio, 4),
         "valid_subject_any_put_ratio": round(valid_subject_put_ratio, 4),
+        "methodology_backlog": backlog,
         "valid_put_oracle_class_counts": dict(sorted(valid_put_classes.items())),
         "valid_put_oracle_combo_counts": dict(sorted(valid_put_combos.items())),
         "valid_put_no_r1r2_exit_shapes": dict(sorted(no_r1r2_exit_shapes.items())),
@@ -296,6 +305,9 @@ def _print_human(summary: dict[str, Any]) -> None:
     print(
         "valid-subject any-PUT ratio: "
         f"{summary['valid_subject_any_put_ratio']:.3f}")
+    print("methodology backlog:")
+    for key, value in summary["methodology_backlog"].items():
+        print(f"  {key}: {value}")
     print("valid PUT oracle classes:")
     for key, value in summary["valid_put_oracle_class_counts"].items():
         print(f"  {key}: {value}")

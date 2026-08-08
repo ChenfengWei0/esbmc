@@ -136,6 +136,8 @@ def test_schedule_prioritizes_hinted_units_and_preserves_argv():
                  f"strong region controls are scheduled for benchmarks: {argv}")
     bad += check("--no-auto-pin-value" not in argv,
                  f"main benchmark recipe keeps the nonpayable body slice cheap: {argv}")
+    bad += check("--env-coord" not in argv,
+                 f"one-parameter unit does not get the zero-interface sender arm: {argv}")
     bad += check(argv_value(argv, "--timeout") == "60"
                  and argv_value(argv, "--run-timeout") == "60"
                  and argv_value(argv, "--memlimit-gib") == "8",
@@ -211,6 +213,19 @@ def test_schedule_prioritizes_semantic_units_before_getter_like_units():
                  f"semantic units are sampled before getter-like rows: {got}")
     bad += check(doc["jobs"][0]["unit_info"]["parameter_count"] == 1,
                  f"job keeps unit metadata for later audit: {doc['jobs'][0]}")
+    poke = next(job for job in doc["jobs"] if job["unit"] == "poke")
+    poke_argv = poke["certify_argv"]
+    bad += check(poke["region_strategy"] == {
+        "zero_interface_sender_arm": True,
+        "env_coords": ["msg.sender"],
+        "reason": "state-changing unit has no ABI parameter coordinate",
+    }, f"zero-interface state unit records the sender-coordinate arm: {poke}")
+    bad += check(argv_value(poke_argv, "--env-coord") == "msg.sender",
+                 f"zero-interface state unit promotes sender to a PUT coordinate: {poke_argv}")
+    name = next(job for job in doc["jobs"] if job["unit"] == "name")
+    bad += check(not name["region_strategy"]["zero_interface_sender_arm"]
+                 and "--env-coord" not in name["certify_argv"],
+                 f"zero-arg view unit does not spend a sender-coordinate arm: {name}")
     return bad
 
 

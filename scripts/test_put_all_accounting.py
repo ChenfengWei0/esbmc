@@ -185,6 +185,10 @@ def main():
                      put_all.recipe_requires_certified_details(
                          "veriput-strong/15-relation-establish"),
                      True)
+        bad += check("stage4-v16-requires-certified-details",
+                     put_all.recipe_requires_certified_details(
+                         "veriput-strong/16-zero-interface-sender-arm"),
+                     True)
         bad += check("stage4-claim-path-id-suffix",
                      put_all.claim_path_id_int("7#nonvacuous"), 7)
         bad += check("stage4-claim-path-id-nonnumeric",

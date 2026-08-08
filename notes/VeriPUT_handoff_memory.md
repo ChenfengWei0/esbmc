@@ -19834,3 +19834,56 @@ Interpretation:
     Stage4 currently records `all return rungs DROPPED: no return rung HOLDS
     over the certified region`; this kind of case is a better candidate for a
     return-oracle/R2 improvement than rollback cases.
+
+## 2026-08-08 methodology backlog and zero-interface sender arm
+
+The user clarified the optimization target is not only `no-valid`; it must also
+focus `valid-no-PUT` and, after that, `valid-PUT-no-R1/R2`.  Preserve this
+priority after compaction:
+
+1. `no-valid`: recover any reference-valid generated test.
+2. `valid-no-PUT`: convert concrete-only outcomes into ESBMC-certified PUTs
+   when there is a real generalisable input dimension.
+3. `valid-PUT-no-R1/R2`: improve oracle strength, but only for
+   normal/unknown exits.  Rollback no-R1/R2 is accounting-only because
+   rollback post-state is unobservable.
+
+Implemented:
+
+- `notes/coverage/scripts/rq1_veriput_triage.py` now prints
+  `methodology_backlog` with:
+  - `no_valid`
+  - `valid_no_put`
+  - `valid_put_no_r1r2_actionable`
+  - `valid_put_no_r1r2_rollback_accounting_only`
+- `notes/coverage/scripts/unit_schedule.py` now records
+  `region_strategy` per job.
+- For state-changing units with `parameter_count == 0`, the schedule appends
+  `--env-coord msg.sender` and records:
+  `zero_interface_sender_arm=true`.
+- The shared recipe version is now
+  `veriput-strong/16-zero-interface-sender-arm`.
+
+Rationale:
+
+- Zero-interface state-changing methods often have no ABI coordinate, so the
+  old strong recipe could pin `msg.sender` and leave only a point/concrete
+  replay.  `msg.sender` is a Foundry-establishable input coordinate, so this is
+  a generic way to search for real PUTs without overfitting a PoC.
+- This does not prove anything by fuzz.  Fuzz remains refute-only.  The sender
+  arm only changes the Stage2 certification query; ESBMC must still certify the
+  region, and Stage4 still must pass the Foundry replay guard on the reference
+  contract.
+
+Verification:
+
+- `python3 -m py_compile notes/coverage/scripts/veriput_recipe.py
+  notes/coverage/scripts/unit_schedule.py
+  notes/coverage/scripts/rq1_veriput_triage.py
+  scripts/test_unit_schedule.py scripts/test_put_all_accounting.py`
+- `python3 scripts/test_unit_schedule.py`
+- `python3 scripts/test_put_all_accounting.py`
+- `python3 scripts/test_unit_campaign_plan.py`
+- `python3 scripts/test_benchmark_pipeline_plan.py`
+- `python3 notes/coverage/scripts/rq1_veriput_triage.py --benchmark all
+  --sample-limit 1`
