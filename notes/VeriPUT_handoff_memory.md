@@ -20160,3 +20160,37 @@ Verification:
   notes/coverage/scripts/rq1_veriput_triage.py`
 - `python3 notes/coverage/scripts/rq1_veriput_triage.py --benchmark all
   --json --sample-limit 0`
+
+## 2026-08-08 source-first R2 scheduling
+
+Implemented a generation-side R2 scheduling change:
+
+- Source-assignment R2 candidates now run in their own verifier pass before the
+  mechanical typed R2 batch.
+- If a source R2 row `HOLDS` for a variable, later mechanical typed batches for
+  that same variable are pruned.  `REFUTED` and solver-unknown do not prune
+  anything, because they are not proof of an oracle.
+- This is intended to avoid cases where a high-value source candidate such as
+  `_allowances[msg.sender][spender]: post == amount` is mixed into a large
+  mechanical batch and comes back solver-unknown with the whole batch.
+
+Representative diagnosis:
+
+- `peer_ccsolbmc__shibabread.approve` already extracts the mapping slot source
+  candidate `_allowances[msg.sender][spender]: post == amount`.
+- The old run merged it into a 35-candidate typed batch; the mapping slot rows
+  came back `NO VERDICT (solver unknown)`, while the bool return source row
+  held.
+- The new source-first schedule should give that semantic candidate a smaller
+  proof query and then skip same-variable mechanical noise if it holds.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 255 tests.
+- `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+
+No ESBMC benchmark rerun was spent for this change yet.

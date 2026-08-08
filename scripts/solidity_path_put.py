@@ -2621,42 +2621,15 @@ def _r2_refresh_candidate_count(spec):
     spec["candidate_count"] = _r2_entry_count(spec.get("vars", ()))
 
 
-def _r2_trim_mechanical_tail(spec, candidate_budget, log):
-    """Keep source candidates in front and trim generated suffixes if needed."""
-    if candidate_budget is None:
-        return 0
-    over = _r2_entry_count(spec.get("vars", ())) - candidate_budget
-    if over <= 0:
-        return 0
-    dropped = 0
-    for entry in reversed(spec.get("vars", ())):
-        for kind in ("deltas", "abs", "equals"):
-            queue = entry.get(kind, [])
-            while queue and dropped < over:
-                candidate = queue[-1]
-                if str(candidate.get("id", "")).startswith("src"):
-                    break
-                queue.pop()
-                dropped += 1
-            if dropped >= over:
-                break
-        if dropped >= over:
-            break
-    spec["vars"] = [
-        entry for entry in spec.get("vars", ())
-        if any(entry.get(kind) for kind in ("equals", "abs", "deltas"))
-    ]
-    _r2_refresh_candidate_count(spec)
-    if dropped:
-        log(f"[put]   typed R2 candidate budget made room for source "
-            f"assignment candidate(s) by naming {dropped} mechanical "
-            "candidate(s) as NOT ASKED")
-    return dropped
+def schedule_source_r2_specs(source_specs, typed_specs, log=print):
+    """Run source-prioritized R2 candidates before mechanical batches.
 
-
-def merge_source_r2_specs(source_specs, typed_specs, candidate_budget=None,
-                          log=print):
-    """Merge source-prioritized candidates into one typed R2 verifier query."""
+    Source-assignment candidates are usually few and semantically direct, e.g.
+    `allowance[msg.sender][spender] == amount`.  Keeping them in the same
+    verifier query as a wide mechanical batch can turn an easy oracle into a
+    solver-unknown batch.  Schedule them first, then let `run_r2_passes` skip
+    later mechanical entries for variables that already got a holding R2 row.
+    """
     source = json.loads(json.dumps(source_specs or []))
     typed = json.loads(json.dumps(typed_specs or []))
     if not source:
@@ -2664,81 +2637,15 @@ def merge_source_r2_specs(source_specs, typed_specs, candidate_budget=None,
     if not typed:
         return source
 
-    target = typed[0]
-    entries = target.setdefault("vars", [])
-    by_name = {entry.get("name"): entry for entry in entries}
-    new_entries = []
-    inserted = 0
-
+    source_count = sum(_r2_entry_count(spec.get("vars", ()))
+                       for spec in source)
     for spec in source:
-        for entry in spec.get("vars", []):
-            name = entry.get("name")
-            if not name:
-                continue
-            dest = by_name.get(name)
-            if dest is None:
-                dest = {"name": name, "equals": [], "abs": [], "deltas": []}
-                by_name[name] = dest
-                new_entries.append(dest)
-            for kind in ("equals", "abs", "deltas"):
-                dest.setdefault(kind, [])
-
-            existing_equals = {r2_term_text(item["term"])
-                               for item in dest.get("equals", [])}
-            prepend_equals = []
-            for candidate in entry.get("equals", []):
-                text = r2_term_text(candidate["term"])
-                if text in existing_equals:
-                    continue
-                existing_equals.add(text)
-                prepend_equals.append(candidate)
-                inserted += 1
-            if prepend_equals:
-                dest["equals"] = prepend_equals + dest.get("equals", [])
-
-            existing_abs = {
-                (r2_term_text(item["lo"]), r2_term_text(item["hi"]))
-                for item in dest.get("abs", [])
-            }
-            prepend_abs = []
-            for candidate in entry.get("abs", []):
-                key = (r2_term_text(candidate["lo"]),
-                       r2_term_text(candidate["hi"]))
-                if key in existing_abs:
-                    continue
-                existing_abs.add(key)
-                prepend_abs.append(candidate)
-                inserted += 1
-            if prepend_abs:
-                dest["abs"] = prepend_abs + dest.get("abs", [])
-
-            existing_deltas = {
-                (item.get("dir"), r2_term_text(item["lo"]),
-                 r2_term_text(item["hi"]))
-                for item in dest.get("deltas", [])
-            }
-            prepend_deltas = []
-            for candidate in entry.get("deltas", []):
-                key = (candidate.get("dir"), r2_term_text(candidate["lo"]),
-                       r2_term_text(candidate["hi"]))
-                if key in existing_deltas:
-                    continue
-                existing_deltas.add(key)
-                prepend_deltas.append(candidate)
-                inserted += 1
-            if prepend_deltas:
-                dest["deltas"] = prepend_deltas + dest.get("deltas", [])
-
-    if new_entries:
-        target["vars"] = new_entries + entries
-    if inserted:
-        target["kind"] = "typed+source-assign"
-        _r2_refresh_candidate_count(target)
-        _r2_trim_mechanical_tail(target, candidate_budget, log)
-        log(f"[put]   typed R2 source assignment merge kept {inserted} "
-            "source candidate(s) in the same verifier query as the "
-            "mechanical batch")
-    return typed
+        spec.setdefault("stage", 1)
+        spec["kind"] = spec.get("kind") or "source-assign"
+        _r2_refresh_candidate_count(spec)
+    log(f"[put]   source R2 scheduled {source_count} source assignment "
+        "candidate(s) before the mechanical batch")
+    return source + typed
 
 
 def r2_terms_from_specs(specs):
@@ -3027,9 +2934,11 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
     # not spend a whole query buying a strictly weaker rung, and one that came
     # back without a verdict does not spend it buying a second no-verdict.
     exact_delta = {}
+    proven_r2_vars = set()
     for i, s in enumerate(specs or []):
         stage, kind = s.get("stage", 1), s.get("kind", "num")
         entries = s["vars"]
+        pruned_by_prior_r2 = False
         if stage == 2:
             entries = [e for e in entries
                        if exact_delta.get(e["name"]) == "REFUTED"]
@@ -3038,7 +2947,21 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
                     f"`{s['param']}`): stage 1 refuted the exact delta on no "
                     f"variable, so a cap would be asked about nothing")
                 continue
+        if proven_r2_vars and kind != "source-assign":
+            before = len(entries)
+            entries = [e for e in entries if e.get("name") not in proven_r2_vars]
+            dropped = before - len(entries)
+            if dropped:
+                pruned_by_prior_r2 = True
+                log(f"[put]   R2 pass {i + 1}/{len(specs)} pruned {dropped} "
+                    "mechanical variable batch(es): an earlier source R2 row "
+                    "already HOLDS for the same variable")
         if not entries:
+            if pruned_by_prior_r2:
+                log(f"[put]   R2 pass {i + 1}/{len(specs)} NOT RUN: every "
+                    "candidate in this batch is dominated by an earlier "
+                    "holding source R2 row")
+                continue
             log(f"[put]   R2 pass {i + 1}/{len(specs)} NOT RUN: every "
                 "candidate in this batch was refuted by Forge")
             continue
@@ -3071,6 +2994,8 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
             seen.add((v, t))
             if stage == 1 and t.startswith(("post - pre in [", "pre - post in [")):
                 exact_delta[v] = d
+            if d == "HOLDS":
+                proven_r2_vars.add(v)
         if not fresh:
             log(f"[put]     NO R2 ROW came back from this pass"
                 + (f" (ladder refusal: {refusal})" if refusal else
@@ -10383,9 +10308,7 @@ def main():
                 rendered_coords=_rendered_coords,
                 term_budget=a.r2_term_budget,
                 candidate_budget=a.r2_candidate_budget, log=print)
-            _r2 = merge_source_r2_specs(
-                _r2, _typed_r2, candidate_budget=a.r2_candidate_budget,
-                log=print)
+            _r2 = schedule_source_r2_specs(_r2, _typed_r2, log=print)
             _r2, _ = dedup_r2_specs_by_normalized_text(
                 _r2, point_value_texts(region, pins), log=print)
             r2_term_lookup = r2_terms_from_specs(_r2)

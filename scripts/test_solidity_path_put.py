@@ -6920,8 +6920,8 @@ def test_bool_literal_R2_rows_render_from_ESBMC_true_spelling():
     return bad
 
 
-def test_source_R2_candidates_merge_into_the_typed_batch():
-    from solidity_path_put import merge_source_r2_specs, r2_candidates  # noqa: E402
+def test_source_R2_candidates_run_before_the_typed_batch():
+    from solidity_path_put import r2_candidates, schedule_source_r2_specs  # noqa: E402
     source = [{"param": "source_assign", "kind": "source-assign",
                "vars": [{"name": "ready", "equals": [{
                    "id": "src0", "term": {"kind": "literal", "value": "1"}}],
@@ -6942,30 +6942,30 @@ def test_source_R2_candidates_merge_into_the_typed_batch():
                                            "name": "flag_"}}],
                    "abs": [], "deltas": []}]}]
     said = []
-    got = merge_source_r2_specs(source, typed, candidate_budget=8,
-                                log=said.append)
+    got = schedule_source_r2_specs(source, typed, log=said.append)
     candidates = r2_candidates(got)
     bad = 0
-    bad += check(len(got) == 1,
-                 f"source and typed candidates share one R2 query: {got}")
-    bad += check(got[0].get("kind") == "typed+source-assign",
-                 f"the merged provenance is visible: {got[0]}")
-    bad += check(got[0].get("candidate_count") == 4,
-                 f"no typed candidate was lost: {got}")
+    bad += check(len(got) == 2,
+                 f"source and typed candidates are separate R2 queries: {got}")
+    bad += check(got[0].get("kind") == "source-assign",
+                 f"the source provenance is visible first: {got[0]}")
+    bad += check(got[0].get("candidate_count") == 2,
+                 f"the source candidate count is refreshed: {got}")
+    bad += check(got[1].get("candidate_count") == 2,
+                 f"the typed candidate count is preserved: {got}")
     bad += check([c["text"] for c in candidates] ==
-                 ["post == amount", "post == 1",
+                 ["post == 1",
                   "post - pre in [amount, amount] with post >= pre",
-                  "post == flag_"],
-                 f"the source bool candidate is inserted before the "
-                 f"mechanical bool endpoint, and source deltas survive: "
-                 f"{candidates}")
-    bad += check(any("same verifier query" in line for line in said),
-                 f"the log says this is not an extra ESBMC pass: {said}")
+                  "post == amount", "post == flag_"],
+                 f"all source candidates are scheduled before typed "
+                 f"mechanical candidates: {candidates}")
+    bad += check(any("before the mechanical batch" in line for line in said),
+                 f"the log says source candidates are prioritized: {said}")
     return bad
 
 
-def test_source_R2_merge_preserves_the_candidate_budget():
-    from solidity_path_put import merge_source_r2_specs, r2_candidates  # noqa: E402
+def test_source_R2_schedule_keeps_source_outside_the_mechanical_budget():
+    from solidity_path_put import r2_candidates, schedule_source_r2_specs  # noqa: E402
     source = [{"vars": [{"name": "ready", "equals": [{
         "id": "src0", "term": {"kind": "literal", "value": "1"}}],
                          "abs": [], "deltas": []}]}]
@@ -6980,18 +6980,14 @@ def test_source_R2_merge_preserves_the_candidate_budget():
                                            "name": "flag_"}}],
                    "abs": [], "deltas": []}]}]
     said = []
-    got = merge_source_r2_specs(source, typed, candidate_budget=2,
-                                log=said.append)
+    got = schedule_source_r2_specs(source, typed, log=said.append)
     texts = [candidate["text"] for candidate in r2_candidates(got)]
     bad = 0
-    bad += check(got[0].get("candidate_count") == 2,
-                 f"the global candidate cap is still respected: {got}")
-    bad += check("post == 1" in texts and "post == flag_" not in texts,
-                 f"source survives and the mechanical suffix is dropped: "
-                 f"{texts}")
-    bad += check(any("made room" in line and "NOT ASKED" in line
-                     for line in said),
-                 f"the dropped mechanical candidate is named: {said}")
+    bad += check(len(got) == 2 and got[0].get("candidate_count") == 1,
+                 f"source gets its own prefix query: {got}")
+    bad += check("post == 1" in texts and "post == flag_" in texts,
+                 f"source does not spend the mechanical candidate budget: "
+                 f"{texts}, {said}")
     return bad
 
 
@@ -7365,6 +7361,57 @@ def test_the_CAP_pass_IS_SKIPPED_when_stage_1_gave_NO_VERDICT():
                  f"only stage 1 was written: {[s for s, _ in written]}")
     bad += check(any("NOT RUN" in s for s in said),
                  f"and the skip is announced: {said}")
+    return bad
+
+
+def test_a_source_R2_HOLD_skips_later_mechanical_candidates_for_that_var():
+    from solidity_path_put import run_r2_passes  # noqa: E402
+    said, written = [], []
+
+    def write_spec(suffix, spec):
+        written.append((suffix, spec))
+        return "/tmp/spec" + suffix + ".json"
+
+    replies = [
+        [("bal", "post == amount", "HOLDS")],
+        [("other", "post == flag_", "HOLDS")],
+    ]
+
+    def parse(_text):
+        return (replies.pop(0) if replies else []), None, None, None
+
+    specs = [
+        {"param": "source_assign", "stage": 1, "kind": "source-assign",
+         "vars": [{"name": "bal", "equals": [{
+             "id": "src0", "term": {"kind": "coord", "name": "amount"}}],
+                   "abs": [], "deltas": []}]},
+        {"param": "batch", "stage": 1, "kind": "typed",
+         "vars": [
+             {"name": "bal", "equals": [{
+                 "id": "e0", "term": {"kind": "coord", "name": "amount"}}],
+              "abs": [], "deltas": []},
+             {"name": "other", "equals": [{
+                 "id": "e1", "term": {"kind": "coord", "name": "flag_"}}],
+              "abs": [], "deltas": []},
+         ]},
+    ]
+    got = run_r2_passes(specs, {"unit": "u", "enc": 7}, write_spec,
+                        lambda _p: "ok", parse, log=said.append)
+    bad = 0
+    bad += check(len(written) == 2,
+                 f"source and remaining typed entries run separately: "
+                 f"{[suffix for suffix, _ in written]}")
+    if len(written) == 2:
+        bad += check([entry["name"] for entry in written[1][1]["vars"]] ==
+                     ["other"],
+                     f"the proven variable is pruned from the typed batch: "
+                     f"{written[1][1]['vars']}")
+    bad += check(("bal", "post == amount", "HOLDS") in got,
+                 f"the source row is retained: {got}")
+    bad += check(("other", "post == flag_", "HOLDS") in got,
+                 f"unproven variables in the typed batch still run: {got}")
+    bad += check(any("pruned 1 mechanical" in line for line in said),
+                 f"the prune is visible in logs: {said}")
     return bad
 
 
@@ -11419,8 +11466,8 @@ def main():
               test_source_R2_storage_local_aliases_resolve_to_state_coords,
               test_source_R2_storage_mapping_aliases_preserve_later_indices,
               test_bool_literal_R2_rows_render_from_ESBMC_true_spelling,
-              test_source_R2_candidates_merge_into_the_typed_batch,
-              test_source_R2_merge_preserves_the_candidate_budget,
+              test_source_R2_candidates_run_before_the_typed_batch,
+              test_source_R2_schedule_keeps_source_outside_the_mechanical_budget,
               test_same_arity_overloads_use_the_exact_path_declaration,
               test_overload_persistence_keys_and_work_suffixes_are_distinct,
               test_structured_R2_term_renders_with_the_lifted_coordinate,
@@ -11434,6 +11481,7 @@ def main():
               test_the_CAP_pass_RUNS_when_stage_1_REFUTED_the_exact_delta,
               test_the_CAP_pass_IS_SKIPPED_when_stage_1_ALREADY_HOLDS,
               test_the_CAP_pass_IS_SKIPPED_when_stage_1_gave_NO_VERDICT,
+              test_a_source_R2_HOLD_skips_later_mechanical_candidates_for_that_var,
               test_an_R2_PASS_THAT_RETURNS_NOTHING_is_REPORTED_not_absorbed,
               test_a_ROLLBACK_path_DOES_NOT_SPEND_an_R2_ESBMC_pass,
               test_a_REVERT_path_DOES_NOT_SPEND_an_R2_ESBMC_pass,
