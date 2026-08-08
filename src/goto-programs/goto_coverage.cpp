@@ -1672,6 +1672,23 @@ walk_field_type(const namespacet &ns, type2tc &t, const std::string &path)
   return false;
 }
 
+static expr2tc
+path_cov_slot_index_key(const type2tc &array_t, const expr2tc &key)
+{
+  if (!is_array_type(array_t))
+    return key;
+
+  const array_type2t &arr = to_array_type(array_t);
+  unsigned width = arr.index_width;
+  if (width == 0 && is_unsignedbv_type(key))
+    width = key->type->get_width();
+  if (width == 0)
+    width = 256;
+
+  const type2tc index_t = get_uint_type(width);
+  return key->type == index_t ? key : typecast2tc(index_t, key);
+}
+
 // |R_c| for a punched interval (Definition 5): how many values of [lo, hi]
 // survive once this coordinate's holes are removed.
 //
@@ -4449,7 +4466,8 @@ void goto_coveraget::solidity_path_coverage()
   //              "delta_dir"?,"delta_lo"?,"delta_hi"?,
   //              "equals"?: [{"id","term"}],
   //              "abs"?: [{"id","lo","hi"}],
-  //              "deltas"?: [{"id","dir","lo","hi"}]}, ...]}
+  //              "deltas"?: [{"id","dir","lo","hi"}]}, ...],
+  //  "candidate_policy"?: "exact"}
   //
   // `region` is byte for byte the shape certify parses under "box" and goes
   // through the SAME parser. `vars` is optional; omitting it emits the equality
@@ -4494,6 +4512,7 @@ void goto_coveraget::solidity_path_coverage()
   // treats an empty or slot-only list as a whitelist and leaves return-value
   // rungs enabled independently.
   bool assert_vars_state_exact = false;
+  bool assert_candidates_exact = false;
   path_cov_assert_mode = false;
   path_cov_assert_candidates.clear();
   path_cov_assert_partial_rows_published.clear();
@@ -4531,6 +4550,14 @@ void goto_coveraget::solidity_path_coverage()
           throw std::runtime_error(
             "vars_policy \"state-exact\" requires an explicit vars array");
         assert_vars_state_exact = true;
+      }
+      if (j.contains("candidate_policy"))
+      {
+        const std::string policy = j.at("candidate_policy").get<std::string>();
+        if (policy != "exact")
+          throw std::runtime_error(
+            "candidate_policy must be \"exact\" when present");
+        assert_candidates_exact = true;
       }
       for (const auto &v : j.value("vars", nlohmann::json::array()))
       {
@@ -4623,6 +4650,7 @@ void goto_coveraget::solidity_path_coverage()
         "{{\"unit\":..., \"enc\":N, \"depth\":D, "
         "\"region\":[{{\"name\":...,\"lo\":\"..\",\"hi\":\"..\"}}], "
         "\"establish\":[{{\"target\":...,\"source\":...}}], "
+        "\"candidate_policy\":\"exact\", "
         "\"vars\":[{{\"name\":...,\"abs_lo\":\"..\",\"abs_hi\":\"..\","
         "\"delta_dir\":\"inc|dec\",\"delta_lo\":\"..\",\"delta_hi\":\"..\","
         "\"equals\":[{{\"id\":...,\"term\":...}}],"
@@ -5450,7 +5478,7 @@ void goto_coveraget::solidity_path_coverage()
           std::string kwhy;
           if (!resolve_slot_key(fsym, kn, kexpr, kwhy))
             return false;
-          cur_e = index2tc(et, cur_e, kexpr);
+          cur_e = index2tc(et, cur_e, path_cov_slot_index_key(cur_t, kexpr));
           cur_t = et;
         }
 
@@ -10135,13 +10163,17 @@ void goto_coveraget::solidity_path_coverage()
         goto_program.instructions.insert(entry, asg);
         ++vars_emitted;
 
-        // R1 -- the equality rungs. Emitted as a PAIR, always, and that is the
-        // one thing this mode can testify to on its own: the two are
-        // necessarily opposite, so a run in which both HOLD is a run in which
-        // the exit read is not observing the unit's writes, and a run in which
-        // both are REFUTED is one in which the antecedent never matched.
-        emit_rung(vname, "eq", "post == pre", equality2tc(live, pre_v));
-        emit_rung(vname, "ne", "post != pre", notequal2tc(live, pre_v));
+        if (!assert_candidates_exact)
+        {
+          // R1 -- the equality rungs. Emitted as a PAIR, always, and that is
+          // the one thing this mode can testify to on its own: the two are
+          // necessarily opposite, so a run in which both HOLD is a run in
+          // which the exit read is not observing the unit's writes, and a run
+          // in which both are REFUTED is one in which the antecedent never
+          // matched.
+          emit_rung(vname, "eq", "post == pre", equality2tc(live, pre_v));
+          emit_rung(vname, "ne", "post != pre", notequal2tc(live, pre_v));
+        }
 
         if (!interval_ok)
         {
@@ -10150,10 +10182,14 @@ void goto_coveraget::solidity_path_coverage()
           continue;
         }
 
-        emit_rung(vname, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
-        emit_rung(vname, "le", "post <= pre", lessthanequal2tc(live, pre_v));
-        emit_rung(vname, "gt", "post > pre", greaterthan2tc(live, pre_v));
-        emit_rung(vname, "lt", "post < pre", lessthan2tc(live, pre_v));
+        if (!assert_candidates_exact)
+        {
+          emit_rung(
+            vname, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
+          emit_rung(vname, "le", "post <= pre", lessthanequal2tc(live, pre_v));
+          emit_rung(vname, "gt", "post > pre", greaterthan2tc(live, pre_v));
+          emit_rung(vname, "lt", "post < pre", lessthan2tc(live, pre_v));
+        }
 
         // ---- AN R2 BOUND MAY NAME A QUANTITY, NOT ONLY A DECIMAL ----------
         //
@@ -10586,8 +10622,15 @@ void goto_coveraget::solidity_path_coverage()
         // index per level and each carrying the type of the level it produces.
         expr2tc marr = symbol2tc(mt, sit->second->id);
         expr2tc live = marr;
+        type2tc level_t = mt;
         for (size_t ki = 0; ki < key_ghosts.size(); ++ki)
-          live = index2tc(level_elem[ki], live, key_ghosts[ki]);
+        {
+          live = index2tc(
+            level_elem[ki],
+            live,
+            path_cov_slot_index_key(level_t, key_ghosts[ki]));
+          level_t = level_elem[ki];
+        }
         // The pre-read and the post-read walk the SAME member path, for the
         // same reason both index with the same entry key ghost: two reads that
         // did not agree on which field they name would be reported as one
@@ -10632,27 +10675,34 @@ void goto_coveraget::solidity_path_coverage()
         }
         ++vars_emitted;
 
-        // The equality PAIR, always, for the reason the component loop states:
-        // the two are necessarily opposite, so a run in which BOTH hold is a
-        // run in which the exit read is not observing this unit's writes --
-        // which on a slot is the failure to watch for, since an entry ghost
-        // holding the wrong key would produce exactly that.
-        emit_rung(v.name, "eq", "post == pre", equality2tc(live, pre_v));
-        emit_rung(v.name, "ne", "post != pre", notequal2tc(live, pre_v));
+        if (!assert_candidates_exact)
+        {
+          // The equality PAIR, always, for the reason the component loop
+          // states: the two are necessarily opposite, so a run in which BOTH
+          // hold is a run in which the exit read is not observing this unit's
+          // writes -- which on a slot is the failure to watch for, since an
+          // entry ghost holding the wrong key would produce exactly that.
+          emit_rung(v.name, "eq", "post == pre", equality2tc(live, pre_v));
+          emit_rung(v.name, "ne", "post != pre", notequal2tc(live, pre_v));
+        }
         if (!iv_ok)
         {
           path_cov_refused_coords[v.name + " [ordering/interval rungs]"] =
             "the mapping's value type is a BOOLEAN -- a two-point domain has "
-            "no ordering to measure. The equality rungs ARE emitted for it";
+            "no ordering to measure. Default equality rungs are emitted for "
+            "it unless candidate_policy is exact";
           emit_structured_rungs(
             &v, et, v.name, live, pre_v, "post", true, true);
           continue;
         }
-        emit_rung(
-          v.name, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
-        emit_rung(v.name, "le", "post <= pre", lessthanequal2tc(live, pre_v));
-        emit_rung(v.name, "gt", "post > pre", greaterthan2tc(live, pre_v));
-        emit_rung(v.name, "lt", "post < pre", lessthan2tc(live, pre_v));
+        if (!assert_candidates_exact)
+        {
+          emit_rung(
+            v.name, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
+          emit_rung(v.name, "le", "post <= pre", lessthanequal2tc(live, pre_v));
+          emit_rung(v.name, "gt", "post > pre", greaterthan2tc(live, pre_v));
+          emit_rung(v.name, "lt", "post < pre", lessthan2tc(live, pre_v));
+        }
 
         // ---- THE ENDPOINTS GO THROUGH `bound_endpoint`, LIKE THE COMPONENT'S
         //
@@ -10843,16 +10893,19 @@ void goto_coveraget::solidity_path_coverage()
               // No constant_int2tc on a bool, and no ordering: the same rule
               // the state side documents at (F). The two-point domain makes
               // the equality pair exhaustive, which is all a bool needs.
-              emit_rung(
-                vname,
-                "reteq0",
-                "return == false",
-                or2tc(no_ret, equality2tc(g, gen_false_expr())));
-              emit_rung(
-                vname,
-                "retne0",
-                "return == true",
-                or2tc(no_ret, equality2tc(g, gen_true_expr())));
+              if (!assert_candidates_exact)
+              {
+                emit_rung(
+                  vname,
+                  "reteq0",
+                  "return == false",
+                  or2tc(no_ret, equality2tc(g, gen_false_expr())));
+                emit_rung(
+                  vname,
+                  "retne0",
+                  "return == true",
+                  or2tc(no_ret, equality2tc(g, gen_true_expr())));
+              }
               emit_structured_rungs(
                 sp,
                 g->type,
@@ -10873,16 +10926,19 @@ void goto_coveraget::solidity_path_coverage()
             // which BOTH hold is a run in which none of them was reached --
             // which `retlive` reports directly.
             const type2tc rt = g->type;
-            emit_rung(
-              vname,
-              "reteq0",
-              "return == 0",
-              or2tc(no_ret, equality2tc(g, gen_zero(rt))));
-            emit_rung(
-              vname,
-              "retne0",
-              "return != 0",
-              or2tc(no_ret, notequal2tc(g, gen_zero(rt))));
+            if (!assert_candidates_exact)
+            {
+              emit_rung(
+                vname,
+                "reteq0",
+                "return == 0",
+                or2tc(no_ret, equality2tc(g, gen_zero(rt))));
+              emit_rung(
+                vname,
+                "retne0",
+                "return != 0",
+                or2tc(no_ret, notequal2tc(g, gen_zero(rt))));
+            }
 
             if (sp != nullptr && sp->has_abs)
             {

@@ -189,6 +189,18 @@ STRATEGY_FLAGS_REFUSED = {
                            "and its report-writing call site is gated off",
 }
 
+SOLVER_SELECTION_ARGS = {
+    "--z3",
+    "--cvc5",
+    "--bitwuzla",
+    "--boolector",
+    "--cvc4",
+    "--yices",
+    "--mathsat",
+    "--smtlib",
+    "--default-solver",
+}
+
 
 def check_esbmc_args(extra):
     """The refusal, or None. Applied to what the CALLER passes, never to the
@@ -214,6 +226,11 @@ def check_esbmc_args(extra):
                     f"so it explores a SUPERSET of executions and cannot make "
                     f"a path look infeasible that is not")
     return None
+
+
+def esbmc_args_select_solver(extra):
+    """Whether caller-supplied ESBMC args already choose a solver."""
+    return any(a in SOLVER_SELECTION_ARGS for a in extra or [])
 
 
 # ---- WHICH CELL A RUN IS IN, AND WHY THE ARTEFACT HAS TO SAY SO --------------
@@ -546,6 +563,33 @@ def parse_ladder(log):
         if m and refusal is None:
             refusal = m.group(1)
     return (rows or partial_rows), summary, refusal, blocker
+
+
+def should_retry_exact_mapping_r2_with_cvc5(spec, rows, extra_args):
+    """A narrow retry gate for Bitwuzla's nested-array unknowns.
+
+    Fallback is intentionally limited to exact R2 specs over mapping slots. The
+    first pass has already asked only explicit candidates, so a retry buys a
+    source/typed oracle rather than spending CVC5 on the mechanical ladder. If
+    the caller selected a solver, keep that choice.
+    """
+    if esbmc_args_select_solver(extra_args):
+        return False
+    if not spec or spec.get("candidate_policy") != "exact":
+        return False
+    mapping_vars = {
+        var.get("name") for var in spec.get("vars", [])
+        if "[" in str(var.get("name") or "")
+    }
+    if not mapping_vars:
+        return False
+    for var, text, verdict in rows or []:
+        if var in mapping_vars and "NO VERDICT" in verdict and (
+                text.startswith("post == ") or text.startswith("post in [")
+                or text.startswith("post - pre in [")
+                or text.startswith("pre - post in [")):
+            return True
+    return False
 
 
 def ladder_answer_gap(asked, rows):
@@ -2966,6 +3010,7 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
                 "candidate in this batch was refuted by Forge")
             continue
         spec = dict(base_spec)
+        spec["candidate_policy"] = "exact"
         spec["vars"] = entries
         path = write_spec(f".r2_{s['param']}_s{stage}", spec)
         log(f"[put]   R2 pass {i + 1}/{len(specs)}: stage {stage} {kind} "
@@ -10350,12 +10395,34 @@ def main():
                 return p
 
             def _run_r2(spec_path):
+                extra = (
+                    ["--path-cov-assert", spec_path, "--cov-report-json"]
+                    + a.esbmc_arg + unwind_applied)
                 o, _rc, _w = run_esbmc(
                     a.esbmc, a.sol, a.ast, a.contract, a.unit,
-                    ["--path-cov-assert", spec_path, "--cov-report-json"]
-                    + a.esbmc_arg + unwind_applied,
+                    extra,
                     assert_dir, a.max_tx, esbmc_budget("R2"), a.memlimit,
                     a.scope)
+                rows_o, _summary_o, _refusal_o, _blocker_o = parse_ladder(o)
+                with open(spec_path) as f:
+                    spec_o = json.load(f)
+                if should_retry_exact_mapping_r2_with_cvc5(
+                        spec_o, rows_o, a.esbmc_arg + unwind_applied):
+                    print("[put]   R2 exact mapping pass got solver unknown "
+                          "under the default solver; retrying this spec once "
+                          "with --cvc5")
+                    notes.append("R2 exact mapping solver fallback: --cvc5")
+                    cvc5_budget = min(esbmc_budget("R2-cvc5"), 240)
+                    o2, _rc2, _w2 = run_esbmc(
+                        a.esbmc, a.sol, a.ast, a.contract, a.unit,
+                        extra + ["--cvc5"],
+                        assert_dir, a.max_tx, cvc5_budget, a.memlimit,
+                        a.scope)
+                    rows_2, _summary_2, _refusal_2, blocker_2 = parse_ladder(o2)
+                    if attempt_is_usable(rows_2, blocker_2):
+                        return o2
+                    print("[put]   R2 --cvc5 retry produced no usable ladder; "
+                          "keeping the default-solver result")
                 return o
 
             rows += maybe_run_r2_passes(

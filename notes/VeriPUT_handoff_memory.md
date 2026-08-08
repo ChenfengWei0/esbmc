@@ -20194,3 +20194,92 @@ Verification:
   scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
 
 No ESBMC benchmark rerun was spent for this change yet.
+
+## 2026-08-08 RQ1 priority ladder
+
+The RQ1 repair target is not just `no-valid`.
+
+Use a three-level methodology backlog:
+
+1. `no-valid`: no reference-valid test exists.  This is the minimum viability
+   failure.
+2. `valid-no-PUT`: a valid concrete replay exists, but no parameterized unit
+   test exists.  This directly weakens the PUT method claim even when raw valid
+   improves.
+3. `valid-PUT-no-R1/R2`: a PUT exists, but only weak R0-style or rollback-only
+   assertions are retained.  This is a PUT strength failure and should be
+   tracked separately from no-valid.
+
+Generation decisions should therefore prefer fixes that convert:
+
+- `no-valid -> valid`
+- `valid-no-PUT -> valid PUT`
+- `PUT-R0-only -> PUT with meaningful R1/R2`
+
+Do not optimize only for the raw valid ratio.  The useful success metric is the
+valid PUT ratio plus the fraction of those PUTs carrying semantic R1/R2
+oracles.  Concrete replay tests remain useful as fallback artifacts, but they
+should not dominate the final RQ1 story.
+
+### 2026-08-08 no-R1/R2 repair: exact R2 pass plus narrow CVC5 fallback
+
+Target probe:
+
+- Unit: `peer182__peer_ccsolbmc__shibabread.approve`, path enc `15`.
+- Expected semantic source R2:
+  `_allowances[msg.sender][spender]: post == amount`, plus
+  `return == true`.
+- Existing strong-source scheduling did propose that mapping-slot source R2,
+  and Foundry fuzz prefilter did NOT refute it, but the emitted PUT previously
+  kept only weak `return == true`/exit assertions because ESBMC/Bitwuzla
+  answered the mapping equality with `NO VERDICT (solver unknown)`.
+
+Root cause and fix:
+
+- The source R2 pass was "source first" in the external scheduler, but
+  `--path-cov-assert` still auto-emitted mechanical `post==pre`,
+  `post!=pre`, and ordering rungs before the structured source equality.  This
+  made fallback solver experiments spend time on rows we did not need.
+- `src/goto-programs/goto_coverage.cpp` now accepts
+  `"candidate_policy": "exact"` in a `--path-cov-assert` spec.  In this mode it
+  skips the automatic mechanical state/mapping/return value rungs and emits
+  only the explicit structured candidates from the spec, while still keeping
+  `retlive` for return non-vacuity.
+- `scripts/solidity_path_put.py` writes `candidate_policy: exact` for extra R2
+  passes.  The first ladder still keeps default R1/ordering behavior; only
+  follow-on R2 passes are exact.
+- Mapping-slot index expressions are now cast to the lowered array index width
+  when building post-state slot reads in `goto_coverage.cpp`
+  (`path_cov_slot_index_key`).  This makes the ladder's direct array read match
+  Solidity frontend writes such as
+  `_allowances[(uint256)owner][(uint256)spender]=amount`.
+- Bitwuzla still returns `NO VERDICT (solver unknown)` on the exact mapping
+  equality and prints `Equality over constant arrays not fully supported yet`.
+  Therefore this is a solver/backend limitation, not just candidate ordering.
+- A narrow external fallback retries only exact R2 specs over mapping slots
+  when the default solver gives `NO VERDICT (solver unknown)` and the caller did
+  not explicitly select a solver.  The retry appends `--cvc5` and is capped at
+  240s so one fallback cannot consume the whole 600s budget.
+
+Verification/probe result:
+
+- Direct exact Bitwuzla probe reached only 4 claims and still returned:
+  `_allowances[msg.sender][spender]: post == amount  NO VERDICT`.
+- Direct exact CVC5 probe returned:
+  `_allowances[msg.sender][spender]: post == amount  HOLDS` and
+  `return: return == true  HOLDS`.
+- Full `put_all.py` single-case probe:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/peer_ccsolbmc__shibabread/put/approve_exact_cvc5_fallback_probe_1`
+  produced B-valid PUT with 2 fuzz parameters and 3 oracle asserts:
+  one post-state mapping R2, one return R2, one exit-kind R0.
+- Generated test:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/peer_ccsolbmc__shibabread/put/approve_exact_cvc5_fallback_probe_1/peer182__peer_ccsolbmc__shibabread__certify-results/test/SHIBABREADCovTest_SHIBABREAD_approve_put15.t.sol`
+
+Verification commands run after the code change:
+
+- `git diff --check`
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  (`256 test(s) ran`, all checks passed)
+- `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+- `cmake --build build --target esbmc -j2`

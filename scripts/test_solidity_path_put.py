@@ -7402,6 +7402,10 @@ def test_a_source_R2_HOLD_skips_later_mechanical_candidates_for_that_var():
                  f"source and remaining typed entries run separately: "
                  f"{[suffix for suffix, _ in written]}")
     if len(written) == 2:
+        bad += check(all(spec.get("candidate_policy") == "exact"
+                         for _suffix, spec in written),
+                     f"R2 passes ask only their explicit candidates: "
+                     f"{written}")
         bad += check([entry["name"] for entry in written[1][1]["vars"]] ==
                      ["other"],
                      f"the proven variable is pruned from the typed batch: "
@@ -7412,6 +7416,41 @@ def test_a_source_R2_HOLD_skips_later_mechanical_candidates_for_that_var():
                  f"unproven variables in the typed batch still run: {got}")
     bad += check(any("pruned 1 mechanical" in line for line in said),
                  f"the prune is visible in logs: {said}")
+    return bad
+
+
+def test_exact_mapping_R2_unknown_is_the_only_CVC5_retry_shape():
+    from solidity_path_put import (  # noqa: E402
+        parse_ladder, should_retry_exact_mapping_r2_with_cvc5)
+    spec = {
+        "candidate_policy": "exact",
+        "vars": [{"name": "allowance[msg.sender][spender]",
+                  "equals": [{"id": "src0",
+                              "term": {"kind": "coord",
+                                       "name": "amount"}}]}],
+    }
+    rows, _s, _r, _b = parse_ladder(
+        "--path-cov-assert: allowance[msg.sender][spender]: "
+        "post == amount  NO VERDICT (solver unknown)\n")
+    bad = 0
+    bad += check(should_retry_exact_mapping_r2_with_cvc5(spec, rows, []),
+                 "exact mapping R2 solver-unknown is retried with CVC5")
+    bad += check(not should_retry_exact_mapping_r2_with_cvc5(
+        spec, rows, ["--cvc5"]),
+                 "an explicit caller solver is respected")
+    scalar = dict(spec)
+    scalar["vars"] = [{"name": "total",
+                       "equals": [{"id": "src0",
+                                   "term": {"kind": "coord",
+                                            "name": "amount"}}]}]
+    bad += check(not should_retry_exact_mapping_r2_with_cvc5(
+        scalar, [("total", "post == amount",
+                  "NO VERDICT (solver unknown)")], []),
+                 "scalar unknowns do not trigger the mapping fallback")
+    mixed = dict(spec)
+    mixed.pop("candidate_policy")
+    bad += check(not should_retry_exact_mapping_r2_with_cvc5(mixed, rows, []),
+                 "the broad first ladder is not retried")
     return bad
 
 
@@ -11482,6 +11521,7 @@ def main():
               test_the_CAP_pass_IS_SKIPPED_when_stage_1_ALREADY_HOLDS,
               test_the_CAP_pass_IS_SKIPPED_when_stage_1_gave_NO_VERDICT,
               test_a_source_R2_HOLD_skips_later_mechanical_candidates_for_that_var,
+              test_exact_mapping_R2_unknown_is_the_only_CVC5_retry_shape,
               test_an_R2_PASS_THAT_RETURNS_NOTHING_is_REPORTED_not_absorbed,
               test_a_ROLLBACK_path_DOES_NOT_SPEND_an_R2_ESBMC_pass,
               test_a_REVERT_path_DOES_NOT_SPEND_an_R2_ESBMC_pass,
