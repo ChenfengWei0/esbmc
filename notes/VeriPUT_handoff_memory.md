@@ -21626,3 +21626,24 @@ Update after Aug 8 real203 600s recovery batches:
   ERC-3643 cases: `IdentityRegistryStorage`, `TrustedIssuersRegistry`, and
   `IdentityRegistry` all produced useful PUT/R1/R2 artifacts only near the
   end of the 600s window.
+
+Update after Euler no-candidate stress batch:
+
+- Ran real203 Euler batch at `jobs=4`, `memlimit=8GiB`, `timeout=600`, with
+  early-stop knobs disabled:
+  `BalanceForwarder`, `Borrowing`, `ESynth`, `EulerSavingsRate`, `Governance`,
+  `PegStabilityModule`, `RiskManager`, and `Token`.
+- Result was `0/8` valid.  `EulerSavingsRate` and `PegStabilityModule`
+  no-outputed before the full budget; the other six exhausted the 600s subject
+  budget.  The run had no OOM and no nested memory-guard refusal, so the
+  negative result is algorithmic rather than resource-policy noise.
+- Scheduling conclusion: old `no Stage-2 candidate after 4 consecutive units`
+  is not by itself a high-yield 600s rerun signal.  It is useful to disable the
+  early-stop when a project/contract family already shows certified regions
+  nearby, but broad sweeping of this bucket wastes time.  For these Euler
+  modules, further progress likely needs code-side Stage2 improvements in
+  witness discovery, coordinate extraction, or region pruning.
+- Latest real203 snapshot remains:
+  `valid_cases=38`, `put_cases=30`, `r1r2_cases=22`,
+  `concrete_only=8`, `no_valid=165`, `valid_units=208`,
+  `put_units=139`, `r1r2_put_units=45`.
