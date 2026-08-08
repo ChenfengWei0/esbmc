@@ -161,14 +161,17 @@ def green_r1r2_no_width_rows(
 
 
 def quality_bucket(result: dict, result_path: Path | None = None) -> str:
-    valid = _count(result, "valid")
-    put_valid = _count(result, "put_valid")
+    totals = artifact_totals(result, result_path)
+    valid = totals["valid"]
+    put_valid = totals["put_valid"]
     if put_valid <= 0 and green_r1r2_no_width_rows(result, result_path):
         return "PUT-with-R1R2-but-no-width"
     if valid <= 0:
         return "no-valid"
     if put_valid <= 0:
         return "valid-no-PUT"
+    if _summary_valid_put_has_r1r2(result, result_path):
+        return "valid-PUT-with-R1R2"
     for test in valid_put_tests(result):
         if _has_r1r2(test.get("oracle_classes")):
             return "valid-PUT-with-R1R2"
@@ -261,6 +264,10 @@ def classify(result: dict, bucket: str, result_path: Path | None = None) -> str:
 
 
 def _artifact_totals(result: dict) -> dict:
+    return _result_artifact_totals(result)
+
+
+def _result_artifact_totals(result: dict) -> dict:
     put = result.get("put", {})
     return {
         "raw": put.get("raw", 0),
@@ -270,6 +277,65 @@ def _artifact_totals(result: dict) -> dict:
         "concrete_raw": put.get("concrete_raw", 0),
         "concrete_valid": put.get("concrete_valid", 0),
     }
+
+
+def summary_artifact_rows(
+        result: dict, result_path: Path | None = None) -> list[dict]:
+    rows = []
+    seen = set()
+    for path in _summary_paths(result, result_path):
+        doc = _load_json(path)
+        for row in ((doc.get("deliverable_b") or {}).get("rows") or []):
+            if row.get("refused") or row.get("stale"):
+                continue
+            kind = row.get("kind")
+            if kind not in {"put", "concrete"}:
+                continue
+            key = (row.get("file"), row.get("test"), row.get("unit"),
+                   row.get("enc"), kind)
+            if key in seen:
+                continue
+            seen.add(key)
+            enriched = dict(row)
+            enriched["summary_path"] = str(path)
+            rows.append(enriched)
+    return rows
+
+
+def summary_artifact_totals(
+        result: dict, result_path: Path | None = None) -> dict | None:
+    rows = summary_artifact_rows(result, result_path)
+    if not rows:
+        return None
+    return {
+        "raw": len(rows),
+        "valid": sum(1 for row in rows if row.get("valid_reference_test")),
+        "put_raw": sum(1 for row in rows if row.get("kind") == "put"),
+        "put_valid": sum(
+            1 for row in rows
+            if row.get("kind") == "put" and row.get("valid_reference_test")),
+        "concrete_raw": sum(
+            1 for row in rows if row.get("kind") == "concrete"),
+        "concrete_valid": sum(
+            1 for row in rows
+            if row.get("kind") == "concrete"
+            and row.get("valid_reference_test")),
+    }
+
+
+def artifact_totals(result: dict, result_path: Path | None = None) -> dict:
+    return summary_artifact_totals(result, result_path) or _artifact_totals(
+        result)
+
+
+def _summary_valid_put_has_r1r2(
+        result: dict, result_path: Path | None = None) -> bool:
+    for row in summary_artifact_rows(result, result_path):
+        if row.get("kind") != "put" or not row.get("valid_reference_test"):
+            continue
+        if _put_json_has_r1r2(Path(row["summary_path"]), row.get("test")):
+            return True
+    return False
 
 
 def _float_or_zero(value) -> float:
@@ -307,6 +373,7 @@ def triage_rows(result_root: Path, datasets: list[str]) -> list[dict]:
         bucket = quality_bucket(result, path)
         row = result.get("row", {})
         cert = result.get("certification", {})
+        totals = artifact_totals(result, path)
         rows.append({
             "dataset": dataset,
             "subject_id": subject_id,
@@ -323,7 +390,7 @@ def triage_rows(result_root: Path, datasets: list[str]) -> list[dict]:
             "stage4_wall_s": row.get("stage4_wall_s"),
             "foundry_replay_wall_s": row.get("foundry_replay_wall_s"),
             "maxrss_mb": row.get("maxrss_mb"),
-            **_artifact_totals(result),
+            **totals,
         })
     return rows
 

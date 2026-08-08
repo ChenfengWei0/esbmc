@@ -21107,3 +21107,29 @@ Update after the no-PUT/no-R1R2 prioritization sample:
   this point should be: valid PUTs with numeric observable state/return but no
   R1/R2, then valid concrete-only rows likely liftable into PUTs, then
   no-width R1/R2 PUTs, then no-valid.
+
+Update after the DosAuction no-PUT sample:
+
+- `peer182/peer_solar__DosAuction.bid` was rerun Stage4-only as a representative
+  `valid-no-PUT` repair.  Stage2 had already certified two paths and the old
+  Stage4 ladder already found strong scalar oracles, but the old emitter did
+  not render the payable high-level call's wide `msg.value` coordinate, so the
+  result fell back to concrete.
+- Current code emits two PUTs for DosAuction.  The normal path `enc=7` is a
+  reference-valid PUT with `msg.value` fuzz, Foundry green, and 5 assertions:
+  R0 normal exit plus R1/R2 over `currentFrontrunner` and `currentBid`
+  (`currentFrontrunner == msg.sender`, `currentBid == msg.value`, plus
+  surviving state-change/frame checks).  The rollback path `enc=2` emits an R0
+  PUT but has no fuzz/width and correctly drops post-state R1/R2 as
+  unobservable.  Net effect for peer triage: `valid-no-PUT` decreases by 1 and
+  `valid-PUT-with-R1R2` increases by 2 at the summary level.
+- `rq1_veriput_triage.py` now derives artifact totals and quality buckets from
+  fresh `put-summary.json` rows when available, falling back to `result.json`
+  only when summaries are absent.  This matters after Stage4-only targeted
+  reruns: otherwise the queue keeps stale subject-level counts and hides cases
+  that were fixed without a full subject rerun.
+- Current peer triage after the Greeter and DosAuction Stage4-only samples:
+  `no-valid=69`, `valid-no-PUT=3`, `valid-PUT-no-R1R2=22`,
+  `valid-PUT-with-R1R2=88`; artifact totals are `raw=462`, `valid=422`,
+  `put_raw=391`, `put_valid=361`, `concrete_raw=71`,
+  `concrete_valid=61`.
