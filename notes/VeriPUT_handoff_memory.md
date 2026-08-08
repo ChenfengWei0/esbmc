@@ -20558,3 +20558,41 @@ Update after latest RQ1 strength triage tooling:
   `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only notes/coverage/scripts/rq1_veriput_triage.py scripts/test_rq1_veriput_triage.py`;
   `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_triage.py --benchmark bugfix124 --sample-limit 3 --json`;
   focused triage generation command above.
+
+Update after dynamic calldata PUT lifting:
+
+- User clarified that the rescue queue must not be only `no-valid`: it must
+  focus `valid-no-PUT` to improve generalization rate, and also
+  `valid-PUT-no-R1/R2` to improve oracle strength.  Treat `no-valid`,
+  `valid-no-PUT`, and `valid-PUT-no-R1/R2` as separate engineering queues.
+  A valid concrete replay is not enough for the method claim, and a PUT with
+  only R0 is still a weak result for mutation/regression detection.
+- `scripts/solidity_path_put.py` now supports conservative fuzz lifting for
+  omitted or proof-unconstrained dynamic calldata parameters of type
+  `string`/dynamic `bytes`.  It emits Foundry test parameters as
+  `string memory` / `bytes memory`, fills replay/setup defaults with `""` /
+  `hex""`, and updates low-level `abi.encodeWithSignature` spellings to
+  include `string` / `bytes`.
+- Dynamic calldata lifting is deliberately PUT-only: it records a rendered
+  fuzz width of `2` so the floor test recognizes a real fuzz dimension, but it
+  does not add the coordinate to numeric R1/R2 endpoint lookup tables and does
+  not emit `bound()` for it.  Stats now include `dynamic_fuzz_coords` alongside
+  `wide_fuzz_coords`, so later RQ1 analysis can distinguish dynamic PUT
+  generalization from scalar coordinates usable in R1/R2 expressions.
+- This should improve `valid-no-PUT / unsupported-calldata-type` cases such as
+  `acfix_3_5_088_EmergencyOracleFactory.newEmergencyOracle(string calldata
+  description)` when ESBMC has certified that the path does not depend on the
+  dynamic argument.  It is not intended to solve
+  `mapping(address => string)` return-oracle rendering in
+  `StandaloneReverseRegistrar`; that remains a separate `valid-PUT-no-R1/R2`
+  dynamic-storage/return blocker.
+- Regression added:
+  `test_missing_string_replay_arg_becomes_dynamic_fuzz_input` and
+  `test_missing_low_level_dynamic_args_update_abi_signature` in
+  `scripts/test_solidity_path_put.py`.
+- Verification for this Python-side fix, no ESBMC run consumed:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  (263/263);
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`.

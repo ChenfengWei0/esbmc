@@ -62,6 +62,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                assert_query_pins,
                                assert_query_region_entries, build_put,
                                check_esbmc_args, cell_of,
+                               complete_missing_call_args,
                                constructor_external_interface_mock_lines,
                                constructor_staticcall_mock_lines,
                                effective_exit_kind,
@@ -11343,6 +11344,79 @@ contract KeyedCovTest is Test {
     return bad
 
 
+def test_missing_string_replay_arg_becomes_dynamic_fuzz_input():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {EmergencyOracleFactory} from "./EmergencyOracleFactory.sol";
+contract EmergencyOracleFactoryCovTest is Test {
+  EmergencyOracleFactory c1;
+  function setUp() public {
+    c1 = new EmergencyOracleFactory();
+  }
+  // claim: sol:@C@EmergencyOracleFactory@F@newEmergencyOracle#8:path:4
+  function test_cov_0() public {
+    // [revert-tolerant] outcome not asserted
+    try c1.newEmergencyOracle() {} catch {}
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for(
+        "sol:@C@EmergencyOracleFactory@F@newEmergencyOracle#8", 4)
+    notes = []
+    put, stats = build_put(
+        "EmergencyOracleFactory", "newEmergencyOracle", 4, 1,
+        "sol:@C@EmergencyOracleFactory@F@newEmergencyOracle#8",
+        region={}, holes={}, pins={},
+        params=[("description", "string calldata")], emitted=em, case=case,
+        layout={}, ladder_rows=[], notes=notes, exit_kind="revert")
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    bad += check("function test_put_EmergencyOracleFactory_newEmergencyOracle_"
+                 "path4(string memory description) public" in text,
+                 "a dynamic string calldata parameter becomes a Foundry fuzz arg")
+    bad += check("bound(description" not in text,
+                 "dynamic calldata is not sent through numeric bound()")
+    bad += check("try c1.newEmergencyOracle(description) {} catch { "
+                 "_put_ok = false; }" in text,
+                 "the target call receives the dynamic fuzz parameter")
+    bad += check(stats["fuzz_params"] == 1
+                 and stats["wide_fuzz_coords"] == ["description"]
+                 and stats["dynamic_fuzz_coords"] == ["description"],
+                 f"the B ledger records the dynamic fuzz coordinate: {stats}")
+    bad += check(any("not available as a numeric R1/R2 endpoint" in n
+                     for n in notes),
+                 f"the note records the R1/R2 limitation: {notes}")
+    return bad
+
+
+def test_missing_low_level_dynamic_args_update_abi_signature():
+    line = (
+        '    (bool ok, ) = address(c1).call(abi.encodeWithSignature("pack()"));')
+    completed, args, implicit, err = complete_missing_call_args(
+        line, "pack", [("label", "string calldata"), ("blob", "bytes")], [])
+    bad = 0
+    bad += check(err is None, f"dynamic low-level completion succeeds: {err}")
+    bad += check(implicit == [0, 1],
+                 f"both dynamic parameters are implicit fuzz candidates: "
+                 f"{implicit}")
+    bad += check(args == ['""', 'hex""'],
+                 f"dynamic defaults compile in raw replay/setup paths: {args}")
+    bad += check('abi.encodeWithSignature("pack(string,bytes)", "", hex"")'
+                 in (completed or ""),
+                 f"the ABI signature and defaults are rendered: {completed}")
+    return bad
+
+
 def test_missing_low_level_value_gate_args_update_abi_signature():
     """The same omitted-argument repair must update low-level ABI calls."""
     em, case = _st1inch_missing_case(2)
@@ -11772,6 +11846,8 @@ def main():
               test_address_payable_constructor_args_are_cast,
               test_unused_setup_helper_deployment_is_revert_tolerant,
               test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input,
+              test_missing_string_replay_arg_becomes_dynamic_fuzz_input,
+              test_missing_low_level_dynamic_args_update_abi_signature,
               test_missing_low_level_value_gate_args_update_abi_signature,
               test_assembled_put_source_drops_stale_concrete_replays,
               test_assembled_put_source_drops_stale_replays_in_later_contracts,

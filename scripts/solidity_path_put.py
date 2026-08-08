@@ -110,6 +110,7 @@ from solidity_ast_dependencies import (SLOT_DEPENDENCY_POLICY,
                                         unit_state_dependencies)
 
 UINT256_MAX = (1 << 256) - 1
+DYNAMIC_RENDERED_WIDTH = 2
 
 
 class ConcreteFallback(Exception):
@@ -5170,11 +5171,31 @@ def full_lift_bounds(sol_type):
     return (0, (1 << width) - 1)
 
 
+def dynamic_calldata_signature_type(sol_type):
+    """Foundry test parameter spelling for fuzzable dynamic calldata."""
+    t = _norm_ty(sol_type)
+    if t == "string":
+        return "string memory"
+    if t == "bytes":
+        return "bytes memory"
+    return None
+
+
+def dynamic_default_call_arg(sol_type):
+    """Concrete placeholder for dynamic calldata omitted by the raw replay."""
+    t = _norm_ty(sol_type)
+    if t == "string":
+        return '""'
+    if t == "bytes":
+        return 'hex""'
+    return None
+
+
 def default_call_arg(sol_type):
     """Concrete placeholder used before a missing emitted arg is fuzz-lifted."""
     lk = lift_kind(sol_type)
     if lk is None:
-        return None
+        return dynamic_default_call_arg(sol_type)
     kind, _width = lk
     if kind == "bool":
         return "false"
@@ -5197,6 +5218,8 @@ def signature_type(sol_type):
     m = re.match(r"^uint(\d+)?$", t)
     if m:
         return f"uint{m.group(1) or 256}"
+    if t in ("string", "bytes"):
+        return t
     return None
 
 
@@ -6722,7 +6745,8 @@ def complete_missing_call_args(line, unit, params, args):
         name, ty = params[idx]
         default = default_call_arg(ty)
         bounds = full_lift_bounds(ty)
-        if default is None or bounds is None:
+        dynamic_sig = dynamic_calldata_signature_type(ty)
+        if default is None or (bounds is None and dynamic_sig is None):
             return None, None, [], (
                 f"emitted call omits parameter {idx} `{name}` of type `{ty}`, "
                 "which this emitter cannot synthesize as a full-domain fuzz input")
@@ -7050,13 +7074,23 @@ def potential_rendered_widths_for_put(unit, params, emitted, case, region,
             width = rendered_width_for_region(pname, region, holes)
         elif idx in implicit_full:
             bounds = full_lift_bounds(ptype)
-            width = None if bounds is None else bounds[1] - bounds[0] + 1
+            if bounds is None:
+                width = (DYNAMIC_RENDERED_WIDTH
+                         if dynamic_calldata_signature_type(ptype) else None)
+            else:
+                width = bounds[1] - bounds[0] + 1
         elif lift_unconstrained_calldata:
             bounds = full_lift_bounds(ptype)
-            width = None if bounds is None else bounds[1] - bounds[0] + 1
+            if bounds is None:
+                width = (DYNAMIC_RENDERED_WIDTH
+                         if dynamic_calldata_signature_type(ptype) else None)
+            else:
+                width = bounds[1] - bounds[0] + 1
         else:
             continue
-        if width is None or lift_kind(ptype) is None:
+        if width is None:
+            continue
+        if lift_kind(ptype) is None and not dynamic_calldata_signature_type(ptype):
             continue
         widths[pname] = width
 
@@ -7141,6 +7175,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # coordinate -> how many values the EMITTED test leaves it. See the floor
     # test below; `lifted` alone cannot answer it.
     rendered_width = {}
+    dynamic_fuzz_coords = []
     # WHAT AN R2 BOUND IS ALLOWED TO NAME, and it is a much smaller set than
     # "the unit's parameters". A rung may now carry a NAMED endpoint --
     # `post - pre in [amount, amount]`, the property a deposit is actually
@@ -7294,34 +7329,70 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                      "environment slice: " + "; ".join(env_refusals))
         return None, None
     for idx, (pname, ptype) in enumerate(params):
+        dynamic_sig_ty = None
+        lo = hi = None
+        param_holes = []
         if pname in region:
             lo, hi = region[pname]
             param_holes = sorted(holes.get(pname, ()))
         elif idx in implicit_full:
-            lo, hi = full_lift_bounds(ptype)
-            param_holes = []
+            bounds = full_lift_bounds(ptype)
+            if bounds is None:
+                dynamic_sig_ty = dynamic_calldata_signature_type(ptype)
+                if dynamic_sig_ty is None:
+                    notes.append(
+                        f"declared parameter `{pname}` is omitted by the "
+                        f"emitted replay, but type `{ptype}` cannot be "
+                        f"synthesized as a full-domain fuzz input; kept "
+                        f"PINNED at the emitter's literal")
+                    continue
+            else:
+                lo, hi = bounds
         elif lift_unconstrained_calldata:
             bounds = full_lift_bounds(ptype)
             if bounds is None:
+                dynamic_sig_ty = dynamic_calldata_signature_type(ptype)
+                if dynamic_sig_ty is None:
+                    notes.append(
+                        f"declared parameter `{pname}` is absent from the "
+                        f"certified region, but type `{ptype}` cannot be "
+                        f"synthesized as a full-domain fuzz input; kept PINNED at "
+                        f"the emitter's literal")
+                    continue
                 notes.append(
                     f"declared parameter `{pname}` is absent from the "
-                    f"certified region, but type `{ptype}` cannot be "
-                    f"synthesized as a full-domain fuzz input; kept PINNED at "
-                    f"the emitter's literal")
-                continue
-            lo, hi = bounds
-            param_holes = []
-            notes.append(
-                f"declared parameter `{pname}` is absent from the certified "
-                f"region; lifting it as a full-domain calldata fuzz input "
-                f"because the certification proof leaves it unconstrained")
+                    f"certified region; lifting it as a dynamic calldata fuzz "
+                    f"input because the certification proof leaves it "
+                    f"unconstrained")
+            else:
+                lo, hi = bounds
+                notes.append(
+                    f"declared parameter `{pname}` is absent from the certified "
+                    f"region; lifting it as a full-domain calldata fuzz input "
+                    f"because the certification proof leaves it unconstrained")
         else:
             continue                       # pinned: keep the emitter's literal
+        if dynamic_sig_ty is not None:
+            var = pname if pname not in used and pname != "c0" else "p_" + pname
+            sig.append((dynamic_sig_ty, var))
+            repl[idx] = var
+            lifted.append(pname)
+            dynamic_fuzz_coords.append(pname)
+            rendered_width[pname] = DYNAMIC_RENDERED_WIDTH
+            notes.append(
+                f"coordinate `{pname}` has dynamic type `{ptype}`; it is "
+                "rendered as a calldata fuzz input but is not available as a "
+                "numeric R1/R2 endpoint")
+            continue
         lk = lift_kind(ptype)
         if lk is None:
             notes.append(f"coordinate `{pname}` has type `{ptype}`, which "
                          f"this emitter cannot bound; kept PINNED at the "
                          f"emitter's literal")
+            continue
+        if lo is None or hi is None:
+            notes.append(f"coordinate `{pname}` could not be given scalar "
+                         "fuzz bounds; kept PINNED at the emitter's literal")
             continue
         kind, width = lk
         var = pname if pname not in used and pname != "c0" else "p_" + pname
@@ -8591,6 +8662,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              "rendered_width": dict(sorted(rendered_width.items())),
              "wide_fuzz_coords": sorted(
                  n for n, width in rendered_width.items() if width > 1),
+             "dynamic_fuzz_coords": sorted(dynamic_fuzz_coords),
              # COUNTED, and counted separately. A conditional assertion is an
              # assertion the test carries, so it belongs in the total; it is a
              # WEAKER one, so a reader who cannot see how many are conditional
@@ -10034,6 +10106,7 @@ def main():
                            "lifted": [],
                            "rendered_width": {},
                            "wide_fuzz_coords": [],
+                           "dynamic_fuzz_coords": [],
                            "asserts": 0,
                            "state_asserts": 0,
                            "return_asserts": 0,
@@ -10184,6 +10257,7 @@ def main():
                            "lifted": [],
                            "rendered_width": rendered_width_precheck,
                            "wide_fuzz_coords": [],
+                           "dynamic_fuzz_coords": [],
                            "asserts": 0,
                            "state_asserts": 0,
                            "return_asserts": 0,
@@ -10823,6 +10897,7 @@ def main():
                            "lifted": [],
                            "rendered_width": {},
                            "wide_fuzz_coords": [],
+                           "dynamic_fuzz_coords": [],
                            "asserts": 0,
                            "state_asserts": 0,
                            "return_asserts": 0,
