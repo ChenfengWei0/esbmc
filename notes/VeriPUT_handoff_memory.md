@@ -19786,6 +19786,19 @@ Verification:
 No ESBMC rerun was consumed for this fix yet; save benchmark reruns for a
 small selected NO-COORDINATE queue after more script-level fixes are batched.
 
+Follow-up parser hardening:
+
+- Existing rows showed `coords` polluted by prose such as
+  `[coords] ESBMC query pins OMIT immutable/constant coordinate(s): ...`.
+- Added legacy-parser exclusions for the current prose prefixes:
+  `ESBMC query pins OMIT`, `STATE NOT PINNED`,
+  `mapping READ slot access priority`, and `bytesN mapping key`.
+- `scripts/test_certify_all_partial_journal.py` now covers these lines.
+- Verification: `python3 -m py_compile
+  notes/coverage/scripts/certify_all.py
+  scripts/test_certify_all_partial_journal.py` and
+  `python3 scripts/test_certify_all_partial_journal.py` passed.
+
 ## 2026-08-08 no-R1/R2 triage split
 
 Enhanced `notes/coverage/scripts/rq1_veriput_triage.py` to split

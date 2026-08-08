@@ -564,11 +564,15 @@ def parse_driver(out):
                  "[coords] no --ast", "[coords] every",
                  "[coords] UNSUPPORTED", "[coords] ACCOUNTING",
                  "[coords] --pin-agreed-state",
+                 "[coords] ESBMC query pins OMIT",
                  # Added when the whitelist failed. Kept because logs written by
                  # a driver without the FREE marker still have to parse.
                  "[coords] MAPPING SLOT", "[coords] mapping(s)",
+                 "[coords] mapping READ slot access priority",
                  "[coords] mapping dependency policy",
                  "[coords] STATE PINNED",
+                 "[coords] STATE NOT PINNED",
+                 "[coords] bytesN mapping key",
                  "[coords] slot candidate", "[coords] NO mapping slot",
                  "[coords] the outer-box rounds refused")):
             rec["coords"] = [c.strip() for c in m.group(1).split(",")
