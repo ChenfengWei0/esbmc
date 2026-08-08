@@ -74,6 +74,20 @@ Validation:
   normal path `enc=15` gained an R2 source-assignment oracle:
   `governor: post == newGovernor`; rollback paths `enc=6` and `enc=14` remain
   R0 exit-oracle PUTs because post-state R2 is unobservable after revert.
+- Official targeted RQ1 rerun:
+  `real203 / compound-finance__comet__MarketUpdateProposer` now reports
+  `status=ok`, `raw=7`, `valid=7`, `put=7/7`, `concrete=0/0`,
+  `quality_bucket=valid-PUT-with-R1R2`, wall about `600.136s`.
+  Valid PUTs:
+  `setGovernor` enc 15 = R2, enc 6/14 = R0;
+  `setMarketAdmin` enc 7 = R1+R2, enc 6 = R0;
+  `setProposalGuardian` enc 7 = R1+R2, enc 6 = R0.
+- The seven official `put.json` files all record
+  `stats.repaired_unsupported_skeleton=true`.
+- real203 triage after this rerun:
+  `quality_bucket={"no-valid":165,"valid-PUT-no-R1R2":10,"valid-PUT-with-R1R2":6,"valid-no-PUT":22}`;
+  artifact totals `raw=170`, `valid=147`, `put_raw=52`, `put_valid=49`,
+  `concrete_raw=118`, `concrete_valid=98`.
 
 ## 2026-08-08 strength backlog root-cause labels
 
