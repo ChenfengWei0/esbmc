@@ -22211,3 +22211,66 @@ Update after FeeBurnerAuthentication scalar store-alias repair:
   "valid-PUT-with-R1R2":9,"valid-no-PUT":23}`;
   artifacts `{"raw":180,"valid":158,"put_raw":62,"put_valid":58,
   "concrete_raw":118,"concrete_valid":100}`.
+
+Update after checking the remaining non-rollback no-R1/R2 candidates:
+
+- `ensdomains__ens-contracts__StandaloneReverseRegistrar` is valid PUT but
+  only R0.  Its only target unit is `nameForAddr(address) returns (string)`,
+  whose dependency is `_names[addr]`.  `forge inspect
+  StandaloneReverseRegistrar storageLayout --json` reports
+  `_names: mapping(address => string)` with value type
+  `t_string_storage` (`encoding: bytes`).  The current PUT renderer only
+  treats scalar mapping values as ESBMC-queryable/Foundry-renderable slot
+  oracles; dynamic string mapping entries are intentionally not added to the
+  scalar mapping table.  Upgrading this subject to R1/R2 therefore needs a
+  dynamic string/storage oracle, not a small region or alias fix.
+- `euler-xyz__euler-vault-kit__DToken` is valid PUT but only R0.  The only
+  certified PUT row is `emitTransfer`, which has no return value and only
+  checks `msg.sender != eVault`; `eVault` is `address public immutable eVault`
+  initialized from the constructor caller, so solc does not list it in storage
+  layout and the Foundry replay cannot set it through storage.  The script
+  drops both the `state.eVault` entry state and the guard as unnameable, so the
+  remaining oracle is normal exit (R0).  Other ERC20-facing units either pure
+  revert (`allowance`, `approve`, `transfer`, `transferFrom`) or forward to
+  `IEVault(eVault)` (`name`, `symbol`, `decimals`, `totalSupply`, `balanceOf`,
+  `asset`), leaving no stable scalar post-state/return oracle without a more
+  general immutable/interface-return mock policy.  Treat this as not
+  short-term for R1/R2.
+
+Update after real203 no-valid-unknown refresh:
+
+- The `no-valid-unknown` bucket contained stale/adopted rows with no
+  `stage2_wall_s`/`stage4_wall_s`.  Running those subjects with the current
+  script and official limits is high ROI; do this before deeper code changes.
+- Reran 17 real203 stale/unknown no-valid subjects with
+  `rq1_veriput_run.py --timeout 600 --wrapper-grace 60 --memlimit-gib 12
+  --jobs 2 --redo`.  Sixteen produced valid tests; fourteen produced R1/R2
+  PUTs:
+  `ERC-3643__ERC-3643__AgentRole`, `AgentRoleUpgradeable`,
+  `ClaimTopicsRegistry`, `DefaultCompliance`, `Token`,
+  `compound-finance__comet__MarketAdminPermissionChecker`,
+  `MarketUpdateTimelock`, `OptimismBridgeReceiver`,
+  `ScrollBridgeReceiver`, `ensdomains__ens-contracts__Controllable`,
+  `DefaultReverseRegistrar`, `ERC20Recoverable`, `Owned`,
+  `SimplePublicSuffixList`.  `ensdomains__ens-contracts__Ownable` produced
+  valid PUTs but only R0/normal-r0-only-other.  `euler-xyz__euler-vault-kit__IRMLinearKink`
+  produced one valid PUT plus concrete fallbacks but no R1/R2.
+  `compound-finance__comet__PolygonBridgeReceiver` exhausted its 600s budget
+  with no raw artifact and was reclassified into the no-valid/cert-killed
+  bucket.
+- Net real203 movement from before this stale/unknown refresh to after it:
+  `quality_bucket` changed from
+  `{"no-valid":161,"valid-PUT-no-R1R2":10,
+  "valid-PUT-with-R1R2":9,"valid-no-PUT":23}` to
+  `{"no-valid":145,"valid-PUT-no-R1R2":12,
+  "valid-PUT-with-R1R2":23,"valid-no-PUT":23}`.  Artifacts changed from
+  `{"raw":180,"valid":158,"put_raw":62,"put_valid":58,
+  "concrete_raw":118,"concrete_valid":100}` to
+  `{"raw":282,"valid":248,"put_raw":158,"put_valid":142,
+  "concrete_raw":124,"concrete_valid":106}`.
+- The remaining real203 action queue is now dominated by
+  `cleared_not_certified_fallback` concrete-only subjects (mostly
+  `COMPLETE-WITNESS-NO-COORDINATE`), structural R0-only subjects
+  (`rollback-unobservable`, string/dynamic mapping, immutable/event-only), and
+  Stage2 timeout/no-candidate/cert-killed cases.  Do not keep rerunning
+  `PolygonBridgeReceiver`; it already consumed a full 600s refresh.
