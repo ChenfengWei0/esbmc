@@ -21489,3 +21489,41 @@ Update after adopting verified probe artifacts into the official RQ1 journal:
   `valid=71`, `put=66`, `r1r2_subjects=2`, `concrete_only=5`,
   `no_valid=53`.  Before adopting these probes it was `put=63` and
   `concrete_only=8`.
+
+Update after the next RQ1 acceleration pass:
+
+- Fixed `rq1_veriput_run.py` artifact summarization for older concrete replay
+  summaries.  Some old green concrete tests include setup comments like
+  `UNSUPPORTED: ERC20 is abstract ...` for dependencies that were not
+  instantiated, while the actual test function is enabled and Forge-green.
+  `_row_is_unsupported_concrete()` now preserves concrete rows that already
+  report `forge_status == Success` or `valid_reference_test == true`.  This
+  lets old concrete artifacts be merged with newer PUT probes instead of being
+  read as zero-output.
+- Ran one 600s-class representative probe for the remaining bugfix124
+  `PrivatePool` concrete-only cluster:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool.setFeeRate_strong_probe.1786191431`.
+  `setFeeRate` finished in 323s as `NOT-CERTIFIED` with 0 certified / 4 not.
+  Ground truth is owner-gated setter (`newFeeRate <= 5000`, then
+  `feeRate = newFeeRate`), but `onlyOwner` calls
+  `Factory(factory).ownerOf(uint160(address(this)))`.  The discriminator is an
+  uncontrolled external-call return / fixture issue, not a scalar owner storage
+  alias.  Do not spend more 600s runs on the four `PrivatePool` concrete-only
+  cases until external-call return or deterministic factory fixture support is
+  improved.
+- Adopted real203 `ERC-3643__ERC-3643__DefaultCompliance` probe artifacts into
+  the official journal.  It keeps all 16 valid tests while replacing
+  `addTokenAgent`, `removeTokenAgent`, and `transferOwnership` concrete
+  fallbacks with PUTs: `raw=16`, `valid=16`, `put_valid=8`,
+  `concrete_valid=8`, `quality_bucket=valid-PUT-with-R1R2`,
+  `valid_put_with_R1_or_R2=2`, `oracle_class_counts={R0:8,R1:2,R2:3}`.
+- Latest official RQ1 snapshot after this pass:
+  `bugfix124`: 124 subjects, `valid_cases=71`, `put_cases=66`,
+  `r1r2_cases=2`, `concrete_only=5`, `no_valid=53`,
+  `valid_units=253`, `put_units=165`.
+  `real203`: 203 subjects, `valid_cases=29`, `put_cases=25`,
+  `r1r2_cases=1`, `concrete_only=4`, `no_valid=174`,
+  `valid_units=156`, `put_units=118`.
+  `peer182`: 182 subjects, `valid_cases=107`, `put_cases=109`,
+  `r1r2_cases=0`, `concrete_only=4`, `no_valid=75`,
+  `valid_units=388`, `put_units=355`.
