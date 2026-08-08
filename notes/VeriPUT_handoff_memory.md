@@ -110,6 +110,19 @@ Token rerun diagnostics:
 - Therefore the remaining issue for Token is not Foundry replay or oracle
   emission.  It is certification never reaching a proved region before the
   budget is spent on role/admin units.
+- Repaired scheduling rerun #2, after access-control demotion, ended
+  `status=ok`, `raw=1`, `valid=1`, `put=0/0`, `concrete=1/1`,
+  wall `599.906s`.
+- This improved the artifact mix versus the previous 6-concrete row but still
+  left Token in `valid-no-PUT`.
+- Stage2 rows: `increaseAllowance` was killed at 180s with a complete
+  one-path partial witness journal (`claims_decided=2/52`), `decreaseAllowance`
+  returned `NO-WITNESS-UNDECIDED` after 28s, `transfer` was killed at 180s,
+  and `transferFrom` was killed by remaining case budget after about 50s.
+- No Token rerun has produced any certified region; further official reruns of
+  this subject are low expected value until certification/region generation is
+  changed.  Move to other `valid-no-PUT` or actionable `valid-PUT-no-R1/R2`
+  cases first.
 
 Validation:
 
