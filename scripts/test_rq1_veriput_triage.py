@@ -86,6 +86,32 @@ def test_latest_redo_wins_and_buckets_are_strength_aware():
         return bad
 
 
+def test_adopted_artifacts_collapse_to_base_subject_id():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        adopted = (root / "real203" / "subjects"
+                   / "S.adopted_from_artifacts" / "result.json")
+        base = root / "real203" / "subjects" / "S" / "result.json"
+        write_json(adopted, result_doc(valid=0, cert={"NO-WITNESS-UNKNOWN": 1}))
+        write_json(base, result_doc(
+            valid=1,
+            put_valid=1,
+            tests=[{
+                "kind": "put",
+                "oracle_classes": ["R1"],
+                "put_json": put_json(root / "p.json", stats={
+                    "oracle_classes": ["R1"],
+                }),
+            }]))
+        rows = rq1_veriput_triage.triage_rows(root, ["real203"])
+        bad = 0
+        bad += check(len(rows) == 1 and rows[0]["subject_id"] == "S",
+                     f"adopted artifact directory collapses to base id: {rows}")
+        bad += check(rows[0]["quality_bucket"] == "valid-PUT-with-R1R2",
+                     f"base result wins over older adopted artifact: {rows}")
+        return bad
+
+
 def test_triage_causes_distinguish_concrete_and_unobservable_puts():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -212,6 +238,7 @@ def test_action_queue_demotes_no_wide_rendered_coordinate():
 def main():
     tests = [
         test_latest_redo_wins_and_buckets_are_strength_aware,
+        test_adopted_artifacts_collapse_to_base_subject_id,
         test_triage_causes_distinguish_concrete_and_unobservable_puts,
         test_unsupported_calldata_beats_generic_not_parameterized_note,
         test_action_queue_demotes_hard_dynamic_mapping_no_r1r2,

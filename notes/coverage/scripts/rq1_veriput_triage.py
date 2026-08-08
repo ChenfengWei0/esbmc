@@ -21,6 +21,7 @@ DEFAULT_RESULT_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 DEFAULT_DATASETS = ("bugfix124", "real203", "peer182")
 DATASETS = DEFAULT_DATASETS
 REDO_SUFFIX_RE = re.compile(r"\.redo\.\d+(?:\.\d+)?$")
+ADOPTED_SUFFIX_RE = re.compile(r"\.adopted_from_[^.]+$")
 
 
 def _utc_now() -> str:
@@ -28,7 +29,7 @@ def _utc_now() -> str:
 
 
 def base_subject_id(dirname: str) -> str:
-    return REDO_SUFFIX_RE.sub("", dirname)
+    return ADOPTED_SUFFIX_RE.sub("", REDO_SUFFIX_RE.sub("", dirname))
 
 
 def _load_json(path: Path) -> dict:

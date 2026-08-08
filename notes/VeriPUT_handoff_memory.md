@@ -21930,3 +21930,17 @@ Update after real203 no-coordinate sweep and constructor hasCode fix:
   `NO-WITNESS-UNDECIDED` and two `DRIVER-REFUSED` rows.  This bucket is not
   helped by more Stage4 work; it needs Stage2 witness/driver/modeling changes
   or should be deprioritized for short-term PUT/R1/R2 gains.
+- Fixed `rq1_veriput_triage.py` to collapse `.adopted_from_artifacts` and
+  `.adopted_from_probes` directories onto the base subject id, like `.redo.*`.
+  This affects triage/action-queue diagnosis only; final `results_all.py`
+  reads append-only journals by key.  After the fix, real203 triage reports the
+  expected 203 subjects instead of 220.
+- Corrected real203 triage snapshot after adopted-directory collapse:
+  `quality_bucket={"no-valid":166,"valid-PUT-no-R1R2":10,
+  "valid-PUT-with-R1R2":5,"valid-no-PUT":22}`;
+  artifact totals `raw=163`, `valid=140`, `put_raw=45`,
+  `put_valid=42`, `concrete_raw=118`, `concrete_valid=98`.
+  This is the methodology-critical view: real203 has only 15 target contracts
+  with any valid PUT and only 5 with R1/R2-class PUTs.  The earlier higher
+  R1/R2 count came from adopted artifact directories and should not guide
+  scheduling decisions.
