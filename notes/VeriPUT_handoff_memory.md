@@ -8,6 +8,85 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-08 PUT-ratio priority and conditional require frontend fix
+
+User alignment:
+
+- Valid-case coverage alone is not enough.  If roughly half of all valid
+  artifacts are concrete replay tests, the paper/method claim that VeriPUT is a
+  PUT-based synthesis method is weakened.
+- Future scheduling should therefore prefer fixes and candidates that increase
+  certified regions and PUT artifacts, not just concrete-only recovery of
+  no-output rows.
+- Concrete fallback remains useful as a last-resort raw valid artifact and as a
+  diagnostic, but it should not be the main path to improving RQ1 after the
+  current 57.7% bugfix124 artifact-level PUT share.
+
+PuttyV2 diagnosis:
+
+- Official rerun of `bugfix124 / pop_058_PuttyV2` after cheap-first scheduling
+  ended `status=no-output`, raw 0, valid 0, PUT 0/0, concrete 0/0, wall
+  91.232s.
+- The row reason was `no certified regions: NO-WITNESS-UNKNOWN=26`.
+- The per-unit driver diagnostic was uniform:
+  `esbmc-no-cov-report`, ESBMC exit `-6`, `ERROR: code` while generating GOTO.
+- The bad IR came from Solidity statement-level conditional expressions whose
+  branches are statement-effecting calls:
+  `cond ? require(...) : require(...);`.
+- `get_conditional_operator_expr()` was correct for value ternaries, but when
+  the conditional appeared as an expression statement it converted the
+  `require` branches through `get_expr`, producing code operands inside a value
+  `if` expression.  GOTO generation later rejected the embedded `code`.
+
+Code change:
+
+- `src/solidity-frontend/solidity_convert_stmt.cpp` now lowers a
+  statement-level `Conditional` expression to a real `ifthenelse` statement:
+  `if (cond) { trueExpression; } else { falseExpression; }`.
+- The same condition-temporary hoisting and branch-local pending front/back
+  flushing used by `IfStatement` is reused, so branch effects stay under their
+  branch guard.
+- Value-level ternaries are unchanged; this only intercepts `Conditional`
+  nodes in `ExpressionStatement` / `BlockExpressionStatement`.
+- Regression added:
+  `regression/esbmc-solidity/conditional_require_statement_pass`, covering
+  `takeLeft ? require(x > 3) : require(x < 9);`.
+
+Validation:
+
+- `make -C build -j2 esbmc` passed after the C++ change.
+- Direct ESBMC regression command passed before adding `test.desc`:
+  `build/src/esbmc/esbmc regression/esbmc-solidity/conditional_require_statement_pass/contract.solast --sol regression/esbmc-solidity/conditional_require_statement_pass/contract.sol --contract ConditionalRequireStatement --no-standard-checks --k-induction --max-k-step 20 --k-step 3`.
+- `ctest --test-dir build -R '^regression/esbmc-solidity/conditional_require_statement_pass$' --output-on-failure`
+  passed: 1 / 1.
+- `clang-format -i src/solidity-frontend/solidity_convert.h src/solidity-frontend/solidity_convert_stmt.cpp`
+  applied.
+- `git diff --check -- src/solidity-frontend/solidity_convert.h src/solidity-frontend/solidity_convert_stmt.cpp regression/esbmc-solidity/conditional_require_statement_pass/contract.sol regression/esbmc-solidity/conditional_require_statement_pass/test.desc`
+  passed.
+- cppcheck with `--language=c++ --std=c++17` reported only pre-existing header
+  noise (`passedByValue` / `unusedStructMember`), not must-fix
+  `unreadVariable`, `unusedVariable`, or `variableScope`.
+- `cmake ..` refreshed CTest and returned code 0, but it also tried to rebuild
+  Bitwuzla's external dependency and printed missing `cadical/*.hpp` failures.
+  This is an environment/dependency issue unrelated to the patch; the existing
+  `build/src/esbmc/esbmc` binary remained usable and the targeted ctest passed.
+
+PuttyV2 post-fix sanity:
+
+- Temp non-official command:
+  `scripts/solidity_path_generalise.py ... --contract PuttyV2 --unit owner --scope focus --timeout 120 --memlimit 12g --workdir /tmp/veriput_putty_owner_fix_sanity_20260808_01 ...`.
+- Result: no frontend crash; `cov-report.json` and `cov-ce-journal.json` were
+  produced.
+- The run salvaged 2 witnessed paths from the partial CE journal:
+  `enc=2`, `enc=3`.
+- Both paths were then classified `NO GENERALISABLE COORDINATE`; all visible
+  quantities were point, immutable/constant, unsupported aggregate, or
+  unsettable.  They would only generate concrete fallback tests, not PUTs.
+- Therefore do not immediately official-rerun `pop_058_PuttyV2` for RQ1 unless
+  the next change targets coordinate/region generalization for this family.
+  The frontend fix is still valuable because it turns a hard
+  `NO-WITNESS-UNKNOWN` crash into real witness/region diagnostics.
+
 ## 2026-08-08 unused setup helper deployment repair
 
 Code state:

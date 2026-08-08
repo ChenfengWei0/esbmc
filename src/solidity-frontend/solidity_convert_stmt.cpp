@@ -160,6 +160,64 @@ void solidity_convertert::hoist_operands_read_by(
     fops.push_back(k);
 }
 
+bool solidity_convertert::get_conditional_expression_statement(
+  const nlohmann::json &expr,
+  exprt &new_expr)
+{
+  const std::size_t cond_front_base =
+    (current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl)
+      .operands()
+      .size();
+  exprt cond;
+  if (get_expr(expr["condition"], cond))
+    return true;
+
+  code_blockt cond_hoisted;
+  hoist_operands_read_by(cond, cond_front_base, cond_hoisted);
+
+  codet then = code_skipt();
+  std::size_t then_front_base =
+    (current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl)
+      .operands()
+      .size();
+  std::size_t then_back_base =
+    (current_functionDecl ? expr_backBlockDecl : ctor_backBlockDecl)
+      .operands()
+      .size();
+  if (get_expr(expr["trueExpression"], then))
+    return true;
+  convert_expression_to_code(then);
+  flush_pending_into_body(then, then_front_base, then_back_base);
+
+  codet else_expr = code_skipt();
+  std::size_t else_front_base =
+    (current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl)
+      .operands()
+      .size();
+  std::size_t else_back_base =
+    (current_functionDecl ? expr_backBlockDecl : ctor_backBlockDecl)
+      .operands()
+      .size();
+  if (get_expr(expr["falseExpression"], else_expr))
+    return true;
+  convert_expression_to_code(else_expr);
+  flush_pending_into_body(else_expr, else_front_base, else_back_base);
+
+  codet if_expr("ifthenelse");
+  if_expr.copy_to_operands(cond, then, else_expr);
+  if_expr.location() = cond.location();
+
+  if (cond_hoisted.operands().empty())
+  {
+    new_expr = if_expr;
+    return false;
+  }
+
+  cond_hoisted.copy_to_operands(if_expr);
+  new_expr = cond_hoisted;
+  return false;
+}
+
 void solidity_convertert::reset_auxiliary_vars()
 {
   current_baseContractName = "";
@@ -379,6 +437,12 @@ bool solidity_convertert::get_block(
   }
   case SolidityGrammar::BlockT::BlockExpressionStatement:
   {
+    if (block["expression"].value("nodeType", "") == "Conditional")
+    {
+      if (get_conditional_expression_statement(block["expression"], new_expr))
+        return true;
+      break;
+    }
     get_expr(block["expression"], new_expr);
     break;
   }
@@ -442,6 +506,12 @@ bool solidity_convertert::get_statement(
           break;
         }
       }
+    }
+    if (stmt["expression"].value("nodeType", "") == "Conditional")
+    {
+      if (get_conditional_expression_statement(stmt["expression"], new_expr))
+        return true;
+      break;
     }
     if (get_expr(
           stmt["expression"], stmt["expression"]["typeDescriptions"], new_expr))

@@ -366,6 +366,9 @@ protected:
     const exprt &cond,
     std::size_t front_base,
     code_blockt &hoisted);
+  bool get_conditional_expression_statement(
+    const nlohmann::json &expr,
+    exprt &new_expr);
 
   // Symbol id of a library function's formal parameter (pure — no reliance on
   // current_functionName). Shared between the library function body builder
