@@ -71,6 +71,13 @@ Scheduling fix:
 - The zero-interface sender arm is still preserved when those units are
   eventually tried, so `msg.sender` remains available as an environment
   coordinate.
+- After the first repaired Token rerun still produced only concrete fallback
+  tests, access-control mutators were also demoted:
+  `addAgent`, `removeAgent`, `mint`, `burn`, `freezePartialTokens`,
+  `unfreezePartialTokens`, `recoveryAddress`, and `forcedTransfer`.
+  The general rationale is that role-management/admin paths often have ABI
+  parameters but are solver-heavy and less likely to contribute broad PUT
+  regions than ordinary user-facing transfer/allowance units.
 - `notes/coverage/scripts/rq1_veriput_run.py` defaults
   `--stage2-unit-timeout-cap-s` to 180 seconds.  The whole subject timeout
   remains 600 seconds, but a single no-output Stage-2 unit can no longer burn
@@ -82,6 +89,27 @@ Scheduling fix:
   `transfer`, `transferFrom`, `recoveryAddress`, `forcedTransfer`,
   `transferOwnership`, `approve`.
   Admin/metadata units are pushed behind them.
+- After access-control demotion, the same dry schedule starts with:
+  `increaseAllowance`, `decreaseAllowance`, `transfer`, `transferFrom`,
+  `transferOwnership`, `approve`, then zero-interface/admin/role paths.
+  This is the preferred order for attempting to improve `valid-no-PUT` into
+  PUT/R1/R2 under a 600s subject budget.
+
+Token rerun diagnostics:
+
+- Repaired scheduling rerun #1 for
+  `real203 / ERC-3643__ERC-3643__Token` ended
+  `status=ok`, `raw=6`, `valid=6`, `put=0/0`, `concrete=6/6`,
+  wall `600.457s`.
+- It fixed the previous no-valid regression but moved the case into
+  `valid-no-PUT`, which is still methodology-negative.
+- Stage2 rows were all killed by timeout: `addAgent`, `removeAgent`, and
+  `mint` had bucket `KILLED`, exit `124`, no certified regions.  `addAgent`
+  and `removeAgent` had partial witness journals, so Stage4 emitted only
+  timeout concrete fallback tests.
+- Therefore the remaining issue for Token is not Foundry replay or oracle
+  emission.  It is certification never reaching a proved region before the
+  budget is spent on role/admin units.
 
 Validation:
 

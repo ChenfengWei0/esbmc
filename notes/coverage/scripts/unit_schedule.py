@@ -51,6 +51,16 @@ ADMIN_SETTER_UNIT_NAMES = {
     "setOnchainID",
     "setSymbol",
 }
+ACCESS_CONTROL_MUTATOR_UNIT_NAMES = {
+    "addAgent",
+    "burn",
+    "forcedTransfer",
+    "freezePartialTokens",
+    "mint",
+    "recoveryAddress",
+    "removeAgent",
+    "unfreezePartialTokens",
+}
 MODERATE_STATE_UNIT_NAMES = {
     "approve",
     "setApprovalForAll",
@@ -304,6 +314,8 @@ def _unit_cost_rank(unit: str, unit_info: dict | None) -> tuple[int, int, int]:
         tier = 65
     elif unit in ADMIN_SETTER_UNIT_NAMES:
         tier = 65
+    elif unit in ACCESS_CONTROL_MUTATOR_UNIT_NAMES:
+        tier = 68
     elif unit in MODERATE_STATE_UNIT_NAMES:
         tier = 45
     elif unit in CHEAP_STATE_UNIT_NAMES or lower.startswith("set"):

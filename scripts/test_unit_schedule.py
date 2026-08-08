@@ -384,6 +384,9 @@ def test_schedule_deprioritizes_unhinted_admin_units():
         "pending_unit_hints": [],
     }
     row["units"]["units"] = [
+        "addAgent",
+        "mint",
+        "freezePartialTokens",
         "pause",
         "unPause",
         "unpause",
@@ -393,6 +396,24 @@ def test_schedule_deprioritizes_unhinted_admin_units():
         "setFeeRate",
     ]
     row["units"]["unit_info"] = [
+        {
+            "name": "addAgent",
+            "state_mutability": "nonpayable",
+            "parameter_count": 1,
+            "return_count": 0,
+        },
+        {
+            "name": "mint",
+            "state_mutability": "nonpayable",
+            "parameter_count": 2,
+            "return_count": 0,
+        },
+        {
+            "name": "freezePartialTokens",
+            "state_mutability": "nonpayable",
+            "parameter_count": 2,
+            "return_count": 0,
+        },
         {
             "name": "pause",
             "state_mutability": "nonpayable",
@@ -448,6 +469,9 @@ def test_schedule_deprioritizes_unhinted_admin_units():
         "unpause",
         "setName",
         "setAddressFrozen",
+        "addAgent",
+        "mint",
+        "freezePartialTokens",
     ], f"unhinted admin units no longer block business methods: {got}")
     pause = next(job for job in doc["jobs"] if job["unit"] == "pause")
     bad += check(pause["region_strategy"]["zero_interface_sender_arm"]
