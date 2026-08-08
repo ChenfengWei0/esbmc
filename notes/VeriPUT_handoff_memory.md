@@ -20283,3 +20283,86 @@ Verification commands run after the code change:
   (`256 test(s) ran`, all checks passed)
 - `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
 - `cmake --build build --target esbmc -j2`
+
+## 2026-08-08 RQ1 backlog snapshot after exact-R2 patch
+
+User restated the prioritization: focus not only `no-valid`, but also
+`valid-no-PUT`, and especially `valid-PUT-no-R1/R2`.  Keep these categories
+separate in future progress reports.
+
+Read-only snapshot from
+`/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/*/results.jsonl`, using the
+same null-`valid` fallback as `Results/results_all.py`:
+
+- `bugfix124`: 124 cases; 71 have any valid test; 62 have a valid PUT; 9 are
+  valid concrete-only; 53 are no-valid; 29 valid cases have no R1/R2; 20 valid
+  PUT cases have no R1/R2.  Unit totals: raw 281, valid 253, PUT-valid 154,
+  concrete-valid 99.
+- `peer182` historical diagnostic run: 182 cases; 113 have any valid test; 109
+  have a valid PUT; 4 are valid concrete-only; 69 are no-valid; 25 valid cases
+  have no R1/R2; 21 valid PUT cases have no R1/R2.  Unit totals: raw 460,
+  valid 419, PUT-valid 355, concrete-valid 64.  Official Peer RQ1 should still
+  use only `contract080`; the peer182 artifacts remain useful for probing.
+- `real203`: 203 cases; 27 have any valid test; 23 have a valid PUT; 4 are
+  valid concrete-only; 176 are no-valid; 12 valid cases have no R1/R2; 8 valid
+  PUT cases have no R1/R2.  Unit totals: raw 141, valid 133, PUT-valid 109,
+  concrete-valid 24.
+
+Representative queues:
+
+- `bugfix124` concrete-only: `acfix_021_CVE_2018_19832`,
+  `acfix_3_5_088_EmergencyOracleFactory`, `pop_051_LiquidityPool`,
+  `pop_077_GameItems`, `pop_020_GSPFunding`.
+- `bugfix124` PUT-no-R1/R2:
+  `rc_access_control__simple_suicide__SmartFix__simple_suicide`,
+  `rc_access_control__phishable__TIPS__phishable`,
+  `rc_access_control__phishable__SmartFix__phishable`,
+  `rc_access_control__mycontract__SolGPT__mycontract_2round`,
+  `rc_access_control__mycontract__SolGPT__mycontract_3round`.
+- `peer182` concrete-only: `peer_soltg__loop_basic`,
+  `peer_soltg__while_nested_break`,
+  `peer_soltg__short_circuit_or_inside_branch`, `peer_solar__DosAuction`.
+- `peer182` PUT-no-R1/R2: `peer_soltg__for_1_continue`,
+  `peer_soltg__while_1`, `peer_soltg__for_1_break`,
+  `peer_soltg__while_1_continue`,
+  `peer_soltg__branches_merge_variables_5`.
+- `real203` concrete-only:
+  `balancer__balancer-v3-monorepo__HyperEVMRateProvider`,
+  `ERC-3643__ERC-3643__Token`,
+  `balancer__balancer-v3-monorepo__FeeBurnerAuthentication`,
+  `compound-finance__comet__CometWithExtendedAssetList`.
+- `real203` PUT-no-R1/R2:
+  `ensdomains__ens-contracts__StandaloneReverseRegistrar`,
+  `safe-fndn__safe-smart-account__SafeToL2Setup`,
+  `euler-xyz__euler-vault-kit__IRMLinearKink`,
+  `compound-finance__comet__SweepableBridgeReceiver`,
+  `compound-finance__comet__ArbitrumBridgeReceiver`.
+
+Operational implication: choose probes from a mix of no-valid and no-R1/R2
+queues.  `no-valid` dominates case coverage, but `PUT-no-R1/R2` directly
+affects the PUT-strength claim and should be fixed by oracle synthesis where a
+normal/returning path exposes meaningful state or return semantics.  Rollback
+no-R1/R2 remains accounting-only unless there is a stable revert reason/error
+surface to assert.
+
+Follow-up with `notes/coverage/scripts/rq1_veriput_triage.py --benchmark all`
+splits the no-R1/R2 queue by exit/detail shape:
+
+- `bugfix124`: `valid-PUT-no-R1R2-rollback=24`,
+  actionable normal/unknown no-R1/R2 `0`.  Do not spend first-pass time trying
+  to add post-state R1/R2 to these; they are rollback artifacts.
+- `real203`: `valid-PUT-no-R1R2-normal-or-unknown=2`,
+  rollback accounting-only `7`.  The actionable detail shapes are one
+  `normal-return-varies` and one `normal-no-ladder-candidate`.
+- `peer182` diagnostic run: `valid-PUT-no-R1R2-normal-or-unknown=11`,
+  rollback accounting-only `12`.  The actionable detail shape is
+  `normal-no-ladder-candidate`, i.e. candidate surface/support rather than a
+  solver failure.
+
+Therefore the near-term code/debug priority is:
+
+1. no-valid Stage-2 gaps (`NO-COORDINATE`, `NO-WITNESS-UNKNOWN`, early Stage-2
+   no-output) for case coverage;
+2. valid-no-PUT cases where Stage 2 has concrete-only or certified-region
+   artifacts but Stage 4 did not parameterize;
+3. actionable normal/returning no-R1/R2 only, not rollback no-R1/R2.
