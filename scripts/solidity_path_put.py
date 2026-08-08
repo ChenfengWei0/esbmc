@@ -3260,7 +3260,7 @@ def assert_query_var_name(name, layout, state_store_names=None):
     if parse_slot_name(name)[0] is not None:
         return name
     if name in (layout or {}):
-        return (state_store_names or {}).get(name, name)
+        return name
     return name
 
 

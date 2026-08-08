@@ -2515,7 +2515,7 @@ def test_scalar_layout_aliases_use_source_slots_for_foundry_rendering():
     return bad
 
 
-def test_scalar_assert_vars_use_esbmc_names_then_restore_source_rows():
+def test_scalar_assert_vars_use_source_names_and_restore_legacy_rows():
     layout = {
         "_owner": (0, 0, 20),
         "_pendingOwner": (1, 0, 20),
@@ -2526,11 +2526,11 @@ def test_scalar_assert_vars_use_esbmc_names_then_restore_source_rows():
     }
 
     bad = 0
-    bad += check(assert_query_var_name("_owner", layout, aliases) == "_owner$32",
-                 "ESBMC assertion vars use the merged-contract store name")
+    bad += check(assert_query_var_name("_owner", layout, aliases) == "_owner",
+                 "scalar assertion vars use the source storage name")
     bad += check(assert_query_var_name("_pendingOwner", layout, aliases)
-                 == "_pendingOwner$166",
-                 "each scalar source var is renamed with its declaration id")
+                 == "_pendingOwner",
+                 "scalar aliases are not sent to the assertion ladder")
     bad += check(assert_query_var_name("_balances$1[msg.sender]", layout, aliases)
                  == "_balances$1[msg.sender]",
                  "mapping slots stay in their mapping spelling")
@@ -2541,7 +2541,7 @@ def test_scalar_assert_vars_use_esbmc_names_then_restore_source_rows():
                  == [("_owner", "post == pre", "HOLDS"),
                      ("_pendingOwner", "post == newOwner", "HOLDS"),
                      ("return", "return == 0", "HOLDS")],
-                 "ladder rows are restored for solc-layout Foundry rendering")
+                 "legacy ESBMC-named ladder rows still restore to source names")
     return bad
 
 
@@ -12718,7 +12718,7 @@ def main():
               test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries,
               test_mapping_aliases_keep_struct_member_tails_queryable,
               test_scalar_layout_aliases_use_source_slots_for_foundry_rendering,
-              test_scalar_assert_vars_use_esbmc_names_then_restore_source_rows,
+        test_scalar_assert_vars_use_source_names_and_restore_legacy_rows,
               test_state_store_aliases_have_one_canonical_entry_coordinate,
               test_contract_state_store_aliases_read_solc_declaration_ids,
               test_assert_query_keeps_state_pins_for_the_certified_slice,
