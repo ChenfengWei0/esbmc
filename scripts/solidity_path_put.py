@@ -3243,6 +3243,18 @@ def add_esbmc_mapping_aliases(maps, state_store_names):
     return out
 
 
+def layout_scalar_key(name, layout, state_store_names=None):
+    """Return the solc/source scalar layout key for a source or ESBMC state name."""
+    if not name or parse_slot_name(name)[0] is not None:
+        return None
+    if name in (layout or {}):
+        return name
+    for source, store in (state_store_names or {}).items():
+        if store == name and source in (layout or {}):
+            return source
+    return None
+
+
 def prefer_esbmc_mapping_aliases(maps):
     """Drop source-name rows when an ESBMC store-name alias exists."""
     aliases_by_source = {}
@@ -7268,7 +7280,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               derived_by=None, rollback_exit=False, r2_terms=None,
               oracle_label_prefix="", exit_kind=None, state_types=None,
               lift_unconstrained_calldata=False, path_decisions=None,
-              establish=None, unit_payable=False):
+              establish=None, unit_payable=False, state_store_names=None):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -7696,13 +7708,17 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     for idx, (pname, _pt) in enumerate(params):
         key_expr_of[pname] = repl.get(idx, args[idx].strip())
     for sname, sty in (state_types or {}).items():
-        if sname not in (layout or {}):
+        layout_name = layout_scalar_key(sname, layout, state_store_names)
+        if layout_name is None:
             continue
-        slot, off, nb = layout[sname]
+        slot, off, nb = layout[layout_name]
         rd = slot_read_expr(target_addr, slot, off, nb)
         expr = state_key_expr_for_type(sty, rd)
         if expr is not None:
             key_expr_of["state." + sname] = expr
+            store_name = (state_store_names or {}).get(sname)
+            if store_name and store_name != sname:
+                key_expr_of["state." + store_name] = expr
     # ---- msg.sender IS NAMEABLE ONLY WHERE THIS PUT DECIDED IT ---------------
     #
     # `slot_key_expr` refuses `msg.sender` as a mapping key, and its docstring
@@ -7790,12 +7806,13 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                 f"REFUSED: relation establishment for mapping slot `{target}` "
                 "is not rendered yet")
             return None, None
-        if v not in layout:
+        layout_name = layout_scalar_key(v, layout, state_store_names)
+        if layout_name is None:
             notes.append(
                 f"REFUSED: establish target `{target}` has no scalar storage "
                 "slot in solc's layout")
             return None, None
-        slot, off, nb = layout[v]
+        slot, off, nb = layout[layout_name]
         store_lines += slot_write_lines(target_addr, slot, off, nb, source_expr)
         store_lines += slot_landing_check(target_addr, slot, off, nb,
                                           source_expr, target)
@@ -7918,12 +7935,13 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                 str(lo), name)
             stored.append(f"{name} := {lo}")
             continue
-        if v not in layout:
+        layout_name = layout_scalar_key(v, layout, state_store_names)
+        if layout_name is None:
             state_skipped.append(
                 f"{name} (no storage slot: solc's layout does not list it, so "
                 f"it is a constant/immutable and no test can set it)")
             continue
-        slot, off, nb = layout[v]
+        slot, off, nb = layout[layout_name]
         if lo != hi:
             # ---- A WIDE `state.<v>` BOUND MAY NOT BECOME A FUZZ COORDINATE ----
             #
@@ -8264,12 +8282,13 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             coord_ident[cname] = point_texts[cname]
             coord_ident_abs[cname] = point_texts[cname]
             return True
-        if svar not in layout:
+        layout_name = layout_scalar_key(svar, layout, state_store_names)
+        if layout_name is None:
             oracle_skipped.append(
                 f"{cname} (no storage slot: solc's layout does not list it, "
                 "so the R2 endpoint cannot be read before the call)")
             return False
-        slot, off, nb = layout[svar]
+        slot, off, nb = layout[layout_name]
         ident = "_pre_" + _slot_ident(svar)
         if ident not in r2_state_pre_names:
             r2_state_pre_names.add(ident)
@@ -9852,7 +9871,8 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
                            derived_by, timeout, fuzz_runs, candidate_budget,
                            fixture=None, constructor_mocks=None,
                            runtime_mocks=None, establish=None,
-                           unit_payable=False, log=print):
+                           unit_payable=False, state_store_names=None,
+                           log=print):
     """Refute R2 candidates with one Forge run; never produce proof verdicts."""
     candidates = r2_candidates(specs)
     verdicts = {candidate["key"]: "NOT-RUN" for candidate in candidates}
@@ -9888,7 +9908,7 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
                 cell=cell, rettypes=None, maps=maps, piece_label=piece,
                 derived_by=derived_by, rollback_exit=False, r2_terms=r2_terms,
                 oracle_label_prefix=marker + " ", establish=establish,
-                unit_payable=unit_payable)
+                unit_payable=unit_payable, state_store_names=state_store_names)
         except ConcreteFallback as exc:
             evidence[candidate["key"]]["reason"] = (
                 "candidate probe was not parameterized: " + exc.reason)
@@ -10847,7 +10867,8 @@ def main():
                 rollback_exit=rollback_here, r2_terms={},
                 establish=json.loads(a.establish or "[]"),
                 exit_kind=path_exit_kind,
-                unit_payable=(unit_mutability == "payable"))
+                unit_payable=(unit_mutability == "payable"),
+                state_store_names=state_store_names)
         except ConcreteFallback:
             _probe_stats = {}
         skip_r2_after_partial_oracle = partial_ladder_already_has_strict_oracle(
@@ -10909,8 +10930,9 @@ def main():
                 _sv = _sn[len("state."):]
                 if parse_slot_name(_sv)[0] is not None:
                     continue
-                if _sv in layout:
-                    _nb = layout[_sv][2]
+                _layout_name = layout_scalar_key(_sv, layout, state_store_names)
+                if _layout_name is not None:
+                    _nb = layout[_layout_name][2]
                     _rendered_coords.append(
                         (_sn, "id" if _nb == 20 else "num",
                          _nb if _nb == 20 else None))
@@ -10966,7 +10988,8 @@ def main():
                     a.fuzz_r2_candidate_budget, foundry_fixture,
                     constructor_mocks, runtime_mocks,
                     json.loads(a.establish or "[]"),
-                    unit_payable=(unit_mutability == "payable"))
+                    unit_payable=(unit_mutability == "payable"),
+                    state_store_names=state_store_names)
                 r2_fuzz_prefilter["enabled"] = True
                 _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
                 survivors = len(r2_candidates(_r2))
@@ -11157,7 +11180,8 @@ def main():
                                    a.lift_unconstrained_calldata),
                                path_decisions=claim.get("decisions") or [],
                                establish=json.loads(a.establish or "[]"),
-                               unit_payable=(unit_mutability == "payable"))
+                               unit_payable=(unit_mutability == "payable"),
+                               state_store_names=state_store_names)
     except ConcreteFallback as fallback:
         cname, _cstart, _cend = emitted.blocks[case[0]]
         newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"

@@ -21375,3 +21375,47 @@ Update after more `DefaultCompliance` probes:
   concrete), all Foundry/corpus green; the Foundry replay gate ran outside the
   generation timeout.  The normal path `enc=15` has two fuzz parameters
   (`msg.sender`, `newOwner`) and semantic R2 `_owner: post == newOwner HOLDS`.
+
+Update after `bugfix124/pop_020_GSPFunding.adjustPriceLimit`:
+
+- Ground truth for the target unit is simple and useful for no-PUT/no-R1R2
+  debugging: normal path requires `msg.sender == _MAINTAINER_` and
+  `priceLimit <= 1e6`, then sets `_PRICE_LIMIT_ = priceLimit`; rollback paths
+  cover access denied / invalid price.  The old official RQ1 result only had
+  concrete fallback (`put_valid=0`) because certify was killed at 120s.
+- Strong Stage2 probe:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_020_GSPFunding.adjustPriceLimit_strong_probe.1786189051`
+  ran `certify_all.py --strong-recipe --timeout 600 --run-timeout 600
+  --memlimit-gib 12 --unit adjustPriceLimit` and certified 3 of 4 witnessed
+  paths in 73s (`coords`: `msg.sender`, `priceLimit`,
+  `state._MAINTAINER_$3013`).
+- Initial Stage4 on that cert found a general emitter bug: certified normal
+  path `enc=15` had R2 `_PRICE_LIMIT_: post == priceLimit HOLDS`, but the PUT
+  emitter refused because relation establishment targeted
+  `state._MAINTAINER_$3013`, while Foundry/solc storage layout only names the
+  source slot `_MAINTAINER_`.  This is a source-vs-ESBMC scalar store alias
+  mismatch, not an ESBMC proof failure.
+- Code fix in `scripts/solidity_path_put.py`: `layout_scalar_key()` maps ESBMC
+  scalar store aliases (for example `_MAINTAINER_$3013`) back to the solc
+  source layout key only when `contract_state_esbmc_store_names()` provides AST
+  evidence and solc layout contains the source slot.  Applied to relation
+  establishment, entry-state scalar store/checks, R2 pre-read materialization,
+  and R2 rendered-coordinate width accounting.  Mapping aliases still use the
+  existing mapping-specific path.
+- Regression added:
+  `test_scalar_layout_aliases_use_source_slots_for_foundry_rendering` in
+  `scripts/test_solidity_path_put.py`; it checks source names remain unchanged,
+  known scalar aliases resolve, unknown aliases are not guessed, layout evidence
+  is required, and mapping-like names stay off the scalar path.
+- Validation after the fix: `py_compile` passed for the PUT files,
+  `scripts/test_solidity_path_put.py` passed 275/275, `git diff --check` passed,
+  and `PYTHONPATH=notes/coverage/scripts pylint --errors-only` passed.  A plain
+  pylint invocation without `PYTHONPATH` reports the pre-existing dynamic
+  `certify_all` import path issue in the test file.
+- Stage4 rerun using the same Stage2 cert, after the alias fix:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_020_GSPFunding.adjustPriceLimit_strong_probe.1786189051/put/adjustPriceLimit.alias_layout_fix`
+  produced `B=3/3`, all PUT, zero concrete, all Foundry/corpus green.  Normal
+  path `enc=15` has two fuzz params and four assertions, including R2
+  `_PRICE_LIMIT_: post == priceLimit`; rollback paths `enc=6` and `enc=14`
+  have fuzz params plus exit-kind oracle.  `put-summary.json` reports
+  generation wall 83.193s and Foundry replay outside generation timeout.

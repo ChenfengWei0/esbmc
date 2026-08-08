@@ -71,6 +71,7 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                effective_exit_kind,
                                exit_kind_asserted, find_unit_call,
                                fixture_from_esbmc_args, load_fixture_json,
+                               layout_scalar_key,
                                prefer_esbmc_mapping_aliases,
                                no_oracle_reason, observed_env,
                                normal_exit_region_retreat,
@@ -2178,6 +2179,36 @@ def test_mapping_aliases_keep_struct_member_tails_queryable():
     bad += check(got[0] == "_balances$123[msg.sender].amount",
                  f"fallback proposal uses the internal base and source tail: "
                  f"{got}")
+    return bad
+
+
+def test_scalar_layout_aliases_use_source_slots_for_foundry_rendering():
+    layout = {
+        "_MAINTAINER_": (7, 0, 20),
+        "_PRICE_LIMIT_": (8, 0, 32),
+    }
+    aliases = {
+        "_MAINTAINER_": "_MAINTAINER_$3013",
+        "_PRICE_LIMIT_": "_PRICE_LIMIT_$3071",
+    }
+
+    bad = 0
+    bad += check(layout_scalar_key("_MAINTAINER_", layout, aliases)
+                 == "_MAINTAINER_",
+                 "source storage names remain their own layout key")
+    bad += check(layout_scalar_key("_MAINTAINER_$3013", layout, aliases)
+                 == "_MAINTAINER_",
+                 "ESBMC scalar store aliases fall back to the solc source slot")
+    bad += check(layout_scalar_key("_PRICE_LIMIT_$3071", layout, aliases)
+                 == "_PRICE_LIMIT_",
+                 "multiple scalar aliases are resolved from AST evidence")
+    bad += check(layout_scalar_key("_UNKNOWN_$9", layout, aliases) is None,
+                 "unknown alias is not guessed from spelling")
+    bad += check(layout_scalar_key("_MAINTAINER_$3013", {}, aliases) is None,
+                 "alias evidence alone is insufficient without solc layout")
+    bad += check(layout_scalar_key("_balances$1[msg.sender]", layout, aliases)
+                 is None,
+                 "mapping-like names stay on the mapping renderer path")
     return bad
 
 
@@ -12330,6 +12361,7 @@ def main():
               test_certified_region_mapping_slots_are_ASKED_before_guesses,
               test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries,
               test_mapping_aliases_keep_struct_member_tails_queryable,
+              test_scalar_layout_aliases_use_source_slots_for_foundry_rendering,
               test_contract_state_store_aliases_read_solc_declaration_ids,
               test_assert_query_keeps_state_pins_for_the_certified_slice,
               test_assert_query_region_keeps_slots_but_drops_state_scalars,
