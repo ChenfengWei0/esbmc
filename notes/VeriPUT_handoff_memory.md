@@ -22427,3 +22427,34 @@ Update after Peer182 stale batches 3-4:
   `peer_solar__Reentrance`.  Consider mixing at most one or two token-like
   rows per batch with smaller rows, because token-like rows can occupy both
   slots for ~6-10 minutes.
+
+Update after Peer182 stale batch 5:
+
+- Reran 8 more stale peer rows with the same official shape:
+  `peer_solar__Identity`, `peer_solar__PermissionGroups`,
+  `peer_solar__IdentityManager`, `peer_ccsolbmc__DigitalLocker`,
+  `peer_ccsolbmc__RefrigeratedTransportation`,
+  `peer_solar__EIP20StandardToken`, `peer_solar__FixedSupplyToken`, and
+  `peer_ccsolbmc__Ballot`.
+- All 8 produced valid PUT artifacts.  Seven were `valid-PUT-with-R1R2`;
+  `peer_solar__IdentityManager` was `valid-PUT-no-R1R2` (4/4 valid PUT, no
+  concrete fallback, wall 582.6s).  Strong high-volume rows:
+  `DigitalLocker` produced 21/21 valid PUT/R1R2 in 86.8s, `PermissionGroups`
+  produced 14/14 valid artifacts at the 600s edge, and `Identity` produced
+  8/8 valid artifacts at 599.6s.  `EIP20StandardToken`, `FixedSupplyToken`,
+  and `Ballot` also produced R1/R2 but took 518-600s.
+- Net Peer182 movement after the first five stale batches:
+  `quality_bucket` changed from
+  `{"no-valid":147,"valid-PUT-no-R1R2":22,
+  "valid-PUT-with-R1R2":11,"valid-no-PUT":2}` to
+  `{"no-valid":111,"valid-PUT-no-R1R2":27,
+  "valid-PUT-with-R1R2":42,"valid-no-PUT":2}`.  Current aggregate:
+  182 cases, 71 valid, 69 PUT, 42 R1/R2, 2 concrete-only.
+- Remaining stale no-timing `no-valid-unknown` peer queue has 41 rows.  The
+  next smallest are `peer_ccsolbmc__RBC`, `peer_ccsolbmc__AssetTransfer`,
+  `peer_ccsolbmc__SimpleECR20`, `peer_solar__Reentrance`,
+  `peer_solar__DateTime`, `peer_ccsolbmc__FrontRunner`,
+  `peer_ccsolbmc__SOTH`, and `peer_ccsolbmc__ERC20`.  From here most subjects
+  are token/ERC20-like and can consume 500-600s each; still worth running
+  because the observed recovery rate remains high and usually produces
+  R1/R2 PUTs.
