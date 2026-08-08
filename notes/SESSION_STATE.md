@@ -387,10 +387,10 @@ Pushed fixes after the peer prepared fallback work:
   R2 candidate (`post == onoff`) and did not refute it, but the ESBMC R2 pass
   was launched with only a 1s timeout, leaving the test as R0-only.
 
-Current aggregate snapshot before the newest runners finish:
+Current aggregate snapshot after the peer resource-refusal recovery batch:
 
-- `peer182`: total 182, valid 84, PUT 82, R1/R2 51; buckets
-  `{'valid-PUT-with-R1R2': 51, 'no-valid': 98, 'valid-PUT-no-R1R2': 31,
+- `peer182`: total 182, valid 95, PUT 93, R1/R2 58; buckets
+  `{'valid-PUT-with-R1R2': 58, 'no-valid': 87, 'valid-PUT-no-R1R2': 35,
   'valid-no-PUT': 2}`.
 - `bugfix124`: total 124, valid 68, PUT 64, R1/R2 25; buckets
   `{'valid-PUT-with-R1R2': 25, 'no-valid': 56, 'valid-PUT-no-R1R2': 39,
@@ -419,6 +419,14 @@ Runner state:
   - The first attempt with `--jobs 2 --memlimit-gib 12` was refused by the
     wrapper because `2 * 12GiB` exceeded 70% of current MemAvailable. The 8GiB
     cap is intentional for this batch.
+- Session `57553`, peer resource-refusal recovery batch `EStack ChinaCoin
+  goldinu SATURNITE`, `--jobs 2`, `--memlimit-gib 8`, `--redo`.
+  - Confirmed the earlier 0.5s `certify ... error` rows were scheduler memory
+    refusals, not semantic no-valid: `EStack` became valid PUT with R1/R2,
+    `ChinaCoin` valid PUT no-R1/R2, `goldinu` valid with PUT+concrete and
+    R1/R2, and `SATURNITE` valid PUT with R1/R2.
+- Session `98264`, peer resource-refusal recovery batch `Ryujin PROGEV2 TOAD
+  PONY`, `--jobs 2`, `--memlimit-gib 8`, `--redo`, currently running.
 
 Concurrency rule as of this snapshot:
 
