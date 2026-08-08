@@ -11318,9 +11318,9 @@ Recent official BugFix124 status:
 
 - Strict latest journal over
   `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/results.jsonl`:
-  124 cases, 61 cases with at least one valid test, 63 with no valid test.
-- Artifact totals: raw 201, valid 176, valid PUT 126, valid concrete 50.
-  PUT share among valid artifacts: 71.6%.
+  124 cases, 62 cases with at least one valid test, 62 with no valid test.
+- Artifact totals: raw 207, valid 182, valid PUT 126, valid concrete 56.
+  PUT share among valid artifacts: 69.2%.
 - `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark bugfix124`
   reported after `pop_018`: VeriPUT `raw_u=195`, `valid_u=170`,
   `raw_c=60`, `valid_c=60`, coverage `48.4%`, `VT/case=1.37`, status
@@ -11329,6 +11329,10 @@ Recent official BugFix124 status:
   `valid_u=176`, `raw_c=61`, `valid_c=61`, coverage `49.2%`,
   `VT/case=1.42`, status
   `{'ok': 61, 'no-output': 55, 'no-units': 5, 'budget-exhausted': 3}`.
+- After the `pop_048` rerun, the same command reports VeriPUT `raw_u=207`,
+  `valid_u=182`, `raw_c=62`, `valid_c=62`, coverage `50.0%`,
+  `VT/case=1.47`, status
+  `{'ok': 62, 'no-output': 54, 'no-units': 5, 'budget-exhausted': 3}`.
 
 Recent official case observations:
 
@@ -11351,6 +11355,16 @@ Recent official case observations:
   `flashFeeAndProtocolFee`, `flashFee`, `setMerkleRoot`, `setFeeRate`.
   `low_budget_concrete_only_stage4_skip_count=0` because the emitted rows
   included cleared concrete fallbacks and had enough generation budget.
+- `pop_048_PrivatePool` rerun:
+  old row was no-output after `buy`, `sell`, `execute`; new row is status ok,
+  completion budget-exhausted, raw 6, valid 6, PUT 0/0, concrete 6/6,
+  generation 588.582s, Stage2 316.289s, Stage4 generation 272.293s,
+  Foundry replay 9.355s, wall 599.678s, maxrss 1207.9 MB.  Units attempted:
+  `flashFeeAndProtocolFee`, `flashFee`, `setMerkleRoot`, `setFeeRate`,
+  `setUseStolenNftOracle`.  The low-budget concrete-only Stage4 guard triggered
+  once (`0.3s remains below the 90s concrete-only Stage 4 floor`), which kept
+  the run inside the generation budget after valid artifacts had already been
+  produced.
 
 Diagnosis from `pop_018_PrivatePool`:
 
