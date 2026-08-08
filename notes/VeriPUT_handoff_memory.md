@@ -21355,3 +21355,23 @@ Update after `removeTokenAgent` follow-up:
   from the point, which strongly suggests an internal certification harness gap
   for establishing/read-witnessing non-default mapping slot prestate.  Treat
   this as an ESBMC modelling/instrumentation issue, not a region-direction bug.
+
+Update after more `DefaultCompliance` probes:
+
+- `bindToken` strong probe:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/real203/subjects/ERC-3643__ERC-3643__DefaultCompliance.bind_strong_probe.1786188582`
+  is `NOT-CERTIFIED` in 78s (`0 certified / 3 not / 3 witnessed`).  The
+  obstacle is the OR guard lowered to a ternary expression:
+  `owner == sender ? 1 : tokenBound == 0 && sender == _token ? 1 : 0`.
+  The structural relation parser does not yet split this into disjunctive
+  regions, so Stage2 falls back to product-box shrink and exhausts the budget
+  on `msg.sender/state._owner`.  This is a region-strategy/parser opportunity,
+  not a dataset-specific issue.
+- `transferOwnership` strong probe:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/real203/subjects/ERC-3643__ERC-3643__DefaultCompliance.transfer_strong_probe.1786188703`
+  is a successful no-PUT/no-R1R2 upgrade path.  Stage2 certified 4 of 5 paths
+  in 31s.  Stage4 produced 4/4 B deliverables, all PUT and no concrete replay.
+  `put-summary.json` reports 4 reference-valid generated tests (4 PUT, 0
+  concrete), all Foundry/corpus green; the Foundry replay gate ran outside the
+  generation timeout.  The normal path `enc=15` has two fuzz parameters
+  (`msg.sender`, `newOwner`) and semantic R2 `_owner: post == newOwner HOLDS`.
