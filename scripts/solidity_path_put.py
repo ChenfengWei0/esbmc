@@ -9415,6 +9415,80 @@ def constructor_param_interface_mock_specs(forge_project, contract):
     return specs
 
 
+def constructor_param_hascode_specs(forge_project, contract):
+    """Address constructor parameters guarded by hasCode(param)."""
+    source = _flat_source_for_project(forge_project)
+    chunk = _source_contract_chunk(source, contract)
+    if not source or not chunk:
+        return []
+    params = source_constructor_params(forge_project, contract)
+    by_name = {name: (idx, typ) for idx, (name, typ) in enumerate(params)}
+    body = _constructor_body_text(chunk)
+    if not body:
+        return []
+    specs, seen = [], set()
+    for pname in re.findall(r"\bhasCode\s*\(\s*([A-Za-z_]\w*)\s*\)", body):
+        found = by_name.get(pname)
+        if found is None:
+            continue
+        idx, ptype = found
+        if _norm_ty(ptype) not in ("address", "address payable"):
+            continue
+        if idx in seen:
+            continue
+        seen.add(idx)
+        specs.append({
+            "param_index": idx,
+            "param_name": pname,
+        })
+    return specs
+
+
+def apply_constructor_param_hascode_mocks(lines, contract, specs, indent="    "):
+    """Etch bytecode onto address constructor args used by hasCode guards."""
+    if not contract or not specs:
+        return list(lines), 0
+    out, changed, i = [], 0, 0
+    rx = re.compile(r"\bnew\s+" + re.escape(contract) + r"\s*\(")
+    while i < len(lines):
+        if not rx.search(lines[i]):
+            out.append(lines[i])
+            i += 1
+            continue
+        end = _statement_end(lines, i)
+        stmt = "\n".join(lines[i:end + 1])
+        span = _constructor_arg_span(stmt, contract)
+        if span is None:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        _start, _close, args = span
+        local = []
+        seen = set()
+        for spec in specs:
+            idx = spec["param_index"]
+            if idx >= len(args):
+                continue
+            addr_expr = args[idx].strip()
+            if addr_expr in seen or _is_precompile_address_expr(addr_expr):
+                continue
+            mock_index = len(seen)
+            seen.add(addr_expr)
+            mock_name = f"_esbmc_ctor_code_{changed}_{mock_index}"
+            local += [
+                f"{indent}// ESBMC constructor fixture: local Foundry has no "
+                f"code at constructor argument `{spec['param_name']}`.",
+                f"{indent}address {mock_name} = {addr_expr};",
+                f"{indent}vm.etch({mock_name}, hex\"00\");",
+            ]
+        if local:
+            out.extend(local)
+            changed += 1
+        out.extend(lines[i:end + 1])
+        i = end + 1
+    return out, changed
+
+
 def apply_constructor_param_interface_mocks(lines, contract, specs, source,
                                             indent="    "):
     """Mock constructor-time interface calls on replay constructor args."""
@@ -9713,7 +9787,9 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
                         layout=None, contract=None, unit=None,
                         constructor_mocks=None, runtime_mocks=None,
                         constructor_params=None,
-                        constructor_param_mocks=None, flat_source=None):
+                        constructor_param_mocks=None,
+                        constructor_param_hascode_mocks=None,
+                        flat_source=None):
     """Insert PUT functions into the emitter's contract and rename safely."""
     cname, _cstart, cend = emitted.blocks[case[0]]
     lines = list(emitted.lines)
@@ -9746,6 +9822,9 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
             apply_constructor_param_interface_mocks(
                 lines, contract, constructor_param_mocks or [],
                 flat_source or "")
+        lines, _constructor_param_hascode_repairs = \
+            apply_constructor_param_hascode_mocks(
+                lines, contract, constructor_param_hascode_mocks or [])
         lines = repair_pranked_constructor_origins(lines, contract)
         lines, _constructor_payable_repairs = repair_payable_constructor_args(
             lines, contract, constructor_params or [])
@@ -9768,7 +9847,9 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
                              layout=None, contract=None, unit=None,
                              constructor_mocks=None, runtime_mocks=None,
                              constructor_params=None, params=None,
-                             constructor_param_mocks=None, flat_source=None):
+                             constructor_param_mocks=None,
+                             constructor_param_hascode_mocks=None,
+                             flat_source=None):
     """Keep exactly one concrete replay case and rename its test contract.
 
     This is the point-region fallback for a certified region that renders no
@@ -9805,6 +9886,9 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
             apply_constructor_param_interface_mocks(
                 lines, contract, constructor_param_mocks or [],
                 flat_source or "")
+        lines, _constructor_param_hascode_repairs = \
+            apply_constructor_param_hascode_mocks(
+                lines, contract, constructor_param_hascode_mocks or [])
         if params is not None:
             lines, _payable_replay_repairs = repair_payable_replay_call_args(
                 lines, unit, named_params(params))
@@ -10387,6 +10471,8 @@ def main():
     flat_source = _flat_source_for_project(a.forge_project) or ""
     constructor_param_mocks = constructor_param_interface_mock_specs(
         a.forge_project, a.contract)
+    constructor_param_hascode_mocks = constructor_param_hascode_specs(
+        a.forge_project, a.contract)
     if constructor_mocks:
         mock_calls = sum(1 for line in constructor_mocks
                          if "vm.mockCall(" in line)
@@ -10397,6 +10483,10 @@ def main():
     if constructor_param_mocks:
         notes.append("constructor parameter interface mocks inserted before "
                      f"deployment ({len(constructor_param_mocks)} call(s))")
+    if constructor_param_hascode_mocks:
+        notes.append("constructor parameter code fixtures inserted before "
+                     f"deployment ({len(constructor_param_hascode_mocks)} "
+                     "address arg(s))")
     runtime_mocks = runtime_interface_mock_lines(a.forge_project, "    ")
     runtime_mock_addresses = sum(1 for line in runtime_mocks
                                  if "vm.etch(" in line)
@@ -10441,7 +10531,8 @@ def main():
             txt = assemble_concrete_source(
                 emitted, case, newc, foundry_fixture, layout, a.contract,
                 a.unit, constructor_mocks, runtime_mocks, constructor_params,
-                concrete_params, constructor_param_mocks, flat_source)
+                concrete_params, constructor_param_mocks,
+                constructor_param_hascode_mocks, flat_source)
         except ValueError as exc:
             reason = str(exc)
             print(f"[put] REFUSED: {reason}")
@@ -10507,6 +10598,8 @@ def main():
                                constructor_mocks) // 2,
                            "constructor_param_interface_mocks": len(
                                constructor_param_mocks),
+                           "constructor_param_hascode_mocks": len(
+                               constructor_param_hascode_mocks),
                            "runtime_interface_mocks": runtime_mock_addresses,
                        "runtime_interface_mock_calls": runtime_mock_calls,
                        "stats": {
@@ -11190,7 +11283,8 @@ def main():
             txt = assemble_concrete_source(
                 emitted, case, newc, foundry_fixture, layout, a.contract,
                 a.unit, constructor_mocks, runtime_mocks, constructor_params,
-                params, constructor_param_mocks, flat_source)
+                params, constructor_param_mocks,
+                constructor_param_hascode_mocks, flat_source)
         except ValueError as exc:
             reason = str(exc)
             print(f"[put] REFUSED: {reason}")
@@ -11252,6 +11346,8 @@ def main():
                            constructor_mocks) // 2,
                        "constructor_param_interface_mocks": len(
                            constructor_param_mocks),
+                       "constructor_param_hascode_mocks": len(
+                           constructor_param_hascode_mocks),
                        "runtime_interface_mocks": runtime_mock_addresses,
                        "runtime_interface_mock_calls": runtime_mock_calls,
                        "stats": {
@@ -11281,7 +11377,8 @@ def main():
     txt = assemble_put_source(emitted, case, [put], newc, foundry_fixture,
                               layout, a.contract, a.unit, constructor_mocks,
                               runtime_mocks, constructor_params,
-                              constructor_param_mocks, flat_source)
+                              constructor_param_mocks,
+                              constructor_param_hascode_mocks, flat_source)
     dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
     with open(dest, "w") as f:
         f.write(txt)
@@ -11369,6 +11466,8 @@ def main():
                        constructor_mocks) // 2,
                    "constructor_param_interface_mocks": len(
                        constructor_param_mocks),
+                   "constructor_param_hascode_mocks": len(
+                       constructor_param_hascode_mocks),
                    "runtime_interface_mocks": runtime_mock_addresses,
                    "runtime_interface_mock_calls": runtime_mock_calls,
                    # WHICH EXECUTABLE PRODUCED THIS. Without it a reader

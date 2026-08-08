@@ -64,6 +64,7 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                assert_query_region_entries, build_put,
                                check_esbmc_args, cell_of,
                                complete_missing_call_args,
+                               constructor_param_hascode_specs,
                                constructor_param_interface_mock_specs,
                                constructor_external_interface_mock_lines,
                                constructor_staticcall_mock_lines,
@@ -214,6 +215,21 @@ library HyperTokenInfoPrecompile {
         require(success);
         HyperTokenInfo memory tokenInfo = abi.decode(out, (HyperTokenInfo));
         return tokenInfo.szDecimals;
+    }
+}
+"""
+
+HASCODE_CTOR_FLAT = """\
+pragma solidity >=0.8.0;
+
+contract C {
+    constructor(address impl, address payable fallbackHandler, uint256 ignored) {
+        require(hasCode(impl), "impl has no code");
+        require(hasCode(fallbackHandler), "handler has no code");
+        ignored;
+    }
+    function hasCode(address account) internal view returns (bool) {
+        return account.code.length > 0;
     }
 }
 """
@@ -549,6 +565,58 @@ contract CCovTest_1 is Test {
                  "precompile constructor arguments are not etched")
     bad += check(text.count('abi.encodeWithSignature("decimals()")') == 2,
                  "each test contract setUp gets its own constructor mocks")
+    return bad
+
+
+def test_constructor_param_hascode_args_are_etched_before_deploy():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest_0 is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C(address(uint160(0)), payable(address(uint160(11))), 3);
+  }
+  // claim: sol:@C@C@F@f#9:path:1
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 1)
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "src"))
+        with open(os.path.join(project, "src", "flat.sol"), "w") as f:
+            f.write(HASCODE_CTOR_FLAT)
+        specs = constructor_param_hascode_specs(project, "C")
+    put = ["", "  function test_put_C_f_path1() public {", "    c0.f();", "  }"]
+    text = assemble_put_source(
+        em, case, [put], "CCovTest_0_put", contract="C", unit="f",
+        constructor_param_hascode_mocks=specs, flat_source=HASCODE_CTOR_FLAT)
+    new_at = text.find(
+        "c0 = new C(address(uint160(0)), payable(address(uint160(11))), 3);")
+    impl_at = text.find("address _esbmc_ctor_code_0_0 = address(uint160(0));")
+    handler_at = text.find(
+        "address _esbmc_ctor_code_0_1 = payable(address(uint160(11)));")
+    bad = 0
+    bad += check([s["param_name"] for s in specs]
+                 == ["impl", "fallbackHandler"],
+                 f"hasCode address parameters are found: {specs}")
+    bad += check(0 <= impl_at < new_at,
+                 "the first hasCode constructor arg is etched before deploy")
+    bad += check(0 <= handler_at < new_at,
+                 "the payable hasCode constructor arg is etched before deploy")
+    bad += check(text.count("vm.etch(_esbmc_ctor_code_") == 2,
+                 "only hasCode constructor address args are etched")
     return bad
 
 
@@ -12183,6 +12251,7 @@ def main():
               test_path_cov_fixture_replays_constructor_then_pins_state,
               test_constructor_staticcall_mock_is_scoped_to_deployment,
               test_constructor_param_interface_calls_are_mocked_before_deploy,
+              test_constructor_param_hascode_args_are_etched_before_deploy,
               test_runtime_interface_mock_lines_cover_literal_address_calls,
               test_constructor_external_interface_mocks_cover_router_factory_chain,
               test_runtime_interface_mocks_survive_constructor_mock_clear,

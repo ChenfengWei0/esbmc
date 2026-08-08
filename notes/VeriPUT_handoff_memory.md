@@ -21875,3 +21875,48 @@ Update after BugFix124 fallback-root fix:
   constructor-coordinate rendering for immutable/constructor-derived slices,
   external-call mock realisation for pinned extcall returns, or better
   coordinate extraction for NOT-CERTIFIED/no-coordinate rows.
+
+Update after real203 no-coordinate sweep and constructor hasCode fix:
+
+- Ran a focused real203 batch over ten no-coordinate/no-valid subjects with
+  `jobs=4`, `memlimit=8GiB`, full 600s subject/ESBMC budget, and early-stop
+  knobs disabled:
+  `FactoryWidePauseWindow`, `Version`, `ExtendedResolver`,
+  `StaticMetadataService`, `DToken`, `HookTargetSynth`, `MultiSend`,
+  `MultiSendCallOnly`, `SafeMigration`, `SignMessageLib`.
+- Nine of the ten recovered valid artifacts.  Most were concrete-only:
+  `Version` 2/2 concrete, `StaticMetadataService` 2/2 concrete, `MultiSend`
+  1/1 concrete, `MultiSendCallOnly` 1/1 concrete,
+  `FactoryWidePauseWindow` 4/4 concrete, `HookTargetSynth` 3/3 concrete,
+  `ExtendedResolver` 3/3 concrete, `SignMessageLib` 2/2 concrete.  `DToken`
+  recovered `raw=16`, `valid=16`, `put=1/1`, `concrete=15/15`, R0-only.
+- `SafeMigration` initially produced `raw=4` PUTs but `valid=0`: the generated
+  Foundry `setUp()` deployed `new SafeMigration(address(0), address(0),
+  address(0))`, and the constructor reverted because it requires
+  `hasCode(safeSingleton)`, `hasCode(safeL2Singleton)`, and
+  `hasCode(fallbackHandler)`.
+- Fixed `scripts/solidity_path_put.py` so address constructor parameters used
+  in `hasCode(param)` guards are given minimal bytecode with `vm.etch(...)`
+  before deployment.  This is a Foundry harness fix only; it does not change
+  ESBMC certification and does not make rollback/revert paths R1/R2-observable.
+  It applies to both PUT and concrete fallback assembly.
+- Verification:
+  `python3 -m py_compile scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py notes/coverage/scripts/put_all.py
+  notes/coverage/scripts/rq1_veriput_run.py` passed;
+  `python3 scripts/test_solidity_path_put.py` passed (276 tests);
+  a copied SafeMigration Foundry project with the etch inserted ran
+  `forge test --match-test test_put_SafeMigration_migrateSingleton_path6 -vv`
+  successfully over 256 fuzz runs.
+- Reran official RQ1 for
+  `safe-fndn__safe-smart-account__SafeMigration` after the fix:
+  `raw=4`, `valid=4`, `put=4/4`, `concrete=0/0`,
+  `bucket=valid-PUT-no-R1R2`, wall `153.675s`.
+- Latest real203 triage snapshot:
+  `quality_bucket={"no-valid":166,"valid-PUT-no-R1R2":10,
+  "valid-PUT-with-R1R2":21,"valid-no-PUT":23}`;
+  artifact totals `raw=287`, `valid=259`, `put_raw=144`,
+  `put_valid=136`, `concrete_raw=143`, `concrete_valid=123`.
+  The action queue is now dominated by valid concrete-only
+  `cleared_not_certified_fallback` subjects; those improve raw valid ratio but
+  not PUT/R1/R2 claims.
