@@ -20892,3 +20892,36 @@ Update after ERC-3643 Stage-4-only rescue and triage-policy alignment:
   `valid-PUT-no-R1R2=65`, `valid-PUT-with-R1R2=143`.  Duplicated `.redo.*`
   result directories are included in that raw count; deduping by subject/unit
   should be done before final paper numbers.
+
+Follow-up triage samples for the new no-PUT / no-R1R2 focus:
+
+- `bugfix124/acfix_021_CVE_2018_19832` (`NewIntelTechMedia.NETM`) is a
+  `valid-no-PUT` example.  Its `put.json` is `kind=concrete`, `fuzz_params=0`,
+  with the repeated reason `NOT PARAMETERIZED`: the certified region is wide
+  only on coordinates the emitter does not render into the Foundry test.  It
+  still mined oracle candidates (`owner`, `totalDistributed`,
+  `balances[msg.sender]`) and R2 ideas, but no candidate probe could run because
+  there was no rendered fuzz coordinate.  This class is a region/rendering
+  problem, not a solver proof problem.
+- `bugfix124/acfix_016_CVE_2018_10705` (`Owned.setOwner`) is a
+  `valid-PUT-no-R1R2` example whose path exits through rollback revert.  The
+  ladder has `owner: post == pre HOLDS`, but the tool correctly drops post-state
+  R1/R2 because a reverted transaction's intermediate write is not observable
+  in Foundry/on-chain state.  Count these separately from fixable normal-exit
+  no-R1/R2 cases; R0 may be the semantic ceiling for such paths.
+- A more fixable no-R1/R2 sample is
+  `peer182/peer_ccsolbmc__shibabread` (`SHIBABREAD.approve`).  Old artifacts
+  show ladder refusal because the generated assertion spec kept scalar
+  entry-state names such as `state._owner`, while ESBMC's internal state names
+  include suffixes like `_owner$228` and mapping stores like `_allowances$378`.
+  Current code's `assert_query_region_entries()` already skips scalar
+  `state.<field>` entries for the ladder superset, and the newer mapping-alias
+  machinery should translate queryable mapping slots.  This suggests some old
+  no-R1/R2 artifacts are stale and worth Stage-4-only retry before new code.
+- Lightweight attribution over current result directories, counting put.json
+  artifacts rather than deduped subjects, shows the dominant no-PUT reasons are
+  `concrete-only-fallback` and `not-parameterized`; no-R1/R2 has a large
+  rollback bucket plus normal-exit `ladder-refused` / no-renderable cases.  Do
+  not spend engineering effort trying to force R1/R2 onto rollback paths; focus
+  on normal exits and on turning concrete-only/not-parameterized rows into
+  parameterized tests where a renderable coordinate can be established.
