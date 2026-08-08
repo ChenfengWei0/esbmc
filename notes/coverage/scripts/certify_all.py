@@ -563,6 +563,7 @@ def parse_driver(out):
                 ("[coords] DROPPED", "[coords] NOT ",
                  "[coords] no --ast", "[coords] every",
                  "[coords] UNSUPPORTED", "[coords] ACCOUNTING",
+                 "[coords] --pin-agreed-state",
                  # Added when the whitelist failed. Kept because logs written by
                  # a driver without the FREE marker still have to parse.
                  "[coords] MAPPING SLOT", "[coords] mapping(s)",
@@ -627,6 +628,42 @@ def result_not_certified_details(workdir, since_mtime=None):
             continue
         details[str(row["enc"])] = row
     return details
+
+
+def merge_not_certified_details(rec):
+    """Keep machine-readable NOT_CERTIFIED rows visible to Stage 4.
+
+    The prose parser is intentionally conservative and can miss paths when the
+    driver exits through a structured side channel such as NO-COORDINATE.  The
+    JSON result is authoritative for per-enc fallback metadata, so the sweep row
+    must expose those encs in `not_certified` as well as in
+    `not_certified_details`; downstream Stage 4 accounting iterates the former
+    and reads proof/fallback tags from the latter.
+    """
+    not_certified = rec.setdefault("not_certified", {})
+    for enc, detail in (rec.get("not_certified_details") or {}).items():
+        if str(enc) in not_certified:
+            continue
+        if not isinstance(detail, dict):
+            continue
+        reason = detail.get("reason") or detail.get("verdict")
+        if not reason:
+            reason = "machine-readable NOT_CERTIFIED detail"
+        not_certified[str(enc)] = str(reason)
+    return rec
+
+
+def result_pins(workdir, since_mtime=None):
+    """Machine-readable pins written by the stage-2 driver."""
+    path = os.path.join(workdir, "generalise-result.json")
+    try:
+        if since_mtime is not None and os.stat(path).st_mtime < since_mtime:
+            return None
+        with open(path) as stream:
+            pins = json.load(stream).get("pins")
+    except (OSError, ValueError):
+        return None
+    return pins if isinstance(pins, dict) else None
 
 
 def result_certified_details(workdir, since_mtime=None):
@@ -2075,6 +2112,7 @@ def main():
             wall = time.time() - t1
             rec = parse_driver(out)
             generalise_progress = result_generalise_progress(uwd, t1)
+            machine_pins = result_pins(uwd, t1)
             rec.update({"benchmark": bench, "unit": unit,
                         "path_function": result_path_function(uwd),
                         "certified_details":
@@ -2090,7 +2128,6 @@ def main():
                         "partial_witness_journal":
                             result_partial_witness_journal(
                                 uwd, t1, progress=generalise_progress),
-                        "bucket": bucket(rec, rc, out),
                         "wall_s": round(wall, 1), "exit": rc,
                         "memlimit_gib": memlimit, "jobs": args.jobs,
                         "recipe_version": args.recipe_version,
@@ -2236,6 +2273,10 @@ def main():
                         # file whose records came from another build is refused
                         # rather than continued.
                         "binary": ident})
+            if rec.get("pins") is None and machine_pins is not None:
+                rec["pins"] = machine_pins
+            merge_not_certified_details(rec)
+            rec["bucket"] = bucket(rec, rc, out)
             # THE COMMAND, THEN ITS OUTPUT. The log is read when a unit's row
             # cannot say what happened, and the first question then is what was
             # actually run -- the row records the sweep's flags, not the child's

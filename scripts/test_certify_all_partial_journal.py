@@ -98,6 +98,21 @@ def main():
 
         result = workdir / "generalise-result.json"
         result.write_text(json.dumps({
+            "pins": {
+                "msg.sender": "7",
+                "block.timestamp": "9",
+            },
+            "not_certified": [
+                {
+                    "enc": 4,
+                    "reason": "no generalisable coordinate",
+                    "concrete_fallback": True,
+                    "witness_check": "COMPLETE-WITNESS-NO-COORDINATE",
+                    "ce": {
+                        "msg.sender": "7",
+                    },
+                },
+            ],
             "enumeration_source": {
                 "salvage": {
                     "from": "cov-ce-journal.json",
@@ -108,6 +123,21 @@ def main():
                 }
             }
         }))
+        got_pins = certify_all.result_pins(str(workdir), since)
+        bad += check(got_pins == {
+            "msg.sender": "7",
+            "block.timestamp": "9",
+        }, f"machine-readable pins are preserved: {got_pins}")
+        got_not_certified = certify_all.result_not_certified_details(
+            str(workdir), since)
+        row = {
+            "not_certified": {},
+            "not_certified_details": got_not_certified,
+        }
+        certify_all.merge_not_certified_details(row)
+        bad += check(row["not_certified"] == {
+            "4": "no generalisable coordinate",
+        }, f"machine-readable not-certified rows feed Stage 4: {row}")
         got_salvage = certify_all.result_enumeration_salvage(str(workdir), since)
         bad += check(got_salvage["path_count"] == 1
                      and got_salvage["witness_count"] == 8,
@@ -202,6 +232,8 @@ def main():
             "state._owner==1\n"
             "[coords] mapping dependency policy solc-reference-closure/3: "
             "state._owner dependency distance 3\n"
+            "[coords] --pin-agreed-state derived NOTHING: no state coordinate "
+            "survived to this point. No pin was added\n"
             "[coords] NO mapping slot was added. This is a statement about "
             "the source and the budget, not about the tool\n"
             "[coords] NO GENERALISABLE COORDINATE — every coordinate was "

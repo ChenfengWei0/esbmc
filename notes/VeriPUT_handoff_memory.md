@@ -19736,3 +19736,52 @@ Practical interpretation:
 - `bugfix124` remains the best near-term optimization target because all
   three weakness classes are substantial at once, and the PUT/valid artifact
   ratio is currently below the paper-methodology comfort line.
+
+## 2026-08-08 NO-COORDINATE concrete fallback funnel fix
+
+Found a script-level loss in the `NO-COORDINATE` path:
+
+- `scripts/solidity_path_generalise.py` already writes
+  `generalise-result.json` with `not_certified[]` rows for every complete
+  witness when there is no generalisable coordinate.  These rows carry
+  `concrete_fallback: true`, `witness_check:
+  COMPLETE-WITNESS-NO-COORDINATE`, CE values, and top-level `pins`.
+- `notes/coverage/scripts/certify_all.py` stored current `NO-COORDINATE`
+  journal rows with empty `not_certified` and empty
+  `not_certified_details`, so `put_all.py` and the RQ1 wrapper saw zero
+  Stage-4 candidates.
+- Some rows also mis-parsed a prose line like
+  `[coords] --pin-agreed-state derived NOTHING...` as a coordinate, producing
+  a bogus `coords` entry and no usable pins.
+
+Implemented:
+
+- `certify_all.result_pins()` reads top-level pins from
+  `generalise-result.json`.
+- `certify_all.merge_not_certified_details()` merges machine-readable
+  `not_certified_details` into the row's `not_certified` map when the prose
+  parser missed them.
+- The coordinate parser now ignores `[coords] --pin-agreed-state...` prose.
+- The main certify row write fills missing `pins` from the machine-readable
+  result, merges details, and then computes the bucket.  Bucket semantics are
+  unchanged: `NO-COORDINATE` remains `NO-COORDINATE`, not certified and not a
+  PUT.
+
+Expected impact:
+
+- Future reruns of `NO-COORDINATE` subjects should enter Stage 4 as concrete
+  fallback candidates instead of `no-output`.  This can improve raw/valid and
+  reduce `no-valid`, but it intentionally does not improve PUT ratio directly.
+- This is still useful because it separates "method has only concrete replay
+  here" from "pipeline lost a replayable complete witness".
+
+Verification:
+
+- `python3 -m py_compile notes/coverage/scripts/certify_all.py
+  scripts/test_certify_all_partial_journal.py`
+- `python3 scripts/test_certify_all_partial_journal.py`
+- `python3 scripts/test_put_all_accounting.py`
+- `python3 scripts/test_rq1_veriput_run.py`
+
+No ESBMC rerun was consumed for this fix yet; save benchmark reruns for a
+small selected NO-COORDINATE queue after more script-level fixes are batched.
