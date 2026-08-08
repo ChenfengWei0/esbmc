@@ -20107,3 +20107,32 @@ Verification:
   scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
 - `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
   passed: 254 tests.
+
+## 2026-08-08 no-R1/R2 triage detail shapes
+
+`rq1_veriput_triage.py` now distinguishes no-R1/R2 artifacts by detail shape:
+
+- `rollback`: R0-only is accounting-only; post-state/return is not observable.
+- `normal-return-varies`: a return surface exists, but every simple return rung
+  was refuted over the certified region.  This is the actionable numeric/formula
+  R2 class; current representative is `IRMLinearKink`.
+- `normal-no-ladder-candidate`: the ladder could not form any candidate.  This
+  covers unsupported/non-scalar surfaces such as string returns/state strings,
+  or truly no readable scalar/return surface.  Current representative is
+  `Greeter3`; it has string returns and string state.
+- `normal-exit-only` / `normal-unknown`: R0-only without a more specific reason.
+
+Current split from the existing journals:
+
+- `bugfix124`: no-R1/R2 detail is all rollback (`46` artifacts), so prioritize
+  `no-valid` and `valid-no-PUT` for this dataset.
+- `real203`: no-R1/R2 details are `normal-return-varies=1`,
+  `normal-no-ladder-candidate=1`, `rollback=16`.
+- `peer182`: no-R1/R2 details are `normal-no-ladder-candidate=16`,
+  `rollback=24`; its no-R1/R2 pressure is mostly candidate/surface support, not
+  numeric R2 formula strength.
+
+This fixes a previous diagnostic overclaim: the ESBMC refusal text mentions
+"mapping or dynamic array" as a generic example, not proof that the case is a
+mapping/dynamic-array bug.  The triage tag is now
+`ladder-refused-no-candidate`.

@@ -155,8 +155,9 @@ def _strength_issue_tags(row: dict[str, Any], bucket: str) -> Counter[str]:
             oracle_skipped = stats.get("oracle_skipped") or []
             if stats.get("rollback_exit") is True:
                 tags["rollback-exit-r0-only"] += 1
-            if _contains_text(notes, "mapping or dynamic array"):
-                tags["ladder-refused-mapping-or-dynarray"] += 1
+            if doc.get("ladder_refusal") or _contains_text(
+                    notes, "NOT ONE candidate assertion could be formed"):
+                tags["ladder-refused-no-candidate"] += 1
             if _contains_text(oracle_skipped, "all return rungs DROPPED"):
                 tags["return-varies-no-simple-rung"] += 1
             r2_prefilter = doc.get("r2_fuzz_prefilter") or {}
@@ -172,6 +173,24 @@ def _strength_issue_tags(row: dict[str, Any], bucket: str) -> Counter[str]:
         return tags
 
     return tags
+
+
+def _no_r1r2_artifact_shape(test: dict[str, Any]) -> str:
+    doc = _read_put_json(test)
+    stats = doc.get("stats") if isinstance(doc.get("stats"), dict) else {}
+    notes = doc.get("notes") or []
+    oracle_skipped = stats.get("oracle_skipped") or []
+    if stats.get("rollback_exit") is True:
+        return "rollback"
+    if _contains_text(oracle_skipped, "all return rungs DROPPED"):
+        return "normal-return-varies"
+    if doc.get("ladder_refusal") or _contains_text(
+            notes, "NOT ONE candidate assertion could be formed"):
+        return "normal-no-ladder-candidate"
+    classes = set(stats.get("oracle_classes") or test.get("oracle_classes") or [])
+    if classes == {"R0"}:
+        return "normal-exit-only"
+    return "normal-unknown"
 
 
 def _valid_put_no_r1r2_exit_shape(row: dict[str, Any]) -> str:
@@ -298,6 +317,7 @@ def summarize_dataset(root: Path, dataset: str,
     valid_put_classes: Counter[str] = Counter()
     valid_put_combos: Counter[str] = Counter()
     no_r1r2_exit_shapes: Counter[str] = Counter()
+    no_r1r2_detail_shapes: Counter[str] = Counter()
     strength_issue_counts: Counter[str] = Counter()
     artifact = Counter()
     examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -314,6 +334,13 @@ def summarize_dataset(root: Path, dataset: str,
         valid_put_combos.update(_valid_put_combo_counts(row))
         if bucket.startswith("valid-PUT-no-R1R2"):
             no_r1r2_exit_shapes[_valid_put_no_r1r2_exit_shape(row)] += 1
+            for test in _valid_tests(row):
+                if test.get("kind") != "put":
+                    continue
+                labels = set(str(v) for v in (test.get("oracle_classes") or []))
+                if "R1" in labels or "R2" in labels:
+                    continue
+                no_r1r2_detail_shapes[_no_r1r2_artifact_shape(test)] += 1
         if bucket == "valid-no-PUT":
             for test in _valid_tests(row):
                 no_put_sources[str(test.get("stage2_source") or "<missing>")] += 1
@@ -353,6 +380,8 @@ def summarize_dataset(root: Path, dataset: str,
         "valid_put_oracle_class_counts": dict(sorted(valid_put_classes.items())),
         "valid_put_oracle_combo_counts": dict(sorted(valid_put_combos.items())),
         "valid_put_no_r1r2_exit_shapes": dict(sorted(no_r1r2_exit_shapes.items())),
+        "valid_put_no_r1r2_detail_shapes": dict(
+            sorted(no_r1r2_detail_shapes.items())),
         "valid_no_put_stage2_sources": dict(sorted(no_put_sources.items())),
         "strength_issue_counts": dict(sorted(strength_issue_counts.items())),
         "status_counts": dict(sorted(status_counts.items())),
@@ -393,6 +422,10 @@ def _print_human(summary: dict[str, Any]) -> None:
     if summary["valid_put_no_r1r2_exit_shapes"]:
         print("valid PUT no-R1/R2 exit shapes:")
         for key, value in summary["valid_put_no_r1r2_exit_shapes"].items():
+            print(f"  {key}: {value}")
+    if summary["valid_put_no_r1r2_detail_shapes"]:
+        print("valid PUT no-R1/R2 detail shapes:")
+        for key, value in summary["valid_put_no_r1r2_detail_shapes"].items():
             print(f"  {key}: {value}")
     if summary["valid_no_put_stage2_sources"]:
         print("valid-no-PUT stage2 sources:")
