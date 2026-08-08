@@ -21018,3 +21018,11 @@ Update after the RQ1 quality-triage script pass:
   `valid-PUT-with-R1R2=16`.  The next no-valid-with-fallback candidates should
   be screened for whether a certified region exists; pure no-coordinate
   fallback rows improve raw/valid concrete only, not PUT ratio.
+- `real203/ensdomains__ens-contracts__ExponentialPremiumPriceOracle` was
+  inspected as a no-valid-with-complete-fallback candidate.  It is not a
+  simple rerun target: Stage4 did run for `supportsInterface`, but ESBMC's
+  emit phase refused all Foundry cases as a named obstacle and printed
+  `No *.t.sol generated`; `put-summary.json` consequently has four refused
+  rows and zero raw artifacts.  The triage script now detects this as
+  `foundry-obstacle-no-test` from emit logs.  This should be lower priority
+  than no-valid rows where Stage4 never consumed replayable fallback artifacts.

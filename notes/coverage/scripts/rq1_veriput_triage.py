@@ -113,6 +113,22 @@ def _put_json_has_r1r2(summary_path: Path, test: str | None) -> bool:
     return False
 
 
+def case_logs_contain(result_path: Path | None, *needles: str) -> bool:
+    if result_path is None:
+        return False
+    root = result_path.parent / "put"
+    if not root.exists():
+        return False
+    for path in root.rglob("run*.log"):
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        if all(needle in text for needle in needles):
+            return True
+    return False
+
+
 def green_r1r2_no_width_rows(
         result: dict, result_path: Path | None = None) -> list[dict]:
     out = []
@@ -174,13 +190,15 @@ def _text_blob(items) -> str:
     return "\n".join(str(item) for item in items)
 
 
-def classify_no_valid(result: dict) -> str:
+def classify_no_valid(result: dict, result_path: Path | None = None) -> str:
     row = result.get("row", {})
     cert = result.get("certification", {})
     buckets = Counter(cert.get("bucket_counts") or row.get("cert_bucket_counts") or {})
     reason = row.get("early_stop_reason") or ""
     if cert.get("oom_units") or row.get("cert_oom_units"):
         return "oom"
+    if case_logs_contain(result_path, "NAMED OBSTACLE", "No *.t.sol generated"):
+        return "foundry-obstacle-no-test"
     if "no output after" in reason:
         return "stage2-no-output-timeout"
     if "no Stage-2 candidate" in reason:
@@ -234,7 +252,7 @@ def classify(result: dict, bucket: str, result_path: Path | None = None) -> str:
     if bucket == "PUT-with-R1R2-but-no-width":
         return "green-r1r2-put-no-fuzz-width"
     if bucket == "no-valid":
-        return classify_no_valid(result)
+        return classify_no_valid(result, result_path)
     if bucket == "valid-no-PUT":
         return classify_valid_no_put(result)
     if bucket == "valid-PUT-no-R1R2":
