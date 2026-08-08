@@ -11399,6 +11399,67 @@ contract EmergencyOracleFactoryCovTest is Test {
     return bad
 
 
+def test_unconstrained_string_replay_arg_becomes_dynamic_fuzz_input():
+    """A printed dynamic literal can still be proof-unconstrained.
+
+    EmergencyOracleFactory's raw replay prints `newEmergencyOracle("")`, but
+    Stage 2 certifies only the admin-gate region.  Since the path proof leaves
+    `description` unconstrained, the literal should be replaced by a Foundry
+    fuzz argument rather than forcing a concrete replay.
+    """
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {EmergencyOracleFactory} from "./EmergencyOracleFactory.sol";
+contract EmergencyOracleFactoryCovTest is Test {
+  EmergencyOracleFactory c1;
+  function setUp() public {
+    c1 = new EmergencyOracleFactory();
+  }
+  // claim: sol:@C@EmergencyOracleFactory@F@newEmergencyOracle#33:path:6
+  function test_cov_0() public {
+    // [revert-tolerant] outcome not asserted
+    try c1.newEmergencyOracle("") {} catch {}
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for(
+        "sol:@C@EmergencyOracleFactory@F@newEmergencyOracle#33", 6)
+    notes = []
+    put, stats = build_put(
+        "EmergencyOracleFactory", "newEmergencyOracle", 6, 2,
+        "sol:@C@EmergencyOracleFactory@F@newEmergencyOracle#33",
+        region={"state.isAdmin[msg.sender]": (0, 0)}, holes={}, pins={},
+        params=[("description", "string calldata")], emitted=em, case=case,
+        layout={}, ladder_rows=[], notes=notes, exit_kind="revert",
+        lift_unconstrained_calldata=True)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    bad += check("function test_put_EmergencyOracleFactory_newEmergencyOracle_"
+                 "path6(string memory description) public" in text,
+                 "the concrete string literal becomes a fuzz parameter")
+    bad += check('newEmergencyOracle("")' not in text,
+                 "the target call no longer pins the literal string")
+    bad += check("try c1.newEmergencyOracle(description) {} catch { "
+                 "_put_ok = false; }" in text,
+                 "the target call is rewritten with the fuzzed description")
+    bad += check(stats["fuzz_params"] == 1
+                 and stats["dynamic_fuzz_coords"] == ["description"],
+                 f"the dynamic coordinate is counted as fuzzed: {stats}")
+    bad += check(stats["oracle_classes"] == ["R0"],
+                 f"the rollback path carries only the exit oracle: {stats}")
+    return bad
+
+
 def test_missing_low_level_dynamic_args_update_abi_signature():
     line = (
         '    (bool ok, ) = address(c1).call(abi.encodeWithSignature("pack()"));')
@@ -11847,6 +11908,7 @@ def main():
               test_unused_setup_helper_deployment_is_revert_tolerant,
               test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input,
               test_missing_string_replay_arg_becomes_dynamic_fuzz_input,
+              test_unconstrained_string_replay_arg_becomes_dynamic_fuzz_input,
               test_missing_low_level_dynamic_args_update_abi_signature,
               test_missing_low_level_value_gate_args_update_abi_signature,
               test_assembled_put_source_drops_stale_concrete_replays,

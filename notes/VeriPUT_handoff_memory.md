@@ -20579,20 +20579,45 @@ Update after dynamic calldata PUT lifting:
   not emit `bound()` for it.  Stats now include `dynamic_fuzz_coords` alongside
   `wide_fuzz_coords`, so later RQ1 analysis can distinguish dynamic PUT
   generalization from scalar coordinates usable in R1/R2 expressions.
-- This should improve `valid-no-PUT / unsupported-calldata-type` cases such as
+- This improves `valid-no-PUT / unsupported-calldata-type` cases such as
   `acfix_3_5_088_EmergencyOracleFactory.newEmergencyOracle(string calldata
   description)` when ESBMC has certified that the path does not depend on the
-  dynamic argument.  It is not intended to solve
+  dynamic argument.  The real artifact's raw replay already printed
+  `newEmergencyOracle("")`; the important case is therefore
+  present-but-proof-unconstrained dynamic calldata, not only omitted calldata.
+  It is not intended to solve
   `mapping(address => string)` return-oracle rendering in
   `StandaloneReverseRegistrar`; that remains a separate `valid-PUT-no-R1/R2`
   dynamic-storage/return blocker.
 - Regression added:
-  `test_missing_string_replay_arg_becomes_dynamic_fuzz_input` and
+  `test_missing_string_replay_arg_becomes_dynamic_fuzz_input`,
+  `test_unconstrained_string_replay_arg_becomes_dynamic_fuzz_input`, and
   `test_missing_low_level_dynamic_args_update_abi_signature` in
   `scripts/test_solidity_path_put.py`.
 - Verification for this Python-side fix, no ESBMC run consumed:
   `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
   `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
-  (263/263);
+  (264/264 after adding the present-but-unconstrained regression);
   `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
   `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`.
+
+Update after first focused dynamic-calldata RQ1 redo:
+
+- Reran only `bugfix124/acfix_3_5_088_EmergencyOracleFactory` with the normal
+  RQ1 wrapper and `--redo` after the dynamic calldata patch:
+  `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --subject-id acfix_3_5_088_EmergencyOracleFactory --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --timeout 600 --esbmc-run-timeout 120 --stage2-unit-timeout-cap-s 180 --wrapper-grace 60 --memlimit-gib 10 --jobs 1 --forge-timeout 180 --redo`.
+- Result: `status=ok raw=1 valid=1 put=1/1 concrete=0/0`, wall `15.03s`.
+  The generated test is
+  `test_put_EmergencyOracleFactory_newEmergencyOracle_path6(string memory
+  description)` with `oracle_classes=["R0"]` and `dynamic_fuzz_coords` recorded
+  in the corresponding `put.json`.
+- This moves the subject from `valid-no-PUT / unsupported-calldata-type` to
+  `valid-PUT-no-R1/R2 / rollback-unobservable`.  That is an intentional
+  methodology improvement: the valid artifact is now a PUT, but the path
+  reverts through the admin gate, so only the exit-kind oracle is observable.
+- Regenerated focused triage:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/triage/latest_focus.{json,md}`.
+  bugfix124 changed from `valid-no-PUT=9, valid-PUT-no-R1/R2=24` to
+  `valid-no-PUT=8, valid-PUT-no-R1/R2=25`; raw/valid totals remain
+  `raw=281, valid=253`, while `put_valid` increases from `154` to `155` and
+  `concrete_valid` decreases from `99` to `98`.
