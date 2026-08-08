@@ -22202,3 +22202,12 @@ Update after FeeBurnerAuthentication scalar store-alias repair:
   and `_owner: post == msg.sender`), enc=6 remains the rollback R0 PUT.
   A separate `acceptOwnership` probe hit the 240s wrapper timeout without
   output, so no conclusion was recorded for that unit.
+- Official RQ1 rerun after canonical entry-coordinate repair:
+  `raw=4`, `valid=3`, `put=3/4`, `concrete=0/0`,
+  `bucket=valid-PUT-with-R1R2`, wall `677.728s`.  Valid tests are
+  `acceptOwnership` enc=6 (`R0`), `transferOwnership` enc=6 (`R0`), and
+  `transferOwnership` enc=7 (`R1+R2`).  Latest real203 triage after this run:
+  `quality_bucket={"no-valid":161,"valid-PUT-no-R1R2":10,
+  "valid-PUT-with-R1R2":9,"valid-no-PUT":23}`;
+  artifacts `{"raw":180,"valid":158,"put_raw":62,"put_valid":58,
+  "concrete_raw":118,"concrete_valid":100}`.
