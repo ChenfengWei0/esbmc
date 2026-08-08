@@ -22274,3 +22274,35 @@ Update after real203 no-valid-unknown refresh:
   (`rollback-unobservable`, string/dynamic mapping, immutable/event-only), and
   Stage2 timeout/no-candidate/cert-killed cases.  Do not keep rerunning
   `PolygonBridgeReceiver`; it already consumed a full 600s refresh.
+
+Update after bugfix124 stale/unknown refresh batches 1-3:
+
+- Same stale-row pattern exists in bugfix124: `no-valid-unknown` rows with no
+  `stage2_wall_s`/`stage4_wall_s` are often recoverable with the current
+  runner.  Reran 12 such subjects with
+  `rq1_veriput_run.py --benchmark bugfix124 --timeout 600 --wrapper-grace 60
+  --memlimit-gib 12 --jobs 2 --redo`.
+- Eleven of the twelve produced valid artifacts.  Strong R1/R2 recoveries:
+  `acfix_002_Templedao`, `acfix_031_CVE_2021_34273`,
+  `acfix_fixlink_DepositLog`, `acfix_llama3_002_Templedao`,
+  `acfix_llama3_017_CVE_2018_11329`,
+  `acfix_llama3_024_CVE_2019_15078`, and `pop_020_GSPFunding`.
+  R0-only valid recoveries: `acfix_022_CVE_2018_19833`,
+  `acfix_088_EmergencyOracleFactory`,
+  `acfix_llama3_022_CVE_2018_19833`, and `pop_051_LiquidityPool`.
+  `pop_077_GameItems` consumed a full 600s and remained no-valid/cert-killed.
+- Net bugfix124 movement from before these three batches to after them:
+  `quality_bucket` changed from
+  `{"PUT-with-R1R2-but-no-width":1,"no-valid":86,
+  "valid-PUT-no-R1R2":25,"valid-PUT-with-R1R2":9,"valid-no-PUT":3}` to
+  `{"PUT-with-R1R2-but-no-width":1,"no-valid":75,
+  "valid-PUT-no-R1R2":29,"valid-PUT-with-R1R2":16,"valid-no-PUT":3}`.
+  Artifacts changed from
+  `{"raw":91,"valid":70,"put_raw":71,"put_valid":61,
+  "concrete_raw":20,"concrete_valid":9}` to
+  `{"raw":156,"valid":133,"put_raw":121,"put_valid":110,
+  "concrete_raw":35,"concrete_valid":23}`.
+- There are still 20 bugfix124 `no-valid-unknown` rows with no timing left.
+  The next candidates are access-control/reentrancy/unchecked-call variants;
+  continue in small batches because the last batch had one full-timeout
+  no-output case.
