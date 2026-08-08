@@ -11355,6 +11355,59 @@ Scheduling implication:
 - Do not rerun `pop_051` just to apply future script changes unless a change
   directly targets concrete-to-PUT conversion for this contract family.
 
+## 2026-08-08 RQ1 pop_020 recovery result and concrete-only signal
+
+Official single-subject rerun:
+
+- Command:
+  `timeout 1260s python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --subject-id pop_020_GSPFunding --redo --timeout 600 --esbmc-run-timeout 120 --stage2-unit-timeout-cap-s 120 --no-output-stage2-stop-s 100 --wrapper-grace 60 --memlimit-gib 12 --jobs 1 --forge-timeout 300`.
+- Subject: `bugfix124 / pop_020_GSPFunding`, contract `GSPFunding`.
+- Old row from the final fast-first wave was `no-output`, raw 0, valid 0,
+  wall 147.510s.
+- New latest row is `status=ok`,
+  `completion_status=budget-exhausted`,
+  reason `valid artifact already produced; 0.9s remains below the 90s concrete-only Stage 4 floor`.
+- Counts: raw 7, valid 7, PUT 0/0, concrete 7/7.
+- Timing/resource fields: generation 590.324s, Stage2 513.449s,
+  Stage4 generation 76.875s, Foundry replay 6.976s, total wall 599.133s,
+  max RSS 1166.9 MB.
+- Units attempted:
+  `sync`, `correctRState`, `withdrawMtFeeTotal`, `adjustPriceLimit`,
+  `adjustPrice`, `adjustMtFeeRate`.
+- Valid artifacts:
+  `adjustPriceLimit` enc 15, four duplicate concrete fallback rows with
+  `stage2_source=timeout_concrete_fallback`; `correctRState` enc 15 and enc 2
+  with `stage2_source=cleared_not_certified_fallback`; `withdrawMtFeeTotal`
+  enc 63 with `stage2_source=timeout_concrete_fallback`.
+- Oracle class counts and combo counts are empty because no certified PUT was
+  emitted.
+- `low_budget_concrete_only_stage4_skip_count=1`.
+- `put_saturated_concrete_only_stage4_skip_count=0`.
+
+Updated official bugfix124 aggregate after:
+
+- `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark bugfix124`
+  reports VeriPUT:
+  `raw_u=277`, `valid_u=248`, `raw_c=69`, `valid_c=69`,
+  coverage 55.6%, `VT/case=2.00`.
+- Status counts:
+  `{'ok': 69, 'no-output': 47, 'no-units': 5, 'budget-exhausted': 3}`.
+- Strict artifact split over latest rows:
+  69 / 124 subjects have at least one valid test; 55 subjects still have no
+  valid test.  Valid artifacts are 143 PUT and 105 concrete replay tests, so
+  artifact-level PUT share is 57.7%.
+
+Scheduling implication:
+
+- This is the second consecutive no-output recovery that only improves raw
+  valid coverage, not PUT generalization.  The cheap-first/late-unit policy is
+  useful for RQ1 valid-case coverage, but GSPFunding again points at the real
+  bottleneck: Stage2 certification spends most of the budget and leaves only
+  concrete fallbacks.
+- Do not rerun `pop_020` unless a change directly targets converting
+  `cleared_not_certified_fallback` / `timeout_concrete_fallback` rows into PUTs
+  for this family.
+
 ## 2026-08-08 RQ1 runner speed guard after pop018
 
 Current branch:
