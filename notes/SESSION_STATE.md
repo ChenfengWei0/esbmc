@@ -339,3 +339,78 @@ Re-run any sample with
 `python3 notes/coverage/scripts/forge_roundtrip.py <bench> --timeout 180`
 and read the per-line loss with
 `python3 notes/coverage/scripts/emission_loss.py <bench>`.
+
+## VeriPUT RQ1 state, 2026-08-09 06:58-07:10 CST
+
+Active branch/remotes:
+
+- Working branch: `feat/veriput-fuzz-first`.
+- Push target: `E-SOL/feat/veriput-fuzz-first`.
+- Do not push `upstream`; do not mutate `/home/samson/workspace/VeriPUT/Datasets`.
+- RQ1 artifacts are under
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`.
+
+Pushed fixes after the peer prepared fallback work:
+
+- `dbd29420af [scripts] Use source scalar names for PUT ladders`
+  - `scripts/solidity_path_put.py` no longer rewrites scalar state variables
+    to solc `$id` store aliases for assertion-query variable names.
+  - Reason: cases like `IdentityManager.convertAddress` certified normal paths
+    and selected `_currentIndex`, but the PUT assertion ladder passed
+    `_currentIndex$13`; ESBMC's state-component walker expects the source-level
+    member name (`_currentIndex`). The symptom was `valid-PUT-no-R1R2` with
+    `ladder_refusal`.
+  - Verified with `python3 -m py_compile ...` and
+    `python3 scripts/test_solidity_path_put.py` (282/282).
+- `af8dee81c3 [scripts] Treat valid RQ1 artifacts as successful subjects`
+  - `notes/coverage/scripts/rq1_veriput_run.py` now keeps
+    `completion_status` for the real terminal state, but if a subject already
+    has reference-valid generated tests the top-level `status` is `ok` and the
+    original failure moves to `partial_failure_reason`.
+  - Reason: `AIRBets` produced `raw=1 valid=1 put=1/1` with R2, but a later
+    unit failure made the subject row say `status=error`; that is wrong for RQ1
+    raw-valid accounting and confusing for triage.
+  - Verified with `python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py
+    notes/coverage/scripts/rq1_veriput_triage.py` and `git diff --check`.
+
+Current aggregate snapshot before the newest runners finish:
+
+- `peer182`: total 182, valid 84, PUT 82, R1/R2 51; buckets
+  `{'valid-PUT-with-R1R2': 51, 'no-valid': 98, 'valid-PUT-no-R1R2': 31,
+  'valid-no-PUT': 2}`.
+- `bugfix124`: total 124, valid 68, PUT 64, R1/R2 25; buckets
+  `{'valid-PUT-with-R1R2': 25, 'no-valid': 56, 'valid-PUT-no-R1R2': 39,
+  'PUT-with-R1R2-but-no-width': 1, 'valid-no-PUT': 3}`.
+- `real203`: total 203, valid 58, PUT 35, R1/R2 23; buckets
+  `{'valid-PUT-with-R1R2': 23, 'no-valid': 145, 'valid-PUT-no-R1R2': 12,
+  'valid-no-PUT': 23}`.
+
+Runner state:
+
+- Session `96378`, peer batch `AIRBets TESTDONTBUY PipiCoin ShibaJail
+  AnyswapV5ERC20 shibabread KizunaInu DogeRocket`, `--jobs 2`,
+  `--memlimit-gib 12`, `--redo`.
+  - Completed so far: `AIRBets` valid PUT with R2, `TESTDONTBUY` valid PUT
+    without R1/R2.
+  - This runner started before `af8dee81c3`, so completed rows may still carry
+    the old contradictory `status=error` shape even when `valid > 0`.
+- Session `9782`, peer batch `KOALA LILY TOAD PONY`, `--jobs 1`,
+  `--memlimit-gib 12`, `--redo`.
+  - Exited. `KOALA` ended no-valid after about 554s. `LILY` produced
+    `raw=2 valid=2 put=2/2` with R1/R2 but kept old `status=error` because
+    this runner predated `af8dee81c3`. `TOAD` and `PONY` failed instantly with
+    no-valid/error; inspect logs before deciding whether they deserve a rerun.
+- Session `63317`, peer batch `HOTDOGE eNew PORCUPINE RIAS`, `--jobs 2`,
+  `--memlimit-gib 8`, `--redo`.
+  - The first attempt with `--jobs 2 --memlimit-gib 12` was refused by the
+    wrapper because `2 * 12GiB` exceeded 70% of current MemAvailable. The 8GiB
+    cap is intentional for this batch.
+
+Concurrency rule as of this snapshot:
+
+- Current ESBMC concurrency reached five child processes. Later RSS examples:
+  `HOTDOGE` ~8.2GiB, `ShibaJail` ~10.2GiB, `eNew` ~8.5GiB, `PipiCoin` ~7.5GiB,
+  with total MemAvailable around 7.6GiB and swap around 1.6GiB.
+- Do not add another runner until one or two heavy ESBMC children exit. When
+  memory frees, continue with the remaining stale peer no-valid queue, skipping
+  subjects already in active sessions.
