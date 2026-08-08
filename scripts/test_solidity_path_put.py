@@ -10970,6 +10970,68 @@ def test_missing_replay_args_become_full_domain_fuzz_inputs():
     return bad
 
 
+def test_missing_setup_replay_args_are_completed_not_fuzzed():
+    """Pre-target same-unit replay calls must compile after target lifting.
+
+    IRMSynth produced a valid raw PUT whose target call was repaired to
+    `computeInterestRate(arg0,arg1,arg2)`, but earlier setup replay calls to
+    the same unit stayed as `computeInterestRate()` and made Foundry reject the
+    generated test before the double-oracle run could execute.
+    """
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Rate} from "./Rate.sol";
+contract RateCovTest is Test {
+  Rate c1;
+  function setUp() public {
+    c1 = new Rate();
+  }
+  // claim: sol:@C@Rate@F@compute#12:path:9
+  function test_cov_0() public {
+    // [revert-tolerant] outcome not asserted
+    try c1.compute() {} catch {}
+    // [revert-tolerant] outcome not asserted
+    try c1.compute() {} catch {}
+    // [revert-tolerant] outcome not asserted
+    try c1.compute() {} catch {}
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Rate@F@compute#12", 9)
+    notes = []
+    put, stats = build_put(
+        "Rate", "compute", 9, 1, "sol:@C@Rate@F@compute#12",
+        region={}, holes={}, pins={},
+        params=[("a", "address"), ("x", "uint256"), ("y", "uint256")],
+        emitted=em, case=case, layout={}, ladder_rows=[], notes=notes,
+        exit_kind="revert")
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    bad += check("try c1.compute() {} catch {}" not in text,
+                 "no pre-target or target replay call is left with empty args")
+    bad += check(text.count(
+        "try c1.compute(address(uint160(0)), 0, 0) {} catch {}") == 2,
+                 "pre-target setup calls are completed with default args")
+    bad += check("try c1.compute(a, x, y) {} catch { _put_ok = false; }"
+                 in text,
+                 "the target call still receives the fuzz parameters")
+    bad += check(any("completed 2 pre-target replay call" in n for n in notes),
+                 f"the setup repair is reported: {notes}")
+    bad += check(stats["fuzz_params"] == 3,
+                 f"only the target call contributes fuzz width: {stats}")
+    return bad
+
+
 def test_unconstrained_replay_args_become_full_domain_fuzz_inputs():
     """A concrete replay argument can still be unconstrained by the proof.
 
@@ -11703,6 +11765,7 @@ def main():
               test_the_low_level_value_gate_emits_a_PUT,
               test_foundry_fixture_loading_keeps_esbmc_fixture_as_fallback,
               test_missing_replay_args_become_full_domain_fuzz_inputs,
+              test_missing_setup_replay_args_are_completed_not_fuzzed,
               test_unconstrained_replay_args_become_full_domain_fuzz_inputs,
               test_missing_address_payable_replay_arg_casts_at_the_unit_call,
               test_address_payable_replay_prefix_calls_are_cast,

@@ -6748,6 +6748,28 @@ def complete_missing_call_args(line, unit, params, args):
     return new_line, completed[sig_offset:], implicit, None
 
 
+def complete_setup_call_args(lines, call_i, unit, params):
+    """Fill omitted args on pre-target same-unit replay setup calls.
+
+    The target call's omitted arguments become fuzz inputs when the certified
+    region leaves them unconstrained.  Earlier same-unit calls are only state
+    setup, so they get deterministic placeholders and remain non-oracular.
+    """
+    out = list(lines)
+    changed = 0
+    for i in range(max(0, call_i)):
+        _new, args = rewrite_call_args(out[i], unit, {})
+        if args is None:
+            continue
+        completed, _completed_args, _implicit, cerr = (
+            complete_missing_call_args(out[i], unit, params, args))
+        if cerr is not None or completed == out[i]:
+            continue
+        out[i] = completed
+        changed += 1
+    return out, changed
+
+
 def target_instance_for_call(lines, call_i, unit):
     """Contract instance variable whose unit call is lifted, e.g. `c1`."""
     if not (0 <= call_i < len(lines)):
@@ -7091,6 +7113,13 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         notes.append(f"declared arity {len(params)} != emitted arity "
                      f"{len(args)}; refusing to rewrite positionally")
         return None, None
+    body, setup_arg_repairs = complete_setup_call_args(
+        body, call_i, unit, params)
+    if setup_arg_repairs:
+        call_line = body[call_i]
+        notes.append(
+            f"completed {setup_arg_repairs} pre-target replay call(s) with "
+            "default arguments; setup calls are not fuzz oracles")
     body, payable_replay_repairs = repair_payable_replay_call_args(
         body, unit, params)
     if payable_replay_repairs:

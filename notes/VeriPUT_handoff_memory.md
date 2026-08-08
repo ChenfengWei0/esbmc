@@ -20464,3 +20464,40 @@ Update after the inherited/suffixed state-name fix:
   A CMake refresh with `cmake -DESBMC_REGRESS_TIMEOUT=90 ..` returned 0 and
   refreshed CTest, but printed a pre-existing Bitwuzla/CaDiCaL external rebuild
   warning/failure while still finding the already built Bitwuzla 0.8.2.
+
+Update after strength-bucket tracking and the setup replay argument fix:
+
+- User explicitly tightened the triage target: do not focus only on
+  `no-valid`.  Keep three front queues: `no-valid`, `valid-no-PUT`, and
+  `valid-PUT-no-R1/R2` (especially normal/returning R0-only PUTs).  Concrete
+  valid tests help raw-valid but do not support the PUT-methodology claim; PUTs
+  without R1/R2 are also weak for later mutation/vulnerability regression.
+- `notes/coverage/scripts/rq1_veriput_run.py` now records official
+  `quality_bucket` values and aggregates `valid_put_with_R1`,
+  `valid_put_with_R2`, `valid_put_with_R1_or_R2`, and
+  `valid_put_without_R1R2`.  Use these fields for RQ1 triage instead of only
+  raw/valid counts.
+- A small real203 redo showed why broad early-stop reruns are not enough:
+  `ShuffledGatewayProvider` moved from no-valid to `valid-no-PUT`, while
+  `IRMSynth` produced a raw PUT that failed Foundry compilation.  More Stage-2
+  time can recover concrete artifacts but may reduce the PUT/valid ratio.
+- The `IRMSynth.computeInterestRate` Foundry failure was generic emitter
+  fallout, not an ESBMC proof issue: target call arguments were completed and
+  fuzz-lifted, but earlier same-unit setup replay calls stayed as
+  `computeInterestRate()` with no arguments.  Solidity rejected the generated
+  test before the double oracle could run.
+- `scripts/solidity_path_put.py` now completes omitted arguments on pre-target
+  same-unit replay calls with deterministic default values before payable
+  casts and setup tolerance.  These setup repairs do not count as fuzz
+  dimensions; only the lifted target call contributes PUT width.
+- Regression added:
+  `test_missing_setup_replay_args_are_completed_not_fuzzed` in
+  `scripts/test_solidity_path_put.py`.  It reproduces multiple empty-arg
+  pre-target setup calls and asserts they are completed while the target call
+  remains parameterized.
+- Verification for this Python-side fix:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  (261/261);
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md`.
