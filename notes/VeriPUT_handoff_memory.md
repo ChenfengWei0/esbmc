@@ -11318,9 +11318,9 @@ Recent official BugFix124 status:
 
 - Strict latest journal over
   `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/results.jsonl`:
-  124 cases, 64 cases with at least one valid test, 60 with no valid test.
-- Artifact totals: raw 218, valid 193, valid PUT 128, valid concrete 65.
-  PUT share among valid artifacts: 66.3%.
+  124 cases, 65 cases with at least one valid test, 59 with no valid test.
+- Artifact totals: raw 225, valid 200, valid PUT 130, valid concrete 70.
+  PUT share among valid artifacts: 65.0%.
 - `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark bugfix124`
   reported after `pop_018`: VeriPUT `raw_u=195`, `valid_u=170`,
   `raw_c=60`, `valid_c=60`, coverage `48.4%`, `VT/case=1.37`, status
@@ -11342,6 +11342,11 @@ Recent official BugFix124 status:
   the same command reports VeriPUT `raw_u=218`, `valid_u=193`,
   `raw_c=64`, `valid_c=64`, coverage `51.6%`, `VT/case=1.56`, status
   `{'ok': 64, 'no-output': 52, 'no-units': 5, 'budget-exhausted': 3}`.
+- After rerunning
+  `rcx_reentrancy__0x96edbe868531bd23a6c05e9d0c424ea64fb1b78b__SmartFix`,
+  the same command reports VeriPUT `raw_u=225`, `valid_u=200`,
+  `raw_c=65`, `valid_c=65`, coverage `52.4%`, `VT/case=1.61`, status
+  `{'ok': 65, 'no-output': 51, 'no-units': 5, 'budget-exhausted': 3}`.
 
 Recent official case observations:
 
@@ -11394,6 +11399,16 @@ Recent official case observations:
   Oracle class counts: R0=2, R1=6, R2=6; combos R0=2, R1=3,
   R1+R2=3, R2=3.  This is a better next-candidate template than
   concrete-only PrivatePool cases.
+- `rcx_reentrancy__0x96edbe868531bd23a6c05e9d0c424ea64fb1b78b__SmartFix`
+  rerun:
+  old row was no-output after `Put`; new row is status ok, raw 7, valid 7,
+  PUT 2/2, concrete 5/5, generation 278.492s, Stage2 249.227s,
+  Stage4 generation 29.265s, Foundry replay 6.046s, wall 286.33s,
+  maxrss 1256.2 MB.  Units attempted:
+  `Put`, `Collect`, `SetMinSum`, `SetLogFile`, `Initialized`.
+  PUTs mirror the MONEY_BOX result: `SetLogFile` path 7 has R0+R1;
+  `SetMinSum` path 7 has R0+R1+R2.  Oracle class counts:
+  R0=2, R1=6, R2=6.
 
 Next-candidate caution:
 
