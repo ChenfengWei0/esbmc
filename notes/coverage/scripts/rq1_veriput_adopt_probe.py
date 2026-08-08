@@ -19,6 +19,39 @@ from rq1_veriput_run import (_append_jsonl, _strength_quality, _utc_now,
 from veriput_recipe import STRONG_RECIPE_VERSION
 
 
+def _test_key(test):
+    unit = test.get("unit")
+    enc = test.get("enc")
+    if unit is not None and enc is not None:
+        return (unit, enc)
+    return (test.get("file"), test.get("test"))
+
+
+def _test_rank(test):
+    classes = set(test.get("oracle_classes") or [])
+    return (
+        1 if test.get("kind") == "put" else 0,
+        1 if "R2" in classes else 0,
+        1 if "R1" in classes else 0,
+        len(classes),
+        1 if test.get("valid_reference_test") else 0,
+    )
+
+
+def _dedupe_tests(tests):
+    best = {}
+    order = []
+    for test in tests:
+        key = _test_key(test)
+        if key not in best:
+            order.append(key)
+            best[key] = test
+            continue
+        if _test_rank(test) > _test_rank(best[key]):
+            best[key] = test
+    return [best[key] for key in order]
+
+
 def _merge_counts(key, docs):
     out = Counter()
     for doc in docs:
@@ -28,16 +61,21 @@ def _merge_counts(key, docs):
 
 def _combine_put_summaries(put_roots):
     docs = [summarize_put_artifacts(path) for path in put_roots]
+    raw_tests = _dedupe_tests(sum((doc["raw_tests"] for doc in docs), []))
+    valid_tests = _dedupe_tests(sum((doc["valid_tests"] for doc in docs), []))
     out = {
-        "raw": sum(doc["raw"] for doc in docs),
-        "valid": sum(doc["valid"] for doc in docs),
-        "put_raw": sum(doc["put_raw"] for doc in docs),
-        "put_valid": sum(doc["put_valid"] for doc in docs),
-        "concrete_raw": sum(doc["concrete_raw"] for doc in docs),
-        "concrete_valid": sum(doc["concrete_valid"] for doc in docs),
+        "raw": len(raw_tests),
+        "valid": len(valid_tests),
+        "put_raw": sum(1 for test in raw_tests if test.get("kind") == "put"),
+        "put_valid": sum(1 for test in valid_tests
+                         if test.get("kind") == "put"),
+        "concrete_raw": sum(1 for test in raw_tests
+                            if test.get("kind") == "concrete"),
+        "concrete_valid": sum(1 for test in valid_tests
+                              if test.get("kind") == "concrete"),
         "summary_paths": sum((doc["summary_paths"] for doc in docs), []),
-        "raw_tests": sum((doc["raw_tests"] for doc in docs), []),
-        "valid_tests": sum((doc["valid_tests"] for doc in docs), []),
+        "raw_tests": raw_tests,
+        "valid_tests": valid_tests,
         "put_json_count": sum(doc["put_json_count"] for doc in docs),
         "stage4_generation_wall_s": round(
             sum(doc["stage4_generation_wall_s"] for doc in docs), 3),
