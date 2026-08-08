@@ -21710,3 +21710,98 @@ Update after rerunning frontend-abort-affected ERC-3643 proxies:
   `valid_cases=38`, `put_cases=30`, `r1r2_cases=22`,
   `concrete_only=8`, `no_valid=165`, `valid_units=208`,
   `put_units=139`, `r1r2_put_units=45`.
+
+Update after Aug 8 compaction/resume:
+
+- Current active branch is `feat/veriput-fuzz-first`, pushed to
+  `E-SOL/feat/veriput-fuzz-first`.  No ESBMC/RQ1 generator processes were
+  running at resume time.
+- real203's low case-level recovery is now understood as mostly a Stage2 /
+  region-discovery bottleneck, not a final Foundry replay-validity bottleneck.
+  Common real203 blockers are proxy/factory indirection, uncontrolled external
+  call returns, path-coverage probe explosion, and no-coordinate/no-witness
+  rows.  Successful real203 subjects still show the tool can emit useful PUTs:
+  current snapshot is `valid_cases=38`, `put_cases=30`, `r1r2_cases=22`,
+  `concrete_only=8`, `no_valid=165`, `valid_units=208`, `put_units=139`,
+  `r1r2_put_units=45`.
+- Manifest caveat: do not run arbitrary `subject_id`s copied from old result
+  rows unless `rq1_veriput_run.py --dry-run --subject-id ...` confirms they are
+  selectable.  A mistaken bugfix run used result-row ids that are not prepared
+  targets (`ct_20_Pool_sol_Synth_sol_Failing_Max_Value_Al`,
+  `pop_066_LRTDepositPool`, `pop_077_MergingPool`) and appended immediate
+  `runner exception: prepared subject ... was not found` rows.  They were
+  already no-valid subjects, so aggregate valid counts should not improve or
+  degrade materially, but this should not be repeated.
+- Manifest layout:
+  - `real203` maps to `stress203` targets and only uses prepared-ok
+    `/home/samson/workspace/VeriPUT/Results/Stress243/subjects/*/meta.json`
+    plus `flat.sol`.
+  - `bugfix124` reads `/home/samson/workspace/VeriPUT/Datasets/Patch-Bug-Bench/summary.csv`
+    and source paths directly; it does not require prepared `subjects/`.
+  - `peer182` currently cannot be newly run on this machine because
+    `/home/samson/workspace/VeriPUT/Results/Peer182/subjects` is missing.
+    Existing peer results can be counted, but runner dry-run fails before
+    selecting new peer subjects.
+- Latest-row semantics matter: RQ1 summaries use `key =
+  gen:veriput:<subject_id>` and the last row in `results.jsonl` wins.  Use
+  `--redo` only when intentionally replacing a subject row; use `--resume` for
+  broad continuation.  Result JSON rows already include time fields
+  (`generation_wall_s`, `stage2_wall_s`, `stage4_*_wall_s`,
+  `foundry_replay_wall_s`, `wall_total_s`), raw/valid retained artifacts, and
+  PUT/concrete/R0/R1/R2 counts (`valid_tests[*].kind`,
+  `valid_tests[*].oracle_classes`, `oracle_class_counts`,
+  `oracle_class_combo_counts`, `valid_put_with_R1_or_R2`).
+- Scheduling policy after host became free: use moderate concurrency, but only
+  for real prepared subjects.  Prefer real203/bugfix targets with small
+  `flat.sol`, simple storage-heavy contracts, and registry/storage-like ERC3643
+  contracts.  Deprioritize ERC3643 proxy/factory, Balancer goal-cap subjects,
+  ENS registry/fallback, Compound Comet reward/admin/proxy, and unchecked
+  low-level-call transfer-only bugfix cases unless a Stage2 strategy changes.
+- Code-side next targets before more expensive reruns:
+  1. external-call return handling/pinning, because many not-certified paths are
+     gated on interface/oracle/factory returns that the current Foundry
+     generation cannot always control;
+  2. path-cov probe goal-cap fallback, so large branch-arm x exit products can
+     still yield at least cheap concrete or narrower region candidates;
+  3. fuzz-as-refuter before expensive certification where possible.  Fuzz can
+     cheaply reject wrong regions/assertions but must not be treated as proof.
+
+Update after two small concurrent real203 sweeps:
+
+- Tried to increase throughput after the host freed up.  `jobs=6,
+  memlimit=8GiB` was refused by the runner memory guard because current
+  MemAvailable was about 40.4GiB and 6x8GiB exceeds the 90% threshold.  Reran
+  with `jobs=4, memlimit=8GiB`, `--redo`, full 600s subject/ESBMC budgets, and
+  all early-stop knobs disabled.
+- Batch A subjects:
+  `SequenceRegistry`, `CreateCall`, `FIFSRegistrar`, `GatewayProvider`,
+  `FlowNFTDescriptor`, `StablePriceOracle`.
+  Only `safe-fndn__safe-smart-account__CreateCall` recovered a valid case:
+  `raw=3`, `valid=3`, all concrete replay, no PUT.  `StablePriceOracle`
+  emitted `raw=2` but `valid=0`; the others stayed no-valid.
+- Batch B pricefeed subjects:
+  `EzETHExchangeRatePriceFeed`, `MultiplicativePriceFeed`, `WBTCPriceFeed`,
+  `RsETHScalingPriceFeed`, `RateBasedScalingPriceFeed`,
+  `ReverseMultiplicativePriceFeed`, `PriceFeedWith4626Support`.
+  All seven produced valid concrete-only tests quickly; none produced PUTs.
+- Latest real203 snapshot after these batches:
+  `valid_cases=46`, `put_cases=30`, `r1r2_cases=22`,
+  `concrete_only=16`, `no_valid=157`, `valid_units=236`,
+  `put_units=139`, `r1r2_put_units=45`, `concrete_units=97`.
+- Pricefeed diagnosis: Stage2 rows are mostly `NO-COORDINATE` for
+  `latestRoundData`/`version` and `NO-WITNESS-UNKNOWN` with
+  `driver_diagnostic.tag=esbmc-no-cov-report` for `decimals`/`description`.
+  Example `WBTCPriceFeed.latestRoundData` has witnessed paths but every
+  harvested state quantity is unsettable at runtime because it is
+  immutable/constant or derived from constructor parameters:
+  `state.BTCToUSDPriceFeed`, `state.WBTCToBTCPriceFeed`,
+  `state.combinedScale`, `state.decimals`, `state.priceFeedScale`,
+  `state.version`.  Stage4 therefore emits
+  `cleared_not_certified_fallback` concrete tests with `asserts=0`.
+- Do not keep sweeping pricefeed-like contracts if the goal is PUT/R1/R2 rate:
+  they are useful for raw valid coverage but mostly hurt the PUT fraction.
+  A real PUT lift would need a constructor-coordinate design: expose selected
+  constructor arguments as fuzz coordinates and render the Foundry test so it
+  deploys the target inside the test body using those fuzzed parameters, plus
+  matching constructor-time interface mocks.  Simply treating immutable fields
+  as ordinary runtime state coordinates would be unsound/misleading.
