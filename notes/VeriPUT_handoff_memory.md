@@ -8,6 +8,60 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-08 strength backlog root-cause labels
+
+User alignment:
+
+- The active RQ1 queue is not just `no-valid`.  It must also prioritize
+  `valid-no-PUT` and `valid-PUT-no-R1/R2`.
+- Re-running a case is low value unless the previous artifact says the next run
+  can plausibly become a PUT or gain R1/R2.
+
+Code change:
+
+- `notes/coverage/scripts/rq1_veriput_triage.py` now reports
+  `strength_issue_counts`.
+- The labels are artifact-level diagnostics extracted from `put.json`, not new
+  experiment data.  They separate:
+  - `certified-region-no-rendered-wide-coordinate`;
+  - `certified-region-no-emitted-oracle`;
+  - `stage2-timeout-witness-only`;
+  - `stage2-refuted-region-concrete-only`;
+  - `ladder-refused-mapping-or-dynarray`;
+  - `return-varies-no-simple-rung`;
+  - `no-r2-candidate-proposed`;
+  - rollback/exit-only R0 cases.
+
+Current implications:
+
+- bugfix124 still has `valid-no-PUT=9`.  The two cases whose source is
+  `certified_region` (`acfix_021_CVE_2018_19832` and
+  `acfix_3_5_088_EmergencyOracleFactory`) are now labeled as both
+  `certified-region-no-rendered-wide-coordinate` and
+  `certified-region-no-emitted-oracle`.  They are not promising official
+  reruns without an emitter/oracle grammar change.
+- The other bugfix124 valid-no-PUT artifacts are either
+  `stage2-refuted-region-concrete-only` or `stage2-timeout-witness-only`.
+- real203 valid-no-PUT remains 4.  `ERC-3643__ERC-3643__Token` remains
+  `stage2-timeout-witness-only` after three official attempts and should not be
+  re-run again until Stage2 certification/region generation changes.
+- real203 actionable no-R1/R2 now has concrete diagnoses:
+  `StandaloneReverseRegistrar.nameForAddr` is a mapping/dynamic-array ladder
+  refusal over a string mapping return, and `IRMLinearKink` is an
+  exit-only/return-varies case where the current R2 grammar does not recover
+  the internal helper formula.
+- peer182 has a larger no-R1/R2 normal bucket, but the user said peer official
+  benchmark attention should be `contract080`; do not start broad peer reruns
+  unless explicitly re-scoped.
+
+Validation:
+
+- `python3 -m py_compile notes/coverage/scripts/rq1_veriput_triage.py`
+  passed.
+- `python3 notes/coverage/scripts/rq1_veriput_triage.py --benchmark bugfix124
+  --sample-limit 3` passed and reported the new labels.
+- The same triage command passed for `real203` and `peer182`.
+
 ## 2026-08-08 strength-first RQ1 triage and scheduling
 
 User alignment:

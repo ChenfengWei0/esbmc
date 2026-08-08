@@ -91,6 +91,12 @@ def _valid_put_combo_counts(row: dict[str, Any]) -> Counter[str]:
 
 
 def _read_put_stats(test: dict[str, Any]) -> dict[str, Any]:
+    doc = _read_put_json(test)
+    stats = doc.get("stats") or {}
+    return stats if isinstance(stats, dict) else {}
+
+
+def _read_put_json(test: dict[str, Any]) -> dict[str, Any]:
     path = test.get("put_json")
     if not path:
         return {}
@@ -98,8 +104,74 @@ def _read_put_stats(test: dict[str, Any]) -> dict[str, Any]:
         doc = json.loads(Path(str(path)).read_text(errors="replace"))
     except (OSError, json.JSONDecodeError):
         return {}
-    stats = doc.get("stats") or {}
-    return stats if isinstance(stats, dict) else {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def _contains_text(value: Any, needle: str) -> bool:
+    needle = needle.lower()
+    if isinstance(value, str):
+        return needle in value.lower()
+    if isinstance(value, dict):
+        return any(_contains_text(v, needle) for v in value.values())
+    if isinstance(value, list):
+        return any(_contains_text(v, needle) for v in value)
+    return False
+
+
+def _strength_issue_tags(row: dict[str, Any], bucket: str) -> Counter[str]:
+    tags: Counter[str] = Counter()
+    tests = _valid_tests(row)
+    if bucket == "valid-no-PUT":
+        if not tests:
+            tags["no-valid-test-details"] += 1
+        for test in tests:
+            source = str(test.get("stage2_source") or "<missing>")
+            tags[f"source:{source}"] += 1
+            doc = _read_put_json(test)
+            stats = doc.get("stats") if isinstance(doc.get("stats"), dict) else {}
+            notes = doc.get("notes") or []
+            reason = doc.get("concrete_reason") or ""
+            if source == "certified_region":
+                if _contains_text([notes, reason], "NOT PARAMETERIZED"):
+                    tags["certified-region-no-rendered-wide-coordinate"] += 1
+                if not int(stats.get("asserts") or 0):
+                    tags["certified-region-no-emitted-oracle"] += 1
+            if source == "timeout_concrete_fallback":
+                tags["stage2-timeout-witness-only"] += 1
+            if source == "cleared_not_certified_fallback":
+                tags["stage2-refuted-region-concrete-only"] += 1
+        reason = str(row.get("reason") or "")
+        if "before Stage 4" in reason:
+            tags["case-budget-before-stage4"] += 1
+        if "before remaining units" in reason:
+            tags["case-budget-before-remaining-units"] += 1
+        return tags
+
+    if bucket.startswith("valid-PUT-no-R1R2"):
+        for test in [t for t in tests if t.get("kind") == "put"]:
+            doc = _read_put_json(test)
+            stats = doc.get("stats") if isinstance(doc.get("stats"), dict) else {}
+            notes = doc.get("notes") or []
+            oracle_skipped = stats.get("oracle_skipped") or []
+            if stats.get("rollback_exit") is True:
+                tags["rollback-exit-r0-only"] += 1
+            if _contains_text(notes, "mapping or dynamic array"):
+                tags["ladder-refused-mapping-or-dynarray"] += 1
+            if _contains_text(oracle_skipped, "all return rungs DROPPED"):
+                tags["return-varies-no-simple-rung"] += 1
+            r2_prefilter = doc.get("r2_fuzz_prefilter") or {}
+            if isinstance(r2_prefilter, dict):
+                reason = str(r2_prefilter.get("reason") or "")
+                if "no R2 candidate" in reason:
+                    tags["no-r2-candidate-proposed"] += 1
+                if "rollback path" in reason:
+                    tags["r2-skipped-rollback"] += 1
+            classes = set(stats.get("oracle_classes") or test.get("oracle_classes") or [])
+            if classes == {"R0"}:
+                tags["exit-only-oracle"] += 1
+        return tags
+
+    return tags
 
 
 def _valid_put_no_r1r2_exit_shape(row: dict[str, Any]) -> str:
@@ -226,6 +298,7 @@ def summarize_dataset(root: Path, dataset: str,
     valid_put_classes: Counter[str] = Counter()
     valid_put_combos: Counter[str] = Counter()
     no_r1r2_exit_shapes: Counter[str] = Counter()
+    strength_issue_counts: Counter[str] = Counter()
     artifact = Counter()
     examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
@@ -244,6 +317,8 @@ def summarize_dataset(root: Path, dataset: str,
         if bucket == "valid-no-PUT":
             for test in _valid_tests(row):
                 no_put_sources[str(test.get("stage2_source") or "<missing>")] += 1
+        for tag, count in _strength_issue_tags(row, bucket).items():
+            strength_issue_counts[f"{bucket}:{tag}"] += count
         if len(examples[bucket]) < sample_limit:
             examples[bucket].append(_example(row))
 
@@ -279,6 +354,7 @@ def summarize_dataset(root: Path, dataset: str,
         "valid_put_oracle_combo_counts": dict(sorted(valid_put_combos.items())),
         "valid_put_no_r1r2_exit_shapes": dict(sorted(no_r1r2_exit_shapes.items())),
         "valid_no_put_stage2_sources": dict(sorted(no_put_sources.items())),
+        "strength_issue_counts": dict(sorted(strength_issue_counts.items())),
         "status_counts": dict(sorted(status_counts.items())),
         "completion_status_counts": dict(sorted(completion_counts.items())),
         "no_valid_reason_counts": dict(reason_counts.most_common(20)),
@@ -321,6 +397,10 @@ def _print_human(summary: dict[str, Any]) -> None:
     if summary["valid_no_put_stage2_sources"]:
         print("valid-no-PUT stage2 sources:")
         for key, value in summary["valid_no_put_stage2_sources"].items():
+            print(f"  {key}: {value}")
+    if summary["strength_issue_counts"]:
+        print("strength issue counts:")
+        for key, value in summary["strength_issue_counts"].items():
             print(f"  {key}: {value}")
     print("time stats:")
     for key, value in summary["time_stats"].items():
