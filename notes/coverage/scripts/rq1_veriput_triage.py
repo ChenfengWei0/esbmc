@@ -258,7 +258,11 @@ def queue_order(row: dict) -> tuple[int, str, str, str]:
         "rollback-unobservable",
         "revert-unobservable",
     }
-    if row["quality_bucket"] == "valid-PUT-no-R1R2" and not unobservable:
+    hard_no_r1r2 = row["triage_cause"] in {
+        "mapping-dynarray-unrendered",
+    }
+    if (row["quality_bucket"] == "valid-PUT-no-R1R2"
+            and not unobservable and not hard_no_r1r2):
         bucket_rank = 0
     elif row["quality_bucket"] == "valid-no-PUT":
         bucket_rank = 1

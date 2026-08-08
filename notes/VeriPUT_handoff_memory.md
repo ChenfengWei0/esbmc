@@ -20621,3 +20621,32 @@ Update after first focused dynamic-calldata RQ1 redo:
   `valid-no-PUT=8, valid-PUT-no-R1/R2=25`; raw/valid totals remain
   `raw=281, valid=253`, while `put_valid` increases from `154` to `155` and
   `concrete_valid` decreases from `99` to `98`.
+
+Update after StandaloneReverseRegistrar no-R1/R2 analysis:
+
+- Inspected
+  `real203/ensdomains__ens-contracts__StandaloneReverseRegistrar`.  The unit
+  is `nameForAddr(address) returns (string memory)` and returns
+  `_names[addr]` where `_names` is `mapping(address => string)`.  The current
+  test is already a valid PUT over `addr`; its only oracle is R0 normal exit.
+- The ladder refusal is principled, not a simple emitter typo:
+  `_names` is a mapping/dynamic value and the frontend lowers it outside the
+  scalar contract object, so no scalar post-state candidate is available.  The
+  certified region proves the path, not the returned dynamic string content.
+  Adding `return == ""` from the Foundry replay would be a fuzz-tested oracle,
+  not an ESBMC-certified R1/R2 oracle, and should not be counted.
+- `rq1_veriput_triage.py` now demotes
+  `valid-PUT-no-R1/R2 / mapping-dynarray-unrendered` behind actionable
+  `valid-no-PUT` and `no-valid` cases.  It remains visible in the report, but
+  no longer blocks the action queue.  To improve that class later, design a
+  verifier-backed dynamic return/mapping-slot oracle first.
+- Regression added:
+  `test_action_queue_demotes_hard_dynamic_mapping_no_r1r2` in
+  `scripts/test_rq1_veriput_triage.py`.
+- Verification:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_triage.py scripts/test_rq1_veriput_triage.py`;
+  `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_triage.py`
+  (4/4);
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only notes/coverage/scripts/rq1_veriput_triage.py scripts/test_rq1_veriput_triage.py`;
+  `git diff --check -- notes/coverage/scripts/rq1_veriput_triage.py scripts/test_rq1_veriput_triage.py`;
+  regenerated `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/triage/latest_focus.{json,md}`.

@@ -157,11 +157,41 @@ def test_unsupported_calldata_beats_generic_not_parameterized_note():
         return bad
 
 
+def test_action_queue_demotes_hard_dynamic_mapping_no_r1r2():
+    normal = {
+        "dataset": "real203",
+        "subject_id": "Normal",
+        "quality_bucket": "valid-PUT-no-R1R2",
+        "triage_cause": "normal-r0-only-other",
+    }
+    no_put = {
+        "dataset": "real203",
+        "subject_id": "NoPut",
+        "quality_bucket": "valid-no-PUT",
+        "triage_cause": "timeout_concrete_fallback",
+    }
+    dynamic_mapping = {
+        "dataset": "real203",
+        "subject_id": "DynamicMapping",
+        "quality_bucket": "valid-PUT-no-R1R2",
+        "triage_cause": "mapping-dynarray-unrendered",
+    }
+    ordered = sorted([dynamic_mapping, no_put, normal],
+                     key=rq1_veriput_triage.queue_order)
+    bad = 0
+    bad += check([row["subject_id"] for row in ordered]
+                 == ["Normal", "NoPut", "DynamicMapping"],
+                 f"hard dynamic mapping no-R1/R2 is not the first queue item: "
+                 f"{ordered}")
+    return bad
+
+
 def main():
     tests = [
         test_latest_redo_wins_and_buckets_are_strength_aware,
         test_triage_causes_distinguish_concrete_and_unobservable_puts,
         test_unsupported_calldata_beats_generic_not_parameterized_note,
+        test_action_queue_demotes_hard_dynamic_mapping_no_r1r2,
     ]
     bad = 0
     for test in tests:
