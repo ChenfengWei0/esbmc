@@ -37,6 +37,10 @@ Fix:
 - Constructor placeholders use nonzero deterministic addresses for
   address/interface-like source types, so common `address(x) != address(0)`
   constructor guards are not broken by the repair.
+- Custom source types used by synthesized constructor/call placeholders are
+  merged into the generated `flat.sol` import.  This is required for interface
+  placeholders such as `ITimelock(address(uint160(...)))`; without it Foundry
+  compilation fails after successful PUT emission.
 - Final `put.json` stats now include
   `repaired_unsupported_skeleton: true|false`.
 
@@ -63,6 +67,13 @@ Validation:
 - A real existing MarketUpdateProposer unsupported artifact was checked
   offline: the repair produced a local deployment and `c0.setGovernor(...)`
   call without running ESBMC.
+- Stage4-only probe, no Stage2 rerun:
+  `MarketUpdateProposer.setGovernor` over the existing real203 cert file
+  emitted 3 / 3 PUTs and Foundry accepted all 3 as reference-valid.  Each PUT
+  had two fuzz parameters (`msg.sender`, `newGovernor`) and an oracle.  The
+  normal path `enc=15` gained an R2 source-assignment oracle:
+  `governor: post == newGovernor`; rollback paths `enc=6` and `enc=14` remain
+  R0 exit-oracle PUTs because post-state R2 is unobservable after revert.
 
 ## 2026-08-08 strength backlog root-cause labels
 

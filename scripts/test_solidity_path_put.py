@@ -659,10 +659,13 @@ contract MarketUpdateProposerCovTest is Test {
     bad += check(call_i is not None,
                  "the synthesized body contains the unit call")
     text = "\n".join(body)
+    full_text = "\n".join(repaired.lines)
     bad += check("MarketUpdateProposer c0 = new MarketUpdateProposer(" in text,
                  "a local target deployment is synthesized")
     bad += check("ITimelock(address(uint160(1003)))" in text,
                  "interface constructor parameters get nonzero placeholders")
+    bad += check("import {MarketUpdateProposer, ITimelock} from" in full_text,
+                 "custom constructor parameter types are imported")
 
     put, stats = build_put(
         "MarketUpdateProposer", "setGovernor", 15, 1,

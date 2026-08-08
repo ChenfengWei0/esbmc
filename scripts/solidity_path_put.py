@@ -6173,6 +6173,19 @@ def _source_type_default_expr(sol_type, seed=1):
     return None
 
 
+def _source_custom_type_symbol(sol_type):
+    t = _norm_ty(sol_type)
+    if not re.match(r"^[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*$", t):
+        return None
+    if t in ("address", "bool", "string", "bytes", "address payable"):
+        return None
+    if re.match(r"^(?:u?int)(?:\d+)?$", t):
+        return None
+    if re.match(r"^bytes\d+$", t):
+        return None
+    return t.split(".")[0]
+
+
 def synthesize_unsupported_case_replay(emitted, case, contract, unit, params,
                                        constructor_params, notes):
     """Repair an ESBMC unsupported skeleton into a minimal liftable replay.
@@ -6224,6 +6237,17 @@ def synthesize_unsupported_case_replay(emitted, case, contract, unit, params,
         f"    c0.{unit}({', '.join(call_args)});",
     ]
     new_lines[fs + 1:fe] = replacement
+    import_symbols = sorted({
+        sym for sym in (
+            _source_custom_type_symbol(ty)
+            for _name, ty in list(named_params(params))
+        ) if sym
+    } | {
+        sym for sym in (
+            _source_custom_type_symbol(ty) for ty in (constructor_params or [])
+        ) if sym
+    })
+    new_lines = add_flat_import_symbols(new_lines, import_symbols)
     repaired_path = os.path.join(os.path.dirname(emitted.path),
                                  "veriput-repaired-unsupported.cov.t.sol")
     with open(repaired_path, "w") as stream:
