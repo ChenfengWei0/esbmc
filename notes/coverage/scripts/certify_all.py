@@ -55,6 +55,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ESBMC_ROOT, "scripts"))
 from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E402
 from veriput_path_guard import ensure_path_not_protected  # noqa: E402
+from veriput_recipe import STRONG_CERTIFY_ARGS, STRONG_RECIPE_VERSION  # noqa: E402
 from veriput_subjects import (SubjectError, ensure_solast,
                               enumerate_subject_units, resolve_subject)
 # ---- THE INPUTS DIRECTORY IS THE POC'S, NOT A SHARED CORPUS ----
@@ -74,6 +75,64 @@ INPUTS = os.environ.get(
     os.path.join(ESBMC_ROOT, "notes", "coverage", "inputs"))
 DRIVER = os.path.join(ESBMC_ROOT, "scripts", "solidity_path_generalise.py")
 ESBMC = os.path.join(ESBMC_ROOT, "build", "src", "esbmc", "esbmc")
+
+STRONG_CERTIFY_VALUE_OPTIONS = {
+    "--recipe-version": ("recipe_version", str),
+    "--jobs": ("jobs", int),
+    "--probes": ("probes", int),
+    "--refine-rounds": ("refine_rounds", int),
+    "--shrink-rounds": ("shrink_rounds", int),
+    "--safety-retreat-after-tiny-cuts":
+        ("safety_retreat_after_tiny_cuts", int),
+    "--claim-budget": ("claim_budget", int),
+    "--probe-witnesses": ("probe_witnesses", int),
+    "--probe-ladder-budget": ("probe_ladder_budget", int),
+    "--max-holes": ("max_holes", int),
+    "--max-region-pieces": ("max_region_pieces", int),
+    "--cut-policy": ("cut_policy", str),
+    "--slot-coords": ("slot_coords", int),
+}
+
+STRONG_CERTIFY_BOOL_OPTIONS = {
+    "--level0": "level0",
+    "--level0-perturb": "level0_perturb",
+    "--probe-ladder": "probe_ladder",
+    "--skip-bracket": "skip_bracket",
+    "--env-coord-disagreed": "env_coord_disagreed",
+    "--pin-agreed-establishable-env": "pin_agreed_establishable_env",
+    "--pin-agreed-state": "pin_agreed_state",
+    "--state-struct-fields": "state_struct_fields",
+    "--static-uncontrolled-inseparable": "static_uncontrolled_inseparable",
+}
+
+
+def apply_strong_certify_recipe(args):
+    """Apply the shared benchmark certification recipe to parsed arguments."""
+    if not getattr(args, "strong_recipe", False):
+        return getattr(args, "recipe_version", "unversioned")
+    idx = 0
+    while idx < len(STRONG_CERTIFY_ARGS):
+        opt = STRONG_CERTIFY_ARGS[idx]
+        if opt.startswith("--esbmc-arg="):
+            value = opt.split("=", 1)[1]
+            if value not in args.esbmc_arg:
+                args.esbmc_arg.append(value)
+            idx += 1
+            continue
+        if opt in STRONG_CERTIFY_BOOL_OPTIONS:
+            setattr(args, STRONG_CERTIFY_BOOL_OPTIONS[opt], True)
+            idx += 1
+            continue
+        if opt in STRONG_CERTIFY_VALUE_OPTIONS:
+            if idx + 1 >= len(STRONG_CERTIFY_ARGS):
+                raise ValueError(f"strong recipe option {opt} has no value")
+            attr, coerce = STRONG_CERTIFY_VALUE_OPTIONS[opt]
+            setattr(args, attr, coerce(STRONG_CERTIFY_ARGS[idx + 1]))
+            idx += 2
+            continue
+        raise ValueError(f"unsupported strong certify recipe option: {opt}")
+    args.recipe_version = STRONG_RECIPE_VERSION
+    return args.recipe_version
 
 # benchmark -> (flat source basename, contract). The contract is the part after
 # `__` in the input's name, but it is written out rather than parsed: a mapping
@@ -1004,6 +1063,11 @@ def main():
                          "Recorded on every row; this label does not set any "
                          "option by itself, so the concrete fields below remain "
                          "the authority for reproduction.")
+    ap.add_argument("--strong-recipe", action="store_true",
+                    help="apply the shared VeriPUT strong certification recipe "
+                         f"({STRONG_RECIPE_VERSION}). Unlike --recipe-version, "
+                         "this sets the actual region, slot, environment, and "
+                         "ESBMC arguments used by the benchmark runner.")
     ap.add_argument("--scope", default="focus",
                     help="driver dispatcher alphabet: focus, whole, or a "
                          "comma-separated function set. Default focus preserves "
@@ -1606,6 +1670,11 @@ def main():
                          "run ESBMC, write driver logs, append JSONL rows, or "
                          "generate missing AST files.")
     args = ap.parse_args()
+    try:
+        apply_strong_certify_recipe(args)
+    except ValueError as exc:
+        print(f"[sweep] REFUSED: {exc}", file=sys.stderr)
+        return 1
     try:
         ensure_path_not_protected("--out", args.out)
         ensure_path_not_protected("--workdir", args.workdir)

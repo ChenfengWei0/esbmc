@@ -3510,6 +3510,10 @@ check("decision-relation-boolean-false-guard",
       _decision_relation("!(!m[k])"), ("m[k]", "==", "0"))
 check("decision-relation-boolean-true-guard",
       _decision_relation("!(m[k])"), ("m[k]", "==", "1"))
+check("decision-relation-boolean-taken-guard",
+      _decision_relation("!(!m[k])", "taken"), ("m[k]", "==", "0"))
+check("decision-relation-boolean-fallthrough-guard",
+      _decision_relation("!(!m[k])", "fall-through"), ("m[k]", "==", "1"))
 check("decision-term-mapping-slot-state-coord",
       _decision_term("_tokenAgentsList$322[_agentAddress]", {}, {},
                      coord_set={"state._tokenAgentsList$322[_agentAddress]"}),
@@ -3539,6 +3543,32 @@ check("owner-mapping-boolean-guard-fixes-empty-slot",
       (0, 0))
 check("owner-mapping-boolean-guard-keeps-agent-wide",
       _owner_map_boxes[13]["_agentAddress"], (0, (1 << 160) - 1))
+
+_remove_agent_rel_paths = [
+    (14, 3, {"msg.value": 0, "msg.sender": 7, "state._owner": 7,
+             "_agentAddress": 9}),
+]
+_remove_agent_rel_decisions = {
+    14: [{"branch_claim": "!(msg.value == 0)"},
+         {"branch_claim":
+          "!(return_value$_owner$1 == return_value$__msgSender$2)",
+          "arm": "taken"},
+         {"branch_claim": "!(!_tokenAgentsList$322[_agentAddress])",
+          "arm": "fall-through"}],
+}
+_remove_agent_boxes, _remove_agent_holes, _remove_agent_reasons, \
+    _remove_agent_retreats, _remove_agent_establishes = \
+    structural_decision_regions_with_relations(
+        _remove_agent_rel_paths, _remove_agent_rel_decisions,
+        {"msg.value": 0},
+        ["msg.sender", "_agentAddress", "state._owner",
+         "state._tokenAgentsList$322[_agentAddress]"],
+        coord_types={"_agentAddress": "address"})
+check("remove-agent-boolean-guard-establishes-owner-sender",
+      _remove_agent_establishes[14], {"state._owner": "msg.sender"})
+check("remove-agent-boolean-guard-requires-set-slot",
+      _remove_agent_boxes[14]["state._tokenAgentsList$322[_agentAddress]"],
+      (1, 1))
 
 _setmax_normal_decisions = [
     {"synthetic_abi_gate": True, "arm": "taken",

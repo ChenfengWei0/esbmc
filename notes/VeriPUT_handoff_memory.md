@@ -21317,3 +21317,41 @@ Update after boolean-guard and state-alias range fixes:
   ESBMC arguments.  Do not also add duplicate manual `--esbmc-arg` copies of
   those flags during probes; duplicate flags caused one avoidable Stage4
   failure before rerunning without the duplicates.
+
+Update after `removeTokenAgent` follow-up:
+
+- `certify_all.py` now has a real `--strong-recipe` switch, matching
+  `put_all.py --strong-recipe`.  `--recipe-version` remains only a label; the
+  new switch applies the canonical `veriput_recipe.STRONG_CERTIFY_ARGS`
+  controls: slot coords, env disagreement, agreed-state pins, probe ladder,
+  skip bracket, strong ESBMC args, and the current recipe version.  This avoids
+  manual weak runs where a command says `veriput-strong-rq1` but actually runs
+  with `--slot-coords 0`, no env promotion, and no overflow/div checks.
+- Boolean branch relation extraction now uses the coverage decision `arm` for
+  bare boolean claims.  The same printed claim `!(!m[k])` appears in both
+  `require(!m[k])` and `require(m[k])` shapes; `taken` maps it to `m[k] == 0`,
+  while `fall-through` maps it to `m[k] == 1`.  Binary comparisons keep their
+  previous branch-claim semantics.
+- Pure regressions cover the arm split and the `removeTokenAgent` shape:
+  owner/sender established at entry and
+  `state._tokenAgentsList$322[_agentAddress]` constrained to `(1, 1)` for the
+  normal `require(_tokenAgentsList[_agentAddress])` path.
+- Validation after this patch:
+  `py_compile`, `scripts/test_solidity_path_generalise.py`,
+  `scripts/test_certify_all_strong_recipe.py`,
+  `pylint --errors-only`, and `git diff --check` all pass.
+- Probe caution:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/real203/subjects/ERC-3643__ERC-3643__DefaultCompliance.remove_strong_probe.1786187564`
+  used the corrected strong certify recipe but the pre-arm boolean parser.  It
+  produced two green PUTs for `removeTokenAgent`, both rollback-only with slot
+  `0`; these are not the desired normal-path R1/R2 tests and should not be used
+  as evidence for the `removeTokenAgent` normal path.
+- Correct arm-aware probe:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/real203/subjects/ERC-3643__ERC-3643__DefaultCompliance.remove_arm_probe.1786188380`
+  now derives the expected slot-true regions:
+  `state._tokenAgentsList$322[_agentAddress] in [1,1]`, with owner/sender
+  relation handling.  ESBMC Stage2 reports `NOT-CERTIFIED` because the region
+  is `VACUOUS`; the single-point check survives after omitting the mapping slot
+  from the point, which strongly suggests an internal certification harness gap
+  for establishing/read-witnessing non-default mapping slot prestate.  Treat
+  this as an ESBMC modelling/instrumentation issue, not a region-direction bug.

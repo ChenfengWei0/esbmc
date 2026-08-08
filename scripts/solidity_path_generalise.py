@@ -1158,7 +1158,7 @@ def _unwrap_not(expr):
     return expr, False
 
 
-def _boolean_decision_relation(inner, was_not):
+def _boolean_decision_relation(inner, was_not, arm=None):
     """Path condition for a bare boolean branch term, as term == 0/1."""
     term = (inner or "").strip()
     if not term:
@@ -1175,10 +1175,12 @@ def _boolean_decision_relation(inner, was_not):
     # is its negation.  For a boolean term, that flips the truth value unless
     # the claim was already printed as an outer `!(...)` arm.
     want_true = negated if not was_not else not negated
+    if arm == "fall-through":
+        want_true = not want_true
     return term, "==", "1" if want_true else "0"
 
 
-def _decision_relation(branch_claim):
+def _decision_relation(branch_claim, arm=None):
     """Return the path condition encoded by a coverage decision.
 
     ESBMC's branch claim is the assertion used to witness the arm, so the path
@@ -1189,7 +1191,7 @@ def _decision_relation(branch_claim):
     inner, was_not = _unwrap_not(branch_claim)
     m = SIMPLE_BRANCH_RE.match(inner)
     if not m:
-        return _boolean_decision_relation(inner, was_not)
+        return _boolean_decision_relation(inner, was_not, arm=arm)
     lhs, op, rhs = (m.group(1).strip(), m.group(2), m.group(3).strip())
     if not was_not:
         op = {"==": "!=", "!=": "==", "<": ">=", "<=": ">",
@@ -1403,7 +1405,7 @@ def _structural_decision_region(decisions, ce, pins, coords, coord_types=None,
     alias = {}
     clauses = []
     for d in decisions:
-        rel = _decision_relation(d.get("branch_claim"))
+        rel = _decision_relation(d.get("branch_claim"), d.get("arm"))
         if rel is None:
             return None
         lhs, op, rhs = rel
@@ -1577,7 +1579,7 @@ def relation_establishable_state_targets(paths, path_decisions, pins, coords,
     out = set()
     for enc, _depth, ce in paths:
         for d in path_decisions.get(enc) or []:
-            rel = _decision_relation(d.get("branch_claim"))
+            rel = _decision_relation(d.get("branch_claim"), d.get("arm"))
             if rel is None:
                 continue
             lhs, op, rhs = rel
@@ -1678,13 +1680,14 @@ def _decision_has_uncontrolled_source(decisions):
 
 
 def _decision_reads_free_coord(decision, ce, pins, coords, constants=None):
-    rel = _decision_relation((decision or {}).get("branch_claim"))
+    decision = decision or {}
+    rel = _decision_relation(decision.get("branch_claim"), decision.get("arm"))
     if rel is None:
         return False
     lhs, _op, rhs = rel
     coord_set = set(coords or [])
     for term in (lhs, rhs):
-        got = _decision_term(term, ce, pins, constants)
+        got = _decision_term(term, ce, pins, constants, coord_set=coord_set)
         if got and got[0] == "coord" and got[1] in coord_set:
             return True
     return False
