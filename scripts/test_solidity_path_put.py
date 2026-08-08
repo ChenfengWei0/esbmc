@@ -5577,6 +5577,15 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
                 "arguments": [arg],
                 "typeDescriptions": {"typeString": "uint256"}}
 
+    def call(ref, name, args, ty="uint256"):
+        return {"nodeType": "FunctionCall", "kind": "functionCall",
+                "expression": {"nodeType": "Identifier",
+                               "referencedDeclaration": ref,
+                               "name": name,
+                               "typeDescriptions": {"typeString": "function"}},
+                "arguments": args,
+                "typeDescriptions": {"typeString": ty}}
+
     quote = {
         "nodeType": "FunctionDefinition", "id": 20, "name": "quote",
         "parameters": {"parameters": [
@@ -5666,10 +5675,43 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
                                         "kind": "number",
                                         "value": "2"}}}},
             {"nodeType": "Return", "src": "420:7:0"}]}}
+    helper = {
+        "nodeType": "FunctionDefinition", "id": 60, "name": "_helper",
+        "parameters": {"parameters": [
+            {"id": 61, "name": "x",
+             "typeDescriptions": {"typeString": "uint256"}}]},
+        "returnParameters": {"parameters": [
+            {"id": 62, "name": "", "typeDescriptions": {
+                "typeString": "uint256"}}]},
+        "body": {"nodeType": "Block", "statements": [{
+            "nodeType": "Return", "src": "500:10:0",
+            "expression": {"nodeType": "BinaryOperation", "operator": "+",
+                           "leftExpression": {"nodeType": "Identifier",
+                                              "referencedDeclaration": 61,
+                                              "name": "x"},
+                           "rightExpression": {"nodeType": "Literal",
+                                               "kind": "number",
+                                               "value": "7"}}}]}}
+    via_helper = {
+        "nodeType": "FunctionDefinition", "id": 70, "name": "viaHelper",
+        "parameters": {"parameters": [
+            {"id": 71, "name": "amount",
+             "typeDescriptions": {"typeString": "uint256"}}]},
+        "returnParameters": {"parameters": [
+            {"id": 72, "name": "", "typeDescriptions": {
+                "typeString": "uint256"}}]},
+        "body": {"nodeType": "Block", "statements": [{
+            "nodeType": "Return", "src": "600:10:0",
+            "expression": call(60, "_helper", [{
+                "nodeType": "Identifier",
+                "referencedDeclaration": 71,
+                "name": "amount",
+                "typeDescriptions": {"typeString": "uint256"}}])}]}}
     ast = {"nodeType": "SourceUnit", "nodes": [{
         "nodeType": "ContractDefinition", "name": "C", "id": 1,
         "linearizedBaseContracts": [1],
-        "nodes": [quote, safe_quote, flag, pair, named]}]}
+        "nodes": [quote, safe_quote, flag, pair, named, helper,
+                  via_helper]}]}
     fd, path = tempfile.mkstemp(suffix=".solast")
     with os.fdopen(fd, "w") as out:
         json.dump(ast, out)
@@ -5695,6 +5737,10 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
             path, "C", "named", [("amount", "uint256")], {},
             [("amount", "num", None)], arity=1,
             rettypes=[("out", "uint256")], log=lambda _msg: None)
+        helper_specs, helper_evidence = source_assignment_r2_specs(
+            path, "C", "viaHelper", [("amount", "uint256")], {},
+            [("amount", "num", None)], arity=1,
+            rettypes=[("", "uint256")], log=lambda _msg: None)
     finally:
         os.unlink(path)
     quote_entry = next((entry for entry in quote_specs[0]["vars"]
@@ -5713,6 +5759,11 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
                         if entry["name"] == RETURN_VAR), {}) if named_specs else {}
     named_terms = [r2_term_text(item["term"])
                    for item in named_entry.get("equals", [])]
+    helper_entry = next((entry for entry in helper_specs[0]["vars"]
+                         if entry["name"] == RETURN_VAR), {}) \
+        if helper_specs else {}
+    helper_terms = [r2_term_text(item["term"])
+                    for item in helper_entry.get("equals", [])]
     bad = 0
     bad += check(quote_terms == ["(amount + 7)"],
                  f"the arithmetic return expression is prioritized: "
@@ -5747,6 +5798,13 @@ def test_source_R2_return_candidates_prioritize_return_expressions():
     bad += check(any("return: return == (amount * 2)" in line
                      for line in named_evidence),
                  f"the named-return provenance is recorded: {named_evidence}")
+    bad += check(helper_terms == ["(amount + 7)"],
+                 f"single-return helper calls feed return R2 candidates: "
+                 f"{helper_specs}")
+    bad += check(any("return: return == (amount + 7)" in line
+                     for line in helper_evidence),
+                 f"helper-return provenance is recorded at the caller return: "
+                 f"{helper_evidence}")
     return bad
 
 

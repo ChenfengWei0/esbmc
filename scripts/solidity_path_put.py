@@ -1915,6 +1915,57 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 if isinstance(ref, int):
                     return_ids.add(ref)
 
+    return_inline_depth = [0]
+
+    def inline_return_terms(n, expected_kind, target_ty=None):
+        if return_inline_depth[0] >= 1:
+            return []
+        if not isinstance(n, dict) or n.get("nodeType") != "FunctionCall":
+            return []
+        if n.get("kind") not in (None, "functionCall"):
+            return []
+        callee_ref = identifier_ref(n.get("expression"))
+        if callee_ref is None or callee_ref == target.get("id"):
+            return []
+        callee = function_by_id.get(callee_ref)
+        if callee is None or callee.get("body") is None:
+            return []
+        formals = (callee.get("parameters") or {}).get("parameters") or []
+        actuals = n.get("arguments") or []
+        if len(formals) != len(actuals):
+            return []
+        rets = (callee.get("returnParameters") or {}).get("parameters") or []
+        if len(rets) != 1:
+            return []
+        helper_ty = _norm_ty((rets[0].get("typeDescriptions") or {}).get(
+            "typeString") or "")
+        if expected_kind and type_coord_kind(helper_ty) != expected_kind:
+            return []
+        expr = single_return_expr(callee)
+        if expr is None:
+            return []
+        old_aliases = dict(local_aliases)
+        old_storage_aliases = dict(local_storage_aliases)
+        old_local_ids = set(local_ids)
+        old_storage_ids = set(local_storage_ids)
+        try:
+            for formal, actual in zip(formals, actuals):
+                ref = formal.get("id") if isinstance(formal, dict) else None
+                if isinstance(ref, int):
+                    local_aliases[ref] = actual
+            return_inline_depth[0] += 1
+            return return_terms(expr, expected_kind, target_ty or helper_ty)
+        finally:
+            return_inline_depth[0] -= 1
+            local_aliases.clear()
+            local_aliases.update(old_aliases)
+            local_storage_aliases.clear()
+            local_storage_aliases.update(old_storage_aliases)
+            local_ids.clear()
+            local_ids.update(old_local_ids)
+            local_storage_ids.clear()
+            local_storage_ids.update(old_storage_ids)
+
     def return_term(n, expected_kind, target_ty=None):
         alias = local_alias_expr(n)
         if alias is not None:
@@ -1979,6 +2030,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         direct = return_term(n, expected_kind, target_ty)
         if direct is not None:
             return [direct]
+        helper_terms = inline_return_terms(n, expected_kind, target_ty)
+        if helper_terms:
+            return helper_terms
         alias = local_alias_expr(n)
         if alias is not None:
             return return_terms(alias, expected_kind, target_ty)

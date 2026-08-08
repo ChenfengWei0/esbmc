@@ -20069,3 +20069,41 @@ Verification:
 - `python3 scripts/test_benchmark_pipeline_plan.py`
 - `python3 notes/coverage/scripts/rq1_veriput_triage.py --benchmark all
   --sample-limit 1`
+
+## 2026-08-08 no-PUT / no-R1R2 priority and helper-return R2 mining
+
+The current optimization target is three-tiered, not just `no-valid`:
+
+1. `no-valid`: recover any reference-valid test.
+2. `valid-no-PUT`: convert concrete-only valid cases into certified PUTs when
+   a real input/environment coordinate can be widened.
+3. `valid-PUT-no-R1/R2`: add meaningful layer-1/layer-2 oracles for normal
+   exits.  Rollback-only no-R1/R2 remains accounting-only because post-state and
+   returns are not chain-observable after rollback.
+
+Implemented a conservative source-R2 enhancement:
+
+- `source_assignment_r2_specs` now mines return R2 candidates through one level
+  of same-contract helper call when the callee is non-recursive and has exactly
+  one statement of the form `return expr`.
+- Formal parameters are temporarily aliased to caller actuals, so a wrapper like
+  `return _helper(amount)` with `_helper(uint256 x) { return x + 7; }` yields
+  the candidate `return == (amount + 7)`.
+- This only proposes candidates.  Fuzz can refute them cheaply, and ESBMC must
+  still prove any surviving R2 assertion before it can be emitted.
+
+Limits to remember:
+
+- This does not yet solve helpers that build a local accumulator through
+  assignments/branches before returning it, e.g. the `IRMLinearKink`
+  `computeInterestRateInternal` shape.  That needs local accumulator and branch
+  expression mining or a separate source/SSA formula extractor.
+- Mapping/dynamic-array/string return oracles are still a deeper emitter/grammar
+  gap, as seen in `StandaloneReverseRegistrar.nameForAddr`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+- `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  passed: 254 tests.
