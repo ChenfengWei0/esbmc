@@ -621,6 +621,81 @@ def _row_is_disabled_concrete(row: dict) -> bool:
     return enabled_rx.search(text) is None and disabled_rx.search(text) is not None
 
 
+def _has_oracle_class(test: dict, *labels: str) -> bool:
+    present = {str(label) for label in (test.get("oracle_classes") or [])}
+    return any(label in present for label in labels)
+
+
+def _row_count(row: dict, key: str) -> int:
+    try:
+        return int(row.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _legacy_quality_bucket(row: dict) -> str:
+    valid = _row_count(row, "valid")
+    if row.get("valid") is None:
+        valid = (_row_count(row, "put_valid")
+                 + _row_count(row, "concrete_valid"))
+        if valid <= 0:
+            valid = len(row.get("valid_tests") or [])
+    put_valid = _row_count(row, "put_valid")
+    if valid <= 0:
+        return "no-valid"
+    if put_valid <= 0:
+        return "valid-no-PUT"
+    valid_puts = [
+        test for test in (row.get("valid_tests") or [])
+        if test.get("kind") == "put"
+        and test.get("valid_reference_test", True)
+    ]
+    if valid_puts:
+        if any(_has_oracle_class(test, "R1", "R2") for test in valid_puts):
+            return "valid-PUT-with-R1R2"
+        return "valid-PUT-no-R1R2"
+    if (_row_count(row, "valid_put_with_R1_or_R2") > 0
+            or _row_count(row, "valid_put_with_R1") > 0
+            or _row_count(row, "valid_put_with_R2") > 0):
+        return "valid-PUT-with-R1R2"
+    return "valid-PUT-no-R1R2"
+
+
+def _strength_quality(put_summary: dict) -> dict:
+    valid_tests = [
+        test for test in (put_summary.get("valid_tests") or [])
+        if test.get("valid_reference_test", True)
+    ]
+    valid_puts = [test for test in valid_tests if test.get("kind") == "put"]
+    valid_puts_with_r1 = [
+        test for test in valid_puts if _has_oracle_class(test, "R1")
+    ]
+    valid_puts_with_r2 = [
+        test for test in valid_puts if _has_oracle_class(test, "R2")
+    ]
+    valid_puts_with_r1r2 = [
+        test for test in valid_puts if _has_oracle_class(test, "R1", "R2")
+    ]
+    if not valid_tests:
+        bucket = "no-valid"
+    elif not valid_puts:
+        bucket = "valid-no-PUT"
+    elif not valid_puts_with_r1r2:
+        bucket = "valid-PUT-no-R1R2"
+    else:
+        bucket = "valid-PUT-with-R1R2"
+    return {
+        "quality_bucket": bucket,
+        "valid_put_with_R1": len(valid_puts_with_r1),
+        "valid_put_with_R2": len(valid_puts_with_r2),
+        "valid_put_with_R1_or_R2": len(valid_puts_with_r1r2),
+        "valid_put_without_R1R2": (
+            len(valid_puts) - len(valid_puts_with_r1r2)),
+        "valid_concrete": sum(
+            1 for test in valid_tests if test.get("kind") == "concrete"),
+    }
+
+
 def summarize_put_artifacts(put_root: Path) -> dict:
     emission = Counter()
     valid = Counter()
@@ -729,7 +804,7 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             enriched["put_json"] = rec.get("_put_json_path")
             assertion_oracles.append(enriched)
 
-    return {
+    summary = {
         "raw": int(emission["put"] + emission["concrete"]),
         "valid": int(valid["put"] + valid["concrete"]),
         "put_raw": int(emission["put"]),
@@ -751,6 +826,8 @@ def summarize_put_artifacts(put_root: Path) -> dict:
         "oracle_class_combo_counts": dict(sorted(oracle_combo_counts.items())),
         "assertion_oracles": assertion_oracles,
     }
+    summary.update(_strength_quality(summary))
+    return summary
 
 
 def _remaining(deadline: float) -> float:
@@ -1212,6 +1289,11 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "put_valid": put_summary["put_valid"],
         "concrete_raw": put_summary["concrete_raw"],
         "concrete_valid": put_summary["concrete_valid"],
+        "quality_bucket": put_summary["quality_bucket"],
+        "valid_put_with_R1": put_summary["valid_put_with_R1"],
+        "valid_put_with_R2": put_summary["valid_put_with_R2"],
+        "valid_put_with_R1_or_R2": put_summary["valid_put_with_R1_or_R2"],
+        "valid_put_without_R1R2": put_summary["valid_put_without_R1R2"],
         "raw_tests": put_summary["raw_tests"],
         "valid_tests": put_summary["valid_tests"],
         "oracle_class_counts": put_summary["oracle_class_counts"],
@@ -1280,7 +1362,8 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
             print(f"[rq1] -> status={row['status']} raw={row['raw']} "
                   f"valid={row['valid']} put={row['put_valid']}/"
                   f"{row['put_raw']} concrete={row['concrete_valid']}/"
-                  f"{row['concrete_raw']} wall={row['wall_total_s']}s",
+                  f"{row['concrete_raw']} bucket={row.get('quality_bucket')} "
+                  f"wall={row['wall_total_s']}s",
                   flush=True)
         return attempted
 
@@ -1323,6 +1406,11 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                     "put_valid": 0,
                     "concrete_raw": 0,
                     "concrete_valid": 0,
+                    "quality_bucket": "no-valid",
+                    "valid_put_with_R1": 0,
+                    "valid_put_with_R2": 0,
+                    "valid_put_with_R1_or_R2": 0,
+                    "valid_put_without_R1R2": 0,
                     "wall": 0.0,
                     "wall_total_s": 0.0,
                     "maxrss_mb": 0.0,
@@ -1335,7 +1423,7 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                   f"status={row['status']} raw={row['raw']} valid={row['valid']} "
                   f"put={row['put_valid']}/{row['put_raw']} "
                   f"concrete={row['concrete_valid']}/{row['concrete_raw']} "
-                  f"wall={row['wall_total_s']}s",
+                  f"bucket={row.get('quality_bucket')} wall={row['wall_total_s']}s",
                   flush=True)
     return attempted
 
@@ -1343,6 +1431,9 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
 def write_dataset_manifest(root: Path, dataset_label: str, journal: Path) -> None:
     latest = _latest_rows(journal)
     status = Counter(str(row.get("status") or "<missing>") for row in latest.values())
+    quality = Counter(
+        str(row.get("quality_bucket") or _legacy_quality_bucket(row))
+        for row in latest.values())
     doc = {
         "schema": "veriput-rq1-dataset-manifest/v1",
         "generated_at": _utc_now(),
@@ -1358,7 +1449,18 @@ def write_dataset_manifest(root: Path, dataset_label: str, journal: Path) -> Non
             "concrete_raw": sum(row.get("concrete_raw") or 0 for row in latest.values()),
             "concrete_valid": sum(row.get("concrete_valid") or 0
                                   for row in latest.values()),
+            "valid_put_with_R1": sum(row.get("valid_put_with_R1") or 0
+                                     for row in latest.values()),
+            "valid_put_with_R2": sum(row.get("valid_put_with_R2") or 0
+                                     for row in latest.values()),
+            "valid_put_with_R1_or_R2": sum(
+                row.get("valid_put_with_R1_or_R2") or 0
+                for row in latest.values()),
+            "valid_put_without_R1R2": sum(
+                row.get("valid_put_without_R1R2") or 0
+                for row in latest.values()),
             "status": dict(sorted(status.items())),
+            "quality_bucket": dict(sorted(quality.items())),
         },
     }
     _write_json(root / dataset_label / "manifest.json", doc)

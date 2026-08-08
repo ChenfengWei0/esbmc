@@ -74,6 +74,7 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                partial_ladder_already_has_strict_oracle,
                                path_condition_from_branch_claim,
                                path_decision_assumes,
+                               potential_rendered_widths_for_put,
                                rendered_env_coords_for_emitted_case,
                                parse_ladder, region_slot_vars, statement_start,
                                runtime_interface_mock_lines,
@@ -327,6 +328,38 @@ def test_relation_establishes_state_from_fuzzed_sender():
     bad += check(stats["established_relations"] == [
         {"target": "state.owner", "source": "msg.sender"}],
         f"the relation travels in stats: {stats['established_relations']}")
+    return bad
+
+
+def test_precheck_identifies_nonparameterized_candidate_before_ladder():
+    """A state-wide but calldata-point region cannot become a real PUT."""
+    em, case = make_case()
+    widths = potential_rendered_widths_for_put(
+        "setDiscount", PARAMS, em, case,
+        region={"u": (0, 0), "bps": (250, 250),
+                "state.owner": (0, 10)},
+        holes={})
+    bad = 0
+    bad += check(widths == {"u": 1, "bps": 1},
+                 f"only rendered calldata coordinates count: {widths}")
+    bad += check(not any(w > 1 for w in widths.values()),
+                 "the ladder can be skipped when every rendered coordinate is a point")
+    return bad
+
+
+def test_precheck_keeps_possible_parameterized_candidate_on_wide_env():
+    """A wide environment coordinate may still become a PUT parameter."""
+    em, case = make_case()
+    widths = potential_rendered_widths_for_put(
+        "setDiscount", PARAMS, em, case,
+        region={"u": (0, 0), "bps": (250, 250),
+                "msg.sender": (1, 99)},
+        holes={})
+    bad = 0
+    bad += check(widths == {"u": 1, "bps": 1, "msg.sender": 99},
+                 f"wide establishable environment coordinate is retained: {widths}")
+    bad += check(any(w > 1 for w in widths.values()),
+                 "the assertion ladder is not skipped when a PUT may be emitted")
     return bad
 
 
@@ -11449,6 +11482,8 @@ def main():
               test_the_emitted_test_carries_its_cell,
               test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies,
               test_pin_with_a_slot_is_established,
+              test_precheck_identifies_nonparameterized_candidate_before_ladder,
+              test_precheck_keeps_possible_parameterized_candidate_on_wide_env,
               test_storage_oracles_read_the_actual_target_instance_not_c0,
               test_path_cov_fixture_replays_constructor_then_pins_state,
               test_constructor_staticcall_mock_is_scoped_to_deployment,

@@ -17,6 +17,34 @@ User alignment:
 - Re-running a case is low value unless the previous artifact says the next run
   can plausibly become a PUT or gain R1/R2.
 
+Follow-up implementation:
+
+- `notes/coverage/scripts/rq1_veriput_run.py` now writes the same
+  methodology-strength classification into every official RQ1 row:
+  `quality_bucket` is one of `no-valid`, `valid-no-PUT`,
+  `valid-PUT-no-R1R2`, or `valid-PUT-with-R1R2`.
+- The row also records `valid_put_with_R1`, `valid_put_with_R2`,
+  `valid_put_with_R1_or_R2`, and `valid_put_without_R1R2`.  This makes
+  no-PUT and no-R1/R2 visible from `results.jsonl` and `manifest.json`
+  without rescanning artifacts.
+- `scripts/solidity_path_put.py` now runs a conservative pre-ladder
+  parameterization precheck.  If the emitter can already prove that no
+  rendered coordinate has width greater than one, it writes the concrete replay
+  and `put.json` immediately and records
+  `ladder_refusal="not run: no wide rendered PUT coordinate"`.
+- The precheck is deliberately one-way.  If it is unsure, or if any declared
+  calldata/environment coordinate may still become wide, it falls back to the
+  old ladder/R2 path.  This is meant to save ESBMC time on guaranteed
+  `valid-no-PUT` cases, not to prove an assertion.
+- Validation for this follow-up:
+  `python3 -m py_compile scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py notes/coverage/scripts/rq1_veriput_run.py
+  scripts/test_rq1_veriput_run.py`,
+  `python3 scripts/test_rq1_veriput_run.py`,
+  `python3 scripts/test_solidity_path_put.py`,
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only ...`, and
+  `git diff --check -- ...` all passed.
+
 Code change:
 
 - `notes/coverage/scripts/rq1_veriput_triage.py` now reports

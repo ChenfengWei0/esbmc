@@ -6966,6 +6966,85 @@ def path_decision_assumes(path_decisions, coord_ident_abs):
     return lines, skipped
 
 
+def rendered_width_for_region(name, region, holes):
+    """How many values remain after the region interval and punched holes."""
+    if name not in region:
+        return None
+    lo, hi = region[name]
+    return (hi - lo + 1) - len(
+        {h for h in holes.get(name, ()) if lo <= h <= hi})
+
+
+def not_parameterized_reason(rendered_width):
+    widths = ", ".join(f"{n}={w}" for n, w in sorted(rendered_width.items()))
+    return (
+        "NOT PARAMETERIZED, per §From a Region to a Test: no coordinate "
+        "this test RENDERS is left more than one value to take"
+        + (f" (rendered widths: {widths})" if widths
+           else " (no coordinate is rendered at all)")
+        + ". A region wider than a point does not settle this on its own -- "
+          "the coordinates the omission rule leaves out are not rendered, "
+          "and a region can be wide only on those. What this path receives "
+          "is the concrete replay test the emitter already wrote into this "
+          "file; a PUT here would be that same replay with bound() syntax "
+          "over it, counted as a parameterized test")
+
+
+def potential_rendered_widths_for_put(unit, params, emitted, case, region,
+                                      holes,
+                                      lift_unconstrained_calldata=False):
+    """Conservative precheck for whether Stage 4 can emit a real PUT.
+
+    Returns None when the precheck cannot mirror build_put's early parsing
+    safely.  A dict result is authoritative only for widths of coordinates that
+    would be rendered by this emitter; callers may skip the assertion ladder
+    only when every width in that dict is <= 1.
+    """
+    if params is None:
+        return None
+    c_idx, _cname, _claims, (fs, fe) = case
+    _ = c_idx
+    body = emitted.lines[fs + 1:fe]
+    call_i = find_unit_call(body, unit)
+    if call_i is None:
+        return None
+    _new, args = rewrite_call_args(body[call_i], unit, {})
+    if args is None:
+        return None
+    params = named_params(params)
+    completed, completed_args, implicit_full, cerr = (
+        complete_missing_call_args(body[call_i], unit, params, args))
+    _ = completed
+    if cerr is not None:
+        return None
+    args = completed_args
+    if len(params) != len(args):
+        return None
+
+    widths = {}
+    implicit_full = set(implicit_full)
+    for idx, (pname, ptype) in enumerate(params):
+        if pname in region:
+            width = rendered_width_for_region(pname, region, holes)
+        elif idx in implicit_full:
+            bounds = full_lift_bounds(ptype)
+            width = None if bounds is None else bounds[1] - bounds[0] + 1
+        elif lift_unconstrained_calldata:
+            bounds = full_lift_bounds(ptype)
+            width = None if bounds is None else bounds[1] - bounds[0] + 1
+        else:
+            continue
+        if width is None or lift_kind(ptype) is None:
+            continue
+        widths[pname] = width
+
+    for env_coord in ESTABLISHABLE_ENV_COORDS:
+        width = rendered_width_for_region(env_coord, region, holes)
+        if width is not None:
+            widths[env_coord] = width
+    return widths
+
+
 def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               params, emitted, case, layout, ladder_rows, notes, cell=None,
               unwind=None, rettypes=None, maps=None, piece_label="",
@@ -7329,18 +7408,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               "disagree and that is a fact about the region")
         return None, None
     if not any(w > 1 for w in rendered_width.values()):
-        widths = ", ".join(f"{n}={w}" for n, w in sorted(rendered_width.items()))
-        reason = (
-            "NOT PARAMETERIZED, per §From a Region to a Test: no coordinate "
-            "this test RENDERS is left more than one value to take"
-            + (f" (rendered widths: {widths})" if widths
-               else " (no coordinate is rendered at all)")
-            + ". A region wider than a point does not settle this on its own -- "
-              "the coordinates the omission rule leaves out are not rendered, "
-              "and a region can be wide only on those. What this path receives "
-              "is the concrete replay test the emitter already wrote into this "
-              "file; a PUT here would be that same replay with bound() syntax "
-              "over it, counted as a parameterized test")
+        reason = not_parameterized_reason(rendered_width)
         notes.append(reason)
         raise ConcreteFallback(reason)
 
@@ -10014,6 +10082,89 @@ def main():
         for note in retreat_notes:
             print(f"[put]   {note}")
             notes.append(note)
+
+    rendered_width_precheck = potential_rendered_widths_for_put(
+        a.unit, params, emitted, case, region, holes,
+        lift_unconstrained_calldata=a.lift_unconstrained_calldata)
+    if (rendered_width_precheck is not None
+            and not any(w > 1 for w in rendered_width_precheck.values())):
+        reason = not_parameterized_reason(rendered_width_precheck)
+        reason += (" The assertion ladder and R2 passes were not run because "
+                   "this precheck can already prove the emitted test has no "
+                   "wide rendered coordinate.")
+        notes.append(reason)
+        overload_label = overload_artifact_label(
+            a.ast, a.contract, a.unit, declaration_id)
+        plabel = overload_label + (f"p{a.piece}" if a.piece else "")
+        cname, _cstart, _cend = emitted.blocks[case[0]]
+        newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
+                f"{plabel}{a.test_suffix}")
+        txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
+                                       layout, a.contract, a.unit,
+                                       constructor_mocks, runtime_mocks,
+                                       constructor_params)
+        dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
+        with open(dest, "w") as f:
+            f.write(txt)
+        print(f"[put] WROTE concrete replay {dest}")
+        print("[put]   concrete replay : " + case[1])
+        print(f"[put]   note: {reason}")
+        with open(os.path.join(a.workdir, "put.json"), "w") as f:
+            json.dump({"kind": "concrete",
+                       "contract": a.contract, "unit": a.unit, "enc": a.enc,
+                       "depth": a.depth, "path_function": pf,
+                       "artifact_identity": overload_label,
+                       "file": dest, "test": case[1], "piece": a.piece,
+                       "region": {k: [str(v[0]), str(v[1])]
+                                  for k, v in region.items()},
+                       "holes": {k: [str(x) for x in v]
+                                 for k, v in holes.items()},
+                       "establish": json.loads(a.establish or "[]"),
+                       "pins": {k: str(v) for k, v in pins.items()},
+                       "ladder": [], "ladder_summary": None,
+                       "ladder_refusal": (
+                           "not run: no wide rendered PUT coordinate"),
+                       "r2_requested": False,
+                       "r2_depth": None,
+                       "r2_term_budget": None,
+                       "r2_candidate_budget": None,
+                       "r2_fuzz_prefilter": {
+                           "enabled": False,
+                           "reason": (
+                               "not run: no wide rendered PUT coordinate")},
+                       "oracle_dependency_policy": SLOT_DEPENDENCY_POLICY,
+                       "oracle_dependency_state": [],
+                       "oracle_vars": [],
+                       "slot_candidates": {
+                           "asked": [],
+                           "unanswered": [],
+                           "rows_for_unasked_names": []},
+                       "esbmc_extra_args": a.esbmc_arg,
+                       "unwind_applied_to_ladder_only": [],
+                       "unwind_attempts": [],
+                       "cell": {"name": cell_name, "scope": a.scope,
+                                "max_tx": a.max_tx, "rule": cell_rule},
+                       "binary": binary_identity(a.esbmc),
+                       "concrete_reason": reason,
+                       "constructor_staticcall_mocks": len(
+                           constructor_mocks) // 2,
+                       "runtime_interface_mocks": runtime_mock_addresses,
+                       "runtime_interface_mock_calls": runtime_mock_calls,
+                       "stats": {
+                           "fuzz_params": 0,
+                           "lifted": [],
+                           "rendered_width": rendered_width_precheck,
+                           "wide_fuzz_coords": [],
+                           "asserts": 0,
+                           "state_asserts": 0,
+                           "return_asserts": 0,
+                           "exit_kind_asserts": 0,
+                           "guarded_asserts": 0,
+                           "oracle_classes": [],
+                           "assertion_oracles": [],
+                       },
+                       "notes": notes}, f, indent=2)
+        return 0
 
     # ---- WHICH SLOTS TO ASK ABOUT, and why the DRIVER chooses --------------
     #

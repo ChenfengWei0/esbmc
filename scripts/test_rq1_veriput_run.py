@@ -190,7 +190,47 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
                      f"refused PUT rows are not raw deliverables: {summary}")
         bad += check(all(t["enc"] != 10 for t in summary["raw_tests"]),
                      f"disabled concrete replays are not raw deliverables: {summary}")
+        bad += check(summary["quality_bucket"] == "valid-PUT-with-R1R2"
+                     and summary["valid_put_with_R1"] == 1
+                     and summary["valid_put_with_R2"] == 1
+                     and summary["valid_put_with_R1_or_R2"] == 1
+                     and summary["valid_put_without_R1R2"] == 0,
+                     f"methodology strength fields are counted: {summary}")
         return bad
+
+
+def test_strength_quality_bucket_keeps_no_put_and_no_r1r2_visible():
+    cases = [
+        ({
+            "valid_tests": [],
+        }, "no-valid"),
+        ({
+            "valid_tests": [{
+                "kind": "concrete",
+                "valid_reference_test": True,
+            }],
+        }, "valid-no-PUT"),
+        ({
+            "valid_tests": [{
+                "kind": "put",
+                "valid_reference_test": True,
+                "oracle_classes": ["R0"],
+            }],
+        }, "valid-PUT-no-R1R2"),
+        ({
+            "valid_tests": [{
+                "kind": "put",
+                "valid_reference_test": True,
+                "oracle_classes": ["R1"],
+            }],
+        }, "valid-PUT-with-R1R2"),
+    ]
+    bad = 0
+    for summary, bucket in cases:
+        got = rq1_veriput_run._strength_quality(summary)
+        bad += check(got["quality_bucket"] == bucket,
+                     f"{bucket} is reported distinctly: {got}")
+    return bad
 
 
 def test_real203_cache_uses_prepared_benchmark_namespace():
@@ -672,6 +712,7 @@ def main():
     tests = [
         test_path_guard_allows_only_veriput_rq1_result_tree,
         test_put_artifact_summary_counts_raw_valid_and_oracle_classes,
+        test_strength_quality_bucket_keeps_no_put_and_no_r1r2_visible,
         test_real203_cache_uses_prepared_benchmark_namespace,
         test_jobs_admission_refuses_oversubscription,
         test_target_rows_fast_first_sorts_before_limit,
