@@ -5354,6 +5354,15 @@ def _source_sol_param_type(raw):
     return _function_sig_type(text)
 
 
+def _source_sol_param_name(raw):
+    text = re.sub(r"\s+", " ", (raw or "").strip())
+    if not text:
+        return None
+    text = re.sub(r"\s*=.*$", "", text).strip()
+    parts = text.split()
+    return parts[-1] if len(parts) >= 2 else None
+
+
 def repair_payable_replay_call_args(lines, unit, params):
     """Cast replay-call arguments whose declaration is `address payable`.
 
@@ -5408,6 +5417,11 @@ def _source_contract_chunk(source, contract):
 
 
 def source_constructor_param_types(forge_project, contract):
+    return [typ for _name, typ in source_constructor_params(
+        forge_project, contract)]
+
+
+def source_constructor_params(forge_project, contract):
     source = _flat_source_for_project(forge_project)
     chunk = _source_contract_chunk(source, contract)
     if not chunk:
@@ -5418,9 +5432,27 @@ def source_constructor_param_types(forge_project, contract):
     params = []
     for item in split_top_level(m.group(1)):
         typ = _source_sol_param_type(item)
-        if typ:
-            params.append(typ)
+        name = _source_sol_param_name(item)
+        if typ and name:
+            params.append((name, typ))
     return params
+
+
+def _constructor_body_text(chunk):
+    m = re.search(r"\bconstructor\s*\([^)]*\)\s*(?:[^{;]*)\{", chunk, re.S)
+    if m is None:
+        return ""
+    start = m.end()
+    depth, i = 1, start
+    while i < len(chunk) and depth:
+        if chunk[i] == "{":
+            depth += 1
+        elif chunk[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return chunk[start:i]
+        i += 1
+    return ""
 
 
 def _constructor_arg_span(stmt, contract):
@@ -6894,6 +6926,33 @@ def complete_setup_call_args(lines, call_i, unit, params):
         out[i] = completed
         changed += 1
     return out, changed
+
+
+def complete_concrete_replay_call_args(lines, unit, params):
+    """Fill omitted same-unit arguments in a concrete replay case.
+
+    Concrete fallbacks are not PUTs, so omitted target arguments are completed
+    with deterministic placeholders instead of becoming fuzz parameters.  A
+    replay that cannot be completed must be refused before it reaches Forge:
+    one uncompilable concrete file poisons every PUT sharing the project.
+    """
+    if params is None:
+        return list(lines), 0, "declared parameters unavailable"
+    params = named_params(params)
+    out = list(lines)
+    changed = 0
+    for i, line in enumerate(out):
+        _new, args = rewrite_call_args(line, unit, {})
+        if args is None:
+            continue
+        completed, _completed_args, _implicit, cerr = (
+            complete_missing_call_args(line, unit, params, args))
+        if cerr is not None:
+            return None, changed, cerr
+        if completed != line:
+            out[i] = completed
+            changed += 1
+    return out, changed, None
 
 
 def target_instance_for_call(lines, call_i, unit):
@@ -9289,6 +9348,128 @@ def constructor_external_interface_mock_lines(forge_project, indent):
         mock_zero_chained_casts=True)
 
 
+def constructor_param_interface_mock_specs(forge_project, contract):
+    """Interface calls made through address constructor parameters."""
+    source = _flat_source_for_project(forge_project)
+    chunk = _source_contract_chunk(source, contract)
+    if not source or not chunk:
+        return []
+    params = source_constructor_params(forge_project, contract)
+    by_name = {name: (idx, typ) for idx, (name, typ) in enumerate(params)}
+    body = _constructor_body_text(chunk)
+    if not body:
+        return []
+    functions = _source_function_abis(source)
+    specs, seen = [], set()
+    for iface, pname, fname in re.findall(
+            r"\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
+            r"\s*\.\s*([A-Za-z_]\w*)\s*\(", body):
+        found = by_name.get(pname)
+        if found is None:
+            continue
+        idx, ptype = found
+        if _norm_ty(ptype) not in ("address", "address payable"):
+            continue
+        choice = _unique_function_choice(functions.get(fname) or [])
+        if choice is None:
+            continue
+        signature, returns = choice
+        key = (idx, iface, signature)
+        if key in seen:
+            continue
+        seen.add(key)
+        specs.append({
+            "param_index": idx,
+            "param_name": pname,
+            "interface": iface,
+            "signature": signature,
+            "returns": returns,
+        })
+    return specs
+
+
+def apply_constructor_param_interface_mocks(lines, contract, specs, source,
+                                            indent="    "):
+    """Mock constructor-time interface calls on replay constructor args."""
+    if not contract or not specs:
+        return list(lines), 0
+    out, changed, i = [], 0, 0
+    rx = re.compile(r"\bnew\s+" + re.escape(contract) + r"\s*\(")
+    while i < len(lines):
+        if not rx.search(lines[i]):
+            out.append(lines[i])
+            i += 1
+            continue
+        end = _statement_end(lines, i)
+        stmt = "\n".join(lines[i:end + 1])
+        span = _constructor_arg_span(stmt, contract)
+        if span is None:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        _start, _close, args = span
+        local = []
+        seen = set()
+        for spec in specs:
+            idx = spec["param_index"]
+            if idx >= len(args):
+                continue
+            addr_expr = args[idx].strip()
+            signature = spec["signature"]
+            key = (addr_expr, signature)
+            if key in seen:
+                continue
+            seen.add(key)
+            mock_name = f"_esbmc_ctor_arg_mock_{changed}_{len(local)}"
+            returns = spec.get("returns") or []
+            if returns:
+                exprs = ", ".join(
+                    _abi_mock_expr_for_type(source, typ, "", {})
+                    for typ in returns)
+                ret = f"abi.encode({exprs})"
+            else:
+                ret = "bytes(\"\")"
+            local += [
+                f"{indent}// ESBMC constructor fixture: local Foundry has no "
+                f"code at constructor argument `{spec['param_name']}`.",
+                f"{indent}address {mock_name} = {addr_expr};",
+            ]
+            if not _is_precompile_address_expr(addr_expr):
+                local.append(f"{indent}vm.etch({mock_name}, hex\"00\");")
+            local.append(
+                f"{indent}vm.mockCall({mock_name}, "
+                f"abi.encodeWithSignature(\"{signature}\"), {ret});")
+        if local:
+            out.extend(local)
+            changed += 1
+        out.extend(lines[i:end + 1])
+        i = end + 1
+    return out, changed
+
+
+def _address_expr_literal_int(expr):
+    text = (expr or "").strip()
+    patterns = [
+        r"^address\s*\(\s*uint160\s*\(\s*(\d+)\s*\)\s*\)$",
+        r"^address\s*\(\s*(\d+)\s*\)$",
+        r"^0x([0-9A-Fa-f]{40})$",
+    ]
+    for pat in patterns:
+        m = re.match(pat, text)
+        if not m:
+            continue
+        try:
+            return int(m.group(1), 16 if pat.startswith("^0x") else 10)
+        except ValueError:
+            return None
+    return None
+
+
+def _is_precompile_address_expr(expr):
+    value = _address_expr_literal_int(expr)
+    return value is not None and 1 <= value <= 9
+
+
 
 def _struct_owner(source, start):
     prefix = source[:start]
@@ -9504,7 +9685,8 @@ def add_flat_import_symbols(lines, symbols):
 def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
                         layout=None, contract=None, unit=None,
                         constructor_mocks=None, runtime_mocks=None,
-                        constructor_params=None):
+                        constructor_params=None,
+                        constructor_param_mocks=None, flat_source=None):
     """Insert PUT functions into the emitter's contract and rename safely."""
     cname, _cstart, cend = emitted.blocks[case[0]]
     lines = list(emitted.lines)
@@ -9533,6 +9715,10 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
             lines, emitted, case, unit, contract, constructor_mocks or [])
         lines = apply_runtime_interface_mocks(
             lines, emitted, case, unit, contract, runtime_mocks or [])
+        lines, _constructor_param_repairs = \
+            apply_constructor_param_interface_mocks(
+                lines, contract, constructor_param_mocks or [],
+                flat_source or "")
         lines = repair_pranked_constructor_origins(lines, contract)
         lines, _constructor_payable_repairs = repair_payable_constructor_args(
             lines, contract, constructor_params or [])
@@ -9554,7 +9740,8 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
 def assemble_concrete_source(emitted, case, new_contract, fixture=None,
                              layout=None, contract=None, unit=None,
                              constructor_mocks=None, runtime_mocks=None,
-                             constructor_params=None):
+                             constructor_params=None, params=None,
+                             constructor_param_mocks=None, flat_source=None):
     """Keep exactly one concrete replay case and rename its test contract.
 
     This is the point-region fallback for a certified region that renders no
@@ -9565,6 +9752,15 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
     cname, _cstart, _cend = emitted.blocks[case[0]]
     lines = list(emitted.lines)
     keep_start, keep_end = case[3]
+    if unit is not None and params is not None:
+        repaired, completed, cerr = complete_concrete_replay_call_args(
+            lines[keep_start:keep_end + 1], unit, params)
+        if cerr is not None:
+            raise ValueError(
+                "concrete replay omitted call argument(s) that cannot be "
+                f"reconstructed: {cerr}")
+        if completed:
+            lines[keep_start:keep_end + 1] = repaired
     for _ci, _name, _claims, (fs, fe) in sorted(
             emitted.cases, key=lambda item: item[3][0], reverse=True):
         if (fs, fe) == (keep_start, keep_end):
@@ -9578,6 +9774,13 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
             lines, emitted, case, unit, contract, constructor_mocks or [])
         lines = apply_runtime_interface_mocks(
             lines, emitted, case, unit, contract, runtime_mocks or [])
+        lines, _constructor_param_repairs = \
+            apply_constructor_param_interface_mocks(
+                lines, contract, constructor_param_mocks or [],
+                flat_source or "")
+        if params is not None:
+            lines, _payable_replay_repairs = repair_payable_replay_call_args(
+                lines, unit, named_params(params))
         lines = repair_pranked_constructor_origins(lines, contract)
         lines, _constructor_payable_repairs = repair_payable_constructor_args(
             lines, contract, constructor_params or [])
@@ -10113,6 +10316,9 @@ def main():
     constructor_external_mocks = constructor_external_interface_mock_lines(
         a.forge_project, "    ")
     constructor_mocks = constructor_staticcall_mocks + constructor_external_mocks
+    flat_source = _flat_source_for_project(a.forge_project) or ""
+    constructor_param_mocks = constructor_param_interface_mock_specs(
+        a.forge_project, a.contract)
     if constructor_mocks:
         mock_calls = sum(1 for line in constructor_mocks
                          if "vm.mockCall(" in line)
@@ -10120,6 +10326,9 @@ def main():
         notes.append("constructor mocks inserted before deployment "
                      f"({etched} mocked address(es), {mock_calls} call(s)); "
                      "cleared after constructor")
+    if constructor_param_mocks:
+        notes.append("constructor parameter interface mocks inserted before "
+                     f"deployment ({len(constructor_param_mocks)} call(s))")
     runtime_mocks = runtime_interface_mock_lines(a.forge_project, "    ")
     runtime_mock_addresses = sum(1 for line in runtime_mocks
                                  if "vm.etch(" in line)
@@ -10136,6 +10345,15 @@ def main():
                      "Foundry constructor arguments will be wrapped with "
                      "payable(...) where needed")
 
+    concrete_params = None
+    if a.ast:
+        concrete_arity = None
+        if case_call_i is not None:
+            _n, args0 = rewrite_call_args(case_body[case_call_i], a.unit, {})
+            concrete_arity = len(args0) if args0 is not None else None
+        concrete_params = function_params(
+            a.ast, a.contract, a.unit, concrete_arity, declaration_id)
+
     if a.concrete_only:
         layout = None
         if foundry_fixture and foundry_fixture.get("skip_constructor"):
@@ -10151,10 +10369,26 @@ def main():
         cname, _cstart, _cend = emitted.blocks[case[0]]
         newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
                 f"{plabel}{a.test_suffix}")
-        txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
-                                       layout, a.contract, a.unit,
-                                       constructor_mocks, runtime_mocks,
-                                       constructor_params)
+        try:
+            txt = assemble_concrete_source(
+                emitted, case, newc, foundry_fixture, layout, a.contract,
+                a.unit, constructor_mocks, runtime_mocks, constructor_params,
+                concrete_params, constructor_param_mocks, flat_source)
+        except ValueError as exc:
+            reason = str(exc)
+            print(f"[put] REFUSED: {reason}")
+            with open(os.path.join(a.workdir, "put.json"), "w") as f:
+                json.dump({"kind": "concrete",
+                           "contract": a.contract, "unit": a.unit,
+                           "enc": a.enc, "depth": a.depth,
+                           "path_function": pf,
+                           "artifact_identity": overload_label,
+                           "piece": a.piece,
+                           "refused": "concrete-assembly-unrenderable",
+                           "concrete_reason": reason,
+                           "binary": binary_identity(a.esbmc),
+                           "notes": notes + [reason]}, f, indent=2)
+            return 1
         dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
         with open(dest, "w") as f:
             f.write(txt)
@@ -10201,9 +10435,11 @@ def main():
                            "Stage-2 " + str(a.concrete_stage2_source)
                            + " with witness_check="
                            + str(a.concrete_stage2_witness_check)),
-                       "constructor_staticcall_mocks": len(
-                           constructor_mocks) // 2,
-                       "runtime_interface_mocks": runtime_mock_addresses,
+                           "constructor_staticcall_mocks": len(
+                               constructor_mocks) // 2,
+                           "constructor_param_interface_mocks": len(
+                               constructor_param_mocks),
+                           "runtime_interface_mocks": runtime_mock_addresses,
                        "runtime_interface_mock_calls": runtime_mock_calls,
                        "stats": {
                            "fuzz_params": 0,
@@ -10878,10 +11114,26 @@ def main():
         cname, _cstart, _cend = emitted.blocks[case[0]]
         newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
                 f"{plabel}{a.test_suffix}")
-        txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
-                                       layout, a.contract, a.unit,
-                                       constructor_mocks, runtime_mocks,
-                                       constructor_params)
+        try:
+            txt = assemble_concrete_source(
+                emitted, case, newc, foundry_fixture, layout, a.contract,
+                a.unit, constructor_mocks, runtime_mocks, constructor_params,
+                params, constructor_param_mocks, flat_source)
+        except ValueError as exc:
+            reason = str(exc)
+            print(f"[put] REFUSED: {reason}")
+            with open(os.path.join(a.workdir, "put.json"), "w") as f:
+                json.dump({"kind": "concrete",
+                           "contract": a.contract, "unit": a.unit,
+                           "enc": a.enc, "depth": a.depth,
+                           "path_function": pf,
+                           "artifact_identity": overload_label,
+                           "piece": a.piece,
+                           "refused": "concrete-assembly-unrenderable",
+                           "concrete_reason": reason,
+                           "binary": binary_identity(a.esbmc),
+                           "notes": notes + [reason]}, f, indent=2)
+            return 1
         dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
         with open(dest, "w") as f:
             f.write(txt)
@@ -10926,6 +11178,8 @@ def main():
                        "concrete_reason": fallback.reason,
                        "constructor_staticcall_mocks": len(
                            constructor_mocks) // 2,
+                       "constructor_param_interface_mocks": len(
+                           constructor_param_mocks),
                        "runtime_interface_mocks": runtime_mock_addresses,
                        "runtime_interface_mock_calls": runtime_mock_calls,
                        "stats": {
@@ -10954,7 +11208,8 @@ def main():
     newc = f"{cname}_{a.contract}_{a.unit}_put{a.enc}{plabel}{a.test_suffix}"
     txt = assemble_put_source(emitted, case, [put], newc, foundry_fixture,
                               layout, a.contract, a.unit, constructor_mocks,
-                              runtime_mocks, constructor_params)
+                              runtime_mocks, constructor_params,
+                              constructor_param_mocks, flat_source)
     dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
     with open(dest, "w") as f:
         f.write(txt)
@@ -11040,6 +11295,8 @@ def main():
                             "max_tx": a.max_tx, "rule": cell_rule},
                    "constructor_staticcall_mocks": len(
                        constructor_mocks) // 2,
+                   "constructor_param_interface_mocks": len(
+                       constructor_param_mocks),
                    "runtime_interface_mocks": runtime_mock_addresses,
                    "runtime_interface_mock_calls": runtime_mock_calls,
                    # WHICH EXECUTABLE PRODUCED THIS. Without it a reader

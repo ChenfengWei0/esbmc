@@ -21026,3 +21026,54 @@ Update after the RQ1 quality-triage script pass:
   rows and zero raw artifacts.  The triage script now detects this as
   `foundry-obstacle-no-test` from emit logs.  This should be lower priority
   than no-valid rows where Stage4 never consumed replayable fallback artifacts.
+
+Update after the Stage4 replay-isolation / constructor-mock pass:
+
+- User clarified again that RQ1 repair priority is not just `no-valid`.
+  Actively prioritize `no-PUT` and `no-R1/R2`, because a high raw-valid rate
+  made of concrete tests would weaken the PUT claim.  Practical triage order:
+  first cases where a valid PUT exists but lacks R1/R2, then valid concrete-only
+  cases that may be lifted into PUTs, then `PUT-with-R1R2-but-no-width`, and
+  finally pure no-valid cases.  Do not spend solver budget on reruns that can
+  only add concrete fallbacks unless raw-valid recovery is explicitly needed.
+- `notes/coverage/scripts/put_all.py` now treats dotted `--only` selectors
+  such as `<benchmark>.<unit>` and mangled `path_function` selectors as exact.
+  Bare short tokens still keep historical substring matching.  This prevents a
+  targeted run for `computeInterestRate` from also emitting
+  `computeInterestRateView`, which previously polluted the shared Foundry
+  project with stale generated tests.
+- Stage4 now archives previous ESBMC-generated `.t.sol` files in a reused
+  Foundry project to `*.superseded.<ns>.disabled` before a non-`forge-only`
+  emission.  This preserves raw artifacts while preventing stale tests from
+  being compiled in the double-oracle Foundry pass for the current row.
+- Concrete fallbacks now complete omitted same-unit target-call arguments with
+  deterministic defaults before emission.  If an omitted concrete argument
+  cannot be reconstructed, the row is refused as
+  `concrete-assembly-unrenderable` and recorded in `put.json` instead of
+  writing an uncompilable zero-argument replay that poisons neighboring PUTs in
+  the same project.
+- Stage4 now detects constructor-time interface calls made through address
+  constructor parameters, e.g. `IERC20(token).decimals()` or
+  `IOracle(oracle).getQuote(...)`, and inserts `vm.mockCall` before each
+  matching `new Contract(...)`.  The mock is scoped per deployment statement,
+  not globally, so multiple generated test contracts each get their own
+  setup.  Literal precompile addresses `1..9` are mocked without `vm.etch`,
+  because Foundry rejects etching precompiles.
+- IRMSynth diagnostic:
+  `real203/euler-xyz__euler-vault-kit__IRMSynth.computeInterestRate` now
+  emits a strong PUT with fuzz parameters and R0/R2-style assertions once stale
+  files and constructor mocks are handled, but Foundry double-oracle refutes
+  it.  The constructor initializes `irmStorage.lastRate = BASE_RATE`, while
+  the ESBMC entry storage and assertion spec only pin
+  `irmStorage.lastUpdated = 0`.  The generated test therefore leaves
+  `lastRate` at the constructor value and actual EVM returns
+  `BASE_RATE = 158443692534057154`, while the verifier-certified oracle asserted
+  `return == 0`.  Treat this as an entry-state / partial-struct modeling
+  mismatch or verifier false positive, not a constructor fixture problem.
+- Next technical target for no-valid/no-PUT quality is to inspect how
+  `entry_storage` represents struct fields and how `--path-cov-assert`
+  models absent fields.  Either emit/establish full struct dependency fields
+  such as `state.irmStorage.lastRate`, or reject ladder rows whose oracle
+  depends on a partial struct with missing fields.  This is likely to matter
+  beyond the POC set because many real contracts initialize packed structs in
+  constructors and later read fields not selected by the current region.

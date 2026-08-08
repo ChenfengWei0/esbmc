@@ -64,6 +64,7 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                assert_query_region_entries, build_put,
                                check_esbmc_args, cell_of,
                                complete_missing_call_args,
+                               constructor_param_interface_mock_specs,
                                constructor_external_interface_mock_lines,
                                constructor_staticcall_mock_lines,
                                add_esbmc_mapping_aliases,
@@ -477,6 +478,76 @@ def test_constructor_staticcall_mock_is_scoped_to_deployment():
                  "the mock is active only for deployment")
     bad += check("function test_cov_0() public" in text,
                  "the concrete replay remains a concrete replay")
+    return bad
+
+
+def test_constructor_param_interface_calls_are_mocked_before_deploy():
+    flat = """\
+pragma solidity >=0.8.0;
+interface IERC20 { function decimals() external view returns (uint8); }
+interface IOracle { function getQuote(uint256 x) external view returns (uint256); }
+contract C {
+  constructor(address token, address oracle) {
+    IERC20(token).decimals();
+    require(IOracle(oracle).getQuote(1) != 0);
+  }
+  function f() external {}
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest_0 is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C(address(uint160(1)), address(uint160(2)));
+  }
+  // claim: sol:@C@C@F@f#9:path:1
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+contract CCovTest_1 is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C(address(uint160(1)), address(uint160(2)));
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 1)
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "src"))
+        with open(os.path.join(project, "src", "flat.sol"), "w") as f:
+            f.write(flat)
+        specs = constructor_param_interface_mock_specs(project, "C")
+    put = ["", "  function test_put_C_f_path1() public {", "    c0.f();", "  }"]
+    text = assemble_put_source(
+        em, case, [put], "CCovTest_0_put", contract="C", unit="f",
+        constructor_param_mocks=specs, flat_source=flat)
+    bad = 0
+    new_at = text.find("c0 = new C(address(uint160(1)), address(uint160(2)));")
+    decimals_at = text.find('abi.encodeWithSignature("decimals()")')
+    quote_at = text.find('abi.encodeWithSignature("getQuote(uint256)")')
+    bad += check(len(specs) == 2, f"two constructor arg mocks found: {specs}")
+    bad += check(0 <= decimals_at < new_at,
+                 "token decimals mock is inserted before deployment")
+    bad += check(0 <= quote_at < new_at,
+                 "oracle quote mock is inserted before deployment")
+    bad += check("address _esbmc_ctor_arg_mock" in text,
+                 "constructor argument address is materialized for mockCall")
+    bad += check("vm.etch(_esbmc_ctor_arg_mock" not in text,
+                 "precompile constructor arguments are not etched")
+    bad += check(text.count('abi.encodeWithSignature("decimals()")') == 2,
+                 "each test contract setUp gets its own constructor mocks")
     return bad
 
 
@@ -11856,6 +11927,48 @@ def test_assembled_concrete_source_keeps_only_the_selected_replay():
     return bad
 
 
+def test_assembled_concrete_source_completes_missing_call_args():
+    """A bad concrete replay must not poison a neighbouring PUT project."""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./C.sol";
+
+contract CCovTest_0 is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C();
+  }
+  // claim: sol:@C@C@F@f#9:path:4
+  function test_cov_0() public {
+    try c0.f() {} catch {}
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 4)
+    text = assemble_concrete_source(
+        em, case, "CCovTest_C_f_concrete4", unit="f",
+        params=[("a", "address"), ("b", "uint256"), ("c", "uint256")])
+    bad = 0
+    completed = "c0.f(address(uint160(0)), 0, 0)"
+    bad += check(text.count(completed) == 2,
+                 "all omitted concrete replay arguments are completed")
+    bad += check("c0.f()" not in text,
+                 "the uncompilable zero-argument calls are gone")
+    bad += check("function test_put_" not in text,
+                 "the repaired concrete replay is still not a PUT")
+    return bad
+
+
 def test_the_funding_line_precedes_the_prank():
     """`vm.prank` binds to the NEXT call; a deal placed after it would consume
     nothing but must not be the last cheatcode standing between it and the
@@ -11939,6 +12052,7 @@ def main():
               test_storage_oracles_read_the_actual_target_instance_not_c0,
               test_path_cov_fixture_replays_constructor_then_pins_state,
               test_constructor_staticcall_mock_is_scoped_to_deployment,
+              test_constructor_param_interface_calls_are_mocked_before_deploy,
               test_runtime_interface_mock_lines_cover_literal_address_calls,
               test_constructor_external_interface_mocks_cover_router_factory_chain,
               test_runtime_interface_mocks_survive_constructor_mock_clear,
@@ -12173,6 +12287,7 @@ def main():
               test_assembled_put_source_drops_stale_concrete_replays,
               test_assembled_put_source_drops_stale_replays_in_later_contracts,
               test_assembled_concrete_source_keeps_only_the_selected_replay,
+              test_assembled_concrete_source_completes_missing_call_args,
               test_the_funding_line_precedes_the_prank,
               test_a_value_gate_certified_at_ZERO_still_REFUSES):
         print(f"--- {t.__name__}")
