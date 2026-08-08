@@ -7609,11 +7609,6 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               "nothing is the correct outcome; the region and its holes "
               "disagree and that is a fact about the region")
         return None, None
-    if not any(w > 1 for w in rendered_width.values()):
-        reason = not_parameterized_reason(rendered_width)
-        notes.append(reason)
-        raise ConcreteFallback(reason)
-
     new_call, _ = rewrite_call_args(call_line, unit, repl)
     normal_exit_unwrapped = False
     if exit_kind == "normal":
@@ -8800,6 +8795,13 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              "env_unchecked": env_unchecked,
              "path_guard_assumes": len(path_guard_lines),
              "path_guard_skipped": path_guard_skipped}
+    if not any(w > 1 for w in rendered_width.values()) and stats["asserts"] <= 0:
+        reason = not_parameterized_reason(rendered_width)
+        reason += (" The assertion ladder was run, but no verifier-backed "
+                   "oracle could be rendered; without either a fuzz dimension "
+                   "or an assertion this remains the concrete replay.")
+        notes.append(reason)
+        raise ConcreteFallback(reason)
     return out, stats
 
 
@@ -10302,90 +10304,6 @@ def main():
         for note in retreat_notes:
             print(f"[put]   {note}")
             notes.append(note)
-
-    rendered_width_precheck = potential_rendered_widths_for_put(
-        a.unit, params, emitted, case, region, holes,
-        lift_unconstrained_calldata=a.lift_unconstrained_calldata)
-    if (rendered_width_precheck is not None
-            and not any(w > 1 for w in rendered_width_precheck.values())):
-        reason = not_parameterized_reason(rendered_width_precheck)
-        reason += (" The assertion ladder and R2 passes were not run because "
-                   "this precheck can already prove the emitted test has no "
-                   "wide rendered coordinate.")
-        notes.append(reason)
-        overload_label = overload_artifact_label(
-            a.ast, a.contract, a.unit, declaration_id)
-        plabel = overload_label + (f"p{a.piece}" if a.piece else "")
-        cname, _cstart, _cend = emitted.blocks[case[0]]
-        newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
-                f"{plabel}{a.test_suffix}")
-        txt = assemble_concrete_source(emitted, case, newc, foundry_fixture,
-                                       layout, a.contract, a.unit,
-                                       constructor_mocks, runtime_mocks,
-                                       constructor_params)
-        dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
-        with open(dest, "w") as f:
-            f.write(txt)
-        print(f"[put] WROTE concrete replay {dest}")
-        print("[put]   concrete replay : " + case[1])
-        print(f"[put]   note: {reason}")
-        with open(os.path.join(a.workdir, "put.json"), "w") as f:
-            json.dump({"kind": "concrete",
-                       "contract": a.contract, "unit": a.unit, "enc": a.enc,
-                       "depth": a.depth, "path_function": pf,
-                       "artifact_identity": overload_label,
-                       "file": dest, "test": case[1], "piece": a.piece,
-                       "region": {k: [str(v[0]), str(v[1])]
-                                  for k, v in region.items()},
-                       "holes": {k: [str(x) for x in v]
-                                 for k, v in holes.items()},
-                       "establish": json.loads(a.establish or "[]"),
-                       "pins": {k: str(v) for k, v in pins.items()},
-                       "ladder": [], "ladder_summary": None,
-                       "ladder_refusal": (
-                           "not run: no wide rendered PUT coordinate"),
-                       "r2_requested": False,
-                       "r2_depth": None,
-                       "r2_term_budget": None,
-                       "r2_candidate_budget": None,
-                       "r2_fuzz_prefilter": {
-                           "enabled": False,
-                           "reason": (
-                               "not run: no wide rendered PUT coordinate")},
-                       "oracle_dependency_policy": SLOT_DEPENDENCY_POLICY,
-                       "oracle_dependency_state": [],
-                       "oracle_vars": [],
-                       "slot_candidates": {
-                           "asked": [],
-                           "unanswered": [],
-                           "rows_for_unasked_names": []},
-                       "esbmc_extra_args": a.esbmc_arg,
-                       "unwind_applied_to_ladder_only": [],
-                       "unwind_attempts": [],
-                       "cell": {"name": cell_name, "scope": a.scope,
-                                "max_tx": a.max_tx, "rule": cell_rule},
-                       "binary": binary_identity(a.esbmc),
-                       "concrete_reason": reason,
-                       "constructor_staticcall_mocks": len(
-                           constructor_mocks) // 2,
-                       "runtime_interface_mocks": runtime_mock_addresses,
-                       "runtime_interface_mock_calls": runtime_mock_calls,
-                       "stats": {
-                           "fuzz_params": 0,
-                           "lifted": [],
-                           "rendered_width": rendered_width_precheck,
-                           "wide_fuzz_coords": [],
-                           "dynamic_fuzz_coords": [],
-                           "asserts": 0,
-                           "state_asserts": 0,
-                           "return_asserts": 0,
-                           "exit_kind_asserts": 0,
-                           "guarded_asserts": 0,
-                           "oracle_classes": [],
-                           "assertion_oracles": [],
-                       },
-                       "notes": notes}, f, indent=2)
-        return 0
 
     # ---- WHICH SLOTS TO ASK ABOUT, and why the DRIVER chooses --------------
     #

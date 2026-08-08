@@ -20925,3 +20925,48 @@ Follow-up triage samples for the new no-PUT / no-R1R2 focus:
   not spend engineering effort trying to force R1/R2 onto rollback paths; focus
   on normal exits and on turning concrete-only/not-parameterized rows into
   parameterized tests where a renderable coordinate can be established.
+
+Update after the no-PUT / no-R1R2 tightening pass on 2026-08-08:
+
+- User clarified the repair target is stricter than `no-valid`: actively focus
+  on `no-PUT` and even `no-R1/R2`.  Track at least these quality buckets while
+  triaging: `no-valid`, `valid-no-PUT`, `valid-PUT-no-R1R2`,
+  `valid-PUT-with-R1R2`, and the important intermediate case
+  `PUT-with-R1R2-but-no-width` (strong oracle text, Foundry green, but not a
+  reference-valid PUT under the current B gates because fuzz/width are false).
+- Code change: `scripts/solidity_path_put.py` no longer exits to a concrete
+  replay merely because every rendered coordinate is a point.  It now runs the
+  assertion ladder first; only `no wide rendered coordinate AND no
+  verifier-backed assertion` falls back to concrete.  This preserves
+  verifier-backed one-point PUTs instead of losing them as concrete replays.
+- The first Stage4-only rerun of
+  `bugfix124/acfix_021_CVE_2018_19832.NETM` exposed a mapping-name boundary:
+  the driver sent `balances$211[msg.sender]`, but the ESBMC ladder's
+  contract-scope store table contained only source names
+  `allowed, balances, blacklist`, so the ladder refused with zero rows.
+- ESBMC internal fix in `src/goto-programs/goto_coverage.cpp`: the
+  `--path-cov-assert` mapping store table now registers Solidity
+  declaration-suffix aliases when present, and slot lookup can fall back from a
+  query name like `balances$211` to the suffix-stripped `balances` when that is
+  unambiguous.  Ambiguous stripped names refuse rather than silently choosing a
+  store.
+- Rebuilt `build/src/esbmc/esbmc` successfully.  `./scripts/build.sh install`
+  failed because the local CMake install prefix writes to `/usr/local/license`;
+  not relevant for RQ1 because `put_all.py` uses `build/src/esbmc/esbmc`.
+- Second Stage4-only rerun for
+  `bugfix124/acfix_021_CVE_2018_19832.NETM` then succeeded through the ladder:
+  18 ladder rows, 9 HOLDS / 9 REFUTED, R2 source assignment rows and mechanical
+  rows certified.  The generated test is Foundry green and carries 11 asserts,
+  including R1 and R2:
+  `owner: post == pre`,
+  `totalDistributed: post == pre`,
+  `balances$211[msg.sender]: post > pre`,
+  `owner: post == msg.sender`,
+  `balances$211[state.owner]: post == state.totalDistributed`,
+  `balances$211[msg.sender]: post - pre in [state.totalDistributed,
+  state.totalDistributed] with post >= pre`, plus R0 normal exit.
+- That case still has `deliverable_b.b=false` because the certified/rendered
+  region has no fuzz parameter and no width (`gates.fuzz=false`,
+  `gates.width=false`).  Therefore it is no longer a `no-R1/R2` failure, but it
+  is also not a valid reference PUT by current RQ1 accounting.  Treat this as a
+  region/width problem, not an oracle-mining problem.

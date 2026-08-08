@@ -9529,8 +9529,14 @@ void goto_coveraget::solidity_path_coverage()
       // needs exactly this lookup. Recording them in one place is what stops
       // that ladder from growing a second, differently-filtered scan.
       std::map<std::string, const symbolt *> store_syms;
+      std::set<std::string> ambiguous_store_syms;
       {
         const std::string cpfx = "sol:@C@" + own_contract + "@";
+        auto add_store_sym = [&](const std::string &name, const symbolt *sym) {
+          const auto inserted = store_syms.emplace(name, sym);
+          if (!inserted.second && inserted.first->second != sym)
+            ambiguous_store_syms.insert(name);
+        };
         cov_context->foreach_operand([&](const symbolt &s) {
           const std::string id = s.id.as_string();
           if (id.rfind(cpfx, 0) != 0 || id.find("@F@") != std::string::npos)
@@ -9545,7 +9551,10 @@ void goto_coveraget::solidity_path_coverage()
             std::find(comp_names.begin(), comp_names.end(), nm) !=
             comp_names.end())
             return;
-          store_syms.emplace(nm, &s);
+          add_store_sym(nm, &s);
+          const std::string stripped = path_cov_strip_solidity_decl_suffix(nm);
+          if (stripped != nm)
+            add_store_sym(stripped, &s);
           path_cov_refused_coords[nm] =
             "a mapping or dynamic array: the frontend lowers it to a "
             "contract-scope global, not a component of the contract object, so "
@@ -10410,6 +10419,13 @@ void goto_coveraget::solidity_path_coverage()
         auto sit = store_syms.find(mname);
         if (sit == store_syms.end())
         {
+          const std::string stripped =
+            path_cov_strip_solidity_decl_suffix(mname);
+          if (stripped != mname)
+            sit = store_syms.find(stripped);
+        }
+        if (sit == store_syms.end())
+        {
           // NAMED, and the available stores are listed. "It does not exist"
           // and "it is a component, so drop the brackets" need different
           // fixes, and a bare refusal sends the reader to the spelling in
@@ -10428,6 +10444,20 @@ void goto_coveraget::solidity_path_coverage()
             mname,
             own_contract,
             avail.empty() ? "<none>" : avail);
+          exit(1);
+        }
+        if (ambiguous_store_syms.count(sit->first) != 0)
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: \"vars\" "
+            "names the slot '{}', but '{}' resolves to more than one "
+            "contract-scope store after stripping Solidity declaration "
+            "suffixes. Name the exact verifier store instead of the source "
+            "alias, because choosing one here would assert about the wrong "
+            "mapping",
+            uid,
+            v.name,
+            mname);
           exit(1);
         }
 

@@ -57,7 +57,8 @@ import tempfile
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
-from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
+from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
+                               attempt_is_usable,
                                assemble_concrete_source, assemble_put_source,
                                assert_query_pins,
                                assert_query_region_entries, build_put,
@@ -334,8 +335,8 @@ def test_relation_establishes_state_from_fuzzed_sender():
     return bad
 
 
-def test_precheck_identifies_nonparameterized_candidate_before_ladder():
-    """A state-wide but calldata-point region cannot become a real PUT."""
+def test_precheck_only_identifies_rendered_width_not_oracle_strength():
+    """A point-shaped rendered region may still carry a verifier oracle."""
     em, case = make_case()
     widths = potential_rendered_widths_for_put(
         "setDiscount", PARAMS, em, case,
@@ -346,8 +347,35 @@ def test_precheck_identifies_nonparameterized_candidate_before_ladder():
     bad += check(widths == {"u": 1, "bps": 1},
                  f"only rendered calldata coordinates count: {widths}")
     bad += check(not any(w > 1 for w in widths.values()),
-                 "the ladder can be skipped when every rendered coordinate is a point")
+                 "the precheck can still tell that no rendered coordinate is wide")
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"u": (0, 0), "bps": (250, 250),
+                "state.owner": (0, 10)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=LADDER, notes=[])
+    bad += check(put is not None and stats["state_asserts"] == 2,
+                 "a no-wide rendered region still emits a one-point PUT when "
+                 "the ladder supplies state oracles")
     return bad
+
+
+def test_no_wide_rendered_coordinate_without_oracle_stays_concrete():
+    """No fuzz dimension plus no rendered assertion is not a PUT."""
+    em, case = make_case()
+    notes = []
+    try:
+        build_put(
+            "FeeVault", "setDiscount", 7, 2,
+            "sol:@C@FeeVault@F@setDiscount#61",
+            region={"u": (0, 0), "bps": (250, 250)},
+            holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+            layout=LAYOUT, ladder_rows=[], notes=notes)
+    except ConcreteFallback as exc:
+        return check("no verifier-backed oracle" in exc.reason,
+                     f"the fallback explains the missing oracle: {exc.reason}")
+    return check(False, "expected ConcreteFallback")
 
 
 def test_precheck_keeps_possible_parameterized_candidate_on_wide_env():
@@ -11905,7 +11933,8 @@ def main():
               test_the_emitted_test_carries_its_cell,
               test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies,
               test_pin_with_a_slot_is_established,
-              test_precheck_identifies_nonparameterized_candidate_before_ladder,
+              test_precheck_only_identifies_rendered_width_not_oracle_strength,
+              test_no_wide_rendered_coordinate_without_oracle_stays_concrete,
               test_precheck_keeps_possible_parameterized_candidate_on_wide_env,
               test_storage_oracles_read_the_actual_target_instance_not_c0,
               test_path_cov_fixture_replays_constructor_then_pins_state,
