@@ -11439,6 +11439,12 @@ Recent official case observations:
   PUTs include `freezeAccount` path 7 (R0+R1+R2), `freezeAccount` path 6
   (R0), `mintToken` path 6 (R0), and `owned` paths 6/7 (R0 and R0+R1+R2).
   Oracle class counts: R0=5, R1=6, R2=3.
+- Negative control after the concrete-cap code:
+  `acfix_026_CVE_2019_15080` rerun stayed no-output in 27.539s:
+  raw 0, valid 0, stage2 27.525s, units `owned`, `transferOwnership`,
+  cert buckets `NOT-CERTIFIED=2`.  Metrics unchanged.  Do not rerun this one
+  as a scheduling candidate; it needs a certification/modeling improvement, not
+  more case budget.
 
 Next-candidate caution:
 
