@@ -163,6 +163,25 @@ def make_peer(root):
     }) + "\n")
 
 
+def make_peer_fallback(root):
+    d = root / "scripts" / "Results" / "workdirs" / "Peer182" \
+        / "subjects" / "peer_tool__FallbackThing"
+    d.mkdir(parents=True)
+    (d / "flat.sol").write_text("contract FallbackThing {}\n")
+    (d / "meta.json").write_text(json.dumps({
+        "subject_id": "peer_tool__FallbackThing",
+        "status": "ok",
+        "contract": "FallbackThing",
+        "peer_tool": "Tool",
+        "peer_arm": "tool",
+        "source_file": "Tool/contracts_080/FallbackThing.sol",
+        "target_rule": "file-stem",
+        "target_alternatives": ["FallbackThing"],
+        "source_080": True,
+        "has_assert": False,
+    }) + "\n")
+
+
 def test_manifest_from_three_target_sources():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -193,6 +212,17 @@ def test_manifest_from_three_target_sources():
                  ["target_rule"] == "file-stem",
                  "peer target rule is retained")
     return bad
+
+
+def test_peer_manifest_uses_workdirs_fallback():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        make_peer_fallback(root)
+        doc = build_manifest(root, ["peer182"], "include")
+    rows = [row for row in doc["targets"] if row.get("status") == "ok"]
+    return check(
+        [row["subject_id"] for row in rows] == ["peer_tool__FallbackThing"],
+        "peer manifest uses scripts/Results/workdirs fallback")
 
 
 def test_stress203_uses_prepared_ok_population():
@@ -252,6 +282,7 @@ def test_stress203_recovers_prepared_subject_missing_from_csv_duplicate():
 def main():
     tests = [
         test_manifest_from_three_target_sources,
+        test_peer_manifest_uses_workdirs_fallback,
         test_stress203_uses_prepared_ok_population,
         test_stress203_recovers_prepared_subject_missing_from_csv_duplicate,
     ]

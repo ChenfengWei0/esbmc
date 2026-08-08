@@ -372,6 +372,44 @@ def test_target_rows_fast_first_uses_bugfix_fallback_size():
                  "bugfix fast-first uses fallback prepared flat.sol size")
 
 
+def test_target_rows_fast_first_uses_peer_fallback_size():
+    old = rq1_veriput_run.target_manifest.build_manifest
+    rows = [
+        {
+            "status": "ok",
+            "benchmark": "peer182",
+            "subject_id": "slow",
+            "contract": "Slow",
+        },
+        {
+            "status": "ok",
+            "benchmark": "peer182",
+            "subject_id": "fast",
+            "contract": "Fast",
+        },
+    ]
+    rq1_veriput_run.target_manifest.build_manifest = lambda *_args: {
+        "targets": rows,
+    }
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "scripts" / "Results" / "workdirs" \
+                / "Peer182" / "subjects"
+            fast = base / "fast" / "flat.sol"
+            slow = base / "slow" / "flat.sol"
+            fast.parent.mkdir(parents=True)
+            slow.parent.mkdir(parents=True)
+            fast.write_text("contract Fast {}\n")
+            slow.write_text("contract Slow {\n" + ("uint256 x;\n" * 100) + "}\n")
+            _label, fast_rows = rq1_veriput_run.target_rows(
+                root, "peer182", [], 1, "fast-first")
+    finally:
+        rq1_veriput_run.target_manifest.build_manifest = old
+    return check(fast_rows[0]["subject_id"] == "fast",
+                 "peer fast-first uses fallback prepared flat.sol size")
+
+
 def test_certification_summary_identifies_inner_timeouts():
     with tempfile.TemporaryDirectory() as td:
         cert = Path(td) / "certify-results.jsonl"
@@ -784,6 +822,7 @@ def main():
         test_jobs_admission_refuses_oversubscription,
         test_target_rows_fast_first_sorts_before_limit,
         test_target_rows_fast_first_uses_bugfix_fallback_size,
+        test_target_rows_fast_first_uses_peer_fallback_size,
         test_certification_summary_identifies_inner_timeouts,
         test_cleared_concrete_fallbacks_trigger_stage4,
         test_subject_schedule_uses_separate_esbmc_run_timeout,

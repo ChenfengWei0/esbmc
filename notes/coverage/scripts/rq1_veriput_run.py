@@ -182,10 +182,10 @@ def _target_cost_key(veriput_root: Path, row: dict) -> tuple[int, int, str]:
         candidates = [
             veriput_root / "Results" / dirname / "subjects" / subject_id / "flat.sol",
         ]
-        if bench == "bugfix124":
+        if bench in ("bugfix124", "peer182"):
             candidates.append(
                 veriput_root / "scripts" / "Results" / "workdirs"
-                / "BugFix124" / "subjects" / subject_id / "flat.sol")
+                / dirname / "subjects" / subject_id / "flat.sol")
         for flat in candidates:
             try:
                 size = flat.stat().st_size

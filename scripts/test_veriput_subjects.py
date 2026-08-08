@@ -260,6 +260,31 @@ def test_resolve_subject_uses_bugfix_fallback_root():
     return bad
 
 
+def test_resolve_subject_uses_peer_fallback_root():
+    old_primary = veriput_subjects.KNOWN_SUBJECT_ROOTS["peer182"]
+    old_fallback = veriput_subjects.FALLBACK_SUBJECT_ROOTS.get("peer182", ())
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        primary = root / "Results" / "Peer182" / "subjects"
+        fallback = root / "scripts" / "Results" / "workdirs" / "Peer182" / "subjects"
+        make_subject(fallback, "peer__C", benchmark="peer182")
+        veriput_subjects.KNOWN_SUBJECT_ROOTS["peer182"] = primary
+        veriput_subjects.FALLBACK_SUBJECT_ROOTS["peer182"] = (fallback,)
+        try:
+            subject = resolve_subject(
+                "peer__C", benchmark="peer182", unit="f")
+            dirs = veriput_subjects.subject_dirs("peer182")
+        finally:
+            veriput_subjects.KNOWN_SUBJECT_ROOTS["peer182"] = old_primary
+            veriput_subjects.FALLBACK_SUBJECT_ROOTS["peer182"] = old_fallback
+    bad = 0
+    bad += check(subject.root == str((fallback / "peer__C").resolve()),
+                 f"peer fallback root resolves subject: {subject.root}")
+    bad += check([p.name for p in dirs] == ["peer__C"],
+                 f"peer fallback root is scanned: {dirs}")
+    return bad
+
+
 def test_ast_unit_enumeration_is_target_contract_scoped():
     with tempfile.TemporaryDirectory() as td:
         d = make_subject(td)
@@ -855,6 +880,7 @@ def main():
         test_subject_record_preserves_inferred_solc_bin,
         test_bad_status_is_not_usable,
         test_resolve_subject_uses_bugfix_fallback_root,
+        test_resolve_subject_uses_peer_fallback_root,
         test_ast_unit_enumeration_is_target_contract_scoped,
         test_unit_manifest_records_missing_ast_without_solc,
         test_generate_ast_is_atomic_on_success,

@@ -234,6 +234,10 @@ def stress_targets(root: Path, scope: str, *, prepared_ok_only=False) -> list[di
 def peer_targets(root: Path) -> list[dict]:
     subjects = root / "Results" / "Peer182" / "subjects"
     if not subjects.is_dir():
+        fallback = root / "scripts" / "Results" / "workdirs" / "Peer182" / "subjects"
+        if fallback.is_dir():
+            subjects = fallback
+    if not subjects.is_dir():
         raise TargetManifestError(f"missing prepared peer subjects: {subjects}")
     targets = []
     for meta_path in sorted(subjects.glob("*/meta.json")):

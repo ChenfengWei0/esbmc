@@ -22337,3 +22337,49 @@ Update after completing the bugfix124 stale/unknown refresh:
   contracts.  For bugfix124, remaining work is no longer stale-row recovery;
   it is structural (`cert-killed`, `stage2-no-output-timeout`,
   `cert-no-witness-*`, Foundry obstacles, rollback/revert-only, etc.).
+
+Update after fixing Peer182 prepared-subject fallback and first peer batches:
+
+- Peer182 prepared subjects are not under `Results/Peer182/subjects` on this
+  machine; they live under
+  `/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Peer182/subjects`.
+  The manifest, subject resolver, and fast-first cost ordering now all use
+  that fallback, matching the already existing BugFix124 fallback pattern.
+  Without this fix, peer rows failed immediately with
+  `runner exception: prepared subject ... was not found`, producing fake
+  no-valid rows.
+- Verified the fallback with:
+  `python3 -m py_compile notes/coverage/scripts/target_manifest.py
+  notes/coverage/scripts/rq1_veriput_run.py
+  notes/coverage/scripts/veriput_subjects.py
+  scripts/test_target_manifest.py scripts/test_rq1_veriput_run.py
+  scripts/test_veriput_subjects.py`, `python3 scripts/test_veriput_subjects.py`,
+  `python3 scripts/test_target_manifest.py`, `python3
+  scripts/test_rq1_veriput_run.py`, and `git diff --check` on the six touched
+  files.
+- Reran 12 small stale peer rows with `--timeout 600 --wrapper-grace 60
+  --memlimit-gib 12 --jobs 2 --redo`: `peer_soltg__constructor_3_m`,
+  `peer_soltg__simple_if_2`, `peer_soltg__simple_if`, `peer_soltg__exampl`,
+  `peer_soltg__loop_if`, `peer_soltg__return_1`,
+  `peer_soltg__branches_assert_condition_2`, `peer_ccsolbmc__ptest`,
+  `peer_soltg__constructor_3`, `peer_syntest__MetaCoin`,
+  `peer_soltg__constructor_1`, and `peer_soltg__store_state`.
+- All 12 produced valid PUT artifacts.  Eleven are
+  `valid-PUT-with-R1R2`; `peer_syntest__MetaCoin` is valid PUT but currently
+  R0-only/no-R1R2.  `peer_soltg__constructor_3_m` also retained two valid
+  concrete fallback artifacts.
+- Net Peer182 movement after these batches:
+  `quality_bucket` changed from
+  `{"no-valid":147,"valid-PUT-no-R1R2":22,
+  "valid-PUT-with-R1R2":11,"valid-no-PUT":2}` to
+  `{"no-valid":135,"valid-PUT-no-R1R2":23,
+  "valid-PUT-with-R1R2":22,"valid-no-PUT":2}`.  Current aggregate:
+  182 cases, 47 valid, 45 PUT, 22 R1/R2, 2 concrete-only.
+- The next small stale peer queue begins with
+  `peer_soltg__constructor_5`, `peer_solar__GuessTheNumberChallenge`,
+  `peer_solar__BasicToken`, `peer_soltg__many_fun`, `peer_soltg__Math`,
+  `peer_ccsolbmc__RoomThermostat`, `peer_ccsolbmc__BasicProvenance`, and
+  `peer_soltg__branches_in_modifiers_2`.  Continue in small batches; 4
+  parallel jobs is refused by admission at 12 GiB/job, and even 3 jobs is
+  refused on the current MemAvailable threshold, so use `--jobs 2` unless the
+  admission logic or memlimit is deliberately changed.
