@@ -7356,6 +7356,11 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # uint256 slot read needs. Only the ABSOLUTE bound may draw on it; see the
     # comment at the assignment below.
     coord_ident_abs = {}
+    # Return-value assertions are typed from the Solidity return declaration.
+    # A bool return comparing against a bool calldata coordinate needs the
+    # bool expression itself; post-state slot assertions still need the
+    # uint256 spelling above.
+    coord_ident_return = {}
     used = {b[0] for b in emitted.blocks}
 
     # The environment the emitted case runs under must be the one certified.
@@ -7591,6 +7596,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             bit = f"({var} ? uint256(1) : uint256(0))"
             coord_ident[pname] = bit
             coord_ident_abs[pname] = bit
+            coord_ident_return[pname] = var
         elif kind == "bytes":
             coord_ident_abs[pname] = var
         else:
@@ -8091,6 +8097,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             else:
                 new_call = bound_call
                 ret_coord_ident_abs = dict(coord_ident_abs)
+                if any(rk[0] == "bool" for _idx, rk, _vn in plan):
+                    ret_coord_ident_abs.update(coord_ident_return)
                 planned_ret_pre_reads = []
                 planned_ret_pre_names = set()
                 for idx, _rk, _vn in plan:

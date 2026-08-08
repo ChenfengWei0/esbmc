@@ -21133,3 +21133,39 @@ Update after the DosAuction no-PUT sample:
   `valid-PUT-with-R1R2=88`; artifact totals are `raw=462`, `valid=422`,
   `put_raw=391`, `put_valid=361`, `concrete_raw=71`,
   `concrete_valid=61`.
+
+Update after the bool-return R2 emitter repair:
+
+- User priority remains: focus not only on `no-valid`, but also on `no-PUT`
+  and `no-R1/R2`.  Treat concrete-only raw-valid recovery as lower value than
+  turning valid rows into PUTs with semantic R1/R2 oracles, unless the raw-valid
+  denominator is the immediate bottleneck.
+- `scripts/solidity_path_put.py` now keeps a separate return-coordinate
+  spelling table for lifted bool calldata coordinates.  Storage-slot R1/R2
+  still needs the bit spelling `(a ? uint256(1) : uint256(0))`, but a Solidity
+  `bool` return oracle such as `return == a` must render as
+  `assertEq(_put_ret, a, ...)`.  The previous unified spelling compiled for
+  storage but made Foundry reject `assertEq(bool,uint256,string)`.
+- Regression added:
+  `test_a_bool_region_parameter_can_feed_bool_return_R2`.  It covers the full
+  `build_put()` path rather than only `return_rung_assertions()`, because the
+  bug was in the coordinate table passed down to the return renderer.
+- Validation run after the fix:
+  `py_compile` for the PUT/triage scripts, `pylint --errors-only`,
+  `git diff --check`, and `PYTHONDONTWRITEBYTECODE=1 python3
+  scripts/test_solidity_path_put.py` all pass; the PUT test suite is now
+  273/273.
+- Stage4-only rerun for
+  `peer182/peer_soltg__short_circuit_or_inside_branch.g` no longer has the
+  bool-return compile failure.  It emits two R1/R2 PUT artifacts:
+  `enc=12` is Foundry-green with 1 bool parameter and 8 assertions (R0 plus
+  post-state and return R2, including `return == a`); `enc=31` compiles but is
+  Foundry-red under the double oracle.  The red row is not a renderer problem:
+  the generated test pins `a=false`, asserts `x==102`/return true, and the
+  actual Solidity file contains a known assertion-violation branch around
+  `g(false)`.  Do not count that as valid.
+- Both `short_circuit` rows still fail the B width gate because the certified
+  regions are points (`a in [1,1]` and `a in [0,0]`), and the generated tests
+  assign `a=true/false` inside the function.  They are useful for no-PUT /
+  no-R1R2 diagnosis, but not for the final wide-PUT metric unless the upstream
+  region splitter later preserves a wider bool coordinate.

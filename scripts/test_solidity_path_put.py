@@ -3546,6 +3546,56 @@ contract FlaggerCovTest is Test {
     return bad
 
 
+def test_a_bool_region_parameter_can_feed_bool_return_R2():
+    bool_emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Echo} from "./Echo.sol";
+contract EchoCovTest is Test {
+  Echo c0;
+  function setUp() public {
+    c0 = new Echo();
+  }
+  // claim: sol:@C@Echo@F@g#10:path:3
+  function test_cov_0() public {
+    // [asserted] path exits normally; a revert fails the test
+    c0.g(false);
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as out:
+        out.write(bool_emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Echo@F@g#10", 3)
+    notes = []
+    r2_terms = {"a": {"kind": "coord", "name": "a"}}
+    put, stats = build_put(
+        "Echo", "g", 3, 12, "sol:@C@Echo@F@g#10",
+        region={"a": (0, 1)}, holes={}, pins={},
+        params=[("a", "bool")], emitted=em, case=case, layout={},
+        ladder_rows=[("return", RETLIVE, "REFUTED"),
+                     ("return", "return == a", "HOLDS")],
+        notes=notes, rettypes=[("", "bool")], r2_terms=r2_terms)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a bool return PUT is produced: {notes}")
+    bad += check("function test_put_Echo_g_path3(bool a) public" in text,
+                 "the bool coordinate is lifted into the fuzz signature")
+    bad += check('assertEq(_put_ret, a, "return: return == a");' in text,
+                 "bool return R2 compares against the bool parameter spelling")
+    bad += check("(a ? uint256(1) : uint256(0))" not in text,
+                 "the storage-bit spelling is not used for bool return R2")
+    bad += check(stats["return_asserts"] == 1 and stats["fuzz_params"] == 1,
+                 f"the bool PUT has one return oracle and one fuzz param: "
+                 f"{stats}")
+    return bad
+
+
 def test_a_fixed_bytes_region_parameter_is_lifted_via_uint_input():
     """Fixed bytes are fuzzed as same-width integers and cast at the call.
 
@@ -12163,6 +12213,7 @@ def main():
               test_typed_R2_omits_bool_without_a_bool_endpoint,
               test_typed_R2_proposes_bool_equality_to_bool_coordinate,
               test_a_bool_region_parameter_is_lifted_and_can_feed_R2,
+              test_a_bool_region_parameter_can_feed_bool_return_R2,
               test_a_fixed_bytes_region_parameter_is_lifted_via_uint_input,
               test_R2_candidate_dedup_uses_safe_normalized_text_before_fuzz,
               test_source_R2_atoms_are_scoped_to_the_unit_and_contract_chain,
