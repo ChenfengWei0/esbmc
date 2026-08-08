@@ -11305,6 +11305,56 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 RQ1 pop_051 recovery result and concrete-only signal
+
+Official single-subject rerun:
+
+- Command:
+  `timeout 1260s python3 notes/coverage/scripts/rq1_veriput_run.py --benchmark bugfix124 --subject-id pop_051_LiquidityPool --redo --timeout 600 --esbmc-run-timeout 120 --stage2-unit-timeout-cap-s 120 --no-output-stage2-stop-s 100 --wrapper-grace 60 --memlimit-gib 12 --jobs 1 --forge-timeout 300`.
+- Subject: `bugfix124 / pop_051_LiquidityPool`, contract `LiquidityPool`.
+- Old row from the limit112 wave was `no-output`, raw 0, valid 0,
+  wall 121.013s.
+- New latest row is `status=ok`,
+  `completion_status=budget-exhausted`,
+  reason `valid artifact already produced; 9.0s remains below the 90s concrete-only Stage 4 floor`.
+- Counts: raw 13, valid 9, PUT 0/0, concrete 13/9.
+- Timing/resource fields: generation 577.876s, Stage2 548.986s,
+  Stage4 generation 28.890s, Foundry replay 10.962s, total wall 590.967s,
+  max RSS 2625.0 MB.
+- Units attempted:
+  `collectRedeem`, `updatePrice`, `rely`, `deny`, `file`,
+  `requestRedeem`, `decreaseRedeemRequest`, `burn`, `mint`.
+- Valid artifacts are all `cleared_not_certified_fallback` concrete tests:
+  `collectRedeem` enc 2; `decreaseRedeemRequest` enc 7; `deny` enc 7/6;
+  `rely` enc 7/6; `requestRedeem` enc 7; `updatePrice` enc 7/6.
+- Oracle class counts are empty because no certified PUT was emitted.
+- `low_budget_concrete_only_stage4_skip_count=1`.
+- `put_saturated_concrete_only_stage4_skip_count=0`.
+
+Updated official bugfix124 aggregate after:
+
+- `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark bugfix124`
+  reports VeriPUT:
+  `raw_u=270`, `valid_u=241`, `raw_c=68`, `valid_c=68`,
+  coverage 54.8%, `VT/case=1.94`.
+- Status counts:
+  `{'ok': 68, 'no-output': 48, 'no-units': 5, 'budget-exhausted': 3}`.
+- This recovers one no-output subject and improves raw valid case coverage,
+  but it is a concrete-only recovery. It does not improve PUT generalization
+  and should not be treated as evidence that the region/R1/R2 path is fixed
+  for LiquidityPool-like subjects.
+
+Scheduling implication:
+
+- The cheap-first scheduler can recover late units inside a former no-output
+  subject, but `pop_051` is another signal that sibling-subtraction/region
+  certification still fails to turn many reachable paths into PUTs.
+- Future candidate choice should prefer subjects with a chance of certified
+  regions, not only a high scheduled-unit count, if the immediate goal is
+  stronger PUT ratio rather than just valid-case coverage.
+- Do not rerun `pop_051` just to apply future script changes unless a change
+  directly targets concrete-to-PUT conversion for this contract family.
+
 ## 2026-08-08 RQ1 runner speed guard after pop018
 
 Current branch:
