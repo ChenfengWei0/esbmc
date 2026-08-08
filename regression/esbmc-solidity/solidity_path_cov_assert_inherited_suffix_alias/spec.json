@@ -1,0 +1,13 @@
+{
+  "unit": "setOwner",
+  "enc": 1,
+  "depth": 0,
+  "region": [
+    {"name": "newOwner", "lo": "2", "hi": "5"},
+    {"name": "state.owner", "lo": "1", "hi": "1"}
+  ],
+  "vars_policy": "state-exact",
+  "vars": [
+    {"name": "owner"}
+  ]
+}

@@ -1,0 +1,13 @@
+CORE
+contract.sol
+--contract AliasChild --solidity-path-coverage --solidity-max-tx 1 --path-cov-assert spec.json --memlimit 8g
+^--path-cov-assert: POST-STATE ASSERTION LADDER for unit 'setOwner' path enc=1 depth=0 over 2 region bound\(s\)
+^--path-cov-assert: region NON-VACUITY witnessed
+^--path-cov-assert: owner: post == pre  REFUTED
+^--path-cov-assert: owner: post != pre  HOLDS$
+^--path-cov-assert: owner: post >= pre  HOLDS$
+^--path-cov-assert: owner: post <= pre  REFUTED
+^--path-cov-assert: owner: post > pre  HOLDS$
+^--path-cov-assert: owner: post < pre  REFUTED
+^--path-cov-assert: ladder summary -- 6 candidate\(s\): 3 HOLDS, 3 REFUTED, 0 no verdict \(solver unknown\), 0 no verdict \(never reached the solver\)
+\A(?!(.|\n)*REFUSING THE LADDER)

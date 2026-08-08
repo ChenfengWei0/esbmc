@@ -20393,3 +20393,46 @@ Update after the pinned-state R2 renderer fix:
   NOT ESTABLISHED because Foundry cannot set them; that is disclosure, not a
   proof failure.  The double oracle remains ESBMC certification plus Foundry
   reference replay on P.
+
+Update after the inherited/suffixed state-name fix:
+
+- User priority is broader than `no-valid`: keep `valid-no-PUT` and
+  `valid-PUT-no-R1/R2` in the front queue.  A case that is already reference
+  valid can still be weak if it is concrete-only or R0-only.
+- Found a generic ESBMC-side blocker while probing
+  `real203/balancer__balancer-v3-monorepo__FeeBurnerAuthentication.transferOwnership`.
+  Stage 4 wrote a `--path-cov-assert` spec with solc/source names `_owner` and
+  `_pendingOwner`, but the ESBMC contract object components were named
+  `_owner$32` and `_pendingOwner$166`.  Before the fix, the ladder refused with
+  `"vars" names '_owner'`; this made a real certified region look like
+  `valid-no-PUT`/no-oracle even though candidate state existed.
+- `src/goto-programs/goto_coverage.cpp` now treats a Solidity frontend
+  declaration suffix `$<digits>` as an internal alias: component lookup accepts
+  both the internal name and the stripped source name, and emitted ladder rows
+  keep the requested source name so Python/Foundry can still render against
+  solc storage layout.  Ambiguous duplicate aliases remain fail-closed via the
+  existing duplicate explicit-vars refusal.
+- Real direct ESBMC probe after the fix:
+  `FeeBurnerAuthentication.transferOwnership` enc=6 depth=2 now emits 12 rows
+  for `_pendingOwner` and `_owner`; examples include `_pendingOwner: post >= pre
+  HOLDS`, `_owner: post == pre HOLDS`, `_owner: post >= pre HOLDS`, and
+  `_owner: post <= pre HOLDS`.  The path is a rollback revert, so Stage 4 still
+  refuses to emit R2 post-state as an observable PUT oracle, but the refusal is
+  now semantically correct rather than a name-resolution bug.
+- Stage4 probe location:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/real203/subjects/balancer__balancer-v3-monorepo__FeeBurnerAuthentication/put/transferOwnership_suffix_alias_probe_1`.
+  It still emits no PUT because rollback post-state is unobservable and the
+  concrete replay did not contain a callable `transferOwnership` to lift.
+- Regression added:
+  `regression/esbmc-solidity/solidity_path_cov_assert_inherited_suffix_alias`.
+  The fixture uses an inherited `owner` scalar and a spec that names only
+  source-level `owner`; expected rows are the normal R1 flip
+  `post != pre`, `post >= pre`, `post > pre` HOLDS and their complementary
+  refutations.
+- Verification for this fix:
+  `cmake --build build --target esbmc -j2`;
+  direct real ESBMC probe above;
+  `timeout 5m ctest -R 'solidity_path_cov_assert_(inherited_suffix_alias|r1_pair_written|exact_empty_state|exact_candidate_policy)' --output-on-failure`.
+  A CMake refresh with `cmake -DESBMC_REGRESS_TIMEOUT=90 ..` returned 0 and
+  refreshed CTest, but printed a pre-existing Bitwuzla/CaDiCaL external rebuild
+  warning/failure while still finding the already built Bitwuzla 0.8.2.

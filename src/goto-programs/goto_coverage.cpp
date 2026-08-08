@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
@@ -1585,6 +1586,38 @@ static bool path_cov_user_state_name(const std::string &n)
     n.rfind("anon_pad", 0) == 0);
 }
 
+static std::string path_cov_strip_solidity_decl_suffix(const std::string &n)
+{
+  const size_t dollar = n.rfind('$');
+  if (dollar == std::string::npos || dollar == 0 || dollar + 1 == n.size())
+    return n;
+  for (size_t i = dollar + 1; i < n.size(); ++i)
+    if (!std::isdigit(static_cast<unsigned char>(n[i])))
+      return n;
+  return n.substr(0, dollar);
+}
+
+static bool path_cov_component_name_matches(
+  const struct_typet::componentt &comp,
+  const std::string &field)
+{
+  std::vector<std::string> names;
+  const std::string comp_name = comp.get_name().as_string();
+  const std::string base_name = comp.get("#base_name").as_string();
+  if (!comp_name.empty())
+    names.push_back(comp_name);
+  if (!base_name.empty())
+    names.push_back(base_name);
+  const size_t n = names.size();
+  for (size_t i = 0; i < n; ++i)
+  {
+    const std::string stripped = path_cov_strip_solidity_decl_suffix(names[i]);
+    if (stripped != names[i])
+      names.push_back(stripped);
+  }
+  return std::find(names.begin(), names.end(), field) != names.end();
+}
+
 // Walk a dotted field path (`taker`, `timelocks.deployedAt`) down from `e`.
 //
 // This is what makes a STRUCT ARGUMENT generalisable at all. An aggregate has no
@@ -1617,7 +1650,7 @@ walk_fields(const namespacet &ns, expr2tc &e, const std::string &path)
       return false;
     bool hit = false;
     for (const auto &comp : to_struct_type(st).components())
-      if (comp.get_name() == field || comp.get("#base_name") == field)
+      if (path_cov_component_name_matches(comp, field))
       {
         e = member2tc(migrate_type(comp.type()), e, comp.get_name());
         hit = true;
@@ -1657,7 +1690,7 @@ walk_field_type(const namespacet &ns, type2tc &t, const std::string &path)
       return false;
     bool hit = false;
     for (const auto &comp : to_struct_type(st).components())
-      if (comp.get_name() == field || comp.get("#base_name") == field)
+      if (path_cov_component_name_matches(comp, field))
       {
         t = migrate_type(comp.type());
         hit = true;
@@ -9475,7 +9508,12 @@ void goto_coveraget::solidity_path_coverage()
         if (vn.empty())
           vn = comp.get_name().as_string();
         if (path_cov_user_state_name(vn))
+        {
           comp_names.push_back(vn);
+          const std::string stripped = path_cov_strip_solidity_decl_suffix(vn);
+          if (stripped != vn)
+            comp_names.push_back(stripped);
+        }
       }
 
       // ---- SECOND SCAN: the state variables that are NOT components ----
@@ -10041,7 +10079,7 @@ void goto_coveraget::solidity_path_coverage()
         // is the failure shape this project keeps paying for.
         const assert_vart *spec = nullptr;
         for (const auto &v : assert_vars)
-          if (v.name == vname)
+          if (path_cov_component_name_matches(comp, v.name))
           {
             if (spec != nullptr)
             {
@@ -10060,13 +10098,14 @@ void goto_coveraget::solidity_path_coverage()
           }
         if (comp_vars_present && spec == nullptr)
           continue; // an explicit `vars` list is a whitelist
+        const std::string oname = spec == nullptr ? vname : spec->name;
         if (spec != nullptr)
-          named_seen.insert(vname);
+          named_seen.insert(spec->name);
 
         expr2tc live = symbol2tc(migrate_type(ostruct), obj->id);
         if (!walk_fields(ns, live, vname))
         {
-          path_cov_refused_coords[vname] =
+          path_cov_refused_coords[oname] =
             "the component does not resolve through the contract object's "
             "field walk, so no post-state expression can be built for it";
           continue;
@@ -10096,11 +10135,11 @@ void goto_coveraget::solidity_path_coverage()
         const bool interval_ok = equality_ok && !is_bool_type(vt);
         if (!equality_ok)
         {
-          path_cov_refused_coords[vname] = why;
+          path_cov_refused_coords[oname] = why;
           continue;
         }
         if (!interval_ok)
-          path_cov_refused_coords[vname + " [ordering/interval rungs]"] =
+          path_cov_refused_coords[oname + " [ordering/interval rungs]"] =
             // `why` is EMPTY when coord_expressible accepted the type, which is
             // now the bool case -- the only way to reach here with equality_ok.
             // Printing an empty reason would read as "refused, cause unknown".
@@ -10125,7 +10164,7 @@ void goto_coveraget::solidity_path_coverage()
             "ordering-capable unsigned scalar; silently dropping ASKED "
             "candidates would leave the batch summary incomplete",
             uid,
-            vname);
+            oname);
           exit(1);
         }
 
@@ -10171,24 +10210,24 @@ void goto_coveraget::solidity_path_coverage()
           // which the exit read is not observing the unit's writes, and a run
           // in which both are REFUTED is one in which the antecedent never
           // matched.
-          emit_rung(vname, "eq", "post == pre", equality2tc(live, pre_v));
-          emit_rung(vname, "ne", "post != pre", notequal2tc(live, pre_v));
+          emit_rung(oname, "eq", "post == pre", equality2tc(live, pre_v));
+          emit_rung(oname, "ne", "post != pre", notequal2tc(live, pre_v));
         }
 
         if (!interval_ok)
         {
           emit_structured_rungs(
-            spec, vt, vname, live, pre_v, "post", true, true);
+            spec, vt, oname, live, pre_v, "post", true, true);
           continue;
         }
 
         if (!assert_candidates_exact)
         {
           emit_rung(
-            vname, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
-          emit_rung(vname, "le", "post <= pre", lessthanequal2tc(live, pre_v));
-          emit_rung(vname, "gt", "post > pre", greaterthan2tc(live, pre_v));
-          emit_rung(vname, "lt", "post < pre", lessthan2tc(live, pre_v));
+            oname, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
+          emit_rung(oname, "le", "post <= pre", lessthanequal2tc(live, pre_v));
+          emit_rung(oname, "gt", "post > pre", greaterthan2tc(live, pre_v));
+          emit_rung(oname, "lt", "post < pre", lessthan2tc(live, pre_v));
         }
 
         // ---- AN R2 BOUND MAY NAME A QUANTITY, NOT ONLY A DECIMAL ----------
@@ -10226,7 +10265,7 @@ void goto_coveraget::solidity_path_coverage()
         // again -- there is only one answer left to give.
         auto bound_expr =
           [&](const char *what, const std::string &s) -> expr2tc {
-          return bound_endpoint(vt, vname, what, s);
+          return bound_endpoint(vt, oname, what, s);
         };
 
         if (spec != nullptr && spec->has_abs)
@@ -10234,7 +10273,7 @@ void goto_coveraget::solidity_path_coverage()
           const expr2tc alo = bound_expr("abs_lo", spec->abs_lo);
           const expr2tc ahi = bound_expr("abs_hi", spec->abs_hi);
           emit_rung(
-            vname,
+            oname,
             "abs",
             "post in [" + spec->abs_lo + ", " + spec->abs_hi + "]",
             and2tc(
@@ -10257,7 +10296,7 @@ void goto_coveraget::solidity_path_coverage()
                                 ? greaterthanequal2tc(live, pre_v)
                                 : greaterthanequal2tc(pre_v, live);
           emit_rung(
-            vname,
+            oname,
             "delta",
             (spec->delta_dir == "inc" ? std::string("post - pre in [")
                                       : std::string("pre - post in [")) +
@@ -10267,7 +10306,7 @@ void goto_coveraget::solidity_path_coverage()
               dir,
               and2tc(greaterthanequal2tc(d, dlo), lessthanequal2tc(d, dhi))));
         }
-        emit_structured_rungs(spec, vt, vname, live, pre_v, "post", true, true);
+        emit_structured_rungs(spec, vt, oname, live, pre_v, "post", true, true);
       }
 
       // ---- MAPPING SLOTS AS OBSERVABLES ----
