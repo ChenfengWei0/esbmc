@@ -11318,9 +11318,9 @@ Recent official BugFix124 status:
 
 - Strict latest journal over
   `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/results.jsonl`:
-  124 cases, 65 cases with at least one valid test, 59 with no valid test.
-- Artifact totals: raw 225, valid 200, valid PUT 130, valid concrete 70.
-  PUT share among valid artifacts: 65.0%.
+  124 cases, 66 cases with at least one valid test, 58 with no valid test.
+- Artifact totals: raw 243, valid 218, valid PUT 138, valid concrete 80.
+  PUT share among valid artifacts: 63.3%.
 - `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark bugfix124`
   reported after `pop_018`: VeriPUT `raw_u=195`, `valid_u=170`,
   `raw_c=60`, `valid_c=60`, coverage `48.4%`, `VT/case=1.37`, status
@@ -11347,6 +11347,11 @@ Recent official BugFix124 status:
   the same command reports VeriPUT `raw_u=225`, `valid_u=200`,
   `raw_c=65`, `valid_c=65`, coverage `52.4%`, `VT/case=1.61`, status
   `{'ok': 65, 'no-output': 51, 'no-units': 5, 'budget-exhausted': 3}`.
+- After rerunning
+  `rc_unchecked_low_level_calls__0x07f7ecb66d788ab01dc93b9b71a88401de7d0f2e__SolGPT__0x07f7ecb66d788ab01dc93b9b71a88401de7d0f2e_3round`,
+  the same command reports VeriPUT `raw_u=243`, `valid_u=218`,
+  `raw_c=66`, `valid_c=66`, coverage `53.2%`, `VT/case=1.76`, status
+  `{'ok': 66, 'no-output': 50, 'no-units': 5, 'budget-exhausted': 3}`.
 
 Recent official case observations:
 
@@ -11409,6 +11414,18 @@ Recent official case observations:
   PUTs mirror the MONEY_BOX result: `SetLogFile` path 7 has R0+R1;
   `SetMinSum` path 7 has R0+R1+R2.  Oracle class counts:
   R0=2, R1=6, R2=6.
+- `rc_unchecked_low_level_calls__0x07f7ecb66d788ab01dc93b9b71a88401de7d0f2e__SolGPT__0x07f7ecb66d788ab01dc93b9b71a88401de7d0f2e_3round`
+  rerun:
+  old row was no-output after `play`; new row is status ok, raw 18, valid 18,
+  PUT 8/8, concrete 10/10, generation 268.621s, Stage2 207.689s,
+  Stage4 generation 60.932s, Foundry replay 15.308s, wall 287.014s,
+  maxrss 1761.5 MB.  Units attempted:
+  `hasPlayerWagered`, `play`, `OpenToThePublic`, `wager`, `donate`,
+  `AdjustBetAmounts`, `AdjustDifficulty`, `transferAnyERC20Token`,
+  `ethBalance`, `currentDifficulty`, `currentBetLimit`, `winnersPot`.
+  Valid PUTs include `AdjustBetAmounts`, `AdjustDifficulty`,
+  `OpenToThePublic`, `hasPlayerWagered`, and `transferAnyERC20Token`;
+  oracle class counts: R0=8, R1=8, R2=14.
 
 Next-candidate caution:
 
