@@ -22101,3 +22101,13 @@ Update after TREXFactory constructor-harness diagnosis:
   enc=15 emits a strong PUT with four fuzz coordinates and 12 oracle asserts,
   including R2 `_idFactory: post == idFactory_`; enc=14 is rollback and carries
   only an R0 exit-kind oracle.
+- Official RQ1 rerun for `ERC-3643__ERC-3643__TREXFactory` after the fix:
+  `raw=2`, `valid=2`, `put=2/2`, `concrete=0/0`,
+  `bucket=valid-PUT-with-R1R2`, wall `707.322s` including wrapper/Foundry.
+  The final `result.json` classifies enc=15 as `R0+R1` and enc=14 as `R0`
+  (so the official result improves PUT/R1 count, but not R2 count).
+- Latest real203 triage after MigrationHelper and TREXFactory official reruns:
+  `quality_bucket={"no-valid":163,"valid-PUT-no-R1R2":10,
+  "valid-PUT-with-R1R2":8,"valid-no-PUT":22}`;
+  artifacts `{"raw":176,"valid":153,"put_raw":58,"put_valid":55,
+  "concrete_raw":118,"concrete_valid":98}`.
