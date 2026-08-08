@@ -20852,3 +20852,43 @@ Update after tuple-wrapped source-R2 mining fix:
   (268/268);
   `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
   `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`.
+
+Update after ERC-3643 Stage-4-only rescue and triage-policy alignment:
+
+- User clarified the RQ1 repair queue is not just `no-valid`.  Treat three
+  buckets as first-class repair targets:
+  1. `no-valid`: no reference-valid generated test at all.
+  2. `valid-no-PUT`: only concrete replay(s) are valid; upgrade to a PUT if
+     possible.
+  3. `valid-PUT-no-R1R2`: a PUT is valid but only has R0/exit-kind oracle; try
+     to add verifier-backed R1/R2.
+  `valid-PUT-with-R1R2` is the desired bucket.
+- Fuzz remains refute-only.  A Forge/fuzz `NOT-REFUTED` candidate is never a
+  proof and must not be counted as an oracle unless a later ESBMC ladder row is
+  `HOLDS`.  ERC-3643 confirmed this path: the Forge R2 prefilter kept several
+  candidates with reason "Forge reported Success; this is not proof"; then
+  Bitwuzla exact mapping R2 returned `NO VERDICT`, and only the CVC5 fallback
+  (`assert/run.8.log`) turned the two mapping R2 rows into `HOLDS`.
+- Stage-4-only rerun for
+  `real203/ERC-3643__ERC-3643__Token.increaseAllowance` used the existing
+  cert JSONL and official out-root:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/real203/subjects/ERC-3643__ERC-3643__Token/put/increaseAllowance`.
+  It emitted one reference-valid PUT, no concrete replay.  Generated test:
+  `TokenCovTest_Token_increaseAllowance_put15.t.sol`.
+- The final generated oracle includes:
+  `_allowances$496[msg.sender][_spender]: post == pre + _addedValue`,
+  `_allowances$496[msg.sender][_spender]: post - pre == _addedValue`, and
+  `return == true`, plus the R0 normal-exit oracle.  `put.json` stats now report
+  `oracle_classes=["R0","R1","R2"]`,
+  `valid_put_with_R1=1`, `valid_put_with_R2=1`.
+- Because this was a Stage-4-only rerun, `result.json` initially still embedded
+  the stale old row (`oracle_classes=["R0"]`).  Recomputed only the derived
+  `put` and `row` summary fields from existing `put-summary.json`/`put.json`;
+  no ESBMC rerun and no Dataset file changes.  The subject now has
+  `quality_bucket=valid-PUT-with-R1R2`.
+- Current lightweight scan of
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT` after that refresh:
+  573 result files total; `no-valid=337`, `valid-no-PUT=28`,
+  `valid-PUT-no-R1R2=65`, `valid-PUT-with-R1R2=143`.  Duplicated `.redo.*`
+  result directories are included in that raw count; deduping by subject/unit
+  should be done before final paper numbers.
