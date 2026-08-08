@@ -22458,3 +22458,31 @@ Update after Peer182 stale batch 5:
   are token/ERC20-like and can consume 500-600s each; still worth running
   because the observed recovery rate remains high and usually produces
   R1/R2 PUTs.
+
+Update after Peer182 stale batch 6:
+
+- Reran 8 more stale peer rows:
+  `peer_ccsolbmc__RBC`, `peer_ccsolbmc__AssetTransfer`,
+  `peer_ccsolbmc__SimpleECR20`, `peer_solar__Reentrance`,
+  `peer_solar__DateTime`, `peer_ccsolbmc__FrontRunner`,
+  `peer_ccsolbmc__SOTH`, and `peer_ccsolbmc__ERC20`.
+- All 8 produced valid PUT artifacts.  Six were `valid-PUT-with-R1R2`:
+  `RBC`, `SimpleECR20`, `Reentrance`, `DateTime`, `SOTH`, and `ERC20`.
+  Two were `valid-PUT-no-R1R2`: `AssetTransfer` (10/11 raw PUT valid) and
+  `FrontRunner` (6/6 valid PUT).  The slowest rows were `RBC` (587.3s),
+  `SOTH` (600.3s), and `ERC20` (599.6s).  `ERC20.transfer` included a
+  revert-path PUT attempt, then later succeeded on `increaseAllowance`.
+- Net Peer182 movement after the first six stale batches:
+  `quality_bucket` changed from
+  `{"no-valid":147,"valid-PUT-no-R1R2":22,
+  "valid-PUT-with-R1R2":11,"valid-no-PUT":2}` to
+  `{"no-valid":103,"valid-PUT-no-R1R2":29,
+  "valid-PUT-with-R1R2":48,"valid-no-PUT":2}`.  Current aggregate:
+  182 cases, 79 valid, 77 PUT, 48 R1/R2, 2 concrete-only.
+- Remaining stale no-timing `no-valid-unknown` peer queue has 33 rows.  The
+  next rows are almost entirely token/ERC20/meme-token style:
+  `peer_solar__array-utils`, `peer_ccsolbmc__eMastiff`,
+  `peer_ccsolbmc__ChinaCoin`, `peer_ccsolbmc__EStack`,
+  `peer_ccsolbmc__goldinu`, `peer_ccsolbmc__SATURNITE`,
+  `peer_ccsolbmc__Ryujin`, and `peer_ccsolbmc__PROGEV2` are the next eight by
+  prepared `flat.sol` size.  Expect many to run near the full 600s.
