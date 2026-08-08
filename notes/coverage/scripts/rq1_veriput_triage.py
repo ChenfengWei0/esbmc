@@ -276,12 +276,14 @@ def queue_order(row: dict) -> tuple[int, str, str, str]:
         bucket_rank = 9
     cause_rank = {
         "normal-r0-only-other": 0,
-        "mapping-dynarray-unrendered": 1,
-        "not-parameterized-no-wide-rendered-coordinate": 2,
+        "timeout_concrete_fallback": 1,
+        "cleared_not_certified_fallback": 2,
         "unsupported-calldata-type": 3,
         "cert-no-coordinate": 4,
         "cert-no-witness-unknown": 5,
         "stage2-no-output-timeout": 6,
+        "mapping-dynarray-unrendered": 8,
+        "not-parameterized-no-wide-rendered-coordinate": 8,
         "rollback-unobservable": 8,
         "revert-unobservable": 8,
     }.get(row["triage_cause"], 7)

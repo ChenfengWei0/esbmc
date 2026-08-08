@@ -186,12 +186,36 @@ def test_action_queue_demotes_hard_dynamic_mapping_no_r1r2():
     return bad
 
 
+def test_action_queue_demotes_no_wide_rendered_coordinate():
+    timeout_fallback = {
+        "dataset": "real203",
+        "subject_id": "TimeoutFallback",
+        "quality_bucket": "valid-no-PUT",
+        "triage_cause": "timeout_concrete_fallback",
+    }
+    no_wide = {
+        "dataset": "bugfix124",
+        "subject_id": "NoWide",
+        "quality_bucket": "valid-no-PUT",
+        "triage_cause": "not-parameterized-no-wide-rendered-coordinate",
+    }
+    ordered = sorted([no_wide, timeout_fallback],
+                     key=rq1_veriput_triage.queue_order)
+    bad = 0
+    bad += check([row["subject_id"] for row in ordered]
+                 == ["TimeoutFallback", "NoWide"],
+                 f"point-region no-PUT does not block fallback triage: "
+                 f"{ordered}")
+    return bad
+
+
 def main():
     tests = [
         test_latest_redo_wins_and_buckets_are_strength_aware,
         test_triage_causes_distinguish_concrete_and_unobservable_puts,
         test_unsupported_calldata_beats_generic_not_parameterized_note,
         test_action_queue_demotes_hard_dynamic_mapping_no_r1r2,
+        test_action_queue_demotes_no_wide_rendered_coordinate,
     ]
     bad = 0
     for test in tests:

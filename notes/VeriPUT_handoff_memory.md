@@ -20650,3 +20650,37 @@ Update after StandaloneReverseRegistrar no-R1/R2 analysis:
   `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only notes/coverage/scripts/rq1_veriput_triage.py scripts/test_rq1_veriput_triage.py`;
   `git diff --check -- notes/coverage/scripts/rq1_veriput_triage.py scripts/test_rq1_veriput_triage.py`;
   regenerated `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/triage/latest_focus.{json,md}`.
+
+Update after no-wide no-PUT triage correction:
+
+- User clarified the priority again: the rescue work must target not only
+  `no-valid`, but also `valid-no-PUT`, and even `valid-PUT-no-R1/R2`.  The
+  practical queue should therefore ask whether a case is actionable, not only
+  whether it is weak.  A concrete-only valid test hurts the PUT claim, and an
+  R0-only PUT hurts oracle strength, but some weak buckets are hard because the
+  certified path exposes no rendered fuzzable dimension or no scalar oracle.
+- Inspected `bugfix124/acfix_021_CVE_2018_19832`.  Its target unit `NETM()`
+  has no calldata parameters.  The certified region has only a point
+  environment guard (`msg.sender in [0,0]`) plus pins, so there is no wide
+  rendered coordinate to expose in Foundry.  Turning `bound(x,0,0)` into a test
+  parameter would be a fake PUT: syntactically fuzzed but semantically
+  concrete.  It should remain visible as `valid-no-PUT /
+  not-parameterized-no-wide-rendered-coordinate`, but should not outrank
+  timeout/cleared concrete-fallback cases that may become real PUTs after code
+  fixes.
+- `rq1_veriput_triage.py` now demotes
+  `not-parameterized-no-wide-rendered-coordinate` together with hard
+  dynamic-mapping/unobservable cases in the action queue.  The top queue after
+  regeneration starts with actionable fallback/no-PUT subjects:
+  `real203/ERC-3643__ERC-3643__Token`,
+  `real203/compound-finance__comet__CometWithExtendedAssetList`,
+  `bugfix124/pop_018_PrivatePool`, `bugfix124/pop_020_GSPFunding`,
+  `bugfix124/pop_033_PrivatePool`, and `bugfix124/pop_077_GameItems`, then
+  cleared fallback cases such as `FeeBurnerAuthentication`,
+  `HyperEVMRateProvider`, `ShuffledGatewayProvider`, `pop_009`, `pop_048`, and
+  `pop_051`.
+- Regression added:
+  `test_action_queue_demotes_no_wide_rendered_coordinate` in
+  `scripts/test_rq1_veriput_triage.py`.  Verification target is five triage
+  tests, plus `py_compile`, `pylint --errors-only`, and `git diff --check`
+  before committing.
