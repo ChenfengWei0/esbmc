@@ -51,6 +51,15 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
         disabled_file = unit / "Project" / "test" / "TokenCovTest_disabled.t.sol"
         disabled_file.write_text(
             "contract T { function disabled_test_cov_disabled() public {} }\n")
+        unsupported_file = (
+            unit / "Project" / "test" / "TokenCovTest_unsupported.t.sol")
+        unsupported_file.write_text("""\
+contract T {
+  function test_cov_unsupported() public {
+    // UNSUPPORTED: Token.approve has an argument type ESBMC cannot yet render
+  }
+}
+""")
         (wd / "put.json").write_text(json.dumps({
             "kind": "put",
             "test": "test_put_Token_approve_path7",
@@ -160,6 +169,17 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
                         "valid_reference_test": False,
                         "b": False,
                     },
+                    {
+                        "kind": "concrete",
+                        "unit": "approve",
+                        "enc": 11,
+                        "piece": None,
+                        "test": "test_cov_unsupported",
+                        "file": str(unsupported_file),
+                        "forge_status": "Success",
+                        "valid_reference_test": True,
+                        "b": False,
+                    },
                 ],
             },
         }))
@@ -190,6 +210,8 @@ def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
                      f"refused PUT rows are not raw deliverables: {summary}")
         bad += check(all(t["enc"] != 10 for t in summary["raw_tests"]),
                      f"disabled concrete replays are not raw deliverables: {summary}")
+        bad += check(all(t["enc"] != 11 for t in summary["raw_tests"]),
+                     f"unsupported concrete no-ops are not raw deliverables: {summary}")
         bad += check(summary["quality_bucket"] == "valid-PUT-with-R1R2"
                      and summary["valid_put_with_R1"] == 1
                      and summary["valid_put_with_R2"] == 1

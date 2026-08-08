@@ -113,6 +113,19 @@ def _put_json_has_r1r2(summary_path: Path, test: str | None) -> bool:
     return False
 
 
+def _row_is_unsupported_concrete(row: dict) -> bool:
+    if row.get("kind") != "concrete":
+        return False
+    file_name = row.get("file")
+    if not file_name:
+        return False
+    try:
+        text = Path(file_name).read_text(errors="replace")
+    except OSError:
+        return False
+    return "UNSUPPORTED:" in text
+
+
 def case_logs_contain(result_path: Path | None, *needles: str) -> bool:
     if result_path is None:
         return False
@@ -222,6 +235,9 @@ def classify_valid_no_put(result: dict) -> str:
     blob = _text_blob(notes)
     if "cannot be synthesized as a full-domain fuzz input" in blob:
         return "unsupported-calldata-type"
+    if ("NOT ONE candidate assertion could be formed" in blob
+            and "NOT PARAMETERIZED" in blob):
+        return "no-observable-oracle-no-width"
     if "NOT PARAMETERIZED" in blob:
         return "not-parameterized-no-wide-rendered-coordinate"
     if sources:
@@ -291,6 +307,8 @@ def summary_artifact_rows(
             kind = row.get("kind")
             if kind not in {"put", "concrete"}:
                 continue
+            if _row_is_unsupported_concrete(row):
+                continue
             key = (row.get("file"), row.get("test"), row.get("unit"),
                    row.get("enc"), kind)
             if key in seen:
@@ -304,8 +322,9 @@ def summary_artifact_rows(
 
 def summary_artifact_totals(
         result: dict, result_path: Path | None = None) -> dict | None:
+    paths = _summary_paths(result, result_path)
     rows = summary_artifact_rows(result, result_path)
-    if not rows:
+    if not rows and not paths:
         return None
     return {
         "raw": len(rows),
@@ -458,6 +477,7 @@ def queue_order(row: dict) -> tuple[int, str, str, str]:
         "cert-no-witness-unknown": 5,
         "stage2-no-output-timeout": 6,
         "mapping-dynarray-unrendered": 8,
+        "no-observable-oracle-no-width": 8,
         "not-parameterized-no-wide-rendered-coordinate": 8,
         "rollback-unobservable": 8,
         "revert-unobservable": 8,

@@ -388,6 +388,24 @@ def stale_reason(rec, now):
     return None
 
 
+def unsupported_concrete_reason(rec):
+    """Why a concrete replay should not count as a reference-valid test."""
+    if (rec.get("kind") or "put") != "concrete":
+        return None
+    file_name = rec.get("file")
+    if not file_name:
+        return "concrete replay did not record a generated file"
+    try:
+        text = open(file_name, errors="replace").read()
+    except OSError as exc:
+        return f"concrete replay file could not be read: {exc}"
+    if "UNSUPPORTED:" in text:
+        return ("concrete replay contains UNSUPPORTED placeholder(s), so a "
+                "green Foundry run is not evidence of an executable reference "
+                "test")
+    return None
+
+
 def record_key(record):
     key = record.get("benchmark") or record.get("poc")
     unit = record.get("unit")
@@ -1544,6 +1562,9 @@ def b_report(results, forge_timeout):
             want = rec.get("test")
             status = verdicts.get(want)
             g4 = status == "Success"
+            unsupported = (unsupported_concrete_reason(rec)
+                           if rc == 0 else None)
+            refused = refused or unsupported is not None
             g5 = is_corpus
             generated_ok = g4 and g5 and not stale and not refused
             if generated_ok:
@@ -1569,6 +1590,7 @@ def b_report(results, forge_timeout):
                 "b": False,
                 "valid_reference_test": generated_ok,
                 "refused": refused,
+                "refusal_reason": unsupported,
                 "stale": stale,
                 "fuzz_params": fz,
                 "asserts": ar,
@@ -1587,6 +1609,8 @@ def b_report(results, forge_timeout):
                 print(f"      ⛔ NOT COUNTED: {stale}")
                 n_stale += 1
             if refused:
+                if unsupported:
+                    print(f"      ⛔ NOT COUNTED: {unsupported}")
                 n_refused += 1
             continue
 

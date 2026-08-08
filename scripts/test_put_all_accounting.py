@@ -283,6 +283,9 @@ def main():
                             "test_cov_0()": {
                                 "status": "Success"
                             },
+                            "test_cov_1()": {
+                                "status": "Success"
+                            },
                             "test_put_C_target_path3()": {
                                 "status": "Success"
                             },
@@ -292,6 +295,21 @@ def main():
                 "",
                 False,
                 0.01)
+            tmpdir = tempfile.TemporaryDirectory()
+            selfcheck_files = tmpdir.name
+            concrete_ok = os.path.join(selfcheck_files, "concrete.t.sol")
+            concrete_unsupported = os.path.join(selfcheck_files,
+                                                "unsupported.t.sol")
+            with open(concrete_ok, "w") as fh:
+                fh.write("contract T { function test_cov_0() public {} }\n")
+            with open(concrete_unsupported, "w") as fh:
+                fh.write("""\
+contract T {
+  function test_cov_1() public {
+    // UNSUPPORTED: C.target has an argument type ESBMC cannot yet render
+  }
+}
+""")
             summary = put_all.b_report([
                 ("bench", "target", 1, None, 0, {
                     "test": "test_put_C_target_path1",
@@ -307,7 +325,19 @@ def main():
                 ("bench", "target", 2, None, 0, {
                     "kind": "concrete",
                     "test": "test_cov_0",
-                    "file": "/tmp/concrete.t.sol",
+                    "file": concrete_ok,
+                    "binary": {"binaryMtime": 123},
+                    "stats": {
+                        "fuzz_params": 0,
+                        "asserts": 0,
+                        "guarded_asserts": 0,
+                        "rendered_width": {},
+                    },
+                }, "/tmp/forge-project", {}, True, "C"),
+                ("bench", "target", 4, None, 0, {
+                    "kind": "concrete",
+                    "test": "test_cov_1",
+                    "file": concrete_unsupported,
                     "binary": {"binaryMtime": 123},
                     "stats": {
                         "fuzz_params": 0,
@@ -328,13 +358,14 @@ def main():
                     },
                 }, "/tmp/forge-project", {"x": [0, 2]}, True, "C"),
             ], 10)
+            tmpdir.cleanup()
             bad += check("stage4-b-summary-counts-b",
                          (summary["b"], summary["certified_region_rows"]),
-                         (1, 3))
+                         (1, 4))
             bad += check("stage4-b-summary-forge-seen",
                          (summary["forge_seen"]["put"]["Success"],
                           summary["forge_seen"]["concrete"]["Success"]),
-                         (2, 1))
+                         (2, 2))
             bad += check("stage4-b-summary-row-gates",
                          summary["rows"][0]["gates"],
                          {"fuzz": True, "width": True, "assert": True,
@@ -349,11 +380,16 @@ def main():
                          {"total": 2, "put": 1, "concrete": 1})
             bad += check("stage4-source-counts",
                          summary["stage2_source_counts"],
-                         {"certified_region": 3})
-            bad += check("stage4-zero-assert-put-refused",
+                         {"certified_region": 4})
+            bad += check("stage4-unsupported-concrete-refused",
                          (summary["rows"][2]["refused"],
                           summary["rows"][2]["valid_reference_test"],
-                          summary["rows"][2]["gates"]),
+                          bool(summary["rows"][2]["refusal_reason"])),
+                         (True, False, True))
+            bad += check("stage4-zero-assert-put-refused",
+                         (summary["rows"][3]["refused"],
+                          summary["rows"][3]["valid_reference_test"],
+                          summary["rows"][3]["gates"]),
                          (True, False,
                           {"fuzz": False, "width": None, "assert": None,
                            "green": None, "corpus": None}))

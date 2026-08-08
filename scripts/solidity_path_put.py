@@ -9803,7 +9803,47 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
         source = re.sub(
             r"ESBMCMock_" + re.escape(mock) + r"\b",
             f"ESBMCMock_{mock}_{new_contract}", source)
+    reason = concrete_replay_refusal_reason(source, case[1], unit)
+    if reason is not None:
+        raise ValueError(reason)
     return source
+
+
+def function_body_lines(source, name):
+    """Return a Solidity function body from generated Foundry source."""
+    lines = source.splitlines()
+    rx = re.compile(r"^\s*function\s+" + re.escape(name) + r"\s*\(")
+    for i, line in enumerate(lines):
+        if not rx.search(line):
+            continue
+        depth = line.count("{") - line.count("}")
+        body = []
+        j = i + 1
+        while j < len(lines):
+            depth += lines[j].count("{") - lines[j].count("}")
+            if depth <= 0:
+                return body
+            body.append(lines[j])
+            j += 1
+        return body
+    return None
+
+
+def concrete_replay_refusal_reason(source, test_name, unit):
+    """Why a concrete replay is not an executable reference test, if any."""
+    if "UNSUPPORTED:" in source:
+        return ("concrete replay contains UNSUPPORTED placeholder(s), so a "
+                "green Foundry run would be a no-op rather than a reference "
+                "test")
+    if unit is None:
+        return None
+    body = function_body_lines(source, test_name)
+    if body is None:
+        return f"concrete replay test {test_name} is absent"
+    if find_unit_call(body, unit) is None:
+        return (f"concrete replay test {test_name} contains no renderable "
+                f"call to {unit}")
+    return None
 
 
 def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,

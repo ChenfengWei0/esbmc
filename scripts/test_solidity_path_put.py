@@ -11987,6 +11987,45 @@ def test_assembled_concrete_source_keeps_only_the_selected_replay():
     return bad
 
 
+def test_assembled_concrete_source_refuses_unsupported_replay():
+    """A green empty replay is not a reference test."""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {BoxUser} from "./BoxUser.sol";
+
+contract BoxUserCovTest is Test {
+  BoxUser c0;
+  function setUp() public {
+    c0 = new BoxUser();
+  }
+  // claim: sol:@C@BoxUser@F@put#9:path:4
+  function test_cov_0() public {
+    // UNSUPPORTED: BoxUser.put has an argument type ESBMC cannot yet render as a literal
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@BoxUser@F@put#9", 4)
+    bad = 0
+    try:
+        assemble_concrete_source(
+            em, case, "BoxUserCovTest_BoxUser_put_concrete4", unit="put")
+        refused = None
+    except ValueError as exc:
+        refused = str(exc)
+    bad += check(refused is not None and "UNSUPPORTED" in refused,
+                 f"unsupported concrete replay is refused: {refused}")
+    return bad
+
+
 def test_assembled_concrete_source_completes_missing_call_args():
     """A bad concrete replay must not poison a neighbouring PUT project."""
     emitted = """\
@@ -12349,6 +12388,7 @@ def main():
               test_assembled_put_source_drops_stale_concrete_replays,
               test_assembled_put_source_drops_stale_replays_in_later_contracts,
               test_assembled_concrete_source_keeps_only_the_selected_replay,
+              test_assembled_concrete_source_refuses_unsupported_replay,
               test_assembled_concrete_source_completes_missing_call_args,
               test_the_funding_line_precedes_the_prank,
               test_a_value_gate_certified_at_ZERO_still_REFUSES):

@@ -21169,3 +21169,51 @@ Update after the bool-return R2 emitter repair:
   assign `a=true/false` inside the function.  They are useful for no-PUT /
   no-R1R2 diagnosis, but not for the final wide-PUT metric unless the upstream
   region splitter later preserves a wider bool coordinate.
+
+Update after the unsupported-concrete no-op accounting fix:
+
+- User explicitly broadened the target from `no-valid` to `no-PUT` and
+  `no-R1/R2`.  The working quality buckets are now:
+  `no-valid`, `valid-no-PUT`, `valid-PUT-no-R1R2`,
+  `valid-PUT-with-R1R2`, plus the diagnostic
+  `PUT-with-R1R2-but-no-width`.  A concrete-only artifact is not considered a
+  method success, and a PUT without R1/R2 remains a quality failure unless it
+  is a semantic ceiling such as rollback/unobservable or no observable
+  state/return.
+- Found a statistics bug while probing
+  `real203/compound-finance__comet__CometWithExtendedAssetList.pause`: the
+  "valid concrete" fallback file contained only `UNSUPPORTED:` comments for an
+  unrenderable constructor and target-call argument.  Foundry reports Success
+  for that empty test, but it is not an executable reference test and must not
+  count as raw or valid.
+- Code fix:
+  `scripts/solidity_path_put.py::assemble_concrete_source()` now refuses
+  concrete replay sources containing `UNSUPPORTED:` or lacking a renderable
+  unit call.  `notes/coverage/scripts/put_all.py`,
+  `rq1_veriput_run.py`, and `rq1_veriput_triage.py` also filter old
+  unsupported concrete rows when reading existing artifacts, so no full rerun
+  is needed to correct the queue.  Added regression coverage in
+  `scripts/test_solidity_path_put.py`, `scripts/test_put_all_accounting.py`,
+  and `scripts/test_rq1_veriput_run.py`.
+- Validation after the fix:
+  `py_compile`, `pylint --errors-only`, `git diff --check`,
+  `scripts/test_put_all_accounting.py`, `scripts/test_rq1_veriput_run.py`, and
+  `scripts/test_solidity_path_put.py` all pass.  The PUT test suite is now
+  274/274.
+- Refreshed triage at
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/triage/latest_quality.*`.
+  The correction moved several old fake concrete successes back to `no-valid`:
+  bugfix124 is now `no-valid=57`, `valid-no-PUT=3`,
+  `valid-PUT-no-R1R2=25`, `valid-PUT-with-R1R2=38`, plus one
+  `PUT-with-R1R2-but-no-width`; real203 is `no-valid=176`,
+  `valid-no-PUT=3`, `valid-PUT-no-R1R2=8`, `valid-PUT-with-R1R2=16`;
+  peer182 remains `no-valid=70`, `valid-no-PUT=2`,
+  `valid-PUT-no-R1R2=22`, `valid-PUT-with-R1R2=88`.
+- Current high-value queue after filtering fake concrete:
+  valid-no-PUT cases are `bugfix124/pop_020_GSPFunding`,
+  `bugfix124/pop_077_GameItems`, `peer182/while_nested_break`,
+  `real203/DefaultCompliance`, `real203/HyperEVMRateProvider`,
+  `real203/ShuffledGatewayProvider`, `bugfix124/pop_051_LiquidityPool`, and
+  semantic-ceiling `peer182/loop_basic`.  Also inspect
+  `bugfix124/acfix_021_CVE_2018_19832`, which has R1/R2 assertions but no
+  fuzz width.

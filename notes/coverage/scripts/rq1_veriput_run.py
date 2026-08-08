@@ -621,6 +621,19 @@ def _row_is_disabled_concrete(row: dict) -> bool:
     return enabled_rx.search(text) is None and disabled_rx.search(text) is not None
 
 
+def _row_is_unsupported_concrete(row: dict) -> bool:
+    if row.get("kind") != "concrete":
+        return False
+    file_name = row.get("file")
+    if not file_name:
+        return False
+    try:
+        text = Path(str(file_name)).read_text(errors="replace")
+    except OSError:
+        return False
+    return "UNSUPPORTED:" in text
+
+
 def _has_oracle_class(test: dict, *labels: str) -> bool:
     present = {str(label) for label in (test.get("oracle_classes") or [])}
     return any(label in present for label in labels)
@@ -754,7 +767,8 @@ def summarize_put_artifacts(put_root: Path) -> dict:
         if not rec and not file_name:
             rec = by_unique_test.get(str(test_name), {})
         if (row.get("refused") or _row_is_no_oracle_put(row, rec)
-                or _row_is_disabled_concrete(row)):
+                or _row_is_disabled_concrete(row)
+                or _row_is_unsupported_concrete(row)):
             continue
         entry = {
             "kind": row.get("kind"),
@@ -1513,7 +1527,7 @@ def main(argv=None) -> int:
     ap.add_argument("--ast-cache-root", default=str(DEFAULT_AST_CACHE_ROOT))
     ap.add_argument("--timeout", type=int, default=600,
                     help="whole subject generation budget, seconds")
-    ap.add_argument("--esbmc-run-timeout", type=int, default=120,
+    ap.add_argument("--esbmc-run-timeout", type=int, default=600,
                     help="per ESBMC invocation budget inside certification, "
                          "seconds. The whole subject still gets --timeout")
     ap.add_argument("--stage2-unit-timeout-cap-s", type=int,
