@@ -21077,3 +21077,33 @@ Update after the Stage4 replay-isolation / constructor-mock pass:
   depends on a partial struct with missing fields.  This is likely to matter
   beyond the POC set because many real contracts initialize packed structs in
   constructors and later read fields not selected by the current region.
+
+Update after the no-PUT/no-R1R2 prioritization sample:
+
+- User clarified that repair must focus on `no-PUT` and even `no-R1/R2`, not
+  only `no-valid`.  Practical interpretation: do not let raw-valid concrete
+  fallbacks hide a weak PUT story; however, also do not spend time forcing
+  R1/R2 onto units with no observable state/return object.
+- `peer182/peer_solar__Greeter.changeHello` was rerun Stage4-only as a cheap
+  sample after the replay-isolation commit.  It selected exactly 3 Stage2
+  certified rows, archived the old generated tests in the reused Foundry
+  project, and emitted 3 reference-valid PUTs.  Each has 2 fuzz parameters
+  (`lang`, `_hello`), 1 R0 exit-kind assertion, and Foundry green.  This
+  confirms that dynamic `string` fuzzing plus normal-exit unwrap can recover
+  old weak/no-PUT-ish rows without rerunning Stage2.
+- Code fix from that sample: `unwrap_normal_try_call()` now also unwraps
+  `try c.f(...) {} catch {};` with a trailing semicolon.  Without this, a
+  Stage2-certified normal-exit path can remain inside a revert-tolerant wrapper
+  and lose the R0 oracle.  Test added:
+  `test_a_normal_try_call_with_trailing_semicolon_is_unwrapped`.
+- Greeter still has no R1/R2 because its written state is Solidity `string`
+  (`helloKorean`/`helloEnglish`) and the current ladder only emits numeric
+  scalar/storage-slot oracles.  Similarly,
+  `peer_soltg__branches_merge_variables_3` is `pure`, returns nothing, and has
+  no state, so R1/R2 has no semantic target.  These are no-R1/R2 ceilings, not
+  the same class as a numeric state update whose R2 candidate was missed.
+- `rq1_veriput_triage.py` now deprioritizes `no-candidate-assertion` together
+  with mapping/dynamic-array ceilings in the action queue.  True priority after
+  this point should be: valid PUTs with numeric observable state/return but no
+  R1/R2, then valid concrete-only rows likely liftable into PUTs, then
+  no-width R1/R2 PUTs, then no-valid.

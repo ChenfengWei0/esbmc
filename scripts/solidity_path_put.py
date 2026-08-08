@@ -4011,7 +4011,7 @@ def unwrap_normal_try_call(call_line):
     exit.  The old wrapper then no longer represents caution; it prevents both
     the R0 non-revert oracle and any return-value rungs from being rendered.
     """
-    m = re.match(r"^(\s*)try\s+(.+?)\s*\{\s*\}\s*catch\s*\{\s*\}\s*$",
+    m = re.match(r"^(\s*)try\s+(.+?)\s*\{\s*\}\s*catch\s*\{\s*\}\s*;?\s*$",
                  call_line)
     if not m:
         return call_line, False

@@ -10219,6 +10219,16 @@ contract CCovTest is Test {
     return bad
 
 
+def test_a_normal_try_call_with_trailing_semicolon_is_unwrapped():
+    bad = 0
+    line = '    try c0.changeHello(lang, "") {} catch {};'
+    unwrapped, changed = unwrap_normal_try_call(line)
+    bad += check(changed, "try/catch with a trailing semicolon is recognized")
+    bad += check(unwrapped == '    c0.changeHello(lang, "");',
+                 f"the unwrapped call is a bare asserting call: {unwrapped}")
+    return bad
+
+
 def test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle():
     """St1inch.setMaxLossRatio enc=14 shape.
 
@@ -12149,6 +12159,7 @@ def main():
               test_oracle_class_metadata_keeps_R0_R1_R2_apart,
               test_effective_exit_kind_falls_back_to_the_fresh_claim,
               test_a_STAGE1_normal_try_call_is_unwrapped_for_return_oracles,
+              test_a_normal_try_call_with_trailing_semicolon_is_unwrapped,
               test_typed_R2_omits_bool_without_a_bool_endpoint,
               test_typed_R2_proposes_bool_equality_to_bool_coordinate,
               test_a_bool_region_parameter_is_lifted_and_can_feed_R2,

@@ -365,6 +365,7 @@ def queue_order(row: dict) -> tuple[int, str, str, str]:
     }
     hard_no_r1r2 = row["triage_cause"] in {
         "mapping-dynarray-unrendered",
+        "no-candidate-assertion",
     }
     if (row["quality_bucket"] == "valid-PUT-no-R1R2"
             and not unobservable and not hard_no_r1r2):
