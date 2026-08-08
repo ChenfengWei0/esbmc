@@ -882,6 +882,33 @@ def validate_jobs(args) -> None:
             f"MemAvailable ({available:.1f}GiB)")
 
 
+def wait_for_mem_budget(memlimit_gib: int, deadline: float, *, fraction: float,
+                        poll_s: float, min_remaining_s: float) -> dict:
+    start = time.monotonic()
+    required_gib = memlimit_gib / max(fraction, 0.01)
+    available = _mem_available_gib()
+    waited = False
+    while (available and available < required_gib
+           and _remaining(deadline) > min_remaining_s):
+        waited = True
+        sleep_s = min(max(0.5, poll_s), _remaining(deadline))
+        time.sleep(sleep_s)
+        available = _mem_available_gib()
+    status = "ok"
+    if available and available < required_gib:
+        status = "insufficient-memory"
+    return {
+        "stage": "resource-wait",
+        "status": status,
+        "wall_s": round(time.monotonic() - start, 3),
+        "waited": waited,
+        "mem_available_gib": round(available, 3) if available else 0.0,
+        "required_mem_available_gib": round(required_gib, 3),
+        "memlimit_gib": memlimit_gib,
+        "mem_wait_fraction": fraction,
+    }
+
+
 def _stage_wall_s(stages: list[dict], stage_name: str) -> float:
     return sum(stage.get("wall_s") or 0.0 for stage in stages
                if stage.get("stage") == stage_name)
@@ -1076,6 +1103,25 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             break
         unit = job["unit"]
         units_attempted.append(unit)
+        mem_wait = wait_for_mem_budget(
+            args.memlimit_gib,
+            deadline,
+            fraction=args.stage_mem_fraction,
+            poll_s=args.mem_wait_poll_s,
+            min_remaining_s=args.min_remaining_s)
+        if mem_wait["waited"] or mem_wait["status"] != "ok":
+            mem_wait.update({"unit": unit, "before_stage": "certify"})
+            stages.append(mem_wait)
+        if mem_wait["status"] != "ok":
+            result_status = "budget-exhausted"
+            failure_reason = (
+                f"insufficient memory before certify {unit}: "
+                f"need MemAvailable >= "
+                f"{mem_wait['required_mem_available_gib']}GiB for "
+                f"{args.memlimit_gib}GiB at "
+                f"{args.stage_mem_fraction:.0%}; have "
+                f"{mem_wait['mem_available_gib']}GiB")
+            break
         cert_argv = _certify_argv_for_remaining(job, _remaining(deadline),
                                                 args.esbmc_run_timeout,
                                                 args.memlimit_gib,
@@ -1191,6 +1237,25 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         if _remaining(deadline) < args.min_remaining_s:
             result_status = "budget-exhausted"
             failure_reason = "case budget exhausted before Stage 4"
+            break
+        mem_wait = wait_for_mem_budget(
+            args.memlimit_gib,
+            deadline,
+            fraction=args.stage_mem_fraction,
+            poll_s=args.mem_wait_poll_s,
+            min_remaining_s=args.min_remaining_s)
+        if mem_wait["waited"] or mem_wait["status"] != "ok":
+            mem_wait.update({"unit": unit, "before_stage": "put"})
+            stages.append(mem_wait)
+        if mem_wait["status"] != "ok":
+            result_status = "budget-exhausted"
+            failure_reason = (
+                f"insufficient memory before put {unit}: need "
+                f"MemAvailable >= "
+                f"{mem_wait['required_mem_available_gib']}GiB for "
+                f"{args.memlimit_gib}GiB at "
+                f"{args.stage_mem_fraction:.0%}; have "
+                f"{mem_wait['mem_available_gib']}GiB")
             break
         put_root = case_dir / "put" / _safe_name(unit)
         put_generation_budget_s = _remaining(deadline)
@@ -1515,6 +1580,8 @@ def build_dry_run(args) -> dict:
             args.skip_concrete_only_after_put_valid,
         "memlimit_gib": args.memlimit_gib,
         "jobs": args.jobs,
+        "stage_mem_fraction": args.stage_mem_fraction,
+        "mem_wait_poll_s": args.mem_wait_poll_s,
         "order": args.order,
         "subjects": [{
             "subject_id": row.get("subject_id"),
@@ -1589,6 +1656,12 @@ def main(argv=None) -> int:
     ap.add_argument("--mem-fraction", type=float, default=0.70,
                     help="refuse --jobs when jobs*memlimit exceeds this "
                          "fraction of current MemAvailable")
+    ap.add_argument("--stage-mem-fraction", type=float, default=0.60,
+                    help="before starting each Stage-2/4 subprocess, wait "
+                         "until memlimit fits this fraction of current "
+                         "MemAvailable. This mirrors certify_all.py's guard")
+    ap.add_argument("--mem-wait-poll-s", type=float, default=5.0,
+                    help="seconds between memory-availability checks")
     ap.add_argument("--forge-timeout", type=int, default=180)
     ap.add_argument("--resume", action="store_true",
                     help="skip subject keys already present in results.jsonl")
@@ -1609,7 +1682,9 @@ def main(argv=None) -> int:
                 or args.stage2_unit_timeout_cap_s < 0
                 or args.zero_output_stage4_stop_s < 0
                 or args.min_concrete_only_stage4_s < 0
-                or args.skip_concrete_only_after_put_valid < 0):
+                or args.skip_concrete_only_after_put_valid < 0
+                or args.stage_mem_fraction <= 0
+                or args.mem_wait_poll_s <= 0):
             raise RQ1RunError("timeouts and --memlimit-gib must be positive; "
                               "--no-output-stage2-stop-s and "
                               "--no-candidate-stage2-unit-stop-n and "
@@ -1617,7 +1692,8 @@ def main(argv=None) -> int:
                               "--zero-output-stage4-stop-s and "
                               "--min-concrete-only-stage4-s and "
                               "--skip-concrete-only-after-put-valid must be "
-                              "non-negative")
+                              "non-negative; --stage-mem-fraction and "
+                              "--mem-wait-poll-s must be positive")
         if args.esbmc_run_timeout > args.timeout:
             raise RQ1RunError("--esbmc-run-timeout must not exceed --timeout")
         validate_jobs(args)

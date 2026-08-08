@@ -372,6 +372,13 @@ Pushed fixes after the peer prepared fallback work:
     raw-valid accounting and confusing for triage.
   - Verified with `python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py
     notes/coverage/scripts/rq1_veriput_triage.py` and `git diff --check`.
+- Pending after this note unless already committed: `rq1_veriput_run.py`
+  gained a per-stage memory wait. Before each certify/put subprocess, it waits
+  until `--memlimit-gib` fits 60% of current MemAvailable, mirroring
+  `certify_all.py`'s internal guard. This prevents high-parallel runs from
+  recording a 0.5s `certify ... error` when the inner tool refused to start for
+  scheduler memory reasons. Waiting consumes the subject's 600s wall budget and
+  is recorded as a separate `resource-wait` stage.
 
 Current aggregate snapshot before the newest runners finish:
 
