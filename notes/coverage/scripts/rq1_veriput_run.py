@@ -44,7 +44,7 @@ CONCRETE_FALLBACK_WITNESS_CHECKS = {
 DEFAULT_VERIPUT_ROOT = Path("/home/samson/workspace/VeriPUT")
 DEFAULT_RESULT_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1" / "VeriPUT"
 DEFAULT_AST_CACHE_ROOT = Path("/tmp/veriput_rq1_ast_cache")
-DEFAULT_STAGE2_UNIT_TIMEOUT_CAP_S = 180
+DEFAULT_STAGE2_UNIT_TIMEOUT_CAP_S = 0
 DATASET_LABEL = {
     "peer182": "peer182",
     "bugfix124": "bugfix124",

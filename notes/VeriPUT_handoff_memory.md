@@ -20684,3 +20684,28 @@ Update after no-wide no-PUT triage correction:
   `scripts/test_rq1_veriput_triage.py`.  Verification target is five triage
   tests, plus `py_compile`, `pylint --errors-only`, and `git diff --check`
   before committing.
+
+Update after inspecting top valid-no-PUT timeout fallback:
+
+- Inspected `real203/ERC-3643__ERC-3643__Token`, currently
+  `valid-no-PUT / timeout_concrete_fallback`.  The only valid artifact is a
+  concrete replay for `increaseAllowance(address,uint256)`:
+  `c0.increaseAllowance(address(uint160(1)), 0)`.  The Solidity unit is simple
+  and has real fuzzable calldata coordinates (`_spender`, `_addedValue`), so
+  this is not a no-wide case.  The natural strong target is a PUT over those
+  inputs, ideally with an R2 allowance-update oracle.
+- The failure mode is Stage-2 budget/resource, not PUT rendering.  The
+  `increaseAllowance` run hit the 180s unit cap with a partial witness journal
+  containing one feasible path (`path:15`, depth 3, inputs `_spender=1`,
+  `_addedValue=0`) but no certified region.  `transfer` produced only one
+  witnessed path and then reported `std::bad_alloc` in the per-claim solve.
+  This suggests the next rescue attempt should give the promising witnessed
+  unit more of the 600s case budget and more memory, before changing ESBMC.
+- `notes/coverage/scripts/rq1_veriput_run.py` now defaults
+  `--stage2-unit-timeout-cap-s` to `0`, matching its help text and preserving
+  the full subject remaining budget by default.  Batch runs that need faster
+  turnover can still pass `--stage2-unit-timeout-cap-s 180` explicitly, but
+  focused no-PUT rescue runs should usually leave it uncapped or deliberately
+  choose a larger value.  Regression:
+  `test_stage2_unit_timeout_cap_defaults_to_uncapped` in
+  `scripts/test_rq1_veriput_run.py`.

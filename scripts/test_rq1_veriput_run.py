@@ -521,6 +521,13 @@ def test_certify_argv_for_remaining_caps_only_run_timeout():
     return bad
 
 
+def test_stage2_unit_timeout_cap_defaults_to_uncapped():
+    bad = 0
+    bad += check(rq1_veriput_run.DEFAULT_STAGE2_UNIT_TIMEOUT_CAP_S == 0,
+                 "Stage-2 unit timeout cap defaults to uncapped")
+    return bad
+
+
 def test_certify_argv_for_remaining_honors_unit_timeout_cap():
     job = {
         "certify_argv": [
@@ -720,6 +727,7 @@ def main():
         test_cleared_concrete_fallbacks_trigger_stage4,
         test_subject_schedule_uses_separate_esbmc_run_timeout,
         test_certify_argv_for_remaining_caps_only_run_timeout,
+        test_stage2_unit_timeout_cap_defaults_to_uncapped,
         test_certify_argv_for_remaining_honors_unit_timeout_cap,
         test_prepare_case_dir_preserves_complete_and_quarantines_partial,
         test_stage2_no_output_stop_reason_is_audit_friendly,
