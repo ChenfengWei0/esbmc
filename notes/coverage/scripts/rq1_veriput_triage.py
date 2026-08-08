@@ -1,531 +1,370 @@
 #!/usr/bin/env python3
-"""Triage VeriPUT RQ1 results by methodological strength.
+"""Triage existing VeriPUT RQ1 results by methodology strength.
 
-This is intentionally journal-only.  It reads
-`/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/<dataset>/results.jsonl`
-with last-write-wins semantics and never scans `subjects/*/result.json`,
-because redo directories preserve stale result files.
+The runner records raw/valid totals, but the next debugging decision needs a
+more specific queue: no valid artifact, valid concrete-only artifact, or valid
+PUT that carries only R0.  This script is intentionally read-only with respect
+to benchmark inputs; it only scans the generated RQ1 result tree.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 from collections import Counter, defaultdict
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 DEFAULT_RESULT_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
-DATASETS = ("bugfix124", "real203", "peer182")
+DEFAULT_DATASETS = ("bugfix124", "real203", "peer182")
+DATASETS = DEFAULT_DATASETS
+REDO_SUFFIX_RE = re.compile(r"\.redo\.\d+(?:\.\d+)?$")
 
 
-def _count_int(row: dict[str, Any], key: str) -> int:
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def base_subject_id(dirname: str) -> str:
+    return REDO_SUFFIX_RE.sub("", dirname)
+
+
+def _load_json(path: Path) -> dict:
     try:
-        return int(row.get(key) or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _valid_tests(row: dict[str, Any]) -> list[dict[str, Any]]:
-    out = []
-    for test in row.get("valid_tests") or []:
-        if isinstance(test, dict) and test.get("valid_reference_test", True):
-            out.append(test)
-    return out
-
-
-def _valid_count(row: dict[str, Any]) -> int:
-    if row.get("valid") is not None:
-        return _count_int(row, "valid")
-    split = _count_int(row, "put_valid") + _count_int(row, "concrete_valid")
-    return split or len(_valid_tests(row))
-
-
-def _kind_valid(row: dict[str, Any], kind: str) -> int:
-    key = f"{kind}_valid"
-    if row.get(key) is not None:
-        return _count_int(row, key)
-    return sum(1 for test in _valid_tests(row) if test.get("kind") == kind)
-
-
-def _valid_put_classes(row: dict[str, Any]) -> Counter[str]:
-    classes: Counter[str] = Counter()
-    valid_puts = [test for test in _valid_tests(row) if test.get("kind") == "put"]
-    if valid_puts:
-        for test in valid_puts:
-            labels = test.get("oracle_classes") or []
-            if not labels:
-                classes["<none>"] += 1
-            for label in labels:
-                classes[str(label)] += 1
-        return classes
-
-    # Compatibility path for old rows that have only aggregate counters.
-    if _kind_valid(row, "put") > 0:
-        for label, count in (row.get("oracle_class_counts") or {}).items():
-            try:
-                classes[str(label)] += int(count or 0)
-            except (TypeError, ValueError):
-                continue
-        if not classes:
-            classes["<unknown>"] += _kind_valid(row, "put")
-    return classes
-
-
-def _valid_put_combo_counts(row: dict[str, Any]) -> Counter[str]:
-    combos: Counter[str] = Counter()
-    valid_puts = [test for test in _valid_tests(row) if test.get("kind") == "put"]
-    if valid_puts:
-        for test in valid_puts:
-            labels = tuple(str(v) for v in (test.get("oracle_classes") or []))
-            combos["+".join(labels) if labels else "<none>"] += 1
-        return combos
-    if _kind_valid(row, "put") > 0:
-        for label, count in (row.get("oracle_class_combo_counts") or {}).items():
-            try:
-                combos[str(label)] += int(count or 0)
-            except (TypeError, ValueError):
-                continue
-    return combos
-
-
-def _read_put_stats(test: dict[str, Any]) -> dict[str, Any]:
-    doc = _read_put_json(test)
-    stats = doc.get("stats") or {}
-    return stats if isinstance(stats, dict) else {}
-
-
-def _read_put_json(test: dict[str, Any]) -> dict[str, Any]:
-    path = test.get("put_json")
-    if not path:
-        return {}
-    try:
-        doc = json.loads(Path(str(path)).read_text(errors="replace"))
+        with path.open() as stream:
+            return json.load(stream)
     except (OSError, json.JSONDecodeError):
         return {}
-    return doc if isinstance(doc, dict) else {}
 
 
-def _contains_text(value: Any, needle: str) -> bool:
-    needle = needle.lower()
-    if isinstance(value, str):
-        return needle in value.lower()
-    if isinstance(value, dict):
-        return any(_contains_text(v, needle) for v in value.values())
-    if isinstance(value, list):
-        return any(_contains_text(v, needle) for v in value)
-    return False
+def latest_result_paths(result_root: Path, datasets: list[str]) -> list[tuple[str, str, Path]]:
+    out = []
+    for dataset in datasets:
+        subject_root = result_root / dataset / "subjects"
+        grouped: dict[str, list[Path]] = defaultdict(list)
+        for path in subject_root.glob("*/result.json"):
+            grouped[base_subject_id(path.parent.name)].append(path)
+        for subject_id, paths in grouped.items():
+            latest = max(paths, key=lambda path: path.stat().st_mtime)
+            out.append((dataset, subject_id, latest))
+    return sorted(out)
 
 
-def _strength_issue_tags(row: dict[str, Any], bucket: str) -> Counter[str]:
-    tags: Counter[str] = Counter()
-    tests = _valid_tests(row)
-    if bucket == "valid-no-PUT":
-        if not tests:
-            tags["no-valid-test-details"] += 1
-        for test in tests:
-            source = str(test.get("stage2_source") or "<missing>")
-            tags[f"source:{source}"] += 1
-            doc = _read_put_json(test)
-            stats = doc.get("stats") if isinstance(doc.get("stats"), dict) else {}
-            notes = doc.get("notes") or []
-            reason = doc.get("concrete_reason") or ""
-            if source == "certified_region":
-                if _contains_text([notes, reason], "NOT PARAMETERIZED"):
-                    tags["certified-region-no-rendered-wide-coordinate"] += 1
-                if not int(stats.get("asserts") or 0):
-                    tags["certified-region-no-emitted-oracle"] += 1
-            if source == "timeout_concrete_fallback":
-                tags["stage2-timeout-witness-only"] += 1
-            if source == "cleared_not_certified_fallback":
-                tags["stage2-refuted-region-concrete-only"] += 1
-        reason = str(row.get("reason") or "")
-        if "before Stage 4" in reason:
-            tags["case-budget-before-stage4"] += 1
-        if "before remaining units" in reason:
-            tags["case-budget-before-remaining-units"] += 1
-        return tags
-
-    if bucket.startswith("valid-PUT-no-R1R2"):
-        for test in [t for t in tests if t.get("kind") == "put"]:
-            doc = _read_put_json(test)
-            stats = doc.get("stats") if isinstance(doc.get("stats"), dict) else {}
-            notes = doc.get("notes") or []
-            oracle_skipped = stats.get("oracle_skipped") or []
-            if stats.get("rollback_exit") is True:
-                tags["rollback-exit-r0-only"] += 1
-            if doc.get("ladder_refusal") or _contains_text(
-                    notes, "NOT ONE candidate assertion could be formed"):
-                tags["ladder-refused-no-candidate"] += 1
-            if _contains_text(oracle_skipped, "all return rungs DROPPED"):
-                tags["return-varies-no-simple-rung"] += 1
-            r2_prefilter = doc.get("r2_fuzz_prefilter") or {}
-            if isinstance(r2_prefilter, dict):
-                reason = str(r2_prefilter.get("reason") or "")
-                if "no R2 candidate" in reason:
-                    tags["no-r2-candidate-proposed"] += 1
-                if "rollback path" in reason:
-                    tags["r2-skipped-rollback"] += 1
-            classes = set(stats.get("oracle_classes") or test.get("oracle_classes") or [])
-            if classes == {"R0"}:
-                tags["exit-only-oracle"] += 1
-        return tags
-
-    return tags
+def valid_put_tests(result: dict) -> list[dict]:
+    tests = result.get("put", {}).get("valid_tests") or []
+    return [
+        test for test in tests
+        if test.get("kind") == "put" or test.get("b") is True
+    ]
 
 
-def _no_r1r2_artifact_shape(test: dict[str, Any]) -> str:
-    doc = _read_put_json(test)
-    stats = doc.get("stats") if isinstance(doc.get("stats"), dict) else {}
-    notes = doc.get("notes") or []
-    oracle_skipped = stats.get("oracle_skipped") or []
-    if stats.get("rollback_exit") is True:
-        return "rollback"
-    if _contains_text(oracle_skipped, "all return rungs DROPPED"):
-        return "normal-return-varies"
-    if doc.get("ladder_refusal") or _contains_text(
-            notes, "NOT ONE candidate assertion could be formed"):
-        return "normal-no-ladder-candidate"
-    classes = set(stats.get("oracle_classes") or test.get("oracle_classes") or [])
-    if classes == {"R0"}:
-        return "normal-exit-only"
-    return "normal-unknown"
-
-
-def _no_r1r2_subject_detail_shape(row: dict[str, Any]) -> str:
-    shapes = []
-    for test in _valid_tests(row):
-        if test.get("kind") != "put":
-            continue
-        labels = set(str(v) for v in (test.get("oracle_classes") or []))
-        if "R1" in labels or "R2" in labels:
-            continue
-        shapes.append(_no_r1r2_artifact_shape(test))
-    if not shapes:
-        return "none"
-    for preferred in (
-            "normal-return-varies",
-            "normal-no-ladder-candidate",
-            "normal-exit-only",
-            "normal-unknown",
-    ):
-        if preferred in shapes:
-            return preferred
-    if "rollback" in shapes:
-        return "rollback"
-    return "unknown"
-
-
-def _valid_put_no_r1r2_exit_shape(row: dict[str, Any]) -> str:
-    valid_puts = [test for test in _valid_tests(row) if test.get("kind") == "put"]
-    if not valid_puts:
-        return "none"
-    rollback = 0
-    normal_or_unknown = 0
-    for test in valid_puts:
-        stats = _read_put_stats(test)
-        if stats.get("rollback_exit") is True:
-            rollback += 1
-        else:
-            normal_or_unknown += 1
-    if normal_or_unknown:
-        return "normal-or-unknown"
-    if rollback:
-        return "rollback"
-    return "unknown"
-
-
-def _bucket(row: dict[str, Any]) -> str:
-    valid = _valid_count(row)
-    put_valid = _kind_valid(row, "put")
+def quality_bucket(result: dict) -> str:
+    put = result.get("put", {})
+    valid = put.get("valid") or result.get("row", {}).get("valid") or 0
+    put_valid = put.get("put_valid") or result.get("row", {}).get("put_valid") or 0
     if valid <= 0:
         return "no-valid"
     if put_valid <= 0:
         return "valid-no-PUT"
-    classes = _valid_put_classes(row)
-    if classes.get("R2", 0) > 0:
-        return "valid-PUT-with-R2"
-    if classes.get("R1", 0) > 0:
-        return "valid-PUT-with-R1-no-R2"
-    shape = _valid_put_no_r1r2_exit_shape(row)
-    if shape == "rollback":
-        return "valid-PUT-no-R1R2-rollback"
-    return "valid-PUT-no-R1R2-normal-or-unknown"
+    for test in valid_put_tests(result):
+        if {"R1", "R2"} & set(test.get("oracle_classes") or []):
+            return "valid-PUT-with-R1R2"
+    return "valid-PUT-no-R1R2"
 
 
-def _load_latest(path: Path) -> tuple[dict[str, dict[str, Any]], int, int]:
-    latest: dict[str, dict[str, Any]] = {}
-    bad_lines = 0
-    lines = 0
-    if not path.exists():
-        return latest, lines, bad_lines
-    for line in path.read_text(errors="replace").splitlines():
-        if not line.strip():
-            continue
-        lines += 1
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            bad_lines += 1
-            continue
-        key = row.get("key")
-        if key:
-            latest[str(key)] = row
-    return latest, lines, bad_lines
+def _put_json_for_test(test: dict) -> dict:
+    path = test.get("put_json")
+    if not path:
+        return {}
+    return _load_json(Path(path))
 
 
-def _sum_float(row: dict[str, Any], *keys: str) -> float:
-    total = 0.0
-    for key in keys:
-        try:
-            total += float(row.get(key) or 0.0)
-        except (TypeError, ValueError):
-            pass
-    return total
+def _text_blob(items) -> str:
+    if not items:
+        return ""
+    if isinstance(items, str):
+        return items
+    return "\n".join(str(item) for item in items)
 
 
-def _time_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    generation = [_sum_float(row, "generation_wall_s") for row in rows]
-    stage2 = [_sum_float(row, "stage2_wall_s") for row in rows]
-    stage4_gen = [_sum_float(row, "stage4_generation_wall_s") for row in rows]
-    replay = [_sum_float(row, "foundry_replay_wall_s") for row in rows]
+def classify_no_valid(result: dict) -> str:
+    row = result.get("row", {})
+    cert = result.get("certification", {})
+    buckets = Counter(cert.get("bucket_counts") or row.get("cert_bucket_counts") or {})
+    reason = row.get("early_stop_reason") or ""
+    if cert.get("oom_units") or row.get("cert_oom_units"):
+        return "oom"
+    if "no output after" in reason:
+        return "stage2-no-output-timeout"
+    if "no Stage-2 candidate" in reason:
+        return "stage2-no-candidate-early-stop"
+    if buckets:
+        return "cert-" + buckets.most_common(1)[0][0].lower()
+    return row.get("completion_status") or "no-valid-unknown"
 
-    def block(values: list[float]) -> dict[str, float]:
-        nonzero = [value for value in values if value > 0]
-        if not nonzero:
-            return {"sum_s": 0.0, "mean_s": 0.0, "median_s": 0.0}
-        return {
-            "sum_s": round(sum(nonzero), 3),
-            "mean_s": round(statistics.mean(nonzero), 3),
-            "median_s": round(statistics.median(nonzero), 3),
+
+def classify_valid_no_put(result: dict) -> str:
+    sources = Counter()
+    notes = []
+    for test in result.get("put", {}).get("valid_tests") or []:
+        if test.get("kind") == "concrete":
+            sources[test.get("stage2_source") or "concrete-unknown"] += 1
+        put_json = _put_json_for_test(test)
+        notes.extend(put_json.get("notes") or [])
+    blob = _text_blob(notes)
+    if "NOT PARAMETERIZED" in blob:
+        return "not-parameterized-no-wide-rendered-coordinate"
+    if "cannot be synthesized as a full-domain fuzz input" in blob:
+        return "unsupported-calldata-type"
+    if sources:
+        return sources.most_common(1)[0][0]
+    return "valid-no-PUT-unknown"
+
+
+def classify_no_r1r2(result: dict) -> str:
+    causes = Counter()
+    for test in valid_put_tests(result):
+        put_json = _put_json_for_test(test)
+        stats = put_json.get("stats") or {}
+        notes = _text_blob(put_json.get("notes") or [])
+        skipped = _text_blob(stats.get("oracle_skipped") or [])
+        if stats.get("rollback_exit") or "ROLLBACK revert" in skipped:
+            causes["rollback-unobservable"] += 1
+        elif stats.get("exit_kind") == "revert" or "path exits through a revert" in skipped:
+            causes["revert-unobservable"] += 1
+        elif "mapping or dynamic array" in notes or "mapping or dynamic array" in skipped:
+            causes["mapping-dynarray-unrendered"] += 1
+        elif "NOT ONE candidate assertion could be formed" in notes:
+            causes["no-candidate-assertion"] += 1
+        else:
+            causes["normal-r0-only-other"] += 1
+    if not causes:
+        return "missing-valid-put-json"
+    return causes.most_common(1)[0][0]
+
+
+def classify(result: dict, bucket: str) -> str:
+    if bucket == "no-valid":
+        return classify_no_valid(result)
+    if bucket == "valid-no-PUT":
+        return classify_valid_no_put(result)
+    if bucket == "valid-PUT-no-R1R2":
+        return classify_no_r1r2(result)
+    return "strong-enough"
+
+
+def _artifact_totals(result: dict) -> dict:
+    put = result.get("put", {})
+    return {
+        "raw": put.get("raw", 0),
+        "valid": put.get("valid", 0),
+        "put_raw": put.get("put_raw", 0),
+        "put_valid": put.get("put_valid", 0),
+        "concrete_raw": put.get("concrete_raw", 0),
+        "concrete_valid": put.get("concrete_valid", 0),
+    }
+
+
+def _float_or_zero(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _time_block(rows: list[dict], key: str) -> dict:
+    values = [_float_or_zero(row.get(key)) for row in rows]
+    nonzero = [value for value in values if value > 0]
+    if not nonzero:
+        return {"sum_s": 0.0, "mean_s": 0.0, "median_s": 0.0}
+    return {
+        "sum_s": round(sum(nonzero), 3),
+        "mean_s": round(statistics.mean(nonzero), 3),
+        "median_s": round(statistics.median(nonzero), 3),
+    }
+
+
+def _time_stats(rows: list[dict]) -> dict:
+    return {
+        "wall_total": _time_block(rows, "wall_total_s"),
+        "stage2": _time_block(rows, "stage2_wall_s"),
+        "stage4": _time_block(rows, "stage4_wall_s"),
+        "foundry_replay_outside_timeout": _time_block(rows, "foundry_replay_wall_s"),
+    }
+
+
+def triage_rows(result_root: Path, datasets: list[str]) -> list[dict]:
+    rows = []
+    for dataset, subject_id, path in latest_result_paths(result_root, datasets):
+        result = _load_json(path)
+        bucket = quality_bucket(result)
+        row = result.get("row", {})
+        cert = result.get("certification", {})
+        rows.append({
+            "dataset": dataset,
+            "subject_id": subject_id,
+            "contract": row.get("contract") or result.get("subject", {}).get("contract"),
+            "quality_bucket": bucket,
+            "triage_cause": classify(result, bucket),
+            "completion_status": row.get("completion_status"),
+            "early_stop_reason": row.get("early_stop_reason"),
+            "cert_bucket_counts": cert.get("bucket_counts") or row.get("cert_bucket_counts") or {},
+            "cert_exit_counts": cert.get("exit_counts") or row.get("cert_exit_counts") or {},
+            "result_json": str(path),
+            "wall_total_s": row.get("wall_total_s") or row.get("wall"),
+            "stage2_wall_s": row.get("stage2_wall_s"),
+            "stage4_wall_s": row.get("stage4_wall_s"),
+            "foundry_replay_wall_s": row.get("foundry_replay_wall_s"),
+            "maxrss_mb": row.get("maxrss_mb"),
+            **_artifact_totals(result),
+        })
+    return rows
+
+
+def build_doc(result_root: Path, datasets: list[str]) -> dict:
+    rows = triage_rows(result_root, datasets)
+    by_dataset: dict[str, dict] = {}
+    for dataset in datasets:
+        ds_rows = [row for row in rows if row["dataset"] == dataset]
+        by_dataset[dataset] = {
+            "rows": len(ds_rows),
+            "quality_bucket": dict(Counter(row["quality_bucket"] for row in ds_rows)),
+            "triage_cause": dict(Counter(row["triage_cause"] for row in ds_rows)),
+            "artifact_totals": {
+                key: sum(row.get(key, 0) or 0 for row in ds_rows)
+                for key in ("raw", "valid", "put_raw", "put_valid",
+                            "concrete_raw", "concrete_valid")
+            },
+            "time_stats": _time_stats(ds_rows),
+            "maxrss_mb": {
+                "max": max((_float_or_zero(row.get("maxrss_mb"))
+                            for row in ds_rows), default=0.0),
+            },
         }
-
     return {
-        "generation": block(generation),
-        "stage2": block(stage2),
-        "stage4_generation": block(stage4_gen),
-        "foundry_replay_outside_timeout": block(replay),
+        "schema": "veriput-rq1-triage/v1",
+        "generated_at": _utc_now(),
+        "result_root": str(result_root),
+        "datasets": datasets,
+        "summary": by_dataset,
+        "rows": rows,
     }
 
 
-def _example(row: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "subject_id": row.get("subject_id"),
-        "status": row.get("status"),
-        "completion_status": row.get("completion_status"),
-        "reason": row.get("reason"),
-        "valid": _valid_count(row),
-        "put_valid": _kind_valid(row, "put"),
-        "concrete_valid": _kind_valid(row, "concrete"),
-        "valid_put_classes": dict(_valid_put_classes(row)),
-        "valid_put_combos": dict(_valid_put_combo_counts(row)),
-        "generation_wall_s": row.get("generation_wall_s"),
-        "stage2_wall_s": row.get("stage2_wall_s"),
-        "stage4_generation_wall_s": row.get("stage4_generation_wall_s"),
+def queue_order(row: dict) -> tuple[int, str, str, str]:
+    unobservable = row["triage_cause"] in {
+        "rollback-unobservable",
+        "revert-unobservable",
     }
-
-
-def summarize_dataset(root: Path, dataset: str,
-                      sample_limit: int) -> dict[str, Any]:
-    journal = root / dataset / "results.jsonl"
-    latest, lines, bad_lines = _load_latest(journal)
-    rows = list(latest.values())
-    buckets = Counter(_bucket(row) for row in rows)
-    status_counts = Counter(str(row.get("status") or "<missing>") for row in rows)
-    completion_counts = Counter(
-        str(row.get("completion_status") or "<missing>") for row in rows)
-    reason_counts = Counter(
-        str(row.get("reason") or "<none>") for row in rows if _bucket(row) == "no-valid")
-    no_put_sources = Counter()
-    valid_put_classes: Counter[str] = Counter()
-    valid_put_combos: Counter[str] = Counter()
-    no_r1r2_exit_shapes: Counter[str] = Counter()
-    no_r1r2_detail_shapes: Counter[str] = Counter()
-    no_r1r2_detail_subjects: Counter[str] = Counter()
-    strength_issue_counts: Counter[str] = Counter()
-    artifact = Counter()
-    examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
-
-    for row in rows:
-        bucket = _bucket(row)
-        artifact["raw"] += _count_int(row, "raw")
-        artifact["valid"] += _valid_count(row)
-        artifact["put_raw"] += _count_int(row, "put_raw")
-        artifact["put_valid"] += _kind_valid(row, "put")
-        artifact["concrete_raw"] += _count_int(row, "concrete_raw")
-        artifact["concrete_valid"] += _kind_valid(row, "concrete")
-        valid_put_classes.update(_valid_put_classes(row))
-        valid_put_combos.update(_valid_put_combo_counts(row))
-        if bucket.startswith("valid-PUT-no-R1R2"):
-            no_r1r2_exit_shapes[_valid_put_no_r1r2_exit_shape(row)] += 1
-            no_r1r2_detail_subjects[_no_r1r2_subject_detail_shape(row)] += 1
-            for test in _valid_tests(row):
-                if test.get("kind") != "put":
-                    continue
-                labels = set(str(v) for v in (test.get("oracle_classes") or []))
-                if "R1" in labels or "R2" in labels:
-                    continue
-                no_r1r2_detail_shapes[_no_r1r2_artifact_shape(test)] += 1
-        if bucket == "valid-no-PUT":
-            for test in _valid_tests(row):
-                no_put_sources[str(test.get("stage2_source") or "<missing>")] += 1
-        for tag, count in _strength_issue_tags(row, bucket).items():
-            strength_issue_counts[f"{bucket}:{tag}"] += count
-        if len(examples[bucket]) < sample_limit:
-            examples[bucket].append(_example(row))
-
-    put_ratio = 0.0
-    if artifact["valid"]:
-        put_ratio = artifact["put_valid"] / artifact["valid"]
-    valid_subjects = len(rows) - buckets["no-valid"]
-    valid_subject_put_ratio = 0.0
-    if valid_subjects:
-        valid_subject_put_ratio = (
-            valid_subjects - buckets["valid-no-PUT"]) / valid_subjects
-    nonrollback_no_r1r2 = sum(
-        count for shape, count in no_r1r2_detail_subjects.items()
-        if shape not in ("rollback", "none"))
-    backlog = {
-        "no_valid": buckets["no-valid"],
-        "valid_no_put": buckets["valid-no-PUT"],
-        "valid_put_no_r1r2_actionable": nonrollback_no_r1r2,
-        "valid_put_no_r1r2_formula_actionable": (
-            no_r1r2_detail_subjects["normal-return-varies"]),
-        "valid_put_no_r1r2_candidate_surface_gap": (
-            no_r1r2_detail_subjects["normal-no-ladder-candidate"]),
-        "valid_put_no_r1r2_exit_only_unknown": (
-            no_r1r2_detail_subjects["normal-exit-only"] +
-            no_r1r2_detail_subjects["normal-unknown"]),
-        "valid_put_no_r1r2_rollback_accounting_only": (
-            buckets["valid-PUT-no-R1R2-rollback"]),
-    }
-
-    return {
-        "dataset": dataset,
-        "journal": str(journal),
-        "journal_lines": lines,
-        "bad_jsonl_lines": bad_lines,
-        "subjects": len(rows),
-        "subject_buckets": dict(sorted(buckets.items())),
-        "artifact_totals": dict(sorted(artifact.items())),
-        "artifact_put_valid_ratio": round(put_ratio, 4),
-        "valid_subject_any_put_ratio": round(valid_subject_put_ratio, 4),
-        "methodology_backlog": backlog,
-        "valid_put_oracle_class_counts": dict(sorted(valid_put_classes.items())),
-        "valid_put_oracle_combo_counts": dict(sorted(valid_put_combos.items())),
-        "valid_put_no_r1r2_exit_shapes": dict(sorted(no_r1r2_exit_shapes.items())),
-        "valid_put_no_r1r2_detail_shapes": dict(
-            sorted(no_r1r2_detail_shapes.items())),
-        "valid_put_no_r1r2_detail_subjects": dict(
-            sorted(no_r1r2_detail_subjects.items())),
-        "valid_no_put_stage2_sources": dict(sorted(no_put_sources.items())),
-        "strength_issue_counts": dict(sorted(strength_issue_counts.items())),
-        "status_counts": dict(sorted(status_counts.items())),
-        "completion_status_counts": dict(sorted(completion_counts.items())),
-        "no_valid_reason_counts": dict(reason_counts.most_common(20)),
-        "time_stats": _time_stats(rows),
-        "examples": dict(examples),
-    }
-
-
-def _print_human(summary: dict[str, Any]) -> None:
-    print(f"## {summary['dataset']}")
-    print(f"journal: {summary['journal']}")
-    print(
-        f"subjects: {summary['subjects']} "
-        f"(jsonl lines={summary['journal_lines']}, bad={summary['bad_jsonl_lines']})")
-    print("subject buckets:")
-    for key, value in summary["subject_buckets"].items():
-        print(f"  {key}: {value}")
-    totals = summary["artifact_totals"]
-    print("artifact totals:")
-    for key in ("raw", "valid", "put_raw", "put_valid",
-                "concrete_raw", "concrete_valid"):
-        print(f"  {key}: {totals.get(key, 0)}")
-    print(f"artifact PUT/valid ratio: {summary['artifact_put_valid_ratio']:.3f}")
-    print(
-        "valid-subject any-PUT ratio: "
-        f"{summary['valid_subject_any_put_ratio']:.3f}")
-    print("methodology backlog:")
-    for key, value in summary["methodology_backlog"].items():
-        print(f"  {key}: {value}")
-    print("valid PUT oracle classes:")
-    for key, value in summary["valid_put_oracle_class_counts"].items():
-        print(f"  {key}: {value}")
-    print("valid PUT oracle combos:")
-    for key, value in summary["valid_put_oracle_combo_counts"].items():
-        print(f"  {key}: {value}")
-    if summary["valid_put_no_r1r2_exit_shapes"]:
-        print("valid PUT no-R1/R2 exit shapes:")
-        for key, value in summary["valid_put_no_r1r2_exit_shapes"].items():
-            print(f"  {key}: {value}")
-    if summary["valid_put_no_r1r2_detail_shapes"]:
-        print("valid PUT no-R1/R2 detail shapes:")
-        for key, value in summary["valid_put_no_r1r2_detail_shapes"].items():
-            print(f"  {key}: {value}")
-    if summary["valid_put_no_r1r2_detail_subjects"]:
-        print("valid PUT no-R1/R2 detail subjects:")
-        for key, value in summary["valid_put_no_r1r2_detail_subjects"].items():
-            print(f"  {key}: {value}")
-    if summary["valid_no_put_stage2_sources"]:
-        print("valid-no-PUT stage2 sources:")
-        for key, value in summary["valid_no_put_stage2_sources"].items():
-            print(f"  {key}: {value}")
-    if summary["strength_issue_counts"]:
-        print("strength issue counts:")
-        for key, value in summary["strength_issue_counts"].items():
-            print(f"  {key}: {value}")
-    print("time stats:")
-    for key, value in summary["time_stats"].items():
-        print(
-            f"  {key}: sum={value['sum_s']}s "
-            f"mean={value['mean_s']}s median={value['median_s']}s")
-    for bucket in (
-            "no-valid",
-            "valid-no-PUT",
-            "valid-PUT-no-R1R2-normal-or-unknown",
-            "valid-PUT-no-R1R2-rollback",
-            "valid-PUT-with-R1-no-R2",
-    ):
-        rows = summary.get("examples", {}).get(bucket) or []
-        if not rows:
-            continue
-        print(f"examples: {bucket}")
-        for row in rows:
-            subject = row.get("subject_id")
-            valid = row.get("valid")
-            put = row.get("put_valid")
-            concrete = row.get("concrete_valid")
-            classes = row.get("valid_put_classes")
-            status = row.get("status")
-            reason = row.get("reason")
-            print(
-                f"  {subject}: valid={valid} put={put} concrete={concrete} "
-                f"classes={classes} status={status} reason={reason}")
-    print()
-
-
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--result-root", default=str(DEFAULT_RESULT_ROOT))
-    ap.add_argument("--benchmark", choices=("all",) + DATASETS, default="all")
-    ap.add_argument("--json", action="store_true",
-                    help="print machine-readable JSON instead of text")
-    ap.add_argument("--sample-limit", type=int, default=8)
-    args = ap.parse_args(argv)
-
-    root = Path(args.result_root).expanduser().resolve()
-    datasets = DATASETS if args.benchmark == "all" else (args.benchmark,)
-    summaries = [
-        summarize_dataset(root, dataset, max(0, args.sample_limit))
-        for dataset in datasets
-    ]
-    if args.json:
-        print(json.dumps({"datasets": summaries}, indent=2, sort_keys=True))
+    if row["quality_bucket"] == "valid-PUT-no-R1R2" and not unobservable:
+        bucket_rank = 0
+    elif row["quality_bucket"] == "valid-no-PUT":
+        bucket_rank = 1
+    elif row["quality_bucket"] == "no-valid":
+        bucket_rank = 2
+    elif row["quality_bucket"] == "valid-PUT-no-R1R2":
+        bucket_rank = 3
+    elif row["quality_bucket"] == "valid-PUT-with-R1R2":
+        bucket_rank = 4
     else:
-        for summary in summaries:
-            _print_human(summary)
+        bucket_rank = 9
+    cause_rank = {
+        "normal-r0-only-other": 0,
+        "mapping-dynarray-unrendered": 1,
+        "not-parameterized-no-wide-rendered-coordinate": 2,
+        "unsupported-calldata-type": 3,
+        "cert-no-coordinate": 4,
+        "cert-no-witness-unknown": 5,
+        "stage2-no-output-timeout": 6,
+        "rollback-unobservable": 8,
+        "revert-unobservable": 8,
+    }.get(row["triage_cause"], 7)
+    dataset_rank = {
+        "real203": 0,
+        "bugfix124": 1,
+        "peer182": 2,
+    }.get(row["dataset"], 9)
+    return (bucket_rank, cause_rank, dataset_rank, row["subject_id"])
+
+
+def markdown(doc: dict, limit: int) -> str:
+    lines = [
+        "# VeriPUT RQ1 Triage",
+        "",
+        f"Generated: `{doc['generated_at']}`",
+        f"Result root: `{doc['result_root']}`",
+        "",
+        "## Summary",
+        "",
+    ]
+    for dataset, summary in doc["summary"].items():
+        lines.append(f"### {dataset}")
+        lines.append("")
+        lines.append(f"- subjects: {summary['rows']}")
+        lines.append(f"- quality_bucket: `{json.dumps(summary['quality_bucket'], sort_keys=True)}`")
+        lines.append(f"- triage_cause: `{json.dumps(summary['triage_cause'], sort_keys=True)}`")
+        lines.append(f"- artifacts: `{json.dumps(summary['artifact_totals'], sort_keys=True)}`")
+        lines.append(f"- time_stats: `{json.dumps(summary['time_stats'], sort_keys=True)}`")
+        lines.append(f"- maxrss_mb: `{json.dumps(summary['maxrss_mb'], sort_keys=True)}`")
+        lines.append("")
+    queue = [
+        row for row in doc["rows"]
+        if row["quality_bucket"] != "valid-PUT-with-R1R2"
+    ]
+    queue.sort(key=queue_order)
+    lines += ["## Action Queue", ""]
+    for row in queue[:limit]:
+        lines.append(
+            f"- `{row['dataset']}` `{row['subject_id']}` "
+            f"{row['quality_bucket']} / {row['triage_cause']} "
+            f"(valid={row['valid']}, put_valid={row['put_valid']}, "
+            f"concrete_valid={row['concrete_valid']})")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
+    parser.add_argument("--benchmark", choices=("all",) + DEFAULT_DATASETS,
+                        default=None,
+                        help="Compatibility alias for old triage invocations.")
+    parser.add_argument("--dataset", action="append", choices=DEFAULT_DATASETS,
+                        help="Dataset to include; repeatable. Defaults to all.")
+    parser.add_argument("--json", action="store_true",
+                        help="Compatibility mode: print JSON to stdout.")
+    parser.add_argument("--json-out", type=Path)
+    parser.add_argument("--markdown-out", type=Path)
+    parser.add_argument("--limit", type=int, default=80,
+                        help="Number of queue rows to print in markdown/stdout.")
+    parser.add_argument("--sample-limit", type=int,
+                        help="Compatibility alias for --limit.")
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+    if args.benchmark and args.benchmark != "all":
+        datasets = [args.benchmark]
+    elif args.benchmark == "all":
+        datasets = list(DEFAULT_DATASETS)
+    else:
+        datasets = args.dataset or list(DEFAULT_DATASETS)
+    limit = args.sample_limit if args.sample_limit is not None else args.limit
+    doc = build_doc(args.result_root, datasets)
+    if args.json_out:
+        args.json_out.parent.mkdir(parents=True, exist_ok=True)
+        args.json_out.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+    if args.json:
+        print(json.dumps(doc, indent=2, sort_keys=True))
+        return 0
+    text = markdown(doc, limit)
+    if args.markdown_out:
+        args.markdown_out.parent.mkdir(parents=True, exist_ok=True)
+        args.markdown_out.write_text(text)
+    print(text)
     return 0
 
 

@@ -20501,3 +20501,56 @@ Update after strength-bucket tracking and the setup replay argument fix:
   (261/261);
   `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
   `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/VeriPUT_handoff_memory.md`.
+
+Update after latest RQ1 strength triage tooling:
+
+- `notes/coverage/scripts/rq1_veriput_triage.py` was changed from
+  journal-only summarization to scanning the current
+  `Results/RQ1/VeriPUT/<dataset>/subjects/*/result.json` tree.  It collapses
+  `.redo.<ts>.<pid>` directories to the base subject id and selects the newest
+  result file, so the triage queue follows the actual artifact state after
+  targeted redos.  Compatibility CLI options are preserved:
+  `--benchmark all|bugfix124|real203|peer182`, `--json`, and
+  `--sample-limit`.
+- The triage report now explicitly classifies:
+  `no-valid`, `valid-no-PUT`, `valid-PUT-no-R1R2`,
+  `valid-PUT-with-R1R2`; for weak buckets it adds `triage_cause` such as
+  `mapping-dynarray-unrendered`, `not-parameterized-no-wide-rendered-coordinate`,
+  `timeout_concrete_fallback`, `cleared_not_certified_fallback`,
+  `cert-no-coordinate`, `stage2-no-output-timeout`, and
+  `rollback-unobservable`.
+- Action queue ordering is methodology-aware: normal/returning
+  `valid-PUT-no-R1R2` comes first, then `valid-no-PUT`, then `no-valid`; rollback
+  or revert no-R1/R2 is pushed behind those because R1/R2 post-state/return
+  oracles are unobservable on chain.  Old broad peer results are retained in
+  summaries but do not dominate the focused queue; formal peer reruns remain
+  scoped to contract080 per user instruction.
+- Current focused report (bugfix124 + real203, excluding old broad peer queue)
+  was written to:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/triage/latest_focus.json`
+  and
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/triage/latest_focus.md`.
+  Current counts:
+  bugfix124 = 53 no-valid, 9 valid-no-PUT, 24 valid-PUT-no-R1/R2, 38 strong;
+  real203 = 175 no-valid, 5 valid-no-PUT, 8 valid-PUT-no-R1/R2, 15 strong.
+- The focused action queue begins with:
+  `real203/ensdomains__ens-contracts__StandaloneReverseRegistrar`
+  (`valid-PUT-no-R1R2`, `mapping-dynarray-unrendered`) followed by
+  valid-no-PUT cases:
+  `acfix_021_CVE_2018_19832`,
+  `acfix_3_5_088_EmergencyOracleFactory`,
+  `ERC-3643__ERC-3643__Token`,
+  `FeeBurnerAuthentication`,
+  `HyperEVMRateProvider`,
+  `CometWithExtendedAssetList`,
+  `ShuffledGatewayProvider`,
+  and several bugfix POP contracts.  The StandaloneReverseRegistrar blocker is
+  `mapping(address => string)` returning a dynamic string, not the already
+  supported scalar mapping getter case, so treat it cautiously rather than
+  patching blindly.
+- Verification for the triage tooling:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_triage.py scripts/test_rq1_veriput_triage.py`;
+  `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_triage.py`;
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only notes/coverage/scripts/rq1_veriput_triage.py scripts/test_rq1_veriput_triage.py`;
+  `PYTHONDONTWRITEBYTECODE=1 python3 notes/coverage/scripts/rq1_veriput_triage.py --benchmark bugfix124 --sample-limit 3 --json`;
+  focused triage generation command above.
