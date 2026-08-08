@@ -10870,6 +10870,11 @@ def main():
     ap.add_argument("--fuzz-r2-prefilter-timeout", type=int, default=300,
                     dest="fuzz_r2_prefilter_timeout",
                     help="hard timeout in seconds for the single R2 Forge run")
+    ap.add_argument("--min-r2-esbmc-budget", type=int, default=30,
+                    help="minimum seconds to reserve for the verifier-backed "
+                         "R2 ESBMC proof after the refutation-only Forge "
+                         "prefilter. If the remaining PUT budget cannot cover "
+                         "both, the Forge prefilter is shortened or skipped")
     ap.add_argument("--derived-by", default="{}", metavar="JSON",
                     help="the stage-2 switches this region was derived under, "
                          "as a JSON object, printed on the emitted test. The "
@@ -10937,10 +10942,12 @@ def main():
         fixture_from_esbmc_args(a.esbmc_arg))
     if (a.r2_term_budget <= 0 or a.r2_candidate_budget <= 0
             or a.fuzz_runs <= 0 or a.fuzz_r2_prefilter_timeout <= 0
-            or a.fuzz_r2_candidate_budget <= 0):
+            or a.fuzz_r2_candidate_budget <= 0
+            or a.min_r2_esbmc_budget <= 0):
         print("[put] REFUSED: R2 term/candidate budgets, --fuzz-runs, "
               "--fuzz-r2-candidate-budget and "
-              "--fuzz-r2-prefilter-timeout must all be positive")
+              "--fuzz-r2-prefilter-timeout and --min-r2-esbmc-budget must "
+              "all be positive")
         return 1
     if a.fuzz_r2_prefilter and not a.propose_r2:
         print("[put] REFUSED: --fuzz-r2-prefilter needs --propose-r2; there "
@@ -11703,22 +11710,50 @@ def main():
                         a.fuzz_runs))
                     print(f"[put]   Forge R2 prefilter NOT RUN: {reason}")
             elif a.fuzz_r2_prefilter:
-                _fuzz_verdicts, r2_fuzz_prefilter = run_forge_r2_prefilter(
-                    a.forge_project, a.workdir, emitted, case, a.contract,
-                    a.unit, a.enc, a.depth, pf, region, holes, pins, params,
-                    layout, maps, _r2, r2_term_lookup,
-                    (cell_name, cell_rule), json.loads(a.derived_by or "{}"),
-                    a.fuzz_r2_prefilter_timeout, a.fuzz_runs,
-                    a.fuzz_r2_candidate_budget, foundry_fixture,
-                    constructor_mocks, runtime_mocks,
-                    json.loads(a.establish or "[]"),
-                    unit_payable=(unit_mutability == "payable"),
-                    state_store_names=state_store_names)
-                r2_fuzz_prefilter["enabled"] = True
-                _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
-                survivors = len(r2_candidates(_r2))
-                print(f"[put]   Forge R2 survivors sent to ESBMC: "
-                      f"{survivors}; a Forge pass was NOT counted as proof")
+                remaining_for_r2 = (
+                    put_deadline - time.monotonic() - postprocess_reserve_s
+                    - float(a.min_r2_esbmc_budget))
+                fuzz_timeout = min(
+                    a.fuzz_r2_prefilter_timeout,
+                    max(0, int(remaining_for_r2)))
+                if fuzz_timeout <= 0:
+                    r2_fuzz_prefilter.update(skipped_forge_r2_evidence(
+                        _r2, a.fuzz_r2_candidate_budget,
+                        "skipped to reserve ESBMC R2 proof budget",
+                        a.fuzz_runs))
+                    r2_fuzz_prefilter["enabled"] = True
+                    r2_fuzz_prefilter["reserved_esbmc_budget_s"] = (
+                        a.min_r2_esbmc_budget)
+                    print("[put]   Forge R2 prefilter NOT RUN: reserving "
+                          f"{a.min_r2_esbmc_budget}s for verifier-backed "
+                          "R2 proof. Fuzz can only refute; it must not spend "
+                          "the proof budget")
+                else:
+                    if fuzz_timeout < a.fuzz_r2_prefilter_timeout:
+                        print("[put]   Forge R2 prefilter timeout shortened "
+                              f"from {a.fuzz_r2_prefilter_timeout}s to "
+                              f"{fuzz_timeout}s to reserve "
+                              f"{a.min_r2_esbmc_budget}s for ESBMC proof")
+                    _fuzz_verdicts, r2_fuzz_prefilter = run_forge_r2_prefilter(
+                        a.forge_project, a.workdir, emitted, case, a.contract,
+                        a.unit, a.enc, a.depth, pf, region, holes, pins, params,
+                        layout, maps, _r2, r2_term_lookup,
+                        (cell_name, cell_rule),
+                        json.loads(a.derived_by or "{}"),
+                        fuzz_timeout, a.fuzz_runs,
+                        a.fuzz_r2_candidate_budget, foundry_fixture,
+                        constructor_mocks, runtime_mocks,
+                        json.loads(a.establish or "[]"),
+                        unit_payable=(unit_mutability == "payable"),
+                        state_store_names=state_store_names)
+                    r2_fuzz_prefilter["enabled"] = True
+                    r2_fuzz_prefilter["reserved_esbmc_budget_s"] = (
+                        a.min_r2_esbmc_budget)
+                    _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
+                    survivors = len(r2_candidates(_r2))
+                    print(f"[put]   Forge R2 survivors sent to ESBMC: "
+                          f"{survivors}; a Forge pass was NOT counted as "
+                          "proof")
 
             def _write_r2(suffix, spec_dict):
                 p = os.path.join(assert_dir, "spec" + suffix + ".json")

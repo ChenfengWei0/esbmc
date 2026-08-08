@@ -379,6 +379,13 @@ Pushed fixes after the peer prepared fallback work:
   recording a 0.5s `certify ... error` when the inner tool refused to start for
   scheduler memory reasons. Waiting consumes the subject's 600s wall budget and
   is recorded as a separate `resource-wait` stage.
+- Pending after this note unless already committed: `solidity_path_put.py`
+  gained `--min-r2-esbmc-budget` (default 30s). R2 Forge prefilter is
+  refutation-only, so it is now shortened or skipped when it would consume the
+  verifier-backed R2 proof window. This was observed on
+  `peer_ccsolbmc__ShibaJail.setCooldownEnabled`: fuzz found a source-assignment
+  R2 candidate (`post == onoff`) and did not refute it, but the ESBMC R2 pass
+  was launched with only a 1s timeout, leaving the test as R0-only.
 
 Current aggregate snapshot before the newest runners finish:
 
