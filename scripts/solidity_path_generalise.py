@@ -69,8 +69,9 @@ from solidity_path_put import (ESTABLISHABLE_ENV_COORDS,  # noqa: E402,F401
                                STRATEGY_FLAGS_REFUSED,
                                check_esbmc_args)
 from solidity_ast_dependencies import (  # noqa: E402,F401
-    SLOT_DEPENDENCY_POLICY, path_function_declaration_id,
-    unit_mapping_slot_accesses, unit_state_dependencies)
+    SLOT_DEPENDENCY_POLICY, contract_state_esbmc_store_names,
+    path_function_declaration_id, unit_mapping_slot_accesses,
+    unit_state_dependencies)
 
 UINT256_MAX = (1 << 256) - 1
 ADDRESS_MAX = (1 << 160) - 1
@@ -2644,6 +2645,81 @@ def mapping_slot_type_ranges(maps, coords):
     return ranges
 
 
+ESBMC_MAP_BASE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+MAPPING_SOURCE_META_KEY = "__source_mapping_key"
+
+
+def map_esbmc_certifiable(base):
+    """Whether the ESBMC side can resolve this mapping base name today."""
+    return ESBMC_MAP_BASE_RE.match(base or "") is not None
+
+
+def mapping_source_key(name, spec):
+    """The solc/source key represented by a Stage-2 mapping spec."""
+    if not name:
+        return None
+    if spec and isinstance(spec[-1], dict):
+        source = spec[-1].get(MAPPING_SOURCE_META_KEY)
+        if source:
+            return source
+    return name
+
+
+def _alias_mapping_spec(spec, source_key):
+    """Attach source metadata without changing the old source-spec shape."""
+    if not spec or len(spec) < 2:
+        return spec
+    kts, vts = spec[0], spec[1]
+    tails = list(spec[2]) if len(spec) > 2 else [""]
+    leaf_types = spec[3] if len(spec) > 3 and isinstance(spec[3], dict) else {}
+    return (kts, vts, tails, dict(leaf_types),
+            {MAPPING_SOURCE_META_KEY: source_key})
+
+
+def mapping_query_key(maps, source_key):
+    """Prefer an ESBMC store-name alias for a source mapping key."""
+    if not maps or not source_key:
+        return None
+    aliases = sorted(
+        name for name, spec in maps.items()
+        if mapping_source_key(name, spec) == source_key and name != source_key)
+    if aliases:
+        return aliases[0]
+    if source_key in maps:
+        return source_key
+    return None
+
+
+def add_esbmc_mapping_aliases(maps, state_store_names):
+    """Add verifier-store aliases while keeping source specs backward-compatible."""
+    out = dict(maps or {})
+    for name, spec in list((maps or {}).items()):
+        source_base = mapping_source_key(name, spec)
+        store_base = (state_store_names or {}).get(source_base)
+        if not store_base or store_base == source_base:
+            continue
+        if not map_esbmc_certifiable(store_base):
+            continue
+        out.setdefault(store_base, _alias_mapping_spec(spec, source_base))
+    return out
+
+
+def prefer_esbmc_mapping_aliases(maps):
+    """Drop source-name rows when an ESBMC store-name alias exists."""
+    aliases_by_source = {}
+    for name, spec in (maps or {}).items():
+        source = mapping_source_key(name, spec)
+        if source and name != source:
+            aliases_by_source.setdefault(source, []).append(name)
+    preferred = {}
+    for name, spec in (maps or {}).items():
+        source = mapping_source_key(name, spec)
+        if source and name == source and source in aliases_by_source:
+            continue
+        preferred[name] = spec
+    return preferred
+
+
 def unit_params(ast_path, contract, unit, declaration_id=None):
     """This unit's parameters, as [(name, typeString)] in declaration order.
 
@@ -2745,21 +2821,23 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
                 cand.append(coord)
 
     def source_spec(name):
-        if name in maps:
-            return name, maps[name], None
+        query_name = mapping_query_key(maps, name)
+        if query_name is not None:
+            return query_name, maps[query_name], None
         base, dot, tail = name.partition(".")
-        if not dot or base not in maps:
+        query_base = mapping_query_key(maps, base)
+        if not dot or query_base is None:
             return None, None, None
-        kts, tails = spec_parts(maps[base])
+        kts, tails = spec_parts(maps[query_base])
         wanted = "." + tail
         if wanted not in tails:
-            return base, None, wanted
-        spec = list(maps[base])
+            return query_base, None, wanted
+        spec = list(maps[query_base])
         if len(spec) > 2:
             spec[2] = [wanted]
         else:
             spec.extend(["", [wanted]][len(spec) - 1:])
-        return base, tuple(spec), wanted
+        return query_base, tuple(spec), wanted
 
     def accept_source_slot(name, keys):
         source_base, spec, wanted_tail = source_spec(name)
@@ -2788,8 +2866,9 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
     else:
         map_order = []
         for name in dependencies:
-            if name in maps and name not in map_order:
-                map_order.append(name)
+            query_name = mapping_query_key(maps, name)
+            if query_name is not None and query_name not in map_order:
+                map_order.append(query_name)
         for name in sorted(set(maps) - set(map_order)):
             skipped.append(
                 f"state.{name}[...] (excluded by {SLOT_DEPENDENCY_POLICY}: "
@@ -2923,6 +3002,18 @@ def unsettable_coords(coords, mutability):
         if mu in ("immutable", "constant"):
             out[c] = mu
     return out
+
+
+def certification_query_pins(pins):
+    """Pins that must constrain Stage-2 certification queries.
+
+    Immutable/constant state values are not runtime coordinates a generated
+    Foundry PUT can fuzz, but once the path harvest observed them they are still
+    facts about the deployed contract slice being certified. Omitting them from
+    the ESBMC query lets the solver refute a candidate region with states no
+    deployment can produce.
+    """
+    return {n: v for n, v in sorted((pins or {}).items())}
 
 
 def geometric_values(limit, lo=0):
@@ -4862,7 +4953,7 @@ def refutation_response(box, holes, ce, wit, pins, ranges=None,
         return "no-payload", None
     if not usable:
         return ("untrusted", untrusted) if untrusted else ("coords-gate", None)
-    best, retreat = None, {}
+    best, best_removed, retreat = None, None, {}
     for name, pv, wv in usable:
         if name in pins or name not in box:
             # Not part of the region's own description: a pin is what the
@@ -4895,7 +4986,8 @@ def refutation_response(box, holes, ce, wit, pins, ranges=None,
             retreat[name] = pv
             continue
         removed = before - after
-        if best is None or removed < best[0]:
+        if best_removed is None or removed < best_removed:
+            best_removed = removed
             best = (removed, name, nlo, nhi)
     if best is not None:
         return "cut", (best[1], best[2], best[3], best[0])
@@ -6646,14 +6738,14 @@ def main():
                 "never declared; no generated test can set one, so offering it "
                 "as a coordinate is the same defect as offering an immutable")
 
-    nonquery_pins = set()
+    unsettable_query_pins = set()
     unsettable = unsettable_coords(coords, state_mutability(args.ast))
     if unsettable:
         for c in sorted(unsettable):
             v = next((ce[c] for _, _, ce in paths if c in ce), None)
             if v is not None:
                 pins.setdefault(c, v)
-                nonquery_pins.add(c)
+                unsettable_query_pins.add(c)
         coords = [c for c in coords if c not in unsettable]
         print("[coords] NOT SETTABLE by any generated test, pinned at the "
               "counterexample value instead of generalised: "
@@ -6662,13 +6754,14 @@ def main():
               + ". An immutable is fixed at construction and a constant is in "
                 "the code; neither is an input, so generalising over one asks "
                 "the verifier about inputs no test can produce")
-        if nonquery_pins:
-            print("[coords] ESBMC query pins OMIT immutable/constant "
-                  "coordinate(s): " + ", ".join(sorted(nonquery_pins))
-                  + ". They remain semantic pins in the reported slice, but "
-                    "are not runtime coordinates the verifier must resolve; "
-                    "proving without those assumptions is stronger than "
-                    "proving with them")
+        if unsettable_query_pins:
+            print("[coords] ESBMC query pins INCLUDE immutable/constant "
+                  "coordinate(s): "
+                  + ", ".join(sorted(unsettable_query_pins))
+                  + ". They are not runtime fuzz coordinates, but they are "
+                    "facts about this deployed-contract slice; omitting them "
+                    "would let the verifier refute the region with an "
+                    "impossible constructor/bytecode state")
     elif args.ast:
         print("[coords] every state coordinate is a MUTABLE state variable "
               "(checked against the AST), so none was excluded")
@@ -6762,6 +6855,19 @@ def main():
     static_slot_type_ranges = {}
     if args.slot_coords or args.slot_coord:
         maps, map_refused = mapping_state_vars(args.ast, args.contract)
+        state_store_names, state_store_evidence = \
+            contract_state_esbmc_store_names(args.ast, args.contract)
+        for evidence in state_store_evidence:
+            print(f"[coords] {evidence}")
+        maps = add_esbmc_mapping_aliases(maps, state_store_names)
+        alias_pairs = sorted(
+            (mapping_source_key(name, spec), name)
+            for name, spec in maps.items()
+            if mapping_source_key(name, spec) != name)
+        if alias_pairs:
+            print("[coords] ESBMC mapping store aliases: " + ", ".join(
+                f"{src} -> {dst}" for src, dst in alias_pairs))
+        maps = prefer_esbmc_mapping_aliases(maps)
         declaration_id = path_function_declaration_id(args.path_function)
         if args.path_function and declaration_id is None:
             raise SystemExit(
@@ -7001,7 +7107,8 @@ def main():
         coords=list(coords),
         coord_count=len(coords),
         pins={n: str(v) for n, v in sorted(pins.items())},
-        nonquery_pins=sorted(nonquery_pins),
+        nonquery_pins=[],
+        unsettable_query_pins=sorted(unsettable_query_pins),
     )
     declaration_id = path_function_declaration_id(args.path_function) \
         if args.path_function else None
@@ -7012,7 +7119,7 @@ def main():
         structural_seed_retreats, structural_seed_establishes = {}, {}, {}, {}, {}
 
     def query_pins():
-        return {n: v for n, v in pins.items() if n not in nonquery_pins}
+        return certification_query_pins(pins)
 
     pre_failed = {}
     if args.static_extcall_inseparable:
@@ -7547,6 +7654,10 @@ def main():
     # simple product constraint over rendered coordinates and pins, the region
     # is the decision tree itself and certification can be structural.
     structural_region_source = {}
+    structural_holes = {}
+    structural_reasons = {}
+    structural_region_retreats = {}
+    structural_region_establishes = {}
     if not paths:
         structural_regions = {}
     elif (structural_seed_regions and

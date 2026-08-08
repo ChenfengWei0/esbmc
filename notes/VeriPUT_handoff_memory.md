@@ -21217,3 +21217,46 @@ Update after the unsupported-concrete no-op accounting fix:
   semantic-ceiling `peer182/loop_basic`.  Also inspect
   `bugfix124/acfix_021_CVE_2018_19832`, which has R1/R2 assertions but no
   fuzz width.
+
+Update after Stage-2 certification-region fixes:
+
+- Two generic fixes landed in `scripts/solidity_path_generalise.py`.
+  First, immutable/constant state coordinates removed from the FREE set are
+  still included as certification query pins via `certification_query_pins()`.
+  They cannot be fuzzed by a generated Foundry PUT, but they are facts about
+  the deployed contract slice.  Omitting them let ESBMC refute a candidate
+  region using constructor/bytecode states that no test can produce.
+- Second, Stage-2 mapping slot proposal now uses ESBMC store aliases derived
+  from the solc AST declaration id.  Source dependency/access facts still name
+  `wards`, `_balances`, etc., but the query coordinate sent to ESBMC is the
+  verifier-side store name such as `wards$5`.  This fixes auth/role-gated
+  regions where the driver proposed `state.wards[msg.sender]` and ESBMC
+  refused it because the actual payload/store coordinate was
+  `state.wards$5[...]`.
+- Pure regressions added in `scripts/test_solidity_path_generalise.py`:
+  `immutable-pin-still-constrains-certification-query`,
+  `slot-esbmc-alias-drops-source-row`,
+  `slot-esbmc-alias-preserves-source-access-name`, and
+  `slot-esbmc-alias-still-drives-type-range`.
+- Validation after the fixes:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  scripts/solidity_path_generalise.py scripts/test_solidity_path_generalise.py
+  scripts/solidity_ast_dependencies.py`,
+  `PYTHONDONTWRITEBYTECODE=1 python3
+  scripts/test_solidity_path_generalise.py`, and
+  `pylint --errors-only scripts/solidity_path_generalise.py
+  scripts/test_solidity_path_generalise.py` all pass.
+- Controlled ESBMC probe:
+  `bugfix124/pop_051_LiquidityPool.updatePrice` under
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_051_LiquidityPool.alias_probe.1786184928`
+  is now `CERTIFIED` in 39s (`1 certified / 2 not / 3 witnessed`).  The
+  previous pin-query-only probe remained `NOT-CERTIFIED`.
+  The new `driver.log` prints `ESBMC mapping store aliases: wards -> wards$5`
+  and proposes `state.wards$5[msg.sender]`; there is no longer any
+  `REFUSING coordinate 'state.wards[msg.sender]'`.
+- This is a high-leverage no-valid/no-PUT/no-R1R2 fix, not a POC overfit:
+  it addresses the generic source-name vs ESBMC-store-name mismatch for
+  mapping slots proposed from dependency/access analysis.  Next RQ1 pass should
+  prioritize rerunning cases with role/auth mappings and then regenerate PUTs
+  for newly certified regions to check R1/R2 strength and Foundry double
+  oracle validity.

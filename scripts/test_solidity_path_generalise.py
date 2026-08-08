@@ -31,6 +31,7 @@ from types import SimpleNamespace
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
+                                      UINT256_MAX,
                                       empty_coords, shrink_target, is_env,
                                       round_failure_reason, boxes_intersect,
                                       certified_overlap, divergence_text,
@@ -42,6 +43,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       round_accounting,
                                       state_mutability,
                                       unsettable_coords,
+                                      certification_query_pins,
                                       struct_fields,
                                       declared_struct_fields,
                                       lowering_artifacts,
@@ -65,6 +67,8 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       unit_mapping_slot_accesses,
                                       unit_state_dependencies,
                                       propose_slot_coords,
+                                      add_esbmc_mapping_aliases,
+                                      prefer_esbmc_mapping_aliases,
                                       bytes_static_mapping_key_from_ce,
                                       agreed_bytes_mapping_key_literals,
                                       empty_enumeration_reason,
@@ -878,6 +882,15 @@ check("unknown-state-coordinate-stays",
       unsettable_coords(["state.mystery"], MUT), {})
 check("empty-mutability-map-excludes-nothing",
       unsettable_coords(["state.FACTORY", "state.balance"], {}), {})
+
+# Once an immutable/constant has been removed from the FREE coordinate set, it
+# still constrains the deployed-contract slice being certified. Filtering it out
+# here lets ESBMC refute a region using a constructor state the generated
+# Foundry test can never produce.
+_PINS_WITH_IMMUTABLE = {"state.FACTORY": 7, "msg.value": 0}
+check("immutable-pin-still-constrains-certification-query",
+      certification_query_pins(_PINS_WITH_IMMUTABLE),
+      {"msg.value": 0, "state.FACTORY": 7})
 
 # The AST reader itself: a missing or unreadable file yields {}, which leaves
 # every coordinate in place -- the pre-existing behaviour, stated rather than
@@ -1737,6 +1750,17 @@ check("slot-a-mismatched-parameter-is-not-used",
       propose_slot_coords({"_balances": ("address", "uint256")},
                           [("amount", "uint256")], 4)[0],
       ["state._balances[msg.sender]"])
+_alias_maps = prefer_esbmc_mapping_aliases(add_esbmc_mapping_aliases(
+    {"wards": ("address", "uint256")}, {"wards": "wards$5"}))
+check("slot-esbmc-alias-drops-source-row",
+      sorted(_alias_maps), ["wards$5"])
+check("slot-esbmc-alias-preserves-source-access-name",
+      propose_slot_coords(_alias_maps, [], 4, ["wards"],
+                          [("wards", ("msg.sender",))])[0],
+      ["state.wards$5[msg.sender]"])
+check("slot-esbmc-alias-still-drives-type-range",
+      mapping_slot_type_ranges(_alias_maps, ["state.wards$5[msg.sender]"]),
+      {"state.wards$5[msg.sender]": (0, UINT256_MAX)})
 
 # ---- NESTED AND STRUCT-VALUED STORES -------------------------------------
 #
