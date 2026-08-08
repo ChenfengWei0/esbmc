@@ -21460,3 +21460,32 @@ Update after continuing the `pop_020_GSPFunding` batch:
   the dataset `results.jsonl` as same-schema last-write-wins journal rows.
   Do this with a small script or the existing RQ1 runner path; do not hand-edit
   old rows in place.
+
+Update after adopting verified probe artifacts into the official RQ1 journal:
+
+- Added `notes/coverage/scripts/rq1_veriput_adopt_probe.py`.  It does not run
+  ESBMC or Forge; it summarizes retained probe artifacts into the same
+  `veriput-rq1-result-row/v1` schema used by `rq1_veriput_run.py`, appends only
+  with `--append`, writes the per-subject `result.json`, and keeps raw/valid
+  artifact paths.  It deduplicates adopted tests by `(unit, enc)`, preferring
+  PUT over concrete and R2/R1-rich PUTs over weaker PUTs.  R0/R1/R2
+  `oracle_class_counts` remain assertion-level counts from the artifact
+  summaries, not merely test-level presence bits.
+- Official rows now appended to
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/results.jsonl`
+  for three previously concrete-only cases:
+  - `pop_020_GSPFunding`: `raw=7`, `valid=7`, `put_valid=7`,
+    `concrete_valid=0`, `quality_bucket=valid-PUT-with-R1R2`,
+    `valid_put_with_R1_or_R2=2`, `oracle_class_counts={R0:7,R1:3,R2:4}`.
+  - `pop_051_LiquidityPool`: kept old coverage while replacing the
+    `updatePrice` path with the probe PUT: `raw=13`, `valid=9`,
+    `put_valid=1`, `concrete_valid=8`, `quality_bucket=valid-PUT-no-R1R2`,
+    `oracle_class_counts={R0:1}`.
+  - `pop_077_GameItems`: deduped old concrete `transferOwnership` artifacts
+    with new PUT artifacts: `raw=3`, `valid=3`, `put_valid=2`,
+    `concrete_valid=1`, `quality_bucket=valid-PUT-with-R1R2`,
+    `valid_put_with_R1_or_R2=1`, `oracle_class_counts={R0:2,R2:1}`.
+- After these appends, the latest official bugfix124 journal has 124 subjects:
+  `valid=71`, `put=66`, `r1r2_subjects=2`, `concrete_only=5`,
+  `no_valid=53`.  Before adopting these probes it was `put=63` and
+  `concrete_only=8`.
