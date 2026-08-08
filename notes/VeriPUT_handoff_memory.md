@@ -21527,3 +21527,32 @@ Update after the next RQ1 acceleration pass:
   `peer182`: 182 subjects, `valid_cases=107`, `put_cases=109`,
   `r1r2_cases=0`, `concrete_only=4`, `no_valid=75`,
   `valid_units=388`, `put_units=355`.
+
+Update after bulk adopting existing artifact summaries without ESBMC:
+
+- Scanned exact subject directories only (`sid` and `sid.*`, excluding adopted
+  output dirs) for official rows that were still concrete-only or
+  `valid-PUT-no-R1R2`.  A row was appended only if the rebuilt artifact row did
+  not decrease `raw`, `valid`, or `put_valid`, and strictly increased
+  `valid_put_with_R1_or_R2`.  This avoids the earlier unsafe prefix issue where
+  `sGuard` could accidentally match `sGuardPlus`.
+- Appended 122 safe rows from retained artifacts:
+  29 for `bugfix124`, 16 for `real203`, and 77 for `peer182`.  Summary file:
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/triage/adopt_existing_artifacts_1786192070.json`.
+  This did not run ESBMC or Forge; it only re-read existing green artifact
+  summaries and wrote per-subject `*.adopted_from_artifacts/result.json` files.
+- Latest official RQ1 snapshot after this bulk adoption:
+  `bugfix124`: `valid_cases=71`, `put_cases=66`, `r1r2_cases=31`,
+  `concrete_only=5`, `no_valid=53`, `valid_units=253`, `put_units=165`,
+  `r1r2_put_units=59`.
+  `real203`: `valid_cases=29`, `put_cases=25`, `r1r2_cases=17`,
+  `concrete_only=4`, `no_valid=174`, `valid_units=163`, `put_units=118`,
+  `r1r2_put_units=35`.
+  `peer182`: `valid_cases=107`, `put_cases=110`, `r1r2_cases=77`,
+  `concrete_only=3`, `no_valid=75`, `valid_units=388`, `put_units=356`,
+  `r1r2_put_units=165`.
+- Sanity check after append: no invariant violations in bugfix124 or real203
+  for `valid <= raw`, `put_valid <= valid`, and
+  `valid_put_with_R1_or_R2 <= put_valid`.  Peer still has 6 historical rows
+  with `valid=None` and nonzero split counts; this predates the adoption and is
+  handled by `Results/results_all.py::valid_count`.
