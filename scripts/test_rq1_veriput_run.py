@@ -627,6 +627,27 @@ def test_no_candidate_stage2_unit_stop_is_thresholded_and_raw_sensitive():
     return bad
 
 
+def test_low_budget_concrete_only_stage4_skip_is_valid_and_put_sensitive():
+    should = rq1_veriput_run._should_skip_low_budget_concrete_only_stage4
+    bad = 0
+    bad += check(should({"raw": 4, "valid": 4}, 36.5, 90, 0, 0, 3),
+                 "low-budget timeout-concrete-only Stage 4 skips after valid")
+    bad += check(not should({"raw": 4, "valid": 4}, 120.0, 90, 0, 0, 3),
+                 "concrete-only Stage 4 keeps enough generation budget")
+    bad += check(not should({"raw": 4, "valid": 0}, 36.5, 90, 0, 0, 3),
+                 "concrete-only Stage 4 is not skipped before a valid artifact")
+    bad += check(not should({"raw": 4, "valid": 4}, 36.5, 90, 1, 0, 3),
+                 "certified regions are never skipped by the concrete-only floor")
+    bad += check(not should({"raw": 4, "valid": 4}, 36.5, 90, 0, 1, 3),
+                 "cleared concrete fallbacks are not treated as timeout-only")
+    bad += check(not should({"raw": 4, "valid": 4}, 36.5, 0, 0, 0, 3),
+                 "concrete-only floor can be disabled")
+    reason = rq1_veriput_run._format_low_budget_concrete_only_skip(36.456, 90)
+    bad += check("36.5s remains below the 90s" in reason,
+                 f"low-budget concrete-only reason is audit-friendly: {reason}")
+    return bad
+
+
 def main():
     tests = [
         test_path_guard_allows_only_veriput_rq1_result_tree,
@@ -644,6 +665,7 @@ def main():
         test_stage2_no_output_stop_requires_multiple_no_candidate_units,
         test_zero_output_stage4_stop_is_thresholded_and_raw_sensitive,
         test_no_candidate_stage2_unit_stop_is_thresholded_and_raw_sensitive,
+        test_low_budget_concrete_only_stage4_skip_is_valid_and_put_sensitive,
     ]
     bad = 0
     for test in tests:

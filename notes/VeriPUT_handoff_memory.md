@@ -11305,6 +11305,79 @@ Checks:
 - `git diff --check -- notes/coverage/scripts/certify_result_summary.py notes/coverage/scripts/unit_campaign_plan.py scripts/test_certify_result_summary.py scripts/test_unit_campaign_plan.py`
   passed.
 
+## 2026-08-08 RQ1 runner speed guard after pop018
+
+Current branch:
+
+- `feat/veriput-fuzz-first`, pushed to `E-SOL/feat/veriput-fuzz-first`.
+- Do not push to upstream.  Do not modify `/home/samson/workspace/VeriPUT/Datasets`.
+- Official VeriPUT RQ1 outputs remain under
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`.
+
+Recent official BugFix124 status:
+
+- Strict latest journal over
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/results.jsonl`:
+  124 cases, 60 cases with at least one valid test, 64 with no valid test.
+- Artifact totals: raw 195, valid 170, valid PUT 126, valid concrete 44.
+  PUT share among valid artifacts: 74.1%.
+- `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark bugfix124`
+  reports VeriPUT `raw_u=195`, `valid_u=170`, `raw_c=60`, `valid_c=60`,
+  coverage `48.4%`, `VT/case=1.37`, status
+  `{'ok': 60, 'no-output': 56, 'no-units': 5, 'budget-exhausted': 3}`.
+
+Recent official case observations:
+
+- `acfix_llama3_024_CVE_2019_15078` rerun:
+  status ok, completion budget-exhausted, raw 3, valid 3, PUT 2/2,
+  concrete 1/1, generation 590.274s, Stage2 250.724s,
+  Stage4 generation 339.55s, Foundry replay 4.14s, wall 595.148s,
+  maxrss 12254.2 MB.  Units attempted: `XBornID`, `withdraw`, `getTokens`.
+- `pop_018_PrivatePool` rerun after expensive target-hint demotion:
+  status ok, completion budget-exhausted, raw 4, valid 4, PUT 0/0,
+  concrete 4/4, generation 639.197s, Stage2 360.826s,
+  Stage4 generation 278.371s, Foundry replay 9.19s, wall 649.94s,
+  maxrss 1194.0 MB.  Units attempted:
+  `setMerkleRoot`, `setFeeRate`, `setUseStolenNftOracle`.
+
+Diagnosis from `pop_018_PrivatePool`:
+
+- The expensive target-hint demotion worked at case level: old run spent the
+  window on `execute` and produced no valid test; new order reached cheap
+  setters and produced 4 valid concrete replays.
+- It also exposed a time leak: the third Stage4 started with only about 36s of
+  generation budget remaining, had no certified regions and no cleared fallback,
+  only timeout concrete fallback rows, and still spent about 82s of emission
+  work to add one low-strength concrete replay.  This pushed
+  `generation_wall_s` above the nominal 600s tool budget, though still inside
+  wrapper slack.
+
+Code change:
+
+- `notes/coverage/scripts/rq1_veriput_run.py` now has
+  `--min-concrete-only-stage4-s`, default 90.
+- After at least one valid artifact exists, the runner will not start a Stage4
+  pass whose candidates are only timeout concrete fallbacks unless at least this
+  many generation seconds remain.
+- The guard does not skip certified regions, cleared concrete fallbacks, or any
+  case that has not yet produced a valid artifact.  Set
+  `--min-concrete-only-stage4-s 0` to reproduce the previous behavior.
+- Result rows record `min_concrete_only_stage4_s`,
+  `low_budget_concrete_only_stage4_skip_count`, and
+  `low_budget_concrete_only_stage4_skips` with unit, remaining budget,
+  raw/valid counts before skip, candidate counts, and reason.
+- Semantics unchanged: fuzz and Foundry replay remain refute-only guards; a
+  green Foundry replay is not a proof.  ESBMC certification remains the proof
+  gate for PUT/region assertions.
+
+Checks:
+
+- `python3 -m py_compile notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+- `python3 scripts/test_rq1_veriput_run.py` passed, 16 tests.
+- `pylint --errors-only notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
+  passed.
+
 ## 2026-08-08 RQ1 double-oracle timing and cheap-first correction
 
 User policy clarification:
