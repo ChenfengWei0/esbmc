@@ -21920,3 +21920,13 @@ Update after real203 no-coordinate sweep and constructor hasCode fix:
   The action queue is now dominated by valid concrete-only
   `cleared_not_certified_fallback` subjects; those improve raw valid ratio but
   not PUT/R1/R2 claims.
+- Follow-up real203 no-witness batch over
+  `IAFactory`, `LocalConduitController`, `ReferenceConduitController`,
+  `SeaportNavigator`, `BalancerContractRegistry`,
+  `BalancerContractRegistryInitializer`, `BaseSplitCodeFactory`, and
+  `CallAndRevert` produced no artifacts.  All finished quickly to moderately
+  quickly (`0.515s` to `72.884s`) and remained Stage2 no-witness/refusal:
+  mostly `NO-WITNESS-UNKNOWN`, with `BalancerContractRegistry` also
+  `NO-WITNESS-UNDECIDED` and two `DRIVER-REFUSED` rows.  This bucket is not
+  helped by more Stage4 work; it needs Stage2 witness/driver/modeling changes
+  or should be deprioritized for short-term PUT/R1/R2 gains.
