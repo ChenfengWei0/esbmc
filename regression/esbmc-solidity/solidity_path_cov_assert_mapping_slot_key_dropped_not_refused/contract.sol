@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-// TWO stores with DIFFERENT key kinds, written by ONE unit.
+// TWO mapping stores with DIFFERENT key kinds, both named in ONE assertion
+// spec.
 //
-// `bal` is keyed by a uint256 the unit takes as a parameter -- a key this mode
-// can express. `tagged` is keyed by a bytes32, which the frontend lowers to an
-// aggregate, so `coord_expressible` refuses it.
+// `bal` is keyed by a uint256 the unit takes as a parameter and writes -- a key
+// this mode can express. `tagged[state.box]` is only named in the spec:
+// `state.box` resolves to an entry-state struct, so `coord_expressible` refuses
+// that single candidate.
 //
 // WHY THE PAIR IS THE POINT. `--path-cov-assert` used to REFUSE THE WHOLE
 // LADDER on the first key it could not express, so a spec naming both answered
@@ -20,18 +22,26 @@ pragma solidity ^0.8.0;
 // a typo is an INPUT error, an unsupported key TYPE is a CAPABILITY limit, and
 // only the second is a per-candidate drop.
 contract MixedKeys {
-    mapping(bytes32 => uint256) public tagged;
+    struct Box {
+        uint256 x;
+    }
+
+    Box box;
+    mapping(uint256 => uint256) tagged;
     mapping(uint256 => uint256) public bal;
+
+    constructor() {
+        bal[0] = 1000;
+    }
 
     function put(uint256 k, uint256 v) external {
         require(v > 0);
         bal[k] = v;
     }
 
-    function take(bytes32 h, uint256 k, uint256 v) external {
+    function take(uint256 k, uint256 v) external {
         require(v > 0);
         require(bal[k] >= v);
         bal[k] -= v;
-        tagged[h] = v;
     }
 }

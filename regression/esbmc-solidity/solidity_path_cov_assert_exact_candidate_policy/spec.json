@@ -1,0 +1,27 @@
+{
+  "unit": "get",
+  "enc": 1,
+  "depth": 0,
+  "region": [
+    {
+      "name": "state.owner",
+      "lo": "7",
+      "hi": "7"
+    }
+  ],
+  "candidate_policy": "exact",
+  "vars": [
+    {
+      "name": "return",
+      "equals": [
+        {
+          "id": "owner",
+          "term": {
+            "kind": "coord",
+            "name": "state.owner"
+          }
+        }
+      ]
+    }
+  ]
+}

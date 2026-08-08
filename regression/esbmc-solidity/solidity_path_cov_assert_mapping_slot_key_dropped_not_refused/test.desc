@@ -1,7 +1,7 @@
 CORE
 contract.sol
---contract MixedKeys --solidity-path-coverage --solidity-max-tx 2 --focus-function put,take --path-cov-instrument-only take --path-cov-assert spec.json
-tagged\[h\] \(the key 'h' resolves but cannot be expressed: it resolves to an AGGREGATE \(struct / contract instance\).*This candidate is DROPPED; the other candidates of this run are unaffected\)
+--contract MixedKeys --solidity-path-coverage --solidity-max-tx 1 --focus-function take --path-cov-assert spec.json
+tagged\[state\.box\] \(the key 'state\.box' resolves but cannot be expressed: it resolves to an AGGREGATE \(struct / contract instance\).*This candidate is DROPPED; the other candidates of this run are unaffected\)
 ^--path-cov-assert: region NON-VACUITY witnessed
 ^--path-cov-assert: bal\[k\]: post != pre  HOLDS
 ^--path-cov-assert: bal\[k\]: post < pre  HOLDS
