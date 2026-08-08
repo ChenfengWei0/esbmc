@@ -19592,3 +19592,55 @@ Next prioritization rule:
 3. Audit `R0-only` PUTs for genuinely observable stronger oracles.  Do not
    force state R1/R2 on rollback paths; treat those as an oracle-design gap,
    not a logging/statistics bug.
+
+Additional triage detail after inspecting representative `valid-no-PUT` and
+`R0-only` rows:
+
+- Across the 15 `valid-no-PUT` subjects, Stage4 row sources are currently:
+  - `certified_region`: 15 rows
+  - `cleared_not_certified_fallback`: 19 rows
+  - `timeout_concrete_fallback`: 31 rows
+  The fallback rows are concrete by construction; converting them to PUTs
+  requires improving Stage2 certification, not merely renaming Stage4 output.
+- Repeated `PrivatePool.setMerkleRoot` rows:
+  - 12 refused rows across the sampled `PrivatePool` subjects.
+  - Stage2 status is `KILLED`, with `0 certified / 3 witnessed / 3 no-verdict`.
+  - ESBMC Foundry emission refuses the cases as `NAMED OBSTACLE`, then writes
+    no `.cov.t.sol`.
+  - Source root: `onlyOwner` calls
+    `Factory(factory).ownerOf(uint160(address(this)))`.
+    ESBMC can satisfy that external return symbolically, but Foundry replay at
+    `factory == address(0)` has no contract/code unless Stage4 installs a mock.
+  - This is a combined external-dependency fixture and model-obstacle problem.
+    Fixing it may recover concrete/fixture replay first; it will not
+    automatically create PUTs because the Stage2 rows are not certified.
+- Two `certified_region -> valid concrete` examples are not simple missed PUTs:
+  - `acfix_021_CVE_2018_19832.transferOwnership`:
+    certified box is a point on the rendered coordinate
+    `newOwner in [0,0]`; the source path is a no-op
+    (`if (newOwner != address(0)) owner = newOwner`), so `owner post == pre`
+    is the strongest R1-style fact.  It cannot become a meaningful fuzz PUT
+    without a wider certified rendered coordinate.
+  - `acfix_3_5_088_EmergencyOracleFactory.newEmergencyOracle`:
+    rollback path with mapping-slot frame fact `isAdmin[msg.sender] post==pre`;
+    no rendered coordinate remains wide.  State R2 is unobservable on rollback.
+- Important code observation:
+  `scripts/solidity_path_put.py::build_put` currently performs the
+  "no rendered coordinate width > 1" concrete fallback before state/return
+  oracle rendering.  This is correct if "PUT" strictly means a fuzzed
+  parameterized test, but it means a point-certified row with a valid R1 oracle
+  is emitted only as concrete and loses the oracle from the artifact.  Do not
+  change this lightly: counting a zero-fuzz oracle test as PUT may inflate the
+  PUT ratio without improving parameterization.  A cleaner future schema would
+  distinguish:
+  - `concrete_replay`
+  - `point_certified_oracle_test` (zero fuzz params, certified point, oracle)
+  - `PUT` (at least one rendered coordinate with width > 1)
+- `R0-only` PUT cluster:
+  Logs show many are rollback/revert paths where Stage4 explicitly skips R2:
+  `R2 ESBMC pass NOT RUN: this path rolls back, so its layer-2/3 post-state is
+  unobservable`.
+  These should not be "fixed" by forcing state R1/R2.  Possible strengthening
+  classes are exit reason/custom error, event absence/presence where observable,
+  return values on normal paths, or ETH/accounting effects when the model and
+  Foundry fixture both support them.
