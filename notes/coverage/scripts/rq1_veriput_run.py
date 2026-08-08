@@ -1255,12 +1255,17 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     cert_summary = summarize_certification(cert_path)
     wall_total_s = round(time.monotonic() - start, 3)
     completion_status = result_status
+    partial_failure_reason = None
     budget_exhausted = completion_status == "budget-exhausted"
     early_stopped_no_output = completion_status == "early-stop-no-output"
     if budget_exhausted and put_summary["raw"] > 0:
         result_status = "ok"
     if early_stopped_no_output:
         result_status = "no-output"
+    if put_summary["valid"] > 0 and result_status != "ok":
+        partial_failure_reason = failure_reason
+        result_status = "ok"
+        failure_reason = None
     if result_status == "ok" and put_summary["raw"] == 0:
         result_status = "no-output"
         failure_reason = _no_output_reason(cert_summary)
@@ -1303,6 +1308,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "completion_status": completion_status,
         "budget_exhausted": budget_exhausted,
         "reason": failure_reason,
+        "partial_failure_reason": partial_failure_reason,
         "subject_id": subject_id,
         "benchmark": target_row["benchmark"],
         "dataset": dataset_label,
