@@ -20756,3 +20756,45 @@ Update after user re-emphasized no-PUT and no-R1/R2 focus:
   valid PUT and the remaining known blocker is exactly this alias issue.  A
   successful run should move it from `valid-PUT-no-R1/R2` to a PUT with
   mapping state R1/R2, likely over `_allowances$496[msg.sender][_spender]`.
+
+Update after rerunning ERC-3643 with mapping aliases:
+
+- Reran `real203/ERC-3643__ERC-3643__Token` once after the alias patch:
+  `status=ok raw=1 valid=1 put=1/1 concrete=0/0
+  bucket=valid-PUT-no-R1R2 wall=583.343s`.  The result stayed R0-only, but the
+  failure mode changed in the intended way.
+- Alias fix is confirmed effective.  The assert spec now asks exactly
+  `_allowances$496[msg.sender][_spender]`, and `put.json` records
+  `oracle_vars=["_allowances$496[msg.sender][_spender]"]` with
+  `slot_candidates.asked` the same and `unanswered=[]`.  The old source-name
+  refusal is gone.
+- The remaining blocker is solver/repair strategy.  `assert/run.1.log` and
+  `run.2.log` show contradictory truncated partial HOLDS for the mapping slot
+  (`post == pre`, `post != pre`, `post > pre`, etc.), so those rows are not
+  sound evidence and must not be rendered.  The `--partial-loops` retry
+  (`run.3.log`) removes the false HOLDS but times out/returns mapping
+  `NO VERDICT (solver unknown)` rows, while return rows are REFUTED.  The
+  emitted PUT therefore remains valid but only R0.
+- Found a driver bug while reading this result: `partial_ladder_already_has_strict_oracle`
+  treated any assertion as enough to skip R2, and `stats["asserts"]` includes
+  R0 exit-kind assertions.  This froze exactly the weak case the user is now
+  prioritizing: `notes` said "partial R1 ladder already rendered a strict fuzz
+  PUT oracle" even though `state_asserts=0`, `return_asserts=0`, and
+  `oracle_classes=["R0"]`.
+- Fixed the R2 skip gate: a partial ladder may skip R2 only if the emitted PUT
+  already has a fuzz dimension and a non-R0 oracle (`state_asserts` or
+  `return_asserts` plus `oracle_classes` containing `R1` or `R2`).  R0-only
+  valid PUTs no longer block R2.  Regression updated:
+  `test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle` now includes
+  the R0-only negative case.
+- Verification for the R2 skip-gate fix:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  (267/267);
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`.
+- Do not immediately rerun ERC-3643 again unless we intentionally spend another
+  case attempt: with 600s total, Stage 2 leaves only about 226s generation
+  budget for Stage 4 on this subject.  The next code-level improvement should
+  either make the R2 query cheaper/targeted for mapping slots or schedule
+  Stage 4 so an already certified row can get more of the 600s budget.

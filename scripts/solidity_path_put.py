@@ -3086,12 +3086,19 @@ def partial_ladder_already_has_strict_oracle(rows, summary, stats):
 
     A missing summary with rows means the driver is consuming per-candidate
     salvage rows rather than the final table.  If those rows already render a
-    fuzz PUT with an oracle, a larger R2 batch is a poor next query: it adds
-    candidates to a run that has just failed to finish its smaller table.
+    fuzz PUT with a non-R0 oracle, a larger R2 batch is a poor next query: it
+    adds candidates to a run that has just failed to finish its smaller table.
+    R0 exit-kind assertions do not count here; they are useful validity
+    oracles, but they are exactly the weak no-R1/R2 case this gate must not
+    freeze in place.
     """
+    oracle_classes = set(stats.get("oracle_classes") or [])
+    non_r0_asserts = (stats.get("state_asserts", 0)
+                      + stats.get("return_asserts", 0))
     return (bool(rows) and summary is None and bool(stats)
             and stats.get("fuzz_params", 0) > 0
-            and stats.get("asserts", 0) > 0)
+            and non_r0_asserts > 0
+            and bool(oracle_classes & {"R1", "R2"}))
 
 
 def oracle_classes_for_rung(text):

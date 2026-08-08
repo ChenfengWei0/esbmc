@@ -3307,9 +3307,14 @@ def test_skipped_forge_R2_accounting_is_complete_and_conservative():
 
 def test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle():
     rows = [("bal", "post >= pre", "HOLDS")]
-    good = {"fuzz_params": 1, "asserts": 1}
-    no_fuzz = {"fuzz_params": 0, "asserts": 1}
-    no_assert = {"fuzz_params": 1, "asserts": 0}
+    good = {"fuzz_params": 1, "asserts": 1, "state_asserts": 1,
+            "return_asserts": 0, "oracle_classes": ["R1"]}
+    no_fuzz = {"fuzz_params": 0, "asserts": 1, "state_asserts": 1,
+               "return_asserts": 0, "oracle_classes": ["R1"]}
+    no_assert = {"fuzz_params": 1, "asserts": 0, "state_asserts": 0,
+                 "return_asserts": 0, "oracle_classes": []}
+    only_r0 = {"fuzz_params": 1, "asserts": 1, "state_asserts": 0,
+               "return_asserts": 0, "oracle_classes": ["R0"]}
     bad = 0
     bad += check(partial_ladder_already_has_strict_oracle(rows, None, good),
                  "a partial ladder with a fuzz oracle can skip the larger R2 "
@@ -3326,6 +3331,9 @@ def test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle():
     bad += check(not partial_ladder_already_has_strict_oracle(rows, None,
                                                               no_assert),
                  "a reachability-only fuzz body cannot skip R2")
+    bad += check(not partial_ladder_already_has_strict_oracle(rows, None,
+                                                              only_r0),
+                 "an R0-only PUT must not freeze a no-R1/R2 result")
     return bad
 
 
