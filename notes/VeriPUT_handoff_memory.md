@@ -19507,3 +19507,88 @@ Throughput implication:
 - Do not spend hours trying to make one red PUT green by weakening assertions.
   Cluster remaining no-valid rows by refusal/failure reason and prefer fixes
   that improve many rows or PUT ratio.
+
+## 2026-08-08 RQ1 triage priority update: no-valid is not enough
+
+User clarified the evaluation/debugging target is broader than `no-valid`:
+
+- Still fix `no-valid`, because raw/valid coverage matters.
+- Also prioritize `valid-no-PUT`: a green concrete replay is useful, but it
+  does not support the PUT methodology claim.
+- Also prioritize PUTs with no strong oracle, especially `R0-only` and cases
+  with no `R1`/`R2`.  These are methodologically weak and may miss mutation or
+  real-bug regressions even when they are counted as valid tests.
+
+Current latest-result snapshot for `bugfix124` official RQ1 outputs
+(`/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/*/result.json`,
+using latest per-subject `result.json`, not append-only `results.jsonl`):
+
+- Subjects: 145
+- Subject buckets:
+  - `valid-PUT-with-R2`: 41
+  - `valid-PUT-R0-only`: 17
+  - `valid-no-PUT`: 15
+  - `no-valid`: 72
+- Artifact totals:
+  - `valid`: 256
+  - `put_valid`: 153
+  - `concrete_valid`: 105
+  - `put_raw`: 176
+  - `concrete_raw`: 124
+- Valid artifact PUT ratio: `153/256 = 0.598`.
+- Valid subject with any PUT ratio: `58/73 = 0.795`.
+- Oracle class totals across artifacts:
+  - `R0`: 141
+  - `R1`: 203
+  - `R2`: 466
+- Oracle combo totals:
+  - `R0`: 141
+  - `R1`: 157
+  - `R2`: 420
+  - `R1+R2`: 46
+
+Interpretation:
+
+- The artifact-level PUT ratio is still too low for the paper claim.  Improving
+  `valid-no-PUT` and concrete-only fallback cases is not optional.
+- `valid-PUT-R0-only` is a separate weakness class, not a success endpoint.
+  If a path genuinely reverts/rolls back, post-state `R1/R2` is unobservable
+  and must not be faked; those cases need other observable oracle classes
+  (exit reason, return, event, ETH/accounting effects, etc.) if feasible.
+- Do not convert concrete fallback rows into fake PUTs without ESBMC-certified
+  region width.  Fuzz/Foundry may refute candidate regions cheaply, but only
+  ESBMC certification can prove the region/oracle.
+
+High-frequency examples and root-cause notes:
+
+- `valid-no-PUT` cluster, `PrivatePool` subjects:
+  `pop_009_PrivatePool`, `pop_018_PrivatePool`, `pop_033_PrivatePool`,
+  `pop_048_PrivatePool`.
+  - `flashFee` / `flashFeeAndProtocolFee` mostly come from
+    `cleared_not_certified_fallback`, so they are concrete by construction.
+  - `setFeeRate` / `setUseStolenNftOracle` often come from
+    `timeout_concrete_fallback`, again concrete by construction.
+  - `setMerkleRoot` has Stage4 candidate rows labelled as certified-region
+    inputs, but the emitter returns rc=1 and writes no `.cov.t.sol`, so no
+    preamble can be lifted:
+    `REFUSED: the emitter produced no .cov.t.sol`.
+    This is an emission/preamble problem worth investigating because it
+    repeats across several `PrivatePool` subjects.
+- `valid-PUT-R0-only` cluster:
+  `phishable.withdrawAll`, `RoundFactory.*`, `SimpleWallet.*`,
+  `EtherLotto.play`, and similar.
+  Logs often say:
+  `R2 ESBMC pass NOT RUN: this path rolls back, so its layer-2/3 post-state is
+  unobservable`.
+  Therefore, adding state `R1/R2` here would be unsound.  Stronger tests need
+  other observable effects or more precise non-rollback path selection.
+
+Next prioritization rule:
+
+1. Fix clustered `no-valid` root causes if they can recover many subjects as
+   valid PUTs.
+2. Fix clustered `valid-no-PUT` causes, especially certified-region emission
+   refusals such as `PrivatePool.setMerkleRoot`.
+3. Audit `R0-only` PUTs for genuinely observable stronger oracles.  Do not
+   force state R1/R2 on rollback paths; treat those as an oracle-design gap,
+   not a logging/statistics bug.
