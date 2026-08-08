@@ -20822,3 +20822,33 @@ Update after source-R2 alias follow-up:
   (267/267);
   `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
   `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`.
+
+Update after tuple-wrapped source-R2 mining fix:
+
+- Real ERC-3643 `increaseAllowance` source is not a direct `+=`.  It calls
+  `_approve(msg.sender, _spender,
+  _allowances[msg.sender][_spender] + (_addedValue))`; `_approve` then assigns
+  `_allowances[_owner][_spender] = _amount`.  Solc represents the parenthesized
+  `_addedValue` as a one-component `TupleExpression`.
+- `source_assignment_r2_specs()` already inlines one helper call, but its
+  numeric/delta term readers did not unwrap one-component tuples.  As a result
+  the actual ERC-3643 AST smoke check mined only `return == true` and missed
+  the semantic mapping delta.
+- Fixed `delta_term()` and `numeric_endpoint_term()` to unwrap a
+  one-component `TupleExpression` before reading coordinates/literals.  Added
+  `test_source_R2_helper_mapping_increment_unwraps_tuple_argument`, which
+  models the ERC-3643 shape: public function calls an internal helper with
+  `allowance[msg.sender][spender] + (amount)`, helper writes the mapping, and
+  maps are alias-only.
+- Post-fix no-ESBMC smoke check on the real AST
+  `/tmp/veriput_rq1_ast_cache/stress243/stress243__ERC-3643__ERC-3643__Token/flat.sol.solast`
+  now mines:
+  `_allowances$496[msg.sender][_spender]: post == (state._allowances$496[msg.sender][_spender] + _addedValue)`,
+  `_allowances$496[msg.sender][_spender]: post - pre == _addedValue`, and
+  `return == true`.
+- Verification:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  (268/268);
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`.

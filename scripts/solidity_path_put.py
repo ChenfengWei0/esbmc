@@ -1672,6 +1672,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         alias = local_alias_expr(n)
         if alias is not None:
             return delta_term(alias, target_ty)
+        if isinstance(n, dict) and n.get("nodeType") == "TupleExpression":
+            components = n.get("components") or []
+            if len(components) == 1:
+                return delta_term(components[0], target_ty)
         if target_ty is not None:
             arg = type_conversion_arg(n, target_ty)
             if arg is not None:
@@ -1733,6 +1737,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         alias = local_alias_expr(n)
         if alias is not None:
             return numeric_endpoint_term(alias, target_ty)
+        if isinstance(n, dict) and n.get("nodeType") == "TupleExpression":
+            components = n.get("components") or []
+            if len(components) == 1:
+                return numeric_endpoint_term(components[0], target_ty)
         direct = delta_term(n, target_ty)
         if direct is not None:
             return direct

@@ -3977,6 +3977,102 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
     return bad
 
 
+def test_source_R2_helper_mapping_increment_unwraps_tuple_argument():
+    from solidity_path_put import (r2_candidates, source_assignment_r2_specs  # noqa: E402
+                                  )
+
+    def ident(ref, name, ty=None):
+        out = {"nodeType": "Identifier", "referencedDeclaration": ref,
+               "name": name}
+        if ty is not None:
+            out["typeDescriptions"] = {"typeString": ty}
+        return out
+
+    msg_sender = {
+        "nodeType": "MemberAccess", "memberName": "sender",
+        "expression": {"nodeType": "Identifier", "name": "msg"},
+        "typeDescriptions": {"typeString": "address"}}
+
+    def index(base, key, ty="uint256"):
+        return {"nodeType": "IndexAccess", "baseExpression": base,
+                "indexExpression": key,
+                "typeDescriptions": {"typeString": ty}}
+
+    def allowance(owner, spender):
+        first = index(ident(10, "allowance"), owner,
+                      "mapping(address => uint256)")
+        return index(first, spender)
+
+    amount_arg = {
+        "nodeType": "BinaryOperation", "operator": "+",
+        "leftExpression": allowance(msg_sender, ident(22, "spender",
+                                                      "address")),
+        "rightExpression": {
+            "nodeType": "TupleExpression",
+            "components": [ident(21, "amount", "uint256")],
+            "typeDescriptions": {"typeString": "uint256"}},
+        "typeDescriptions": {"typeString": "uint256"}}
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10,
+             "name": "allowance", "stateVariable": True,
+             "typeDescriptions": {
+                 "typeString": "mapping(address => mapping(address => uint256))"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "inc",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}},
+                 {"id": 22, "name": "spender",
+                  "typeDescriptions": {"typeString": "address"}}]},
+             "body": {"nodeType": "Block", "statements": [{
+                 "nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "FunctionCall", "kind": "functionCall",
+                     "expression": ident(30, "_set"),
+                     "arguments": [msg_sender, ident(22, "spender",
+                                                     "address"), amount_arg]}}]}},
+            {"nodeType": "FunctionDefinition", "id": 30, "name": "_set",
+             "parameters": {"parameters": [
+                 {"id": 31, "name": "owner",
+                  "typeDescriptions": {"typeString": "address"}},
+                 {"id": 32, "name": "spender",
+                  "typeDescriptions": {"typeString": "address"}},
+                 {"id": 33, "name": "amount",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [{
+                 "nodeType": "ExpressionStatement", "expression": {
+                     "nodeType": "Assignment", "operator": "=",
+                     "src": "200:10:0",
+                     "leftHandSide": allowance(ident(31, "owner", "address"),
+                                               ident(32, "spender", "address")),
+                     "rightHandSide": ident(33, "amount", "uint256")}}]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        maps = prefer_esbmc_mapping_aliases(add_esbmc_mapping_aliases(
+            {"allowance": (1, ("address", "address"), 32, 0,
+                           "allowance", None)},
+            {"allowance": "allowance$10"}))
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "inc", [("amount", "uint256"),
+                               ("spender", "address")],
+            {}, [("amount", "num", None), ("spender", "id", 20)],
+            arity=2, declaration_id=20, maps=maps, log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+    candidates = r2_candidates(specs)
+    bad = 0
+    bad += check(any(item["var"] == "allowance$10[msg.sender][spender]"
+                     and item["text"] ==
+                     "post - pre in [amount, amount] with post >= pre"
+                     for item in candidates),
+                 f"helper-inlined mapping increment becomes an alias-named "
+                 f"delta R2 candidate: {candidates}; evidence={evidence}")
+    return bad
+
+
 def test_source_R2_unary_updates_prioritize_one_step_deltas():
     from solidity_path_put import source_assignment_r2_specs  # noqa: E402
     msg_sender = {"nodeType": "MemberAccess", "memberName": "sender",
@@ -11919,6 +12015,7 @@ def main():
               test_source_R2_assignment_candidates_are_small_setter_queries,
               test_source_R2_self_updates_prioritize_delta_queries,
               test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries,
+              test_source_R2_helper_mapping_increment_unwraps_tuple_argument,
               test_source_R2_unary_updates_prioritize_one_step_deltas,
               test_source_R2_delete_updates_prioritize_zero_endpoints,
               test_source_R2_address_zero_assignments_prioritize_zero_endpoints,
