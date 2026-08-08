@@ -7466,9 +7466,11 @@ DECISION_NEGATE_OP = {
 
 def unwrap_decision_not(text):
     text = (text or "").strip()
-    if text.startswith("!(") and text.endswith(")"):
-        return text[2:-1].strip(), True
-    return text, False
+    negated = False
+    while text.startswith("!(") and text.endswith(")"):
+        text = text[2:-1].strip()
+        negated = not negated
+    return text, negated
 
 
 def path_condition_from_branch_claim(branch_claim):

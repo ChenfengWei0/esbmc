@@ -3693,6 +3693,21 @@ def test_path_decision_guard_negates_plain_branch_claim():
     return bad
 
 
+def test_path_decision_guard_handles_double_negated_branch_claim():
+    bad = 0
+    bad += check(path_condition_from_branch_claim("!(!(msg.sender == owner))") ==
+                 ("msg.sender", "!=", "owner"),
+                 "double-negated branch claim is unwrapped before parsing")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "!(!(msg.sender == owner))"}],
+        {"msg.sender": "p_msg_sender", "state.owner": "_pre_owner"})
+    bad += check(lines == [("!(!(msg.sender == owner))",
+                            "    vm.assume(p_msg_sender != _pre_owner);")],
+                 f"double-negated path guard rendered: {lines}")
+    bad += check(skipped == [], f"nothing skipped: {skipped}")
+    return bad
+
+
 def test_path_decision_guard_skips_true_constant_relation():
     lines, skipped = path_decision_assumes(
         [{"branch_claim": "!(msg.value == 0)"}],
@@ -12626,6 +12641,7 @@ def main():
               test_typed_R2_candidate_budget_ignores_empty_bool_return_queue,
               test_path_decision_guard_renders_mapping_slot_relation,
               test_path_decision_guard_negates_plain_branch_claim,
+              test_path_decision_guard_handles_double_negated_branch_claim,
               test_path_decision_guard_skips_true_constant_relation,
               test_typed_R2_term_budget_is_VISIBLE_not_a_second_query,
               test_typed_R2_candidate_budget_caps_claims_and_shares_them,
