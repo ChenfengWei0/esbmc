@@ -1425,13 +1425,14 @@ def test_partial_ladder_rows_are_used_only_when_final_table_is_missing():
 RETLIVE = "a value IS returned on this path (REFUTED == yes)"
 
 
-def _ret_put(ladder_rows, rettypes, layout=None, maps=None, r2_terms=None):
+def _ret_put(ladder_rows, rettypes, layout=None, maps=None, r2_terms=None,
+             pins=None, region=None):
     em, case = make_case()
     notes = []
     put, stats = build_put(
         "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
-        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
-        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        region=(region or {"bps": (0, 250), "u": (0, (1 << 160) - 1)}),
+        holes={}, pins=(pins or {}), params=PARAMS, emitted=em, case=case,
         layout=LAYOUT if layout is None else layout,
         ladder_rows=ladder_rows, notes=notes, rettypes=rettypes,
         maps=maps, r2_terms=r2_terms)
@@ -1491,6 +1492,36 @@ def test_return_rung_can_assert_a_scalar_entry_state_coord():
                  f"{stats['oracle_skipped']}")
     bad += check(stats["return_asserts"] == 1,
                  f"one return assertion: {stats['return_asserts']}")
+    return bad
+
+
+def test_return_rung_can_assert_a_pinned_nonlayout_state_coord():
+    """Immutable-like state pins can still be semantic return R2 endpoints."""
+    text, stats, _n = _ret_put(
+        [("return", RETLIVE, "REFUTED"),
+         ("return", "return == state.baseRate", "HOLDS")],
+        [("", "uint256")],
+        layout={},
+        pins={"state.baseRate": 7},
+        r2_terms={
+            "state.baseRate": {
+                "kind": "coord",
+                "name": "state.baseRate",
+            },
+        })
+    bad = 0
+    bad += check("_ret_pre_baseRate" not in text,
+                 "a non-layout pin is not read from storage")
+    bad += check(
+        'assertEq(uint256(_put_ret), 7, "return: return == state.baseRate")'
+        in text,
+        "the pinned point value renders as the certified R2 endpoint")
+    bad += check("return: return == state.baseRate (rung shape not renderable"
+                 not in text,
+                 "the return R2 rung is not reported as dropped")
+    bad += check(stats["return_asserts"] == 1
+                 and "R2" in stats["oracle_classes"],
+                 f"the pinned endpoint is counted as an emitted R2: {stats}")
     return bad
 
 
@@ -1939,25 +1970,22 @@ def test_certified_region_mapping_slots_are_ASKED_before_guesses():
     return bad
 
 
-def test_assert_query_drops_state_pins_ESBMC_cannot_resolve():
-    """`state._DOCKED` is a semantic pin from source, not a storage-layout slot.
+def test_assert_query_keeps_state_pins_for_the_certified_slice():
+    """State pins are single-point entry assumptions for --path-cov-assert.
 
-    `state.owner` is a real storage slot, but --path-cov-assert still cannot
-    use a storage scalar as a region coordinate.  The Foundry test establishes
-    it; the solver ladder is asked over the larger unconstrained-state superset.
+    A wide state region is still not passed through this helper, but a pin is
+    already a point value from certification.  Dropping it asks the assertion
+    ladder over a wider state slice and loses return/state R2 facts tied to
+    immutables such as `return == state.baseRate`.
     """
     keep, skipped = assert_query_pins(
         {"state._DOCKED": 255, "state.owner": 7, "msg.value": 0},
         layout={"owner": (0, 0, 20)}, maps={})
     bad = 0
-    bad += check(keep == {"msg.value": 0},
-                 f"only queryable pins remain in the assert spec: {keep}")
-    bad += check(any("state._DOCKED" in s and "semantic constant" in s
-                     for s in skipped),
-                 f"the skipped semantic pin is reported: {skipped}")
-    bad += check(any("state.owner" in s and "unconstrained-state superset" in s
-                     for s in skipped),
-                 f"the skipped storage-scalar pin is reported: {skipped}")
+    bad += check(keep == {"msg.value": 0, "state._DOCKED": 255,
+                          "state.owner": 7},
+                 f"state pins remain in the assert spec: {keep}")
+    bad += check(skipped == [], f"no scalar state pin is skipped: {skipped}")
     return bad
 
 
@@ -6061,6 +6089,57 @@ def test_source_R2_return_type_conversion_wrappers_are_unwrapped():
     bad += check(return_terms(calc_specs) == ["(amount + 7)"],
                  f"cast-wrapped arithmetic return terms are mined: "
                  f"{calc_specs}")
+    return bad
+
+
+def test_source_R2_return_can_name_a_rendered_state_pin():
+    from solidity_path_put import RETURN_VAR, r2_term_text  # noqa: E402
+    from solidity_path_put import source_assignment_r2_specs  # noqa: E402
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "baseRate",
+             "stateVariable": True,
+             "typeDescriptions": {"typeString": "uint256"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "rate",
+             "parameters": {"parameters": []},
+             "returnParameters": {"parameters": [
+                 {"id": 21, "name": "",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [
+                 {"nodeType": "Return",
+                  "expression": {
+                      "nodeType": "Identifier",
+                      "name": "baseRate",
+                      "referencedDeclaration": 10,
+                      "typeDescriptions": {"typeString": "uint256"}}}]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        specs, evidence = source_assignment_r2_specs(
+            path, "C", "rate", [], {},
+            [("state.baseRate", "num", None)], arity=0,
+            rettypes=[("", "uint256")], log=lambda _msg: None)
+        unrendered, _ = source_assignment_r2_specs(
+            path, "C", "rate", [], {}, [], arity=0,
+            rettypes=[("", "uint256")], log=lambda _msg: None)
+    finally:
+        os.unlink(path)
+
+    entry = next((item for item in specs[0]["vars"]
+                  if item["name"] == RETURN_VAR), {}) if specs else {}
+    terms = [r2_term_text(item["term"]) for item in entry.get("equals", [])]
+    bad = 0
+    bad += check(terms == ["state.baseRate"],
+                 f"rendered state pin can feed return R2: {specs}")
+    bad += check(any("return: return == state.baseRate" in line
+                     for line in evidence),
+                 f"state-pin return provenance is recorded: {evidence}")
+    bad += check(unrendered == [],
+                 f"unrendered state pin is not guessed: {unrendered}")
     return bad
 
 
@@ -11395,6 +11474,7 @@ def main():
               test_block_coinbase_range_is_fuzzed_with_coinbase,
               test_return_rung_is_bound_and_asserted,
               test_return_rung_can_assert_a_scalar_entry_state_coord,
+              test_return_rung_can_assert_a_pinned_nonlayout_state_coord,
               test_return_rung_can_assert_a_mapping_entry_state_coord,
               test_a_retlive_that_HOLDS_kills_every_return_rung,
               test_a_bool_return_uses_assertTrue_not_a_cast,
@@ -11495,6 +11575,7 @@ def main():
               test_source_R2_return_candidates_prioritize_return_expressions,
               test_source_R2_return_conditionals_expose_leaf_candidates,
               test_source_R2_return_type_conversion_wrappers_are_unwrapped,
+              test_source_R2_return_can_name_a_rendered_state_pin,
               test_source_R2_local_aliases_feed_return_state_and_mapping_terms,
               test_source_R2_local_aliases_are_invalidated_after_mutation,
               test_source_R2_mapping_getter_returns_named_entry_slot_coord,
@@ -11544,7 +11625,7 @@ def main():
               test_source_access_slots_render_state_struct_member_keys,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,
-              test_assert_query_drops_state_pins_ESBMC_cannot_resolve,
+              test_assert_query_keeps_state_pins_for_the_certified_slice,
               test_assert_query_region_keeps_slots_but_drops_state_scalars,
               test_an_ADDRESS_endpoint_renders_for_an_ABSOLUTE_bound,
               test_an_ADDRESS_endpoint_is_STILL_REFUSED_for_a_DELTA_bound,

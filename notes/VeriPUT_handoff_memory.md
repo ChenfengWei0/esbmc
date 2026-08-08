@@ -20366,3 +20366,30 @@ Therefore the near-term code/debug priority is:
 2. valid-no-PUT cases where Stage 2 has concrete-only or certified-region
    artifacts but Stage 4 did not parameterize;
 3. actionable normal/returning no-R1/R2 only, not rollback no-R1/R2.
+
+Update after the pinned-state R2 renderer fix:
+
+- Keep reporting and attacking three queues separately: `no-valid`,
+  `valid-no-PUT`, and `valid-PUT-no-R1/R2`.  The last two are methodologically
+  important even when raw valid improves, because a concrete-only or R0-only
+  result weakens the PUT claim.
+- `scripts/solidity_path_put.py` now keeps scalar `state.*` pins in the
+  `--path-cov-assert` spec and lets point-valued coordinates from
+  `region + pins` render as R2 endpoints even when solc storage layout has no
+  slot for them.  This covers immutable/constant-like state pins that ESBMC can
+  reason about but Foundry cannot `vm.store`.
+- Real probe:
+  `real203/euler-xyz__euler-vault-kit__IRMLinearKink.computeInterestRateView`
+  under
+  `Results/RQ1/VeriPUT/real203/subjects/euler-xyz__euler-vault-kit__IRMLinearKink/put/computeInterestRateView_statepin_probe_2`
+  is B-valid: 1/1 PUT, 0 concrete, generation wall about 4.8s, total wall about
+  6.1s including the outside-timeout Foundry replay.  Its `put.json` stats are
+  `fuzz_params=3`, `asserts=8`, `return_asserts=7`,
+  `exit_kind_asserts=1`, `oracle_classes=["R0","R2"]`,
+  `oracle_skipped=[]`.  The generated test includes
+  `return == state.baseRate`, so this case is no longer a normal-path
+  `valid-PUT-no-R1/R2` example.
+- The entry-state header still reports those immutable-like pins as
+  NOT ESTABLISHED because Foundry cannot set them; that is disclosure, not a
+  proof failure.  The double oracle remains ESBMC certification plus Foundry
+  reference replay on P.

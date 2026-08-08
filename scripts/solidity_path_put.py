@@ -4166,18 +4166,7 @@ def assert_query_pins(pins, layout, maps):
                     f"{name} (not passed to --path-cov-assert: `{mname}` is "
                     "not a queryable mapping member in solc's layout)")
             continue
-        if layout and v in layout:
-            skipped.append(
-                f"{name} (not passed to --path-cov-assert: storage scalar "
-                "entry-state pins are established in the Foundry test, but "
-                "the ESBMC assertion ladder cannot resolve them as query "
-                "coordinates today. The ladder is asked over the larger "
-                "unconstrained-state superset instead; any HOLDS result is "
-                "therefore still valid for the pinned slice)")
-        else:
-            skipped.append(
-                f"{name} (not passed to --path-cov-assert: solc's layout "
-                "does not list it, so it is a semantic constant/immutable pin)")
+        keep[name] = value
     return keep, skipped
 
 
@@ -7040,6 +7029,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
 
     lifted, repl, sig, pre_lines = [], {}, [], []
     implicit_full = set(implicit_full)
+    point_texts = point_value_texts(region, pins)
     # coordinate -> how many values the EMITTED test leaves it. See the floor
     # test below; `lifted` alone cannot answer it.
     rendered_width = {}
@@ -7789,6 +7779,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                                 svar = cname[len("state."):]
                                 if cname in ret_coord_ident_abs:
                                     continue
+                                if cname in point_texts:
+                                    ret_coord_ident_abs[cname] = (
+                                        point_texts[cname])
+                                    continue
                                 mname, slot_keys, slot_tail = parse_slot_name(
                                     svar)
                                 if mname is not None:
@@ -7934,6 +7928,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             coord_ident[cname] = ident
             coord_ident_abs[cname] = ident
             return True
+        if cname in point_texts:
+            coord_ident[cname] = point_texts[cname]
+            coord_ident_abs[cname] = point_texts[cname]
+            return True
         if svar not in layout:
             oracle_skipped.append(
                 f"{cname} (no storage slot: solc's layout does not list it, "
@@ -7966,7 +7964,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # there in a sharper form, and swapping them makes a healthy pipeline read
     # as broken or a broken one as healthy.
     ladder_rows, implied_rows = antichain(
-        ladder_rows, call_is_revert_tolerant, point_value_texts(region, pins))
+        ladder_rows, call_is_revert_tolerant, point_texts)
     oracle_implied = [f"{v}: {t} (entailed by a stronger rung that also HOLDS "
                       f"on {v}, so asserting it detects nothing the stronger "
                       f"one misses)" for v, t, _d in implied_rows]
@@ -10337,12 +10335,25 @@ def main():
                 _sv = _sn[len("state."):]
                 if parse_slot_name(_sv)[0] is not None:
                     continue
-                if _sv not in layout:
+                if _sv in layout:
+                    _nb = layout[_sv][2]
+                    _rendered_coords.append(
+                        (_sn, "id" if _nb == 20 else "num",
+                         _nb if _nb == 20 else None))
                     continue
-                _nb = layout[_sv][2]
+                _lk = lift_kind((state_types or {}).get(_sv))
+                if _lk is None:
+                    continue
+                _kind, _width = _lk
+                _coord_kind = {
+                    "address": "id",
+                    "bytes": "id",
+                    "bool": "bool",
+                }.get(_kind, "num")
                 _rendered_coords.append(
-                    (_sn, "id" if _nb == 20 else "num",
-                     _nb if _nb == 20 else None))
+                    (_sn, _coord_kind,
+                     (20 if _kind == "address" else
+                      (_width // 8 if _kind == "bytes" else None))))
             _r2, _source_assignment_evidence = source_assignment_r2_specs(
                 a.ast, a.contract, a.unit, params, layout, _rendered_coords,
                 arity=len(params or []), declaration_id=declaration_id,
