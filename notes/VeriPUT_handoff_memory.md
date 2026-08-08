@@ -19785,3 +19785,39 @@ Verification:
 
 No ESBMC rerun was consumed for this fix yet; save benchmark reruns for a
 small selected NO-COORDINATE queue after more script-level fixes are batched.
+
+## 2026-08-08 no-R1/R2 triage split
+
+Enhanced `notes/coverage/scripts/rq1_veriput_triage.py` to split
+`valid-PUT-no-R1R2` into:
+
+- `valid-PUT-no-R1R2-rollback`: all valid PUTs without R1/R2 are rollback
+  paths, so post-state R1/R2 is unobservable and must not be forced.
+- `valid-PUT-no-R1R2-normal-or-unknown`: at least one valid PUT without R1/R2
+  is not marked as a rollback path, so it is a real oracle-strength candidate
+  unless the unit has no observable return/state surface.
+
+`python3 -m py_compile notes/coverage/scripts/rq1_veriput_triage.py` passed.
+`python3 notes/coverage/scripts/rq1_veriput_triage.py --benchmark all
+--sample-limit 2` passed.
+
+Updated current split:
+
+- `bugfix124`: 21 `valid-PUT-no-R1R2-rollback`, 0
+  `valid-PUT-no-R1R2-normal-or-unknown`.
+- `real203`: 7 rollback, 2 normal-or-unknown.
+- `peer182`: 12 rollback, 11 normal-or-unknown.
+
+Interpretation:
+
+- Do not spend bugfix124 time trying to add state R1/R2 to its current
+  no-R1/R2 PUTs; the valid ones are rollback paths by artifact metadata.
+- For bugfix124, prioritize `no-valid` and `valid-no-PUT`.
+- Peer is the better source for debugging normal no-R1/R2 oracle gaps.  Sample
+  inspection:
+  - `peer_soltg__while_1.f` is a pure/void normal-exit path with no storage or
+    return surface, so R1/R2 may genuinely be absent.
+  - `real203` `IRMLinearKink.computeInterestRateView` has a return value but
+    Stage4 currently records `all return rungs DROPPED: no return rung HOLDS
+    over the certified region`; this kind of case is a better candidate for a
+    return-oracle/R2 improvement than rollback cases.

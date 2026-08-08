@@ -90,6 +90,37 @@ def _valid_put_combo_counts(row: dict[str, Any]) -> Counter[str]:
     return combos
 
 
+def _read_put_stats(test: dict[str, Any]) -> dict[str, Any]:
+    path = test.get("put_json")
+    if not path:
+        return {}
+    try:
+        doc = json.loads(Path(str(path)).read_text(errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    stats = doc.get("stats") or {}
+    return stats if isinstance(stats, dict) else {}
+
+
+def _valid_put_no_r1r2_exit_shape(row: dict[str, Any]) -> str:
+    valid_puts = [test for test in _valid_tests(row) if test.get("kind") == "put"]
+    if not valid_puts:
+        return "none"
+    rollback = 0
+    normal_or_unknown = 0
+    for test in valid_puts:
+        stats = _read_put_stats(test)
+        if stats.get("rollback_exit") is True:
+            rollback += 1
+        else:
+            normal_or_unknown += 1
+    if normal_or_unknown:
+        return "normal-or-unknown"
+    if rollback:
+        return "rollback"
+    return "unknown"
+
+
 def _bucket(row: dict[str, Any]) -> str:
     valid = _valid_count(row)
     put_valid = _kind_valid(row, "put")
@@ -102,7 +133,10 @@ def _bucket(row: dict[str, Any]) -> str:
         return "valid-PUT-with-R2"
     if classes.get("R1", 0) > 0:
         return "valid-PUT-with-R1-no-R2"
-    return "valid-PUT-no-R1R2"
+    shape = _valid_put_no_r1r2_exit_shape(row)
+    if shape == "rollback":
+        return "valid-PUT-no-R1R2-rollback"
+    return "valid-PUT-no-R1R2-normal-or-unknown"
 
 
 def _load_latest(path: Path) -> tuple[dict[str, dict[str, Any]], int, int]:
@@ -191,6 +225,7 @@ def summarize_dataset(root: Path, dataset: str,
     no_put_sources = Counter()
     valid_put_classes: Counter[str] = Counter()
     valid_put_combos: Counter[str] = Counter()
+    no_r1r2_exit_shapes: Counter[str] = Counter()
     artifact = Counter()
     examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
@@ -204,6 +239,8 @@ def summarize_dataset(root: Path, dataset: str,
         artifact["concrete_valid"] += _kind_valid(row, "concrete")
         valid_put_classes.update(_valid_put_classes(row))
         valid_put_combos.update(_valid_put_combo_counts(row))
+        if bucket.startswith("valid-PUT-no-R1R2"):
+            no_r1r2_exit_shapes[_valid_put_no_r1r2_exit_shape(row)] += 1
         if bucket == "valid-no-PUT":
             for test in _valid_tests(row):
                 no_put_sources[str(test.get("stage2_source") or "<missing>")] += 1
@@ -231,6 +268,7 @@ def summarize_dataset(root: Path, dataset: str,
         "valid_subject_any_put_ratio": round(valid_subject_put_ratio, 4),
         "valid_put_oracle_class_counts": dict(sorted(valid_put_classes.items())),
         "valid_put_oracle_combo_counts": dict(sorted(valid_put_combos.items())),
+        "valid_put_no_r1r2_exit_shapes": dict(sorted(no_r1r2_exit_shapes.items())),
         "valid_no_put_stage2_sources": dict(sorted(no_put_sources.items())),
         "status_counts": dict(sorted(status_counts.items())),
         "completion_status_counts": dict(sorted(completion_counts.items())),
@@ -264,6 +302,10 @@ def _print_human(summary: dict[str, Any]) -> None:
     print("valid PUT oracle combos:")
     for key, value in summary["valid_put_oracle_combo_counts"].items():
         print(f"  {key}: {value}")
+    if summary["valid_put_no_r1r2_exit_shapes"]:
+        print("valid PUT no-R1/R2 exit shapes:")
+        for key, value in summary["valid_put_no_r1r2_exit_shapes"].items():
+            print(f"  {key}: {value}")
     if summary["valid_no_put_stage2_sources"]:
         print("valid-no-PUT stage2 sources:")
         for key, value in summary["valid_no_put_stage2_sources"].items():
@@ -276,7 +318,8 @@ def _print_human(summary: dict[str, Any]) -> None:
     for bucket in (
             "no-valid",
             "valid-no-PUT",
-            "valid-PUT-no-R1R2",
+            "valid-PUT-no-R1R2-normal-or-unknown",
+            "valid-PUT-no-R1R2-rollback",
             "valid-PUT-with-R1-no-R2",
     ):
         rows = summary.get("examples", {}).get(bucket) or []
