@@ -22306,3 +22306,34 @@ Update after bugfix124 stale/unknown refresh batches 1-3:
   The next candidates are access-control/reentrancy/unchecked-call variants;
   continue in small batches because the last batch had one full-timeout
   no-output case.
+
+Update after completing the bugfix124 stale/unknown refresh:
+
+- Continued the remaining 20 stale `no-valid-unknown` bugfix124 rows in
+  five more small batches with the same command shape (`--timeout 600
+  --wrapper-grace 60 --memlimit-gib 12 --jobs 2 --redo`).  The stale
+  `no-valid-unknown` bucket is now empty.
+- Additional R1/R2 recoveries included the ReentrancyDAO variants, the two
+  `PENNY_BY_PENNY` variants, the two `MONEY_BOX` variants, both PoCGame
+  unchecked-call variants, and several access-control/reentrancy repairs.
+  Several unchecked-call/reentrancy rows recovered as R0-only PUTs.  `reprod_
+  DCFToken` emitted 11 raw PUT artifacts but all failed Foundry replay, so it
+  remains no-valid with `cert-certified`.
+- Net bugfix124 movement from before any stale refresh to the final stale-free
+  state:
+  `quality_bucket` changed from
+  `{"PUT-with-R1R2-but-no-width":1,"no-valid":86,
+  "valid-PUT-no-R1R2":25,"valid-PUT-with-R1R2":9,"valid-no-PUT":3}` to
+  `{"PUT-with-R1R2-but-no-width":1,"no-valid":56,
+  "valid-PUT-no-R1R2":39,"valid-PUT-with-R1R2":25,"valid-no-PUT":3}`.
+  Artifacts changed from
+  `{"raw":91,"valid":70,"put_raw":71,"put_valid":61,
+  "concrete_raw":20,"concrete_valid":9}` to
+  `{"raw":237,"valid":197,"put_raw":198,"put_valid":172,
+  "concrete_raw":39,"concrete_valid":25}`.
+- Next high-ROI stale-refresh target is peer182: it still has many
+  no-timing `no-valid-unknown` rows, mostly `peer_ccsolbmc__*` and
+  `peer_solar__*`.  Start with small/fast subjects before large token/NFT
+  contracts.  For bugfix124, remaining work is no longer stale-row recovery;
+  it is structural (`cert-killed`, `stage2-no-output-timeout`,
+  `cert-no-witness-*`, Foundry obstacles, rollback/revert-only, etc.).
