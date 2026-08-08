@@ -11318,9 +11318,9 @@ Recent official BugFix124 status:
 
 - Strict latest journal over
   `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/results.jsonl`:
-  124 cases, 63 cases with at least one valid test, 61 with no valid test.
-- Artifact totals: raw 211, valid 186, valid PUT 126, valid concrete 60.
-  PUT share among valid artifacts: 67.7%.
+  124 cases, 64 cases with at least one valid test, 60 with no valid test.
+- Artifact totals: raw 218, valid 193, valid PUT 128, valid concrete 65.
+  PUT share among valid artifacts: 66.3%.
 - `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark bugfix124`
   reported after `pop_018`: VeriPUT `raw_u=195`, `valid_u=170`,
   `raw_c=60`, `valid_c=60`, coverage `48.4%`, `VT/case=1.37`, status
@@ -11337,6 +11337,11 @@ Recent official BugFix124 status:
   `valid_u=186`, `raw_c=63`, `valid_c=63`, coverage `50.8%`,
   `VT/case=1.50`, status
   `{'ok': 63, 'no-output': 53, 'no-units': 5, 'budget-exhausted': 3}`.
+- After rerunning
+  `rcx_reentrancy__0xbe4041d55db380c5ae9d4a9b9703f1ed4e7e3888__SmartFix`,
+  the same command reports VeriPUT `raw_u=218`, `valid_u=193`,
+  `raw_c=64`, `valid_c=64`, coverage `51.6%`, `VT/case=1.56`, status
+  `{'ok': 64, 'no-output': 52, 'no-units': 5, 'budget-exhausted': 3}`.
 
 Recent official case observations:
 
@@ -11377,6 +11382,18 @@ Recent official case observations:
   `flashFee`, `setMerkleRoot`, `setFeeRate`, `setUseStolenNftOracle`.
   The low-budget concrete-only Stage4 guard triggered once on
   `setUseStolenNftOracle` with 0.543s remaining after 4 valid concrete tests.
+- `rcx_reentrancy__0xbe4041d55db380c5ae9d4a9b9703f1ed4e7e3888__SmartFix`
+  rerun:
+  old row was no-output after `Put`, `Collect`; new row is status ok,
+  raw 7, valid 7, PUT 2/2, concrete 5/5, generation 181.747s,
+  Stage2 163.65s, Stage4 generation 18.097s, Foundry replay 4.257s,
+  wall 187.219s, maxrss 1257.0 MB.  Units attempted:
+  `Put`, `Collect`, `SetMinSum`, `SetLogFile`, `Initialized`.
+  PUTs:
+  `SetLogFile` path 7 has R0+R1; `SetMinSum` path 7 has R0+R1+R2.
+  Oracle class counts: R0=2, R1=6, R2=6; combos R0=2, R1=3,
+  R1+R2=3, R2=3.  This is a better next-candidate template than
+  concrete-only PrivatePool cases.
 
 Next-candidate caution:
 
@@ -11385,6 +11402,9 @@ Next-candidate caution:
   fallback rows.  This improves raw valid coverage, but pushes the valid PUT
   share below 70%.  Further PrivatePool-like reruns should be balanced against
   work on stronger PUT synthesis or candidates likely to certify R0/R1/R2.
+- The `MONEY_BOX`/reentrancy family is a better current target: sibling rows
+  show later administrative units can certify and produce R0/R1/R2 PUTs after
+  early money-flow units time out or fall back to concrete.
 
 Diagnosis from `pop_018_PrivatePool`:
 
