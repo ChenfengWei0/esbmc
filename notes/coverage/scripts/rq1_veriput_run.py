@@ -44,6 +44,7 @@ CONCRETE_FALLBACK_WITNESS_CHECKS = {
 DEFAULT_VERIPUT_ROOT = Path("/home/samson/workspace/VeriPUT")
 DEFAULT_RESULT_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1" / "VeriPUT"
 DEFAULT_AST_CACHE_ROOT = Path("/tmp/veriput_rq1_ast_cache")
+DEFAULT_STAGE2_UNIT_TIMEOUT_CAP_S = 180
 DATASET_LABEL = {
     "peer182": "peer182",
     "bugfix124": "bugfix124",
@@ -1413,7 +1414,8 @@ def main(argv=None) -> int:
     ap.add_argument("--esbmc-run-timeout", type=int, default=120,
                     help="per ESBMC invocation budget inside certification, "
                          "seconds. The whole subject still gets --timeout")
-    ap.add_argument("--stage2-unit-timeout-cap-s", type=int, default=0,
+    ap.add_argument("--stage2-unit-timeout-cap-s", type=int,
+                    default=DEFAULT_STAGE2_UNIT_TIMEOUT_CAP_S,
                     help="if positive, cap each Stage-2 unit's whole "
                          "certify_all.py budget to this many seconds while "
                          "leaving --esbmc-run-timeout as the per-ESBMC-run "

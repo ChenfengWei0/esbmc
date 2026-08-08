@@ -374,6 +374,97 @@ def test_schedule_orders_cheaper_units_inside_priority_bucket():
     return bad
 
 
+def test_schedule_deprioritizes_unhinted_admin_units():
+    data = manifest()
+    row = data["subjects"][0]
+    row["target"]["units_hint"] = []
+    row["unit_hints"] = {
+        "hinted_units": [],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    row["units"]["units"] = [
+        "pause",
+        "unPause",
+        "unpause",
+        "setAddressFrozen",
+        "setName",
+        "approve",
+        "setFeeRate",
+    ]
+    row["units"]["unit_info"] = [
+        {
+            "name": "pause",
+            "state_mutability": "nonpayable",
+            "parameter_count": 0,
+            "return_count": 0,
+        },
+        {
+            "name": "unPause",
+            "state_mutability": "nonpayable",
+            "parameter_count": 0,
+            "return_count": 0,
+        },
+        {
+            "name": "unpause",
+            "state_mutability": "nonpayable",
+            "parameter_count": 0,
+            "return_count": 0,
+        },
+        {
+            "name": "setAddressFrozen",
+            "state_mutability": "nonpayable",
+            "parameter_count": 2,
+            "return_count": 0,
+        },
+        {
+            "name": "setName",
+            "state_mutability": "nonpayable",
+            "parameter_count": 1,
+            "return_count": 0,
+        },
+        {
+            "name": "approve",
+            "state_mutability": "nonpayable",
+            "parameter_count": 2,
+            "return_count": 1,
+        },
+        {
+            "name": "setFeeRate",
+            "state_mutability": "nonpayable",
+            "parameter_count": 1,
+            "return_count": 0,
+        },
+    ]
+    doc = unit_schedule.build_schedule(data)
+    got = [(job["unit"], job["schedule_rank"]["cheap_first"])
+           for job in doc["jobs"]]
+    bad = 0
+    bad += check([unit for unit, _rank in got] == [
+        "setFeeRate",
+        "approve",
+        "pause",
+        "unPause",
+        "unpause",
+        "setName",
+        "setAddressFrozen",
+    ], f"unhinted admin units no longer block business methods: {got}")
+    pause = next(job for job in doc["jobs"] if job["unit"] == "pause")
+    bad += check(pause["region_strategy"]["zero_interface_sender_arm"]
+                 and argv_value(pause["certify_argv"], "--env-coord") == "msg.sender",
+                 f"admin zero-interface units still record sender arm when reached: {pause}")
+
+    row["target"]["units_hint"] = ["pause"]
+    row["unit_hints"]["hinted_units"] = ["pause"]
+    hinted_doc = unit_schedule.build_schedule(data)
+    hinted = [(job["unit"], job["priority"], job["priority_reason"])
+              for job in hinted_doc["jobs"][:2]]
+    bad += check(hinted == [("pause", 0, "target-hint"),
+                            ("setFeeRate", 1, "state-changing")],
+                 f"explicit target hints still override admin deprioritization: {hinted}")
+    return bad
+
+
 def test_schedule_deprioritizes_recursive_helper_obstacles():
     recursive_ast = {
         "nodes": [
@@ -729,6 +820,7 @@ TESTS = [
     test_schedule_prioritizes_semantic_units_before_getter_like_units,
     test_schedule_deprioritizes_unhinted_initializers,
     test_schedule_orders_cheaper_units_inside_priority_bucket,
+    test_schedule_deprioritizes_unhinted_admin_units,
     test_schedule_deprioritizes_recursive_helper_obstacles,
     test_schedule_cli_reads_stdin_and_applies_limit,
     test_schedule_deduplicates_prepared_subject_units,

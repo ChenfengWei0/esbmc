@@ -8,6 +8,93 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## 2026-08-08 strength-first RQ1 triage and scheduling
+
+User alignment:
+
+- RQ1 triage must not focus only on `no-valid`.  The actionable backlog is now
+  three-level: `no-valid`, `valid-no-PUT`, and
+  `valid-PUT-no-R1/R2`.
+- `valid-no-PUT` is a methodology risk because concrete replay tests do not
+  support the PUT-based claim.
+- `valid-PUT-no-R1/R2` is split into rollback/accounting-only rows and
+  normal-or-unknown rows.  The latter are actionable for stronger assertions;
+  rollback-only R0 rows are tracked but should not monopolize debugging time.
+- Fuzz remains refute-only.  It can cheaply reject bad candidate regions,
+  coordinates, and assertions, but it must not be counted as proof.
+
+Current accounting support:
+
+- `notes/coverage/scripts/rq1_veriput_triage.py` reports buckets for
+  `no-valid`, `valid-no-PUT`,
+  `valid-PUT-no-R1R2-normal-or-unknown`,
+  `valid-PUT-no-R1R2-rollback`, `valid-PUT-with-R1-no-R2`, and
+  `valid-PUT-with-R2`.
+- The same report includes artifact-level `put_valid / valid`,
+  subject-level any-PUT ratio, valid PUT oracle class counts, oracle
+  combinations, Stage-2 source breakdown for `valid-no-PUT`, and separate
+  timing stats including Foundry replay outside the generation timeout.
+
+Bugfix124 after targeted v16 reruns:
+
+- Buckets: `no-valid=53`, `valid-no-PUT=9`,
+  `valid-PUT-no-R1R2-rollback=24`, `valid-PUT-with-R2=38`.
+- Artifact totals: `raw=281`, `valid=253`, `put_raw=167`,
+  `put_valid=154`, `concrete_raw=114`, `concrete_valid=99`.
+- Artifact PUT/valid ratio is `0.609`; valid-subject any-PUT ratio is `0.873`.
+- Valid PUT oracle classes: `R0=130`, `R1=69`, `R2=64`.
+- The remaining bugfix124 no-R1/R2 rows are rollback-shaped, so the next
+  strength work should mainly target no-valid and valid-no-PUT rows.
+
+Real203 snapshot before repairing the ERC-3643 Token rerun:
+
+- Current journal has one bad official rerun for
+  `ERC-3643__ERC-3643__Token`: it ended `budget-exhausted`, `raw=0`,
+  `valid=0`, after spending the subject budget on
+  `pause`, `unpause`, and `setName`.
+- The root cause was scheduling: admin/metadata units looked cheap and were
+  tried before functions with more useful input coordinates.
+- Current real203 triage therefore reports `no-valid=177`,
+  `valid-no-PUT=3`, `valid-PUT-no-R1R2-normal-or-unknown=2`,
+  `valid-PUT-no-R1R2-rollback=7`, and `valid-PUT-with-R2=14`.
+  This includes the worsened Token row and should be repaired by one rerun
+  after the scheduling fix.
+
+Scheduling fix:
+
+- `notes/coverage/scripts/unit_schedule.py` now demotes unhinted
+  owner/admin/metadata functions such as `pause`, `unpause`, `unPause`,
+  `renounceOwnership`, `acceptOwnership`, `setName`, `setSymbol`,
+  `setOnchainID`, `setIdentityRegistry`, `setCompliance`, and
+  `setAddressFrozen`.
+- Explicit target hints still override the demotion.
+- The zero-interface sender arm is still preserved when those units are
+  eventually tried, so `msg.sender` remains available as an environment
+  coordinate.
+- `notes/coverage/scripts/rq1_veriput_run.py` defaults
+  `--stage2-unit-timeout-cap-s` to 180 seconds.  The whole subject timeout
+  remains 600 seconds, but a single no-output Stage-2 unit can no longer burn
+  the full subject budget by default.
+- A dry schedule for `real203 / ERC-3643__ERC-3643__Token` now starts with
+  business/coordinate-bearing units:
+  `addAgent`, `removeAgent`, `mint`, `burn`, `freezePartialTokens`,
+  `unfreezePartialTokens`, `increaseAllowance`, `decreaseAllowance`,
+  `transfer`, `transferFrom`, `recoveryAddress`, `forcedTransfer`,
+  `transferOwnership`, `approve`.
+  Admin/metadata units are pushed behind them.
+
+Validation:
+
+- `python3 -m py_compile notes/coverage/scripts/unit_schedule.py
+  notes/coverage/scripts/rq1_veriput_run.py scripts/test_unit_schedule.py
+  scripts/test_rq1_veriput_run.py` passed.
+- `python3 scripts/test_unit_schedule.py` passed.
+- `python3 scripts/test_rq1_veriput_run.py` passed: 17 / 17.
+- `python3 scripts/test_unit_campaign_plan.py` passed.
+- `python3 scripts/test_benchmark_pipeline_plan.py` passed.
+- `python3 notes/coverage/scripts/rq1_veriput_triage.py --benchmark bugfix124
+  --sample-limit 3` and the real203 equivalent both ran successfully.
+
 ## 2026-08-08 PUT-ratio priority and conditional require frontend fix
 
 User alignment:

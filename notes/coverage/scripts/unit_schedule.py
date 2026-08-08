@@ -35,13 +35,24 @@ INITIALIZER_LIKE_UNITS = {
     "setUp",
 }
 CHEAP_STATE_UNIT_NAMES = {
+}
+ADMIN_ZERO_INTERFACE_UNIT_NAMES = {
+    "acceptOwnership",
     "pause",
-    "unpause",
+    "renounceOwnership",
     "unPause",
+    "unpause",
+}
+ADMIN_SETTER_UNIT_NAMES = {
+    "setAddressFrozen",
+    "setCompliance",
+    "setIdentityRegistry",
+    "setName",
+    "setOnchainID",
+    "setSymbol",
 }
 MODERATE_STATE_UNIT_NAMES = {
     "approve",
-    "renounceOwnership",
     "setApprovalForAll",
     "transferOwnership",
 }
@@ -289,6 +300,10 @@ def _unit_cost_rank(unit: str, unit_info: dict | None) -> tuple[int, int, int]:
         tier = 80
     elif mutability in ("view", "pure"):
         tier = 5
+    elif unit in ADMIN_ZERO_INTERFACE_UNIT_NAMES and params == 0:
+        tier = 65
+    elif unit in ADMIN_SETTER_UNIT_NAMES:
+        tier = 65
     elif unit in MODERATE_STATE_UNIT_NAMES:
         tier = 45
     elif unit in CHEAP_STATE_UNIT_NAMES or lower.startswith("set"):
