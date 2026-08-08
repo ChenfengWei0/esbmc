@@ -21587,3 +21587,42 @@ Update after enabling host-wide concurrency for real203:
   `real203`: `valid_cases=33`, `put_cases=26`, `r1r2_cases=18`,
   `concrete_only=7`, `no_valid=170`, `valid_units=179`, `put_units=121`,
   `r1r2_put_units=38`.
+
+Update after Aug 8 real203 600s recovery batches:
+
+- Ran two additional real203 batches at `jobs=3`, `memlimit=10GiB`,
+  `timeout=600`, `esbmc-run-timeout=600`, all early-stop knobs disabled.
+  This configuration did not trigger the nested `certify_all.py` memory guard
+  and left no residual ESBMC processes after completion.
+- Batch A subjects:
+  `safe-fndn__safe-smart-account__CompatibilityFallbackHandler` recovered
+  `raw=5`, `valid=5`, all concrete (`valid-no-PUT`);
+  `ERC-3643__ERC-3643__IdentityRegistryStorage` recovered `raw=4`,
+  `valid=4`, `put_valid=4`, `valid_put_with_R1_or_R2=1`;
+  `ERC-3643__ERC-3643__TrustedIssuersRegistry` recovered `raw=13`,
+  `valid=11`, `put_valid=5`, `concrete_valid=6`,
+  `valid_put_with_R1_or_R2=2`; `ProjectOpenSea__seaport__LocalConduit`
+  recovered `raw=2`, `valid=2`, `put_valid=2`,
+  `valid_put_with_R1_or_R2=1`.  `ProjectOpenSea__seaport__TransferHelper`
+  and `compound-finance__comet__CometRewards` remained no-valid at the 600s
+  budget.
+- Batch B subjects:
+  `ERC-3643__ERC-3643__IdentityRegistry` recovered `raw=7`, `valid=7`,
+  `put_valid=7` and `valid-PUT-with-R1R2`.  `TREXGateway` and
+  `TREXImplementationAuthority` remained no-valid at 600s.  Balancer
+  `OwnableAuthentication`, `ProtocolFeeController`, and
+  `ProtocolFeePercentagesProvider` all remained no-valid; treat Balancer
+  fee/auth/controller shapes as low-yield until region or auth modeling
+  improves.
+- Latest official real203 snapshot after these batches:
+  `valid_cases=38`, `put_cases=30`, `r1r2_cases=22`,
+  `concrete_only=8`, `no_valid=165`, `valid_units=208`,
+  `put_units=139`, `r1r2_put_units=45`.
+- Practical priority update: continue sweeping ERC-3643 registry/storage-like
+  subjects first; deprioritize `TREXGateway`, `TREXImplementationAuthority`,
+  Compound Comet reward/admin/proxy shapes, ENS registry/fallback, OpenSea
+  `TransferHelper`, and Balancer fee/auth/controller cases unless a code-side
+  Stage2 improvement lands.  The 600s budget is necessary for some successful
+  ERC-3643 cases: `IdentityRegistryStorage`, `TrustedIssuersRegistry`, and
+  `IdentityRegistry` all produced useful PUT/R1/R2 artifacts only near the
+  end of the 600s window.
