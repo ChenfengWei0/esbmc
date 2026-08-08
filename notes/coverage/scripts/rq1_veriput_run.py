@@ -179,11 +179,19 @@ def _target_cost_key(veriput_root: Path, row: dict) -> tuple[int, int, str]:
     dirname = PREPARED_DATASET_DIR.get(bench)
     size = 1 << 60
     if dirname and subject_id:
-        flat = veriput_root / "Results" / dirname / "subjects" / subject_id / "flat.sol"
-        try:
-            size = flat.stat().st_size
-        except OSError:
-            pass
+        candidates = [
+            veriput_root / "Results" / dirname / "subjects" / subject_id / "flat.sol",
+        ]
+        if bench == "bugfix124":
+            candidates.append(
+                veriput_root / "scripts" / "Results" / "workdirs"
+                / "BugFix124" / "subjects" / subject_id / "flat.sol")
+        for flat in candidates:
+            try:
+                size = flat.stat().st_size
+                break
+            except OSError:
+                continue
     hints = len(row.get("units_hint") or [])
     # Hinted target rows tend to be narrower, but flat size dominates.
     return (size, -hints, subject_id)

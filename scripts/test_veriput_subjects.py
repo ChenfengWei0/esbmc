@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "notes" / "coverage" / "scripts"))
 
+import veriput_subjects  # noqa: E402
 from veriput_subjects import (SubjectError, enumerate_subject_units,  # noqa: E402
                               manifest_for_subject, resolve_subject,
                               subject_from_record, unit_manifest)
@@ -232,6 +233,31 @@ def test_bad_status_is_not_usable():
                          f"bad prepared subject status refused: {exc}")
     print("FAIL: compile-failed subject was accepted")
     return 1
+
+
+def test_resolve_subject_uses_bugfix_fallback_root():
+    old_primary = veriput_subjects.KNOWN_SUBJECT_ROOTS["bugfix124"]
+    old_fallback = veriput_subjects.FALLBACK_SUBJECT_ROOTS.get("bugfix124", ())
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        primary = root / "Results" / "BugFix124" / "subjects"
+        fallback = root / "scripts" / "Results" / "workdirs" / "BugFix124" / "subjects"
+        make_subject(fallback, "bugfix__C", benchmark="bugfix124")
+        veriput_subjects.KNOWN_SUBJECT_ROOTS["bugfix124"] = primary
+        veriput_subjects.FALLBACK_SUBJECT_ROOTS["bugfix124"] = (fallback,)
+        try:
+            subject = resolve_subject(
+                "bugfix__C", benchmark="bugfix124", unit="f")
+            dirs = veriput_subjects.subject_dirs("bugfix124")
+        finally:
+            veriput_subjects.KNOWN_SUBJECT_ROOTS["bugfix124"] = old_primary
+            veriput_subjects.FALLBACK_SUBJECT_ROOTS["bugfix124"] = old_fallback
+    bad = 0
+    bad += check(subject.root == str((fallback / "bugfix__C").resolve()),
+                 f"bugfix fallback root resolves subject: {subject.root}")
+    bad += check([p.name for p in dirs] == ["bugfix__C"],
+                 f"bugfix fallback root is scanned: {dirs}")
+    return bad
 
 
 def test_ast_unit_enumeration_is_target_contract_scoped():
@@ -828,6 +854,7 @@ def main():
         test_subject_from_cert_record_round_trips,
         test_subject_record_preserves_inferred_solc_bin,
         test_bad_status_is_not_usable,
+        test_resolve_subject_uses_bugfix_fallback_root,
         test_ast_unit_enumeration_is_target_contract_scoped,
         test_unit_manifest_records_missing_ast_without_solc,
         test_generate_ast_is_atomic_on_success,

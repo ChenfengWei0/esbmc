@@ -21833,3 +21833,45 @@ Update after unit scheduler speed fix:
   same useful result (`raw=2`, `valid=2`, concrete-only) but scheduled only one
   unit and reduced Stage2 to about 7.0s / total wall to about 14.5s.  This is a
   throughput fix, not a PUT-rate fix.
+
+Update after BugFix124 fallback-root fix:
+
+- Discovered that current `rq1_veriput_run.py` could dry-run bugfix124 target
+  rows from `Datasets/Patch-Bug-Bench/summary.csv` but could not actually run
+  them because `run_subject()` resolves prepared subjects and the canonical
+  `/home/samson/workspace/VeriPUT/Results/BugFix124/subjects` directory is
+  absent on this machine.  The prepared 124 bugfix subjects do exist under
+  `/home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects`.
+- Fixed `notes/coverage/scripts/veriput_subjects.py` to use the workdir
+  subject root as a read-only fallback for `bugfix124`, and fixed
+  `rq1_veriput_run.py` fast-first size sorting to inspect that fallback
+  `flat.sol`.  Added tests for both resolver fallback and RQ1 sorting fallback.
+- Verification:
+  `python3 scripts/test_veriput_subjects.py` passed (23 tests);
+  `python3 scripts/test_rq1_veriput_run.py` passed (20 tests);
+  `python3 -m py_compile notes/coverage/scripts/veriput_subjects.py
+  notes/coverage/scripts/rq1_veriput_run.py scripts/test_veriput_subjects.py
+  scripts/test_rq1_veriput_run.py` passed.  Direct resolver checks now find
+  `acfix_077_L1Block` and
+  `rc_reentrancy__modifier_reentrancy__SmartFix__modifier_reentrancy` from the
+  fallback root.
+- Reran five small bugfix124 no-valid subjects after the fallback fix:
+  `rc_access_control__proxy__SolGPT__proxy_4round` recovered `raw=3, valid=3`
+  concrete-only; `acfix_077_L1Block` recovered `raw=2, valid=2`
+  concrete-only; `acfix_3_5_077_L1Block` recovered `raw=2, valid=2`
+  concrete-only.  `rc_reentrancy__reentrancy_bonus__SmartFix__reentrancy_bonus`
+  and `rc_reentrancy__modifier_reentrancy__SmartFix__modifier_reentrancy`
+  remained no-valid (`NOT-CERTIFIED` only).
+- Latest snapshots after this run:
+  `bugfix124 valid_cases=74, put_cases=66, r1r2_cases=31,
+  concrete_only=8, no_valid=50, valid_units=260, put_units=165,
+  r1r2_put_units=59, concrete_units=95`;
+  `real203 valid_cases=46, put_cases=30, r1r2_cases=22,
+  concrete_only=16, no_valid=157, valid_units=236, put_units=139,
+  r1r2_put_units=45, concrete_units=97`.
+- Methodology warning: the recent throughput fixes recover cases mostly as
+  concrete-only.  They are useful for raw valid ratio but can harm PUT fraction
+  if overused.  Next code work should target actual PUT conversion:
+  constructor-coordinate rendering for immutable/constructor-derived slices,
+  external-call mock realisation for pinned extcall returns, or better
+  coordinate extraction for NOT-CERTIFIED/no-coordinate rows.

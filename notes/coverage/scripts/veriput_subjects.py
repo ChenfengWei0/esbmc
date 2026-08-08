@@ -30,6 +30,12 @@ KNOWN_SUBJECT_ROOTS = {
     "peer182": VERIPUT_ROOT / "Results" / "Peer182" / "subjects",
     "bugfix124": VERIPUT_ROOT / "Results" / "BugFix124" / "subjects",
 }
+FALLBACK_SUBJECT_ROOTS = {
+    "bugfix124": (
+        VERIPUT_ROOT / "scripts" / "Results" / "workdirs" / "BugFix124"
+        / "subjects",
+    ),
+}
 
 
 class SubjectError(ValueError):
@@ -161,8 +167,10 @@ def _subject_dir(subject: str | None, root: str | None,
         p = Path(subject).expanduser()
         if p.is_dir():
             return p.resolve()
-        roots = ([KNOWN_SUBJECT_ROOTS[benchmark]]
-                 if benchmark else list(KNOWN_SUBJECT_ROOTS.values()))
+        roots = subject_roots(benchmark) if benchmark else [
+            root for bench in KNOWN_SUBJECT_ROOTS
+            for root in subject_roots(bench)
+        ]
         found = [r / subject for r in roots if (r / subject / "meta.json").exists()]
         if not found:
             raise SubjectError(f"prepared subject {subject!r} was not found")
@@ -172,6 +180,15 @@ def _subject_dir(subject: str | None, root: str | None,
                 f"prepared subject {subject!r} is ambiguous: {names}")
         return found[0].resolve()
     raise SubjectError("pass --subject-dir or --subject-id")
+
+
+def subject_roots(benchmark: str) -> tuple[Path, ...]:
+    if benchmark not in KNOWN_SUBJECT_ROOTS:
+        raise SubjectError(
+            f"unknown subject benchmark {benchmark!r}; known: "
+            + ", ".join(sorted(KNOWN_SUBJECT_ROOTS)))
+    return (KNOWN_SUBJECT_ROOTS[benchmark],
+            *FALLBACK_SUBJECT_ROOTS.get(benchmark, ()))
 
 
 def _solast_for(flat: Path) -> Path:
@@ -402,7 +419,8 @@ def subject_dirs(benchmark: str, root: str | None = None):
             raise SubjectError(
                 f"unknown subject benchmark {benchmark!r}; known: "
                 + ", ".join(sorted(KNOWN_SUBJECT_ROOTS)))
-        base = KNOWN_SUBJECT_ROOTS[benchmark]
+        base = next((r for r in subject_roots(benchmark) if r.is_dir()),
+                    KNOWN_SUBJECT_ROOTS[benchmark])
     if not base.is_dir():
         raise SubjectError(f"subject root does not exist: {base}")
     return sorted(p for p in base.iterdir() if (p / "meta.json").exists())

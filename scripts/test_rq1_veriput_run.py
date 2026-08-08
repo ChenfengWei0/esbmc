@@ -185,11 +185,11 @@ contract T {
         }))
         summary = rq1_veriput_run.summarize_put_artifacts(root / "put")
         bad = 0
-        bad += check(summary["raw"] == 2 and summary["valid"] == 1,
+        bad += check(summary["raw"] == 3 and summary["valid"] == 2,
                      f"raw/valid split is retained: {summary}")
         bad += check(summary["put_raw"] == 1 and summary["put_valid"] == 1
-                     and summary["concrete_raw"] == 1
-                     and summary["concrete_valid"] == 0,
+                     and summary["concrete_raw"] == 2
+                     and summary["concrete_valid"] == 1,
                      f"PUT/concrete split is retained: {summary}")
         bad += check(summary["oracle_class_counts"] == {"R1": 2, "R2": 1},
                      f"oracle labels counted: {summary['oracle_class_counts']}")
@@ -205,13 +205,13 @@ contract T {
         bad += check(concrete["oracle_classes"] == []
                      and concrete["put_json"] is None,
                      f"duplicate concrete test names do not cross-link put.json: {summary}")
-        bad += check(len(summary["raw_tests"]) == 2
+        bad += check(len(summary["raw_tests"]) == 3
                      and all(t["enc"] != 9 for t in summary["raw_tests"]),
                      f"refused PUT rows are not raw deliverables: {summary}")
         bad += check(all(t["enc"] != 10 for t in summary["raw_tests"]),
                      f"disabled concrete replays are not raw deliverables: {summary}")
-        bad += check(all(t["enc"] != 11 for t in summary["raw_tests"]),
-                     f"unsupported concrete no-ops are not raw deliverables: {summary}")
+        bad += check(any(t["enc"] == 11 for t in summary["valid_tests"]),
+                     f"green concrete replays with setup warnings are retained: {summary}")
         bad += check(summary["quality_bucket"] == "valid-PUT-with-R1R2"
                      and summary["valid_put_with_R1"] == 1
                      and summary["valid_put_with_R2"] == 1
@@ -332,6 +332,44 @@ def test_target_rows_fast_first_sorts_before_limit():
     bad += check(fast_rows[0]["subject_id"] == "fast",
                  "fast-first sorts by prepared flat.sol size before limit")
     return bad
+
+
+def test_target_rows_fast_first_uses_bugfix_fallback_size():
+    old = rq1_veriput_run.target_manifest.build_manifest
+    rows = [
+        {
+            "status": "ok",
+            "benchmark": "bugfix124",
+            "subject_id": "slow",
+            "contract": "Slow",
+        },
+        {
+            "status": "ok",
+            "benchmark": "bugfix124",
+            "subject_id": "fast",
+            "contract": "Fast",
+        },
+    ]
+    rq1_veriput_run.target_manifest.build_manifest = lambda *_args: {
+        "targets": rows,
+    }
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            base = root / "scripts" / "Results" / "workdirs" \
+                / "BugFix124" / "subjects"
+            fast = base / "fast" / "flat.sol"
+            slow = base / "slow" / "flat.sol"
+            fast.parent.mkdir(parents=True)
+            slow.parent.mkdir(parents=True)
+            fast.write_text("contract Fast {}\n")
+            slow.write_text("contract Slow {\n" + ("uint256 x;\n" * 100) + "}\n")
+            _label, fast_rows = rq1_veriput_run.target_rows(
+                root, "bugfix124", [], 1, "fast-first")
+    finally:
+        rq1_veriput_run.target_manifest.build_manifest = old
+    return check(fast_rows[0]["subject_id"] == "fast",
+                 "bugfix fast-first uses fallback prepared flat.sol size")
 
 
 def test_certification_summary_identifies_inner_timeouts():
@@ -745,6 +783,7 @@ def main():
         test_real203_cache_uses_prepared_benchmark_namespace,
         test_jobs_admission_refuses_oversubscription,
         test_target_rows_fast_first_sorts_before_limit,
+        test_target_rows_fast_first_uses_bugfix_fallback_size,
         test_certification_summary_identifies_inner_timeouts,
         test_cleared_concrete_fallbacks_trigger_stage4,
         test_subject_schedule_uses_separate_esbmc_run_timeout,
