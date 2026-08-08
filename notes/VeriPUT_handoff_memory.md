@@ -1,12 +1,68 @@
 # VeriPUT Engineering Memory
 
-Last updated: 2026-08-08
+Last updated: 2026-08-09
 
 This document is the durable handoff state for VeriPUT. It records facts that
 were established by reading the paper, the work order, the implementation, and
 the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
+
+## 2026-08-09 certified-region unsupported-skeleton repair
+
+Root cause:
+
+- Several real203 rows had Stage2 `CERTIFIED` regions and Stage4 assertion
+  ladder/R2 candidates, but still emitted no test.  The concrete Foundry
+  skeleton from ESBMC contained only:
+  `UNSUPPORTED: <Contract>.<unit> has an argument type ESBMC cannot yet render
+  as a literal`.
+- Stage4 then failed with messages such as
+  `no call to setGovernor found in test_cov_0; nothing to lift`.
+- This was not a region-strength problem.  It was an external VeriPUT emitter
+  dependency on a concrete replay call that ESBMC correctly refused to render.
+
+Fix:
+
+- `scripts/solidity_path_put.py` now repairs such unsupported skeletons on the
+  certified-region PUT path.
+- If the emitted case has no target call but does carry an `UNSUPPORTED`
+  marker, and source declarations provide synthesizable parameters, the driver
+  writes a repaired temporary `.cov.t.sol` with a local deterministic
+  deployment and a target call with default placeholders.
+- The normal `build_put` route then lifts calldata from the certified region
+  and emits the same R0/R1/R2 oracle logic as before.  This does not relax the
+  proof gate: Stage2 certification and the assertion ladder remain the proof
+  source, while Foundry replay remains the double oracle for generated tests.
+- Constructor placeholders use nonzero deterministic addresses for
+  address/interface-like source types, so common `address(x) != address(0)`
+  constructor guards are not broken by the repair.
+- Final `put.json` stats now include
+  `repaired_unsupported_skeleton: true|false`.
+
+Expected impact:
+
+- This directly targets certified-but-refused rows such as
+  `compound-finance__comet__MarketUpdateProposer.{setGovernor,setProposalGuardian,setMarketAdmin}`
+  and `ensdomains__ens-contracts__MigrationHelper.{setMigrationTarget,setController}`,
+  whose logs had `no call ... nothing to lift`.
+- It may also help similar future benchmark rows where the target calldata is
+  simple but constructor or replay literals include interface/contract typed
+  arguments ESBMC's concrete emitter leaves unsupported.
+- `ERC-3643__ERC-3643__TREXFactory.setIdFactory` is related but slightly
+  different: its log said the emitter produced no `.cov.t.sol` at all.  This
+  repair only applies once an unsupported skeleton file exists.
+
+Validation:
+
+- `python3 -m py_compile scripts/solidity_path_put.py
+  scripts/test_solidity_path_put.py` passed.
+- `python3 scripts/test_solidity_path_put.py` passed: 277 / 277.
+- `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only
+  scripts/solidity_path_put.py scripts/test_solidity_path_put.py` passed.
+- A real existing MarketUpdateProposer unsupported artifact was checked
+  offline: the repair produced a local deployment and `c0.setGovernor(...)`
+  call without running ESBMC.
 
 ## 2026-08-08 strength backlog root-cause labels
 

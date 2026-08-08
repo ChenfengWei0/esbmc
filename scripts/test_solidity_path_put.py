@@ -85,6 +85,7 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                rendered_env_coords_for_emitted_case,
                                parse_ladder, region_slot_vars, statement_start,
                                runtime_interface_mock_lines,
+                               synthesize_unsupported_case_replay,
                                target_instance_for_call, rewrite_call_args,
                                truncated_loops, unwrap_normal_try_call,
                                unwindset_args)
@@ -617,6 +618,66 @@ contract CCovTest_0 is Test {
                  "the payable hasCode constructor arg is etched before deploy")
     bad += check(text.count("vm.etch(_esbmc_ctor_code_") == 2,
                  "only hasCode constructor address args are etched")
+    return bad
+
+
+def test_unsupported_skeleton_is_synthesized_for_certified_put_lift():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {MarketUpdateProposer} from "./flat.sol";
+contract MarketUpdateProposerCovTest is Test {
+  function setUp() public {
+    // UNSUPPORTED: constructor of MarketUpdateProposer has an argument type ESBMC cannot yet render as a literal
+  }
+  // claim: sol:@C@MarketUpdateProposer@F@setGovernor#196:path:15
+  function test_cov_0() public {
+    // UNSUPPORTED: MarketUpdateProposer.setGovernor has an argument type ESBMC cannot yet render as a literal
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+        case = em.case_for("sol:@C@MarketUpdateProposer@F@setGovernor#196",
+                           15)
+        notes = []
+        repaired, repaired_case, changed = synthesize_unsupported_case_replay(
+            em, case, "MarketUpdateProposer", "setGovernor",
+            [("newGovernor", "address")],
+            ["address", "address", "address", "ITimelock"], notes)
+    finally:
+        os.unlink(path)
+
+    body = repaired.lines[repaired_case[3][0] + 1:repaired_case[3][1]]
+    call_i = find_unit_call(body, "setGovernor")
+    bad = 0
+    bad += check(changed, "the unsupported skeleton is repaired")
+    bad += check(call_i is not None,
+                 "the synthesized body contains the unit call")
+    text = "\n".join(body)
+    bad += check("MarketUpdateProposer c0 = new MarketUpdateProposer(" in text,
+                 "a local target deployment is synthesized")
+    bad += check("ITimelock(address(uint160(1003)))" in text,
+                 "interface constructor parameters get nonzero placeholders")
+
+    put, stats = build_put(
+        "MarketUpdateProposer", "setGovernor", 15, 1,
+        "sol:@C@MarketUpdateProposer@F@setGovernor#196",
+        region={"newGovernor": (1, (1 << 160) - 1)},
+        holes={}, pins={}, params=[("newGovernor", "address")],
+        emitted=repaired, case=repaired_case, layout={}, ladder_rows=[],
+        notes=notes, lift_unconstrained_calldata=True, exit_kind="normal")
+    put_text = "\n".join(put or [])
+    bad += check(put is not None, "build_put no longer refuses with no call")
+    bad += check(stats["lifted"] == ["newGovernor"],
+                 f"the source-synthesized argument is lifted: "
+                 f"{stats['lifted']}")
+    bad += check("c0.setGovernor(newGovernor);" in put_text,
+                 "the PUT calls the target with the fuzz parameter")
     return bad
 
 
@@ -12252,6 +12313,7 @@ def main():
               test_constructor_staticcall_mock_is_scoped_to_deployment,
               test_constructor_param_interface_calls_are_mocked_before_deploy,
               test_constructor_param_hascode_args_are_etched_before_deploy,
+              test_unsupported_skeleton_is_synthesized_for_certified_put_lift,
               test_runtime_interface_mock_lines_cover_literal_address_calls,
               test_constructor_external_interface_mocks_cover_router_factory_chain,
               test_runtime_interface_mocks_survive_constructor_mock_clear,

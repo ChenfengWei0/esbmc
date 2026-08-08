@@ -6153,6 +6153,95 @@ def emitted_case_body_and_call(emitted, case, unit):
     return body, find_unit_call(body, unit)
 
 
+def _source_type_default_expr(sol_type, seed=1):
+    """Deterministic placeholder for a source-level Solidity type.
+
+    This is intentionally broader than `default_call_arg`: constructor
+    parameters may be interface/contract types even when the target unit's
+    fuzzable calldata is scalar.  A nonzero address keeps the common
+    `address(x) != address(0)` constructor guard satisfiable.
+    """
+    default = default_call_arg(sol_type)
+    if default is not None:
+        if _norm_ty(sol_type) in ("address", "address payable"):
+            addr = f"address(uint160({seed}))"
+            return f"payable({addr})" if _is_address_payable_type(sol_type) else addr
+        return default
+    t = _norm_ty(sol_type)
+    if re.match(r"^[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*$", t):
+        return f"{t}(address(uint160({seed})))"
+    return None
+
+
+def synthesize_unsupported_case_replay(emitted, case, contract, unit, params,
+                                       constructor_params, notes):
+    """Repair an ESBMC unsupported skeleton into a minimal liftable replay.
+
+    ESBMC's Foundry emitter is right to refuse literals it cannot reconstruct.
+    In the certified-region PUT route, however, the proof comes from Stage 2
+    and the assertion ladder; the concrete file is only a syntactic preamble
+    that the lifter rewrites.  When the file contains only an UNSUPPORTED
+    marker, synthesize the target deployment and call from source declarations
+    so the normal PUT path can lift parameters and emit the certified oracle.
+    """
+    if emitted is None or case is None or not contract or not unit:
+        return emitted, case, False
+    body, call_i = emitted_case_body_and_call(emitted, case, unit)
+    if call_i is not None:
+        return emitted, case, False
+    if not any("UNSUPPORTED:" in line for line in body):
+        return emitted, case, False
+    if params is None:
+        notes.append("unsupported skeleton not repaired: declared parameters "
+                     "are unavailable")
+        return emitted, case, False
+
+    call_args = []
+    for idx, (_name, ty) in enumerate(named_params(params)):
+        expr = _source_type_default_expr(ty, 2000 + idx)
+        if expr is None:
+            notes.append("unsupported skeleton not repaired: target parameter "
+                         f"{idx} has unsynthesizable type `{ty}`")
+            return emitted, case, False
+        call_args.append(expr)
+
+    ctor_args = []
+    for idx, ty in enumerate(constructor_params or []):
+        expr = _source_type_default_expr(ty, 1000 + idx)
+        if expr is None:
+            notes.append("unsupported skeleton not repaired: constructor "
+                         f"parameter {idx} has unsynthesizable type `{ty}`")
+            return emitted, case, False
+        ctor_args.append(expr)
+
+    fs, fe = case[3]
+    new_lines = list(emitted.lines)
+    replacement = [
+        "    // VeriPUT synthesized this replay from source declarations; "
+        "ESBMC's concrete Foundry emitter marked the original call "
+        "unsupported.",
+        f"    {contract} c0 = new {contract}({', '.join(ctor_args)});",
+        f"    c0.{unit}({', '.join(call_args)});",
+    ]
+    new_lines[fs + 1:fe] = replacement
+    repaired_path = os.path.join(os.path.dirname(emitted.path),
+                                 "veriput-repaired-unsupported.cov.t.sol")
+    with open(repaired_path, "w") as stream:
+        stream.write("\n".join(new_lines) + "\n")
+    repaired = EmittedFile(repaired_path)
+    repaired_case = None
+    m = re.search(r"^(.*):path:([0-9]+)$", case[2].strip())
+    if m:
+        repaired_case = repaired.case_for(m.group(1), m.group(2))
+    if repaired_case is None:
+        notes.append("unsupported skeleton repair failed: repaired case could "
+                     "not be re-identified")
+        return emitted, case, False
+    notes.append("unsupported skeleton repaired by synthesizing a local "
+                 "deployment and target call from source declarations")
+    return repaired, repaired_case, True
+
+
 def rendered_env_coords_for_emitted_case(emitted, case, unit, region):
     """Environment coordinates the R2 proposer may name for an emitted case."""
     body, call_i = emitted_case_body_and_call(emitted, case, unit)
@@ -10693,6 +10782,15 @@ def main():
     else:
         print(f"[put]   declared return: "
               f"{', '.join(t for _n2, t in rettypes) or '(none)'}")
+    emitted, case, repaired_unsupported_skeleton = (
+        synthesize_unsupported_case_replay(
+            emitted, case, a.contract, a.unit, params, constructor_params,
+            notes))
+    if repaired_unsupported_skeleton:
+        case_body, case_call_i = emitted_case_body_and_call(
+            emitted, case, a.unit)
+        print("[put]   repaired unsupported concrete skeleton with a "
+              "source-synthesized deployment and target call")
     if path_exit_kind == "normal":
         region, holes, retreat_notes = normal_exit_region_retreat(
             a.ast, a.contract, a.unit, claim.get("decisions") or [],
@@ -11369,6 +11467,7 @@ def main():
     if put is None:
         print("[put] REFUSED: " + "; ".join(notes))
         return 1
+    stats["repaired_unsupported_skeleton"] = repaired_unsupported_skeleton
 
     # Insert into the SAME test contract, so the PUT shares the deploy the
     # concrete tests use rather than carrying a second copy of it.
