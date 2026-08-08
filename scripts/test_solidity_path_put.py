@@ -72,6 +72,7 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                effective_exit_kind,
                                exit_kind_asserted, find_unit_call,
                                fixture_from_esbmc_args, load_fixture_json,
+                               assert_query_var_name,
                                layout_scalar_key,
                                prefer_esbmc_mapping_aliases,
                                no_oracle_reason, observed_env,
@@ -84,6 +85,7 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                potential_rendered_widths_for_put,
                                rendered_env_coords_for_emitted_case,
                                parse_ladder, region_slot_vars, statement_start,
+                               restore_ladder_row_names,
                                runtime_interface_mock_lines,
                                synthesize_unsupported_case_replay,
                                target_instance_for_call, rewrite_call_args,
@@ -2509,6 +2511,36 @@ def test_scalar_layout_aliases_use_source_slots_for_foundry_rendering():
     bad += check(layout_scalar_key("_balances$1[msg.sender]", layout, aliases)
                  is None,
                  "mapping-like names stay on the mapping renderer path")
+    return bad
+
+
+def test_scalar_assert_vars_use_esbmc_names_then_restore_source_rows():
+    layout = {
+        "_owner": (0, 0, 20),
+        "_pendingOwner": (1, 0, 20),
+    }
+    aliases = {
+        "_owner": "_owner$32",
+        "_pendingOwner": "_pendingOwner$166",
+    }
+
+    bad = 0
+    bad += check(assert_query_var_name("_owner", layout, aliases) == "_owner$32",
+                 "ESBMC assertion vars use the merged-contract store name")
+    bad += check(assert_query_var_name("_pendingOwner", layout, aliases)
+                 == "_pendingOwner$166",
+                 "each scalar source var is renamed with its declaration id")
+    bad += check(assert_query_var_name("_balances$1[msg.sender]", layout, aliases)
+                 == "_balances$1[msg.sender]",
+                 "mapping slots stay in their mapping spelling")
+    rows = [("_owner$32", "post == pre", "HOLDS"),
+            ("_pendingOwner$166", "post == newOwner", "HOLDS"),
+            ("return", "return == 0", "HOLDS")]
+    bad += check(restore_ladder_row_names(rows, aliases)
+                 == [("_owner", "post == pre", "HOLDS"),
+                     ("_pendingOwner", "post == newOwner", "HOLDS"),
+                     ("return", "return == 0", "HOLDS")],
+                 "ladder rows are restored for solc-layout Foundry rendering")
     return bad
 
 
@@ -12667,6 +12699,7 @@ def main():
               test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries,
               test_mapping_aliases_keep_struct_member_tails_queryable,
               test_scalar_layout_aliases_use_source_slots_for_foundry_rendering,
+              test_scalar_assert_vars_use_esbmc_names_then_restore_source_rows,
               test_contract_state_store_aliases_read_solc_declaration_ids,
               test_assert_query_keeps_state_pins_for_the_certified_slice,
               test_assert_query_region_keeps_slots_but_drops_state_scalars,

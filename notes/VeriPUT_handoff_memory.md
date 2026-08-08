@@ -22151,3 +22151,34 @@ Update after StablePriceOracle constructor dynamic-array repair:
   `ProjectOpenSea__seaport__PausableZone`; its blocker remains
   `ARRAY:STRUCT` renderer support for Seaport-style calldata, not a small
   Foundry harness repair.
+
+Update after FeeBurnerAuthentication scalar store-alias repair:
+
+- `balancer__balancer-v3-monorepo__FeeBurnerAuthentication` had one certified
+  `transferOwnership` region, but official RQ1 previously kept only concrete
+  fallbacks (`raw=7`, `valid=7`, `put=0/0`).  Stage4 refused the certified PUT:
+  `vars names '_owner', which is not a scalar component of this contract's
+  instance object`, even though the Foundry-side solc layout listed `_owner`
+  and `_pendingOwner`.
+- Root cause: ESBMC's merged Solidity contract object names inherited scalar
+  stores with declaration-id suffixes such as `_owner$32` and
+  `_pendingOwner$166`.  The PUT script already knew this mapping for layout and
+  mapping aliases, but still wrote source names into `spec["vars"]` for
+  `--path-cov-assert`.  The internal ladder therefore rejected a source-level
+  scalar name that the external Foundry renderer needed to keep.
+- Fixed `scripts/solidity_path_put.py` with
+  `assert_query_var_name` / `restore_ladder_row_names`: scalar `vars` sent to
+  ESBMC now use the verifier store name, and ladder rows are mapped back to
+  source names before Foundry storage rendering.  Mapping slot names are left
+  on the existing mapping-alias path.
+- Added `test_scalar_assert_vars_use_esbmc_names_then_restore_source_rows`.
+  Verification passed:
+  `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `python3 scripts/test_solidity_path_put.py` -> 281/281;
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `git diff --check`.
+- Stage4-only probe from the existing FeeBurnerAuthentication cert:
+  `transferOwnership` enc=6 now emits one green PUT (`B=1/1`), with two fuzz
+  parameters (`msg.sender`, `newOwner`) and one R0 exit-kind oracle.  R1/R2
+  remains impossible for that row because the path is a rollback revert and
+  post-state is unobservable.

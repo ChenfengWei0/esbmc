@@ -3255,6 +3255,26 @@ def layout_scalar_key(name, layout, state_store_names=None):
     return None
 
 
+def assert_query_var_name(name, layout, state_store_names=None):
+    """Name a scalar state var the way ESBMC's assertion ladder resolves it."""
+    if parse_slot_name(name)[0] is not None:
+        return name
+    if name in (layout or {}):
+        return (state_store_names or {}).get(name, name)
+    return name
+
+
+def restore_ladder_row_names(rows, state_store_names=None):
+    """Map ESBMC store-name scalar rows back to solc/source layout names."""
+    if not rows or not state_store_names:
+        return rows
+    source_by_store = {store: source for source, store in state_store_names.items()}
+    restored = []
+    for var, text, verdict in rows:
+        restored.append((source_by_store.get(var, var), text, verdict))
+    return restored
+
+
 def prefer_esbmc_mapping_aliases(maps):
     """Drop source-name rows when an ESBMC store-name alias exists."""
     aliases_by_source = {}
@@ -11387,7 +11407,10 @@ def main():
     # unit has no state dependency" into unrelated frame conditions. Return
     # rungs remain independently enabled by the verifier under this policy.
     spec["vars_policy"] = "state-exact"
-    spec["vars"] = [{"name": name} for name in oracle_vars]
+    spec["vars"] = [
+        {"name": assert_query_var_name(name, layout, state_store_names)}
+        for name in oracle_vars
+    ]
     with open(os.path.join(assert_dir, "spec.json"), "w") as f:
         json.dump(spec, f)
     out2, rc2, w2 = run_esbmc(
@@ -11396,6 +11419,7 @@ def main():
          "--cov-report-json"] + a.esbmc_arg,
         assert_dir, a.max_tx, esbmc_budget("ladder"), a.memlimit, a.scope)
     rows, summary, refusal, blocker = parse_ladder(out2)
+    rows = restore_ladder_row_names(rows, state_store_names)
     # The ladder run is asked about exactly ONE (unit, enc), so any rollback
     # line in ITS log is about this path -- but the pair is still matched rather
     # than assumed, because a log that ever covers two paths would otherwise
@@ -11427,6 +11451,7 @@ def main():
             assert_dir, a.max_tx, esbmc_budget("auto-unwind"), a.memlimit,
             a.scope)
         rows_b, summary_b, refusal_b, blocker_b = parse_ladder(out2b)
+        rows_b = restore_ladder_row_names(rows_b, state_store_names)
         # ---- AN ATTEMPT THAT PRODUCED NO LADDER MAY NOT REPLACE THE STATE ---
         #
         # See `attempt_is_usable`. Adopting unconditionally is what let a
@@ -11474,6 +11499,7 @@ def main():
             assert_dir, a.max_tx, esbmc_budget("partial-loops"), a.memlimit,
             a.scope)
         rows_b, summary_b, refusal_b, blocker_b = parse_ladder(out2b)
+        rows_b = restore_ladder_row_names(rows_b, state_store_names)
         usable = attempt_is_usable(rows_b, blocker_b)
         unwind_attempts.append({"attempt": a.auto_unwind + 1,
                                 "mode": "partial-loops",
