@@ -11318,9 +11318,9 @@ Recent official BugFix124 status:
 
 - Strict latest journal over
   `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/results.jsonl`:
-  124 cases, 66 cases with at least one valid test, 58 with no valid test.
-- Artifact totals: raw 243, valid 218, valid PUT 138, valid concrete 80.
-  PUT share among valid artifacts: 63.3%.
+  124 cases, 67 cases with at least one valid test, 57 with no valid test.
+- Artifact totals: raw 257, valid 232, valid PUT 143, valid concrete 89.
+  PUT share among valid artifacts: 61.6%.
 - `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark bugfix124`
   reported after `pop_018`: VeriPUT `raw_u=195`, `valid_u=170`,
   `raw_c=60`, `valid_c=60`, coverage `48.4%`, `VT/case=1.37`, status
@@ -11352,6 +11352,10 @@ Recent official BugFix124 status:
   the same command reports VeriPUT `raw_u=243`, `valid_u=218`,
   `raw_c=66`, `valid_c=66`, coverage `53.2%`, `VT/case=1.76`, status
   `{'ok': 66, 'no-output': 50, 'no-units': 5, 'budget-exhausted': 3}`.
+- After rerunning `acfix_022_CVE_2018_19833`, the same command reports
+  VeriPUT `raw_u=257`, `valid_u=232`, `raw_c=67`, `valid_c=67`,
+  coverage `54.0%`, `VT/case=1.87`, status
+  `{'ok': 67, 'no-output': 49, 'no-units': 5, 'budget-exhausted': 3}`.
 
 Recent official case observations:
 
@@ -11426,6 +11430,15 @@ Recent official case observations:
   Valid PUTs include `AdjustBetAmounts`, `AdjustDifficulty`,
   `OpenToThePublic`, `hasPlayerWagered`, and `transferAnyERC20Token`;
   oracle class counts: R0=8, R1=8, R2=14.
+- `acfix_022_CVE_2018_19833` rerun:
+  old row was no-output after `transfer`; new row is status ok, raw 14,
+  valid 14, PUT 5/5, concrete 9/9, generation 340.243s, Stage2 293.265s,
+  Stage4 generation 46.978s, Foundry replay 11.786s, wall 354.395s,
+  maxrss 681.6 MB.  Units attempted:
+  `owned`, `burn`, `freezeAccount`, `mintToken`, `transfer`.
+  PUTs include `freezeAccount` path 7 (R0+R1+R2), `freezeAccount` path 6
+  (R0), `mintToken` path 6 (R0), and `owned` paths 6/7 (R0 and R0+R1+R2).
+  Oracle class counts: R0=5, R1=6, R2=3.
 
 Next-candidate caution:
 
@@ -11437,6 +11450,11 @@ Next-candidate caution:
 - The `MONEY_BOX`/reentrancy family is a better current target: sibling rows
   show later administrative units can certify and produce R0/R1/R2 PUTs after
   early money-flow units time out or fall back to concrete.
+- After the PoCGame and ERCDDAToken reruns, coverage is improving quickly, but
+  the artifact-level PUT share has fallen to 61.6% because every recovered case
+  also emits concrete fallbacks.  Before broad continuing, inspect whether
+  timeout concrete fallback emission should be capped once enough PUTs exist for
+  a case, or whether setter certification can be made to finish before fallback.
 
 Diagnosis from `pop_018_PrivatePool`:
 
