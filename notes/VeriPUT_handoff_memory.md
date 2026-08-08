@@ -11318,9 +11318,9 @@ Recent official BugFix124 status:
 
 - Strict latest journal over
   `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/results.jsonl`:
-  124 cases, 62 cases with at least one valid test, 62 with no valid test.
-- Artifact totals: raw 207, valid 182, valid PUT 126, valid concrete 56.
-  PUT share among valid artifacts: 69.2%.
+  124 cases, 63 cases with at least one valid test, 61 with no valid test.
+- Artifact totals: raw 211, valid 186, valid PUT 126, valid concrete 60.
+  PUT share among valid artifacts: 67.7%.
 - `python3 /home/samson/workspace/VeriPUT/Results/results_all.py --benchmark bugfix124`
   reported after `pop_018`: VeriPUT `raw_u=195`, `valid_u=170`,
   `raw_c=60`, `valid_c=60`, coverage `48.4%`, `VT/case=1.37`, status
@@ -11333,6 +11333,10 @@ Recent official BugFix124 status:
   `valid_u=182`, `raw_c=62`, `valid_c=62`, coverage `50.0%`,
   `VT/case=1.47`, status
   `{'ok': 62, 'no-output': 54, 'no-units': 5, 'budget-exhausted': 3}`.
+- After the `pop_033` rerun, the same command reports VeriPUT `raw_u=211`,
+  `valid_u=186`, `raw_c=63`, `valid_c=63`, coverage `50.8%`,
+  `VT/case=1.50`, status
+  `{'ok': 63, 'no-output': 53, 'no-units': 5, 'budget-exhausted': 3}`.
 
 Recent official case observations:
 
@@ -11365,6 +11369,22 @@ Recent official case observations:
   once (`0.3s remains below the 90s concrete-only Stage 4 floor`), which kept
   the run inside the generation budget after valid artifacts had already been
   produced.
+- `pop_033_PrivatePool` rerun:
+  old row was no-output after `flashFee`, `initialize`; new row is status ok,
+  completion budget-exhausted, raw 4, valid 4, PUT 0/0, concrete 4/4,
+  generation 590.725s, Stage2 376.336s, Stage4 generation 214.389s,
+  Foundry replay 6.861s, wall 599.461s, maxrss 1202.9 MB.  Units attempted:
+  `flashFee`, `setMerkleRoot`, `setFeeRate`, `setUseStolenNftOracle`.
+  The low-budget concrete-only Stage4 guard triggered once on
+  `setUseStolenNftOracle` with 0.543s remaining after 4 valid concrete tests.
+
+Next-candidate caution:
+
+- Cheap-first has now recovered three PrivatePool no-output cases
+  (`pop_009`, `pop_048`, `pop_033`), but all new valid artifacts are concrete
+  fallback rows.  This improves raw valid coverage, but pushes the valid PUT
+  share below 70%.  Further PrivatePool-like reruns should be balanced against
+  work on stronger PUT synthesis or candidates likely to certify R0/R1/R2.
 
 Diagnosis from `pop_018_PrivatePool`:
 
