@@ -632,19 +632,39 @@ def test_low_budget_concrete_only_stage4_skip_is_valid_and_put_sensitive():
     bad = 0
     bad += check(should({"raw": 4, "valid": 4}, 36.5, 90, 0, 0, 3),
                  "low-budget timeout-concrete-only Stage 4 skips after valid")
+    bad += check(should({"raw": 4, "valid": 4}, 36.5, 90, 0, 1, 0),
+                 "low-budget cleared-concrete-only Stage 4 skips after valid")
     bad += check(not should({"raw": 4, "valid": 4}, 120.0, 90, 0, 0, 3),
                  "concrete-only Stage 4 keeps enough generation budget")
     bad += check(not should({"raw": 4, "valid": 0}, 36.5, 90, 0, 0, 3),
                  "concrete-only Stage 4 is not skipped before a valid artifact")
     bad += check(not should({"raw": 4, "valid": 4}, 36.5, 90, 1, 0, 3),
                  "certified regions are never skipped by the concrete-only floor")
-    bad += check(not should({"raw": 4, "valid": 4}, 36.5, 90, 0, 1, 3),
-                 "cleared concrete fallbacks are not treated as timeout-only")
     bad += check(not should({"raw": 4, "valid": 4}, 36.5, 0, 0, 0, 3),
                  "concrete-only floor can be disabled")
     reason = rq1_veriput_run._format_low_budget_concrete_only_skip(36.456, 90)
     bad += check("36.5s remains below the 90s" in reason,
                  f"low-budget concrete-only reason is audit-friendly: {reason}")
+    return bad
+
+
+def test_put_saturated_concrete_only_stage4_skip_keeps_put_work():
+    should = rq1_veriput_run._should_skip_concrete_only_after_puts
+    bad = 0
+    bad += check(should({"put_valid": 2}, 2, 0, 1, 0),
+                 "PUT-saturated cleared fallback Stage 4 is skipped")
+    bad += check(should({"put_valid": 3}, 2, 0, 0, 4),
+                 "PUT-saturated timeout fallback Stage 4 is skipped")
+    bad += check(not should({"put_valid": 1}, 2, 0, 1, 4),
+                 "PUT-saturated skip waits for enough valid PUT artifacts")
+    bad += check(not should({"put_valid": 2}, 2, 1, 1, 4),
+                 "PUT-saturated skip never drops certified regions")
+    bad += check(not should({"put_valid": 2}, 0, 0, 1, 4),
+                 "PUT-saturated skip can be disabled")
+    reason = rq1_veriput_run._format_put_saturated_concrete_only_skip(3, 2)
+    bad += check("3 valid PUT artifact(s)" in reason
+                 and "2-PUT floor" in reason,
+                 f"PUT-saturated skip reason is audit-friendly: {reason}")
     return bad
 
 
@@ -666,6 +686,7 @@ def main():
         test_zero_output_stage4_stop_is_thresholded_and_raw_sensitive,
         test_no_candidate_stage2_unit_stop_is_thresholded_and_raw_sensitive,
         test_low_budget_concrete_only_stage4_skip_is_valid_and_put_sensitive,
+        test_put_saturated_concrete_only_stage4_skip_keeps_put_work,
     ]
     bad = 0
     for test in tests:

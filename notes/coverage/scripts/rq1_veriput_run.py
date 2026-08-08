@@ -806,6 +806,32 @@ def _format_low_budget_concrete_only_skip(remaining_s: float,
             f"below the {threshold_s}s concrete-only Stage 4 floor")
 
 
+def _format_put_saturated_concrete_only_skip(put_valid: int,
+                                             threshold: int) -> str:
+    return (f"{put_valid} valid PUT artifact(s) already produced; "
+            f"concrete-only Stage 4 skipped at the {threshold}-PUT floor")
+
+
+def _is_concrete_only_stage4(n_certified: int,
+                             n_cleared_fallback: int,
+                             n_timeout_fallback: int) -> bool:
+    return (n_certified <= 0
+            and (n_cleared_fallback + n_timeout_fallback) > 0)
+
+
+def _should_skip_concrete_only_after_puts(put_summary: dict,
+                                         threshold: int,
+                                         n_certified: int,
+                                         n_cleared_fallback: int,
+                                         n_timeout_fallback: int) -> bool:
+    if threshold <= 0:
+        return False
+    if int(put_summary.get("put_valid") or 0) < threshold:
+        return False
+    return _is_concrete_only_stage4(
+        n_certified, n_cleared_fallback, n_timeout_fallback)
+
+
 def _should_skip_low_budget_concrete_only_stage4(put_summary: dict,
                                                 remaining_s: float,
                                                 threshold_s: int,
@@ -816,9 +842,8 @@ def _should_skip_low_budget_concrete_only_stage4(put_summary: dict,
         return False
     if int(put_summary.get("valid") or 0) <= 0:
         return False
-    if n_certified > 0 or n_cleared_fallback > 0:
-        return False
-    if n_timeout_fallback <= 0:
+    if not _is_concrete_only_stage4(
+            n_certified, n_cleared_fallback, n_timeout_fallback):
         return False
     return remaining_s < float(threshold_s)
 
@@ -917,6 +942,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     consecutive_no_candidate_units = 0
     max_consecutive_no_candidate_units = 0
     low_budget_concrete_only_stage4_skips = []
+    put_saturated_concrete_only_stage4_skips = []
 
     try:
         schedule = build_subject_schedule(subject,
@@ -1009,6 +1035,33 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         consecutive_no_candidate_units = 0
         partial_put = summarize_put_artifacts(case_dir / "put")
         remaining_before_stage4 = _remaining(deadline)
+        if _should_skip_concrete_only_after_puts(
+                partial_put,
+                args.skip_concrete_only_after_put_valid,
+                n_certified,
+                n_cleared_fallback,
+                n_timeout_fallback):
+            put_valid_before_skip = partial_put.get("put_valid") or 0
+            skip_reason = _format_put_saturated_concrete_only_skip(
+                put_valid_before_skip,
+                args.skip_concrete_only_after_put_valid)
+            put_saturated_concrete_only_stage4_skips.append({
+                "unit": unit,
+                "job_id": job.get("job_id"),
+                "remaining_s": round(remaining_before_stage4, 3),
+                "threshold_put_valid":
+                    args.skip_concrete_only_after_put_valid,
+                "certified_regions_for_unit": n_certified,
+                "cleared_concrete_fallbacks_for_unit": n_cleared_fallback,
+                "timeout_concrete_fallbacks_for_unit": n_timeout_fallback,
+                "raw_before_skip": partial_put.get("raw") or 0,
+                "valid_before_skip": partial_put.get("valid") or 0,
+                "put_valid_before_skip": put_valid_before_skip,
+                "reason": skip_reason,
+            })
+            result_status = "budget-exhausted"
+            failure_reason = skip_reason
+            break
         if _should_skip_low_budget_concrete_only_stage4(
                 partial_put,
                 remaining_before_stage4,
@@ -1132,10 +1185,16 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "max_consecutive_no_candidate_units": max_consecutive_no_candidate_units,
         "zero_output_stage4_stop_s": args.zero_output_stage4_stop_s,
         "min_concrete_only_stage4_s": args.min_concrete_only_stage4_s,
+        "skip_concrete_only_after_put_valid":
+            args.skip_concrete_only_after_put_valid,
         "low_budget_concrete_only_stage4_skips":
             low_budget_concrete_only_stage4_skips,
         "low_budget_concrete_only_stage4_skip_count":
             len(low_budget_concrete_only_stage4_skips),
+        "put_saturated_concrete_only_stage4_skips":
+            put_saturated_concrete_only_stage4_skips,
+        "put_saturated_concrete_only_stage4_skip_count":
+            len(put_saturated_concrete_only_stage4_skips),
         "early_stop_reason": early_stop_reason,
         "wall_cap_s": args.timeout + args.wrapper_grace,
         "status": result_status,
@@ -1319,6 +1378,8 @@ def build_dry_run(args) -> dict:
         "no_candidate_stage2_unit_stop_n": args.no_candidate_stage2_unit_stop_n,
         "zero_output_stage4_stop_s": args.zero_output_stage4_stop_s,
         "min_concrete_only_stage4_s": args.min_concrete_only_stage4_s,
+        "skip_concrete_only_after_put_valid":
+            args.skip_concrete_only_after_put_valid,
         "memlimit_gib": args.memlimit_gib,
         "jobs": args.jobs,
         "order": args.order,
@@ -1380,8 +1441,13 @@ def main(argv=None) -> int:
     ap.add_argument("--min-concrete-only-stage4-s", type=int, default=90,
                     help="after at least one valid artifact exists, do not "
                          "start a Stage-4 pass whose only candidates are "
-                         "timeout concrete fallbacks unless at least this many "
+                         "concrete fallbacks unless at least this many "
                          "generation seconds remain. Set 0 to disable")
+    ap.add_argument("--skip-concrete-only-after-put-valid", type=int, default=2,
+                    help="after this many valid PUT artifacts have already "
+                         "been emitted for a subject, do not start another "
+                         "Stage-4 pass whose candidates are only concrete "
+                         "fallbacks. Set 0 to disable")
     ap.add_argument("--memlimit-gib", type=int, default=12,
                     help="per-ESBMC memory budget passed to Stage 2/4")
     ap.add_argument("--jobs", type=int, default=1,
@@ -1408,13 +1474,15 @@ def main(argv=None) -> int:
                 or args.no_candidate_stage2_unit_stop_n < 0
                 or args.stage2_unit_timeout_cap_s < 0
                 or args.zero_output_stage4_stop_s < 0
-                or args.min_concrete_only_stage4_s < 0):
+                or args.min_concrete_only_stage4_s < 0
+                or args.skip_concrete_only_after_put_valid < 0):
             raise RQ1RunError("timeouts and --memlimit-gib must be positive; "
                               "--no-output-stage2-stop-s and "
                               "--no-candidate-stage2-unit-stop-n and "
                               "--stage2-unit-timeout-cap-s and "
                               "--zero-output-stage4-stop-s and "
-                              "--min-concrete-only-stage4-s must be "
+                              "--min-concrete-only-stage4-s and "
+                              "--skip-concrete-only-after-put-valid must be "
                               "non-negative")
         if args.esbmc_run_timeout > args.timeout:
             raise RQ1RunError("--esbmc-run-timeout must not exceed --timeout")

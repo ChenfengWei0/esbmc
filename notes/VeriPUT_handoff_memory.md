@@ -11473,15 +11473,24 @@ Code change:
 - `notes/coverage/scripts/rq1_veriput_run.py` now has
   `--min-concrete-only-stage4-s`, default 90.
 - After at least one valid artifact exists, the runner will not start a Stage4
-  pass whose candidates are only timeout concrete fallbacks unless at least this
-  many generation seconds remain.
-- The guard does not skip certified regions, cleared concrete fallbacks, or any
-  case that has not yet produced a valid artifact.  Set
+  pass whose candidates are only concrete fallbacks unless at least this many
+  generation seconds remain.
+- The guard does not skip certified regions or any case that has not yet
+  produced a valid artifact.  Set
   `--min-concrete-only-stage4-s 0` to reproduce the previous behavior.
+- After the 2026-08-08 PoCGame/ERCDDAToken runs exposed concrete fallback
+  overproduction, `rq1_veriput_run.py` also has
+  `--skip-concrete-only-after-put-valid`, default 2.
+- Once a subject already has at least this many valid PUT artifacts, the runner
+  does not start another Stage4 pass whose candidates are only concrete
+  fallbacks.  This does not skip certified regions and can be disabled with 0.
 - Result rows record `min_concrete_only_stage4_s`,
   `low_budget_concrete_only_stage4_skip_count`, and
   `low_budget_concrete_only_stage4_skips` with unit, remaining budget,
   raw/valid counts before skip, candidate counts, and reason.
+- Result rows also record `skip_concrete_only_after_put_valid`,
+  `put_saturated_concrete_only_stage4_skip_count`, and
+  `put_saturated_concrete_only_stage4_skips`.
 - Semantics unchanged: fuzz and Foundry replay remain refute-only guards; a
   green Foundry replay is not a proof.  ESBMC certification remains the proof
   gate for PUT/region assertions.
@@ -11493,6 +11502,8 @@ Checks:
 - `python3 scripts/test_rq1_veriput_run.py` passed, 16 tests.
 - `pylint --errors-only notes/coverage/scripts/rq1_veriput_run.py scripts/test_rq1_veriput_run.py`
   passed.
+- After adding `--skip-concrete-only-after-put-valid`, the same test file passes
+  17 tests; dry-run records `skip_concrete_only_after_put_valid=2`.
 
 ## 2026-08-08 RQ1 double-oracle timing and cheap-first correction
 
