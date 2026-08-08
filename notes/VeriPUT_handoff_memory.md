@@ -21687,3 +21687,26 @@ Update after Stage2 crash/diagnostic fixes:
   Python script path, targeted direct ESBMC probe for
   `ModularComplianceProxy.getImplementationAuthority`, targeted `certify_all.py`
   probe for Balancer goal-cap classification.
+
+Update after rerunning frontend-abort-affected ERC-3643 proxies:
+
+- Reran six real203 subjects that previously had `base_cname` / conversion
+  abort signatures in their per-unit driver logs:
+  `ClaimTopicsRegistryProxy`, `TrustedIssuersRegistryProxy`,
+  `IdentityRegistryProxy`, `IdentityRegistryStorageProxy`, `TREXFactory`, and
+  `TokenProxy`, using `jobs=3`, `memlimit=8GiB`, 600s budgets and early-stop
+  knobs disabled.
+- Result was `0/6` valid.  The four registry/token proxies each consumed
+  almost the full 600s in Stage2 and ended `case budget exhausted before
+  Stage 4`.  `TREXFactory` spent about 545s in Stage2 and 105s in Stage4, then
+  exhausted the subject budget before remaining units.  No OOM or nested memory
+  guard refusal occurred.
+- Scheduling conclusion: the frontend fixes stop misleading `exit=-6`
+  no-witness rows and allow these proxy/factory cases to progress, but current
+  region/witness generation still does not turn them into valid tests within
+  600s.  Do not keep rerunning ERC-3643 proxy/factory subjects until a Stage2
+  reduction strategy or a proxy-specific model changes.
+- Latest real203 snapshot remains:
+  `valid_cases=38`, `put_cases=30`, `r1r2_cases=22`,
+  `concrete_only=8`, `no_valid=165`, `valid_units=208`,
+  `put_units=139`, `r1r2_put_units=45`.
