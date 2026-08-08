@@ -624,6 +624,8 @@ def _row_is_disabled_concrete(row: dict) -> bool:
 def _row_is_unsupported_concrete(row: dict) -> bool:
     if row.get("kind") != "concrete":
         return False
+    if row.get("forge_status") == "Success" or row.get("valid_reference_test"):
+        return False
     file_name = row.get("file")
     if not file_name:
         return False
