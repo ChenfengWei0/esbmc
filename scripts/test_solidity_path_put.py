@@ -3903,9 +3903,21 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
                                 "allowance", None),
                   "badKeyed": (2, "uint256", 32, 0, "badKeyed", None)},
             log=lambda _msg: None)
+        alias_maps = prefer_esbmc_mapping_aliases(add_esbmc_mapping_aliases(
+            {"allowance": (1, ("address", "address"), 32, 0,
+                           "allowance", None)},
+            {"allowance": "allowance$11"}))
+        alias_specs, _alias_evidence = source_assignment_r2_specs(
+            path, "C", "move", [("amount", "uint256"),
+                                ("spender", "address")],
+            {}, [("amount", "num", None)], arity=2, maps=alias_maps,
+            log=lambda _msg: None)
     finally:
         os.unlink(path)
     entries = {entry["name"]: entry for entry in specs[0]["vars"]} if specs else {}
+    alias_entries = ({entry["name"]: entry
+                      for entry in alias_specs[0]["vars"]}
+                     if alias_specs else {})
     bal_deltas = entries.get("balances[msg.sender]", {}).get("deltas", [])
     bal_owner_deltas = entries.get(
         "balances[state.owner]", {}).get("deltas", [])
@@ -3959,6 +3971,9 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
                      "post == (state.allowance[msg.sender][spender] - amount)"
                      for item in candidates),
                  f"mapping self-subtract equality is renderable: {candidates}")
+    bad += check("allowance$11[msg.sender][spender]" in alias_entries,
+                 f"source R2 mapping candidates use ESBMC alias names when "
+                 f"the query map has no source key: {alias_entries}")
     return bad
 
 

@@ -20798,3 +20798,27 @@ Update after rerunning ERC-3643 with mapping aliases:
   budget for Stage 4 on this subject.  The next code-level improvement should
   either make the R2 query cheaper/targeted for mapping slots or schedule
   Stage 4 so an already certified row can get more of the 600s budget.
+
+Update after source-R2 alias follow-up:
+
+- Found another alias gap before spending a new ESBMC run.  After the R0-only
+  skip fix, `source_assignment_r2_specs()` would finally be allowed to propose
+  source-derived mapping R2 candidates such as
+  `_allowances[msg.sender][_spender] += _addedValue`.  Its `slot_lhs()` helper,
+  however, still looked up `maps[mkey]` by the source key.  In the main flow,
+  `maps` for query/R2 is now the preferred alias map, so the source key may be
+  absent and the R2 candidate either fails or uses the wrong name.
+- Fixed `slot_lhs()` to resolve `mapping_query_key(maps, source_key)` and emit
+  the ESBMC query base (`_allowances$496[...]`) while preserving the same solc
+  layout tuple for key typing.  This is a general source-R2 mapping fix, not an
+  ERC-3643 special case.
+- Regression extended in `test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries`:
+  the same source AST is run against an alias-only query map
+  `allowance -> allowance$11`, and the expected source-R2 candidate is
+  `allowance$11[msg.sender][spender]`.
+- Verification for this no-ESBMC fix:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  (267/267);
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `git diff --check -- scripts/solidity_path_put.py scripts/test_solidity_path_put.py`.

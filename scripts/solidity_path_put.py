@@ -1896,9 +1896,10 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         if base_name is None:
             return None
         mkey = base_name + tail
-        if not queryable_mapping(maps, mkey):
+        query_key = mapping_query_key(maps, mkey)
+        if query_key is None or not queryable_mapping(maps, query_key):
             return None
-        _slot, kty, _nbytes, _off, _base, _member = maps[mkey]
+        _slot, kty, _nbytes, _off, _base, _member = maps[query_key]
         ktypes = list(kty) if isinstance(kty, tuple) else [kty]
         if len(keys) != len(ktypes):
             return None
@@ -1909,7 +1910,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 return None
             names.append(name)
         ty = _norm_ty((n.get("typeDescriptions") or {}).get("typeString") or "")
-        return base_name + "".join(f"[{name}]" for name in names) + tail, ty
+        query_base = mapping_query_base(query_key, maps[query_key])
+        return query_base + "".join(f"[{name}]" for name in names) + tail, ty
 
     def state_member_lhs(n):
         if not layout:
