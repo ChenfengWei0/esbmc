@@ -22138,3 +22138,16 @@ Update after StablePriceOracle constructor dynamic-array repair:
   `premium` -> 2 green concrete replays / 2 total.  Expected official rerun
   should move this subject from `no-valid` to `valid-no-PUT`; it will not
   improve PUT or R1/R2 counts because Stage2 had no certified region.
+- Official RQ1 rerun for
+  `ensdomains__ens-contracts__StablePriceOracle` after the fix:
+  `raw=2`, `valid=2`, `put=0/0`, `concrete=2/2`,
+  `bucket=valid-no-PUT`, wall `15.539s`.
+- Latest real203 triage after StablePriceOracle:
+  `quality_bucket={"no-valid":162,"valid-PUT-no-R1R2":10,
+  "valid-PUT-with-R1R2":8,"valid-no-PUT":23}`;
+  artifacts `{"raw":176,"valid":155,"put_raw":58,"put_valid":55,
+  "concrete_raw":118,"concrete_valid":100}`.  The only remaining base
+  subject with certified regions or raw artifacts but no valid test is
+  `ProjectOpenSea__seaport__PausableZone`; its blocker remains
+  `ARRAY:STRUCT` renderer support for Seaport-style calldata, not a small
+  Foundry harness repair.
