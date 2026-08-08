@@ -55,6 +55,52 @@ def _chain_nodes(ast, contract):
     return [by_id[node_id] for node_id in reversed(chain) if node_id in by_id]
 
 
+def contract_state_esbmc_store_names(ast_path, contract):
+    """Return source state names mapped to ESBMC's contract-scope store names.
+
+    The Solidity frontend disambiguates state fields by appending solc's
+    declaration id to the merged contract struct field, e.g.
+    ``_allowances`` becomes ``_allowances$496``. The source-level storage
+    layout must keep using ``_allowances`` to compute the solc slot, but
+    ``--path-cov-assert`` resolves the verifier-side store name.
+    """
+    ast = _ast_root(ast_path)
+    if ast is None:
+        return {}, ["state store aliases unavailable: AST is absent or unreadable"]
+    nodes = _chain_nodes(ast, contract)
+    if nodes is None:
+        return {}, [
+            f"state store aliases unavailable: contract {contract!r} "
+            "was not found in the AST"
+        ]
+
+    declarations = []
+    counts = {}
+    for owner in nodes:
+        for declaration in owner.get("nodes", []) or []:
+            if (declaration.get("nodeType") == "VariableDeclaration"
+                    and declaration.get("stateVariable")
+                    and declaration.get("name")
+                    and isinstance(declaration.get("id"), int)):
+                name = declaration["name"]
+                declarations.append((name, declaration["id"]))
+                counts[name] = counts.get(name, 0) + 1
+
+    aliases = {}
+    skipped = []
+    for name, declaration_id in declarations:
+        if counts.get(name) != 1:
+            skipped.append(name)
+            continue
+        aliases[name] = f"{name}${declaration_id}"
+    evidence = []
+    if skipped:
+        evidence.append(
+            "state store aliases skipped for duplicate source name(s): "
+            + ", ".join(sorted(set(skipped))))
+    return aliases, evidence
+
+
 def unit_state_dependencies(ast_path, contract, unit, arity=None, declaration_id=None):
     """Return state declarations reached by a unit, ordered by call distance.
 

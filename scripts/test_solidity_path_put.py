@@ -65,9 +65,11 @@ from solidity_path_put import (EmittedFile, attempt_is_usable,  # noqa: E402
                                complete_missing_call_args,
                                constructor_external_interface_mock_lines,
                                constructor_staticcall_mock_lines,
+                               add_esbmc_mapping_aliases,
                                effective_exit_kind,
                                exit_kind_asserted, find_unit_call,
                                fixture_from_esbmc_args, load_fixture_json,
+                               prefer_esbmc_mapping_aliases,
                                no_oracle_reason, observed_env,
                                normal_exit_region_retreat,
                                oracle_class_summary,
@@ -2001,6 +2003,111 @@ def test_certified_region_mapping_slots_are_ASKED_before_guesses():
     ], f"the exact certified literal-key slots are reused: {got}")
     bad += check(not any("strategyHash" in g for g in got),
                  f"no guessed strategyHash slot is introduced: {got}")
+    return bad
+
+
+def test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries():
+    """The ladder resolves verifier store names, not solc source labels.
+
+    ERC-3643 measured the failure mode: solc reports `_allowances`, while
+    ESBMC's merged contract field is `_allowances$496`. The query side must
+    ask for the latter, but keep the same solc layout tuple so Foundry renders
+    the same storage slot.
+    """
+    from solidity_path_put import source_access_slot_vars  # noqa: E402
+
+    source_maps = {
+        "_allowances": (7, ("address", "address"), 32, 0,
+                        "_allowances", None),
+    }
+    all_maps = add_esbmc_mapping_aliases(
+        source_maps, {"_allowances": "_allowances$496"})
+    query_maps = prefer_esbmc_mapping_aliases(all_maps)
+    region = {
+        "state._allowances[msg.sender][_spender]": (0, 0),
+    }
+    slots, used, skipped = source_access_slot_vars(
+        [("_allowances", ("msg.sender", "_spender"))],
+        query_maps, params=[("_spender", "address")])
+    pins, pin_skips = assert_query_pins(
+        {"state._allowances[msg.sender][_spender]": 1}, {}, query_maps)
+    query_region, region_skips = assert_query_region_entries(
+        region, {}, {}, query_maps)
+    bad = 0
+    bad += check("_allowances$496" in all_maps,
+                 f"alias row is present beside source layout: {all_maps}")
+    bad += check("_allowances" not in query_maps
+                 and "_allowances$496" in query_maps,
+                 f"query map drops the refused source name: {query_maps}")
+    bad += check(region_slot_vars(region, query_maps) == [
+        "_allowances$496[msg.sender][_spender]"],
+                 f"certified source region is translated for ESBMC: "
+                 f"{region_slot_vars(region, query_maps)}")
+    bad += check(slots == ["_allowances$496[msg.sender][_spender]"],
+                 f"source-access priority asks the internal store: {slots}")
+    bad += check(used == {"_allowances$496"} and skipped == [],
+                 f"the alias suppresses fallback without skip noise: "
+                 f"{used}, {skipped}")
+    bad += check(pins == {
+        "state._allowances$496[msg.sender][_spender]": 1
+    } and pin_skips == [], f"mapping pins are translated: {pins}, {pin_skips}")
+    bad += check(query_region == [{
+        "name": "state._allowances$496[msg.sender][_spender]",
+        "lo": "0", "hi": "0"
+    }] and region_skips == [],
+                 f"mapping region entries are translated in the assert spec: "
+                 f"{query_region}, {region_skips}")
+    return bad
+
+
+def test_mapping_aliases_keep_struct_member_tails_queryable():
+    from solidity_path_put import propose_slot_vars  # noqa: E402
+
+    source_maps = {
+        "_balances.amount": (4, "address", 31, 0, "_balances", "amount"),
+    }
+    all_maps = add_esbmc_mapping_aliases(
+        source_maps, {"_balances": "_balances$123"})
+    query_maps = prefer_esbmc_mapping_aliases(all_maps)
+    got = propose_slot_vars(
+        query_maps, [("owner", "address")],
+        dependencies=["_balances"])
+    bad = 0
+    bad += check("_balances$123.amount" in query_maps,
+                 f"struct-valued mapping member keeps its member tail: "
+                 f"{query_maps}")
+    bad += check(got[0] == "_balances$123[msg.sender].amount",
+                 f"fallback proposal uses the internal base and source tail: "
+                 f"{got}")
+    return bad
+
+
+def test_contract_state_store_aliases_read_solc_declaration_ids():
+    from solidity_ast_dependencies import contract_state_esbmc_store_names  # noqa: E402
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "Base", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "owner",
+             "stateVariable": True},
+        ]}, {
+        "nodeType": "ContractDefinition", "name": "Token", "id": 2,
+        "linearizedBaseContracts": [2, 1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 496,
+             "name": "_allowances", "stateVariable": True},
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        aliases, evidence = contract_state_esbmc_store_names(path, "Token")
+    finally:
+        os.unlink(path)
+    bad = 0
+    bad += check(aliases == {"owner": "owner$10",
+                             "_allowances": "_allowances$496"},
+                 f"linearized state aliases use declaration ids: {aliases}")
+    bad += check(evidence == [], f"no duplicate-name warning: {evidence}")
     return bad
 
 
@@ -11857,6 +11964,9 @@ def main():
               test_source_access_slots_render_state_struct_member_keys,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,
+              test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries,
+              test_mapping_aliases_keep_struct_member_tails_queryable,
+              test_contract_state_store_aliases_read_solc_declaration_ids,
               test_assert_query_keeps_state_pins_for_the_certified_slice,
               test_assert_query_region_keeps_slots_but_drops_state_scalars,
               test_an_ADDRESS_endpoint_renders_for_an_ABSOLUTE_bound,

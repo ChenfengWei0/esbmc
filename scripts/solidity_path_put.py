@@ -105,6 +105,7 @@ import sys
 import time
 
 from solidity_ast_dependencies import (SLOT_DEPENDENCY_POLICY,
+                                        contract_state_esbmc_store_names,
                                         path_function_declaration_id,
                                         unit_mapping_slot_accesses,
                                         unit_state_dependencies)
@@ -3174,6 +3175,73 @@ def state_key_type_compatible(state_ty, expected_ty):
 SLOT_VAR_BUDGET = 24
 
 
+def mapping_source_key(spec):
+    """The solc/source layout key for a mapping layout row."""
+    if not spec or len(spec) < 6:
+        return None
+    base, member = spec[4], spec[5]
+    if not base:
+        return None
+    return base + (f".{member}" if member else "")
+
+
+def mapping_query_base(name, spec):
+    """The base name ESBMC should see for this mapping row."""
+    if not name:
+        return ""
+    member = spec[5] if spec and len(spec) >= 6 else None
+    if member and name.endswith("." + member):
+        return name[:-(len(member) + 1)]
+    return name
+
+
+def mapping_query_key(maps, source_key):
+    """Prefer an ESBMC store-name alias for a source mapping key."""
+    if not maps or not source_key:
+        return None
+    aliases = sorted(
+        name for name, spec in maps.items()
+        if mapping_source_key(spec) == source_key and name != source_key)
+    if aliases:
+        return aliases[0]
+    if source_key in maps:
+        return source_key
+    return None
+
+
+def add_esbmc_mapping_aliases(maps, state_store_names):
+    """Add verifier-store aliases while preserving solc layout metadata."""
+    out = dict(maps or {})
+    for name, spec in list((maps or {}).items()):
+        if not spec or len(spec) < 6:
+            continue
+        source_base, member = spec[4], spec[5]
+        store_base = (state_store_names or {}).get(source_base)
+        if not store_base or store_base == source_base:
+            continue
+        if not map_esbmc_certifiable(store_base):
+            continue
+        alias = store_base + (f".{member}" if member else "")
+        out.setdefault(alias, spec)
+    return out
+
+
+def prefer_esbmc_mapping_aliases(maps):
+    """Drop source-name rows when an ESBMC store-name alias exists."""
+    aliases_by_source = {}
+    for name, spec in (maps or {}).items():
+        source = mapping_source_key(spec)
+        if source and name != source:
+            aliases_by_source.setdefault(source, []).append(name)
+    preferred = {}
+    for name, spec in (maps or {}).items():
+        source = mapping_source_key(spec)
+        if source and name == source and source in aliases_by_source:
+            continue
+        preferred[name] = spec
+    return preferred
+
+
 def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print,
                       dependencies=None, state_types=None, layout=None):
     """The mapping slot names to ASK THE LADDER ABOUT, one key per level.
@@ -3250,8 +3318,9 @@ def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print,
         # is keyed `<map>.<field>`. A scalar-valued one has member None and the
         # name is unchanged, byte for byte.
         _s, ktype, _n, _o, base, member = maps[mname]
-        if not map_esbmc_certifiable(base):
-            log(f"[put]   mapping candidate {base} skipped: ESBMC's "
+        query_base = mapping_query_base(mname, maps[mname])
+        if not map_esbmc_certifiable(query_base):
+            log(f"[put]   mapping candidate {query_base} skipped: ESBMC's "
                 "--path-cov-assert ladder currently resolves only "
                 "contract-scope mapping stores, not struct-contained "
                 "mapping_t fields")
@@ -3292,7 +3361,7 @@ def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print,
                 f"not a rung that was refused.")
             combos = combos[:budget]
         for keys in combos:
-            out.append(base + "".join(f"[{k}]" for k in keys)
+            out.append(query_base + "".join(f"[{k}]" for k in keys)
                        + (f".{member}" if member else ""))
     return out
 
@@ -3976,9 +4045,10 @@ def map_key_type_ok(label):
 # or hex literal, or `msg.sender`, never something containing a bracket, so
 # forbidding brackets inside a key makes the split unambiguous instead of
 # backtracking into a wrong one.
+SLOT_IDENT = r"[A-Za-z_][A-Za-z0-9_$]*"
 SLOT_NAME_RE = re.compile(
-    r"^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)((?:\[[^\[\]]+\])+)"
-    r"((?:\.[A-Za-z_]\w*)*)$")
+    rf"^({SLOT_IDENT}(?:\.{SLOT_IDENT})*)((?:\[[^\[\]]+\])+)"
+    rf"((?:\.{SLOT_IDENT})*)$")
 SLOT_KEY_RE = re.compile(r"\[([^\[\]]+)\]")
 
 
@@ -3995,7 +4065,7 @@ def parse_slot_name(s):
     return m.group(1), SLOT_KEY_RE.findall(m.group(2)), m.group(3)
 
 
-ESBMC_MAP_BASE_RE = re.compile(r"^[A-Za-z_]\w*$")
+ESBMC_MAP_BASE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 
 
 def map_esbmc_certifiable(base):
@@ -4008,7 +4078,13 @@ def map_entry_esbmc_certifiable(spec):
 
 
 def queryable_mapping(maps, key):
-    return bool(maps and key in maps and map_entry_esbmc_certifiable(maps[key]))
+    if not maps or not key:
+        return False
+    query_key = mapping_query_key(maps, key)
+    if query_key is None:
+        return False
+    query_base = mapping_query_base(query_key, maps[query_key])
+    return map_esbmc_certifiable(query_base)
 
 
 def esbmc_certifiable_maps(maps):
@@ -4032,10 +4108,13 @@ def region_slot_vars(region, maps):
         mname, _keys, tail = parse_slot_name(v)
         if mname is None:
             continue
-        if not queryable_mapping(maps, mname + tail):
+        query_key = mapping_query_key(maps, mname + tail)
+        if query_key is None or not queryable_mapping(maps, query_key):
             continue
-        if v not in out:
-            out.append(v)
+        query_base = mapping_query_base(query_key, maps[query_key])
+        qv = query_base + "".join(f"[{k}]" for k in _keys) + tail
+        if qv not in out:
+            out.append(qv)
     return out
 
 
@@ -4053,9 +4132,6 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
     param_types = {pn: pt for pn, pt in (params or []) if pn}
 
     def entries_for_base(base):
-        if base in (maps or {}):
-            spec = maps[base]
-            return [(base, spec)] if spec[4] == base else []
         mbase, dot, tail = base.partition(".")
         if not dot:
             return sorted((mkey, spec) for mkey, spec in (maps or {}).items()
@@ -4141,7 +4217,8 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
                 rendered.append(name)
             if not rendered:
                 continue
-            coord = source_base + "".join(f"[{k}]" for k in rendered)
+            query_base = mapping_query_base(mkey, spec)
+            coord = query_base + "".join(f"[{k}]" for k in rendered)
             if member:
                 coord += "." + member
             if coord not in out:
@@ -4160,8 +4237,12 @@ def assert_query_pins(pins, layout, maps):
         v = name[6:]
         mname, _keys, tail = parse_slot_name(v)
         if mname is not None:
-            if queryable_mapping(maps, mname + tail):
-                keep[name] = value
+            query_key = mapping_query_key(maps, mname + tail)
+            if query_key is not None and queryable_mapping(maps, query_key):
+                query_base = mapping_query_base(query_key, maps[query_key])
+                qname = ("state." + query_base
+                         + "".join(f"[{k}]" for k in _keys) + tail)
+                keep[qname] = value
             else:
                 skipped.append(
                     f"{name} (not passed to --path-cov-assert: `{mname}` is "
@@ -4179,11 +4260,15 @@ def assert_query_region_entries(region, holes, layout, maps):
             v = name[6:]
             mname, _keys, tail = parse_slot_name(v)
             if mname is not None:
-                if not queryable_mapping(maps, mname + tail):
+                query_key = mapping_query_key(maps, mname + tail)
+                if query_key is None or not queryable_mapping(maps, query_key):
                     skipped.append(
                         f"{name} (not passed to --path-cov-assert: `{mname}` "
                         "is not a queryable mapping member in solc's layout)")
                     continue
+                query_base = mapping_query_base(query_key, maps[query_key])
+                name = ("state." + query_base
+                        + "".join(f"[{k}]" for k in _keys) + tail)
             elif not (layout and v in layout):
                 skipped.append(
                     f"{name} (not passed to --path-cov-assert: solc's layout "
@@ -10135,8 +10220,24 @@ def main():
               f"read would be a GUESSED slot, and a green assertion about the "
               f"wrong slot is worse than no assertion")
         return 1
-    query_maps = esbmc_certifiable_maps(maps)
-    skipped_maps = sorted(set(maps or {}) - set(query_maps))
+    state_store_names, state_store_evidence = ({}, [])
+    if a.ast:
+        state_store_names, state_store_evidence = \
+            contract_state_esbmc_store_names(a.ast, a.contract)
+    for evidence in state_store_evidence:
+        print(f"[put]   {evidence}")
+    aliased_maps = add_esbmc_mapping_aliases(maps, state_store_names)
+    alias_pairs = sorted(
+        (spec[4], mapping_query_base(name, spec))
+        for name, spec in aliased_maps.items()
+        if mapping_source_key(spec) != name)
+    if alias_pairs:
+        print("[put]   ESBMC mapping store aliases: " + ", ".join(
+            f"{src} -> {dst}" for src, dst in alias_pairs))
+    maps = aliased_maps
+    certifiable_maps = esbmc_certifiable_maps(maps)
+    query_maps = prefer_esbmc_mapping_aliases(certifiable_maps)
+    skipped_maps = sorted(set(maps or {}) - set(certifiable_maps))
     print(f"[put] step 2a: storage layout — {len(layout)} readable scalar "
           f"slot(s): {', '.join(sorted(layout)) or 'none'}; "
           f"{len(query_maps)} ESBMC-queryable mapping(s) with a value-type "

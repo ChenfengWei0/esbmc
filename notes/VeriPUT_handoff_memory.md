@@ -20709,3 +20709,50 @@ Update after inspecting top valid-no-PUT timeout fallback:
   choose a larger value.  Regression:
   `test_stage2_unit_timeout_cap_defaults_to_uncapped` in
   `scripts/test_rq1_veriput_run.py`.
+
+Update after user re-emphasized no-PUT and no-R1/R2 focus:
+
+- User clarified again that rescue priority is not only `no-valid`; we must
+  also focus `valid-no-PUT`, and even `valid-PUT-no-R1/R2`.  The RQ1 success
+  target is therefore layered: first produce a reference-valid artifact, then
+  prefer PUT over concrete replay, then prefer R1/R2 oracles over R0-only exit
+  oracles.
+- Reran `real203/ERC-3643__ERC-3643__Token` once with uncapped Stage 2 within
+  the 600s wrapper budget and 16 GiB memory.  It moved from
+  `valid-no-PUT / timeout_concrete_fallback` to `valid-PUT-no-R1/R2`: one
+  valid PUT over `increaseAllowance(address,uint256)`, `fuzz_params=2`,
+  `concrete_valid=0`, `oracle_class_counts={"R0": 1}`.
+- The new no-R1/R2 blocker was a verifier-store naming mismatch, not an
+  absence of semantic candidates.  The assertion ladder was asked about the
+  solc/source slot `_allowances[msg.sender][_spender]`, but ESBMC's Solidity
+  frontend exposes the merged contract-scope mapping store as
+  `_allowances$496`.  The run log refused the variable with:
+  `_allowances is not a contract-scope store of contract Token; available
+  stores are _allowances$496, _balances$490, _frozen$513, _frozenTokens$517`.
+- Fixed the Python driver generally, not as an ERC-3643 special case:
+  `scripts/solidity_ast_dependencies.py` now reads state-variable declaration
+  ids from the solc AST and returns ESBMC store aliases such as
+  `_allowances -> _allowances$496`; `scripts/solidity_path_put.py` adds alias
+  rows to mapping layout, prefers alias names for ladder queries, translates
+  source-region/source-access mapping coordinates into alias names for the
+  assert spec, and keeps the original solc layout tuple for Foundry `vm.load`
+  rendering.
+- Important implementation detail: query names may contain `$`, so the slot
+  parser/certifiable regex now accepts ESBMC identifiers like
+  `_allowances$496[msg.sender][_spender]`.  Solidity source identifiers still
+  come from solc layout/AST and are not widened by this.
+- Regression added in `scripts/test_solidity_path_put.py`:
+  `test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries`,
+  `test_mapping_aliases_keep_struct_member_tails_queryable`, and
+  `test_contract_state_store_aliases_read_solc_declaration_ids`.
+- Verification for this no-ESBMC code fix:
+  `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile scripts/solidity_path_put.py scripts/solidity_ast_dependencies.py scripts/test_solidity_path_put.py`;
+  `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_solidity_path_put.py`
+  (267/267);
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/solidity_ast_dependencies.py scripts/test_solidity_path_put.py`;
+  `git diff --check -- scripts/solidity_path_put.py scripts/solidity_ast_dependencies.py scripts/test_solidity_path_put.py`.
+- Next focused ESBMC run should be the same
+  `real203/ERC-3643__ERC-3643__Token` subject, because it already produces a
+  valid PUT and the remaining known blocker is exactly this alias issue.  A
+  successful run should move it from `valid-PUT-no-R1/R2` to a PUT with
+  mapping state R1/R2, likely over `_allowances$496[msg.sender][_spender]`.
