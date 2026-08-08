@@ -22383,3 +22383,47 @@ Update after fixing Peer182 prepared-subject fallback and first peer batches:
   parallel jobs is refused by admission at 12 GiB/job, and even 3 jobs is
   refused on the current MemAvailable threshold, so use `--jobs 2` unless the
   admission logic or memlimit is deliberately changed.
+
+Update after Peer182 stale batches 3-4:
+
+- Reran the next 16 stale peer rows with the same official shape
+  (`--timeout 600 --wrapper-grace 60 --memlimit-gib 12 --jobs 2 --redo`).
+  All 16 produced valid PUT artifacts.
+- Batch 3 subjects:
+  `peer_soltg__constructor_5`, `peer_solar__GuessTheNumberChallenge`,
+  `peer_solar__BasicToken`, `peer_soltg__many_fun`, `peer_soltg__Math`,
+  `peer_ccsolbmc__RoomThermostat`, `peer_ccsolbmc__BasicProvenance`,
+  `peer_soltg__branches_in_modifiers_2`.  Six were
+  `valid-PUT-with-R1R2`; `GuessTheNumberChallenge` and `BasicToken` were
+  `valid-PUT-no-R1R2`.  `BasicToken` took 145.7s and retained 3 valid concrete
+  fallback artifacts.
+- Batch 4 subjects:
+  `peer_solar__DosAuction`, `peer_ccsolbmc__payments`,
+  `peer_ccsolbmc__SimpleMarketplace`, `peer_ccsolbmc__Token`,
+  `peer_ccsolbmc__DogeMojo`, `peer_ccsolbmc__VamprireDoge`,
+  `peer_ccsolbmc__ShibaAstronaut`, and `peer_ccsolbmc__salvador`.  Seven were
+  `valid-PUT-with-R1R2`; `SimpleMarketplace` was `valid-PUT-no-R1R2`.
+  The token-like `approve` rows (`Token`, `DogeMojo`, `VamprireDoge`,
+  `ShibaAstronaut`) each took about 355-359s but produced 6/6 valid PUT
+  artifacts with R1/R2.  `salvador.transferFrom` hit the 600.1s edge and still
+  produced 4/4 valid PUT/R1R2; its path was `exit-kind revert`, so it is useful
+  evidence that some revert paths can still be retained as PUT, although
+  revert-aware oracle support remains needed for broader revert-only behavior.
+- Net Peer182 movement after the first four stale batches:
+  `quality_bucket` changed from
+  `{"no-valid":147,"valid-PUT-no-R1R2":22,
+  "valid-PUT-with-R1R2":11,"valid-no-PUT":2}` to
+  `{"no-valid":119,"valid-PUT-no-R1R2":26,
+  "valid-PUT-with-R1R2":35,"valid-no-PUT":2}`.  Current aggregate:
+  182 cases, 63 valid, 61 PUT, 35 R1/R2, 2 concrete-only.
+- Remaining stale no-timing `no-valid-unknown` peer queue has 49 rows.  The
+  next small subjects are `peer_solar__Identity`,
+  `peer_solar__PermissionGroups`, `peer_solar__IdentityManager`,
+  `peer_ccsolbmc__DigitalLocker`,
+  `peer_ccsolbmc__RefrigeratedTransportation`,
+  `peer_solar__EIP20StandardToken`, `peer_solar__FixedSupplyToken`,
+  `peer_ccsolbmc__Ballot`, `peer_ccsolbmc__RBC`,
+  `peer_ccsolbmc__AssetTransfer`, `peer_ccsolbmc__SimpleECR20`, and
+  `peer_solar__Reentrance`.  Consider mixing at most one or two token-like
+  rows per batch with smaller rows, because token-like rows can occupy both
+  slots for ~6-10 minutes.
