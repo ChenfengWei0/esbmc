@@ -22111,3 +22111,30 @@ Update after TREXFactory constructor-harness diagnosis:
   "valid-PUT-with-R1R2":8,"valid-no-PUT":22}`;
   artifacts `{"raw":176,"valid":153,"put_raw":58,"put_valid":55,
   "concrete_raw":118,"concrete_valid":98}`.
+
+Update after StablePriceOracle constructor dynamic-array repair:
+
+- `ensdomains__ens-contracts__StablePriceOracle` had no certified PUT region,
+  but Stage2 produced two cleared concrete fallbacks for `premium`.  Official
+  RQ1 had `raw=2`, `valid=0`, both concrete replays failing Foundry `setUp()`
+  with panic `0x32` array out-of-bounds.
+- Root cause: ESBMC emitted `new StablePriceOracle(..., new uint256[](4))`,
+  while the source constructor reads `_rentPrices[0]` through
+  `_rentPrices[4]`; Foundry therefore reverts before the replay body.
+- Fixed `scripts/solidity_path_put.py` assembly layer with
+  `constructor_param_dynarray_min_lengths` and
+  `apply_constructor_param_dynarray_lengths`: for constructor dynamic-array
+  parameters read at constant indices in the source constructor, grow replay
+  args of shape `new Elem[](N)` to at least `max_index + 1`.  This is a
+  harness repair only and does not create PUT proof where Stage2 only supplied
+  concrete fallbacks.
+- Added `test_constructor_dynamic_array_defaults_cover_indexed_reads`.
+  Verification passed:
+  `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `python3 scripts/test_solidity_path_put.py` -> 280/280;
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `git diff --check`.
+- Stage4-only probe from existing StablePriceOracle cert now succeeds:
+  `premium` -> 2 green concrete replays / 2 total.  Expected official rerun
+  should move this subject from `no-valid` to `valid-no-PUT`; it will not
+  improve PUT or R1/R2 counts because Stage2 had no certified region.

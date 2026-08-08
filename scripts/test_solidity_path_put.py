@@ -688,6 +688,53 @@ contract CCovTest is Test {
     return bad
 
 
+def test_constructor_dynamic_array_defaults_cover_indexed_reads():
+    flat = """\
+pragma solidity >=0.8.0;
+contract C {
+  uint256 p4;
+  constructor(uint256[] memory prices) {
+    p4 = prices[4];
+  }
+  function f() external {}
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C(new uint256[](4));
+  }
+  // claim: sol:@C@C@F@f#9:path:1
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 1)
+    put = ["", "  function test_put_C_f_path1() public {", "    c0.f();", "  }"]
+    text = assemble_put_source(
+        em, case, [put], "CCovTest_put", contract="C", unit="f",
+        flat_source=flat)
+    bad = 0
+    bad += check("new C(new uint256[](5))" in text,
+                 "constructor dynamic-array default covers indexed reads")
+    bad += check("new C(new uint256[](4))" not in text,
+                 "the too-short constructor array is gone")
+    return bad
+
+
 def test_unsupported_skeleton_is_synthesized_for_certified_put_lift():
     emitted = """\
 // SPDX-License-Identifier: MIT
@@ -12438,6 +12485,7 @@ def main():
               test_constructor_param_interface_calls_are_mocked_before_deploy,
               test_constructor_param_hascode_args_are_etched_before_deploy,
               test_constructor_nonzero_address_guards_repair_zero_defaults,
+              test_constructor_dynamic_array_defaults_cover_indexed_reads,
               test_unsupported_skeleton_is_synthesized_for_certified_put_lift,
               test_esbmc_interface_mock_completion_adds_inherited_overloads,
               test_runtime_interface_mock_lines_cover_literal_address_calls,

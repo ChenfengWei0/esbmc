@@ -5677,6 +5677,80 @@ def apply_constructor_param_nonzero_args(lines, contract, specs):
     return out, changed
 
 
+def constructor_param_dynarray_min_lengths(source, contract):
+    """Minimum lengths for constructor dynamic-array params read by index."""
+    chunk = _source_contract_chunk(source, contract)
+    if not source or not chunk:
+        return {}
+    params = _source_constructor_params_from_source(source, contract)
+    body = _constructor_body_text(chunk)
+    if not params or not body:
+        return {}
+    out = {}
+    for idx, (pname, ptype) in enumerate(params):
+        if not _norm_ty(ptype).endswith("[]"):
+            continue
+        max_idx = None
+        rx = re.compile(r"\b" + re.escape(pname) + r"\s*\[\s*(\d+)\s*\]")
+        for m in rx.finditer(body):
+            value = int(m.group(1))
+            max_idx = value if max_idx is None else max(max_idx, value)
+        if max_idx is not None:
+            out[idx] = {
+                "param_name": pname,
+                "param_type": ptype,
+                "min_len": max_idx + 1,
+            }
+    return out
+
+
+def apply_constructor_param_dynarray_lengths(lines, contract, specs):
+    """Grow default dynamic-array constructor args to source-read length."""
+    if not contract or not specs:
+        return list(lines), 0
+    out, changed, i = [], 0, 0
+    rx = re.compile(r"\bnew\s+" + re.escape(contract) + r"\s*\(")
+    while i < len(lines):
+        if not rx.search(lines[i]):
+            out.append(lines[i])
+            i += 1
+            continue
+        end = _statement_end(lines, i)
+        stmt = "\n".join(lines[i:end + 1])
+        span = _constructor_arg_span(stmt, contract)
+        if span is None:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        start, close, args = span
+        new_args = list(args)
+        touched = False
+        for idx, spec in specs.items():
+            if idx >= len(args):
+                continue
+            elem_ty = _norm_ty(spec["param_type"])[:-2].strip()
+            arg = args[idx].strip()
+            m = re.fullmatch(r"new\s+" + re.escape(elem_ty) +
+                             r"\s*\[\]\s*\(\s*(\d+)\s*\)", arg)
+            if m is None:
+                continue
+            current = int(m.group(1))
+            min_len = int(spec["min_len"])
+            if current >= min_len:
+                continue
+            new_args[idx] = f"new {elem_ty}[]({min_len})"
+            touched = True
+        if not touched:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        new_stmt = stmt[:start] + ", ".join(new_args) + stmt[close:]
+        out.extend(new_stmt.split("\n"))
+        changed += 1
+        i = end + 1
+    return out, changed
+
+
 def _setup_body_span(lines):
     spans = _setup_body_spans(lines)
     return spans[0] if spans else None
@@ -10301,6 +10375,11 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
         lines, _constructor_param_nonzero_repairs = \
             apply_constructor_param_nonzero_args(
                 lines, contract, constructor_param_nonzero_mocks)
+        constructor_param_dynarray_mocks = \
+            constructor_param_dynarray_min_lengths(flat_source or "", contract)
+        lines, _constructor_param_dynarray_repairs = \
+            apply_constructor_param_dynarray_lengths(
+                lines, contract, constructor_param_dynarray_mocks)
         lines = apply_constructor_staticcall_mocks(
             lines, emitted, case, unit, contract, constructor_mocks or [])
         lines = apply_runtime_interface_mocks(
@@ -10371,6 +10450,11 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
         lines, _constructor_param_nonzero_repairs = \
             apply_constructor_param_nonzero_args(
                 lines, contract, constructor_param_nonzero_mocks)
+        constructor_param_dynarray_mocks = \
+            constructor_param_dynarray_min_lengths(flat_source or "", contract)
+        lines, _constructor_param_dynarray_repairs = \
+            apply_constructor_param_dynarray_lengths(
+                lines, contract, constructor_param_dynarray_mocks)
         lines = apply_constructor_staticcall_mocks(
             lines, emitted, case, unit, contract, constructor_mocks or [])
         lines = apply_runtime_interface_mocks(
