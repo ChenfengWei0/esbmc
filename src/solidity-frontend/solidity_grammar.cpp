@@ -281,9 +281,8 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
       typeString.compare(0, 14, "literal_string") == 0 ||
       typeString == "string storage ref" ||
       typeString == "string storage pointer" || typeString == "string memory" ||
-      typeString == "string calldata" ||
-      typeString == "address payable" || typeString == "address" ||
-      typeString.compare(0, 5, "bytes") == 0)
+      typeString == "string calldata" || typeString == "address payable" ||
+      typeString == "address" || typeString.compare(0, 5, "bytes") == 0)
     {
       // For state var declaration,
       return ElementaryTypeName;
@@ -945,7 +944,8 @@ ExpressionT get_expression_t(const nlohmann::json &expr)
       return LibraryMemberCall;
     else if (type_name == SolidityGrammar::TypeNameT::StructTypeName)
       return StructMemberCall;
-    else if (type_name == SolidityGrammar::TypeNameT::EnumTypeName)
+    else if (
+      has_ref_decl && type_name == SolidityGrammar::TypeNameT::EnumTypeName)
       return EnumMemberCall;
     else if (type_name == SolidityGrammar::TypeNameT::ContractTypeName)
       return ContractMemberCall;

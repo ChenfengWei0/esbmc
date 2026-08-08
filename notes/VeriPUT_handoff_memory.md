@@ -21647,3 +21647,43 @@ Update after Euler no-candidate stress batch:
   `valid_cases=38`, `put_cases=30`, `r1r2_cases=22`,
   `concrete_only=8`, `no_valid=165`, `valid_units=208`,
   `put_units=139`, `r1r2_put_units=45`.
+
+Update after Stage2 crash/diagnostic fixes:
+
+- Investigated fast real203 `NO-WITNESS-UNKNOWN` rows from the proxy/factory
+  rerun batch.  Several were not true witness-search failures: ESBMC aborted
+  before writing `cov-report.json`, and `certify_all.py` collapsed the result
+  into `NO-WITNESS-UNKNOWN`.
+- Fixed one Solidity frontend abort in
+  `src/solidity-frontend/solidity_convert_expr.cpp`: member calls through
+  tuple-wrapped contract/interface casts whose target has no tracked structure
+  now synthesize an opaque nondet return instead of asserting on an empty
+  `base_cname`.  Concrete example:
+  `ITREXImplementationAuthority(getImplementationAuthority()).getMCImplementation()`
+  in `ERC-3643__ERC-3643__ModularComplianceProxy`.  A direct path-coverage
+  probe for `getImplementationAuthority` now reaches solving and writes
+  `cov-report.json` instead of exiting `-6`.
+- Fixed one Solidity grammar abort in
+  `src/solidity-frontend/solidity_grammar.cpp`: enum member access is only
+  classified as `EnumMemberCall` when `referencedDeclaration` is present and
+  positive.  This avoids const JSON `operator[]` aborts on ref-less member
+  accesses in Balancer-style ASTs.
+- Added `certify_all.py` recognition for ESBMC's path probe goal-cap refusal:
+  `--path-cov-probe: unit ... needs N probe claims ... exceeding
+  --path-cov-max-goals`.  Such runs now get
+  `driver_diagnostic.tag=path-coverage-probe-goal-cap` and bucket
+  `DRIVER-REFUSED` rather than `NO-WITNESS-UNKNOWN`.  Verified on
+  `balancer__balancer-v3-monorepo__BalancerContractRegistryInitializer`:
+  it now reports `DRIVER-REFUSED` with `probe_claims=47664`,
+  `branch_arms=18`, `physical_exits=2648`, `path_cov_max_goals=10000`.
+- Reran official RQ1 for
+  `ERC-3643__ERC-3643__ModularComplianceProxy` after the frontend fix.  It no
+  longer dies at conversion, but the subject still exhausted the 600s budget
+  before Stage 4 and produced no valid tests.  Do not count this as a recovered
+  case; count it as evidence that the crash fix is necessary but not sufficient
+  for proxy subjects.
+- Verification performed: `cmake --build build --target esbmc -j$(nproc)`,
+  `cppcheck` on changed Solidity frontend files, `py_compile` for the changed
+  Python script path, targeted direct ESBMC probe for
+  `ModularComplianceProxy.getImplementationAuthority`, targeted `certify_all.py`
+  probe for Balancer goal-cap classification.

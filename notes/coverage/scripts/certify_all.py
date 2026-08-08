@@ -840,6 +840,10 @@ RE_PATH_COV_PROBE_COUNTS = re.compile(
     r"--path-cov-probe: unit '([^']+)' added ([0-9]+) "
     r"exit-latched claim\(s\) for ([0-9]+) branch arm\(s\) at ([0-9]+) "
     r"physical exit\(s\); complete-path denominator remains ([0-9]+)")
+RE_PATH_COV_PROBE_GOAL_CAP = re.compile(
+    r"--path-cov-probe: unit '([^']+)' needs ([0-9]+) probe claims "
+    r"\(([0-9]+) branch arms x ([0-9]+) physical exits\), exceeding "
+    r"--path-cov-max-goals ([0-9]+)")
 RE_ESBMC_ERROR_LINE = re.compile(r"^ERROR: (.*)$", re.MULTILINE)
 RE_RUN_EXIT = re.compile(r"^\[run\] EXIT (-?[0-9]+)$", re.MULTILINE)
 RE_RECURSIVE_HELPER_PREFLIGHT = re.compile(
@@ -867,6 +871,19 @@ def result_driver_diagnostic(out):
                 "path enumeration refused before ESBMC because the target call "
                 "closure reaches direct self-recursive helper wrappers"),
             "helpers": helpers,
+        }
+    m = RE_PATH_COV_PROBE_GOAL_CAP.search(out)
+    if m:
+        return {
+            "tag": "path-coverage-probe-goal-cap",
+            "reason": (
+                "path coverage probe universe exceeded --path-cov-max-goals "
+                "before any cov-report.json could be emitted"),
+            "unit_id": m.group(1),
+            "probe_claims": int(m.group(2)),
+            "branch_arms": int(m.group(3)),
+            "physical_exits": int(m.group(4)),
+            "path_cov_max_goals": int(m.group(5)),
         }
     if "ESBMC produced no cov-report.json" in out:
         err = RE_ESBMC_ERROR_LINE.search(out)
@@ -990,6 +1007,14 @@ def bucket(rec, rc, out):
         return "KILLED"
     if rc not in (0, 1):
         return "CRASHED"
+    diag = rec.get("driver_diagnostic") or {}
+    if (
+        isinstance(diag, dict) and
+        diag.get("tag") == "path-coverage-probe-goal-cap" and
+        rec["witnessed"] is None and not rec["certified"] and
+        not rec["no_coordinate_reason"]
+    ):
+        return "DRIVER-REFUSED"
     # A DECLINED RUN IS NOT AN EMPTY ONE. Guarded on having produced nothing
     # else, so a refusal printed alongside real work cannot hide it -- the same
     # ordering rule the KILLED branch above follows.

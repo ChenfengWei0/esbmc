@@ -3162,6 +3162,55 @@ bool solidity_convertert::get_contract_member_call_expr(
   const nlohmann::json &caller_expr_json = callee_expr_json["expression"];
   assert(callee_expr_json.contains("referencedDeclaration"));
 
+  auto synthesize_nondet_member_return = [&]() -> bool {
+    typet ret_t;
+    bool have_type = false;
+    int fn_ref = expr.value("referencedDeclaration", -1);
+    if (fn_ref > 0)
+    {
+      const nlohmann::json &fdecl = find_decl_ref(fn_ref);
+      if (!fdecl.empty() && !fdecl.is_null())
+      {
+        std::string fnode = fdecl.value("nodeType", "");
+        if (
+          fnode == "FunctionDefinition" && fdecl.contains("returnParameters") &&
+          fdecl["returnParameters"].contains("parameters") &&
+          fdecl["returnParameters"]["parameters"].is_array() &&
+          !fdecl["returnParameters"]["parameters"].empty())
+        {
+          const auto &rp = fdecl["returnParameters"]["parameters"][0];
+          if (rp.contains("typeDescriptions"))
+          {
+            if (get_type_description(rp["typeDescriptions"], ret_t))
+              return true;
+            have_type = true;
+          }
+        }
+        else if (
+          fnode == "VariableDeclaration" && fdecl.contains("typeName") &&
+          fdecl["typeName"].contains("typeDescriptions"))
+        {
+          if (get_type_description(
+                fdecl["typeName"]["typeDescriptions"], ret_t))
+            return true;
+          have_type = true;
+        }
+      }
+    }
+    if (!have_type && expr.contains("typeDescriptions"))
+    {
+      if (get_type_description(expr["typeDescriptions"], ret_t))
+        return true;
+      have_type = true;
+    }
+    if (!have_type)
+      ret_t = empty_typet();
+    exprt nondet = exprt("sideeffect", ret_t);
+    nondet.statement("nondet");
+    new_expr = nondet;
+    return false;
+  };
+
   // The caller expression is normally an Identifier with referencedDeclaration
   // (e.g. `creator.method()`). But it can also be an inline type cast like
   // `TokenCreator(address(creator)).method()`, which is a FunctionCall with
@@ -3214,57 +3263,7 @@ bool solidity_convertert::get_contract_member_call_expr(
       "solidity",
       "\t\t@@@ got member call on inline `new C()`, synthesizing "
       "nondet return");
-    int fn_ref = expr.value("referencedDeclaration", -1);
-    typet ret_t;
-    bool have_type = false;
-    if (fn_ref > 0)
-    {
-      const nlohmann::json &fdecl = find_decl_ref(fn_ref);
-      if (!fdecl.empty() && !fdecl.is_null())
-      {
-        std::string fnode = fdecl.value("nodeType", "");
-        if (
-          fnode == "FunctionDefinition" && fdecl.contains("returnParameters") &&
-          fdecl["returnParameters"].contains("parameters") &&
-          fdecl["returnParameters"]["parameters"].is_array() &&
-          !fdecl["returnParameters"]["parameters"].empty())
-        {
-          const auto &rp = fdecl["returnParameters"]["parameters"][0];
-          if (rp.contains("typeDescriptions"))
-          {
-            if (get_type_description(rp["typeDescriptions"], ret_t))
-              return true;
-            have_type = true;
-          }
-        }
-        else if (
-          fnode == "VariableDeclaration" && fdecl.contains("typeName") &&
-          fdecl["typeName"].contains("typeDescriptions"))
-        {
-          // Public state var getter — the MemberAccess references
-          // the VariableDeclaration; the getter returns the var's
-          // declared type.
-          if (get_type_description(
-                fdecl["typeName"]["typeDescriptions"], ret_t))
-            return true;
-          have_type = true;
-        }
-      }
-    }
-    // Fall back to the member access's own typeDescriptions if we
-    // could not recover the declared return type.
-    if (!have_type && expr.contains("typeDescriptions"))
-    {
-      if (get_type_description(expr["typeDescriptions"], ret_t))
-        return true;
-      have_type = true;
-    }
-    if (!have_type)
-      ret_t = empty_typet();
-    exprt nondet = exprt("sideeffect", ret_t);
-    nondet.statement("nondet");
-    new_expr = nondet;
-    return false;
+    return synthesize_nondet_member_return();
   }
 
   // Recover the cast target contract/interface name when the caller is
@@ -3273,19 +3272,25 @@ bool solidity_convertert::get_contract_member_call_expr(
   // `ICallback(msg.sender).cb()`).  Hoisted so both the variable-backed
   // path and the no-variable address-cast path below can use it.
   std::string cast_target_cname;
+  auto recover_cast_target = [](const nlohmann::json &node) -> std::string {
+    if (!node.contains("typeDescriptions"))
+      return "";
+    const std::string ts = node["typeDescriptions"].value("typeString", "");
+    auto sp = ts.rfind(' ');
+    if (sp != std::string::npos && ts.compare(0, 9, "contract ") == 0)
+      return ts.substr(sp + 1);
+    return "";
+  };
   if (
     caller_expr_json.contains("nodeType") &&
     caller_expr_json["nodeType"] == "FunctionCall" &&
-    caller_expr_json.value("kind", "") == "typeConversion" &&
-    caller_expr_json.contains("typeDescriptions"))
+    caller_expr_json.value("kind", "") == "typeConversion")
   {
-    const std::string ts =
-      caller_expr_json["typeDescriptions"].value("typeString", "");
     // ts is like "contract ERC721TokenReceiver" or "contract IERC20"
-    auto sp = ts.rfind(' ');
-    if (sp != std::string::npos && ts.compare(0, 9, "contract ") == 0)
-      cast_target_cname = ts.substr(sp + 1);
+    cast_target_cname = recover_cast_target(caller_expr_json);
   }
+  if (cast_target_cname.empty())
+    cast_target_cname = recover_cast_target(resolved_caller);
 
   side_effect_expr_function_callt call;
   int contract_var_id = -1;
@@ -3337,52 +3342,7 @@ bool solidity_convertert::get_contract_member_call_expr(
     // of the member's declared type; if the member is later called, the
     // call site will be handled by the opaque fn-ptr path. This mirrors
     // the `(new C()).x` fallback above.
-    typet ret_t;
-    bool have_type = false;
-    int fn_ref = expr.value("referencedDeclaration", -1);
-    if (fn_ref > 0)
-    {
-      const nlohmann::json &fdecl = find_decl_ref(fn_ref);
-      if (!fdecl.empty() && !fdecl.is_null())
-      {
-        std::string fnode = fdecl.value("nodeType", "");
-        if (
-          fnode == "FunctionDefinition" && fdecl.contains("returnParameters") &&
-          fdecl["returnParameters"].contains("parameters") &&
-          fdecl["returnParameters"]["parameters"].is_array() &&
-          !fdecl["returnParameters"]["parameters"].empty())
-        {
-          const auto &rp = fdecl["returnParameters"]["parameters"][0];
-          if (rp.contains("typeDescriptions"))
-          {
-            if (get_type_description(rp["typeDescriptions"], ret_t))
-              return true;
-            have_type = true;
-          }
-        }
-        else if (
-          fnode == "VariableDeclaration" && fdecl.contains("typeName") &&
-          fdecl["typeName"].contains("typeDescriptions"))
-        {
-          if (get_type_description(
-                fdecl["typeName"]["typeDescriptions"], ret_t))
-            return true;
-          have_type = true;
-        }
-      }
-    }
-    if (!have_type && expr.contains("typeDescriptions"))
-    {
-      if (get_type_description(expr["typeDescriptions"], ret_t))
-        return true;
-      have_type = true;
-    }
-    if (!have_type)
-      ret_t = empty_typet();
-    exprt nondet = exprt("sideeffect", ret_t);
-    nondet.statement("nondet");
-    new_expr = nondet;
-    return false;
+    return synthesize_nondet_member_return();
   }
   else
   {
@@ -3434,6 +3394,15 @@ bool solidity_convertert::get_contract_member_call_expr(
       // that case the cast's target type is the correct scope.
       if (base_cname.empty() && !cast_target_cname.empty())
       {
+        if (!structureTypingMap.count(cast_target_cname))
+        {
+          log_debug(
+            "solidity",
+            "\t\t@@@ got member call through untracked contract/interface "
+            "cast {}, synthesizing nondet return",
+            cast_target_cname);
+          return synthesize_nondet_member_return();
+        }
         base_cname = cast_target_cname;
 
         // Re-wrap `base` so its type is CONTRACT (pointer to the
@@ -3471,7 +3440,14 @@ bool solidity_convertert::get_contract_member_call_expr(
           base.type().set("#sol_contract", cast_target_cname);
         }
       }
-      assert(!base_cname.empty());
+      if (base_cname.empty())
+      {
+        log_debug(
+          "solidity",
+          "\t\t@@@ could not recover contract scope for member call, "
+          "synthesizing nondet return");
+        return synthesize_nondet_member_return();
+      }
     }
   }
 
