@@ -20136,3 +20136,27 @@ This fixes a previous diagnostic overclaim: the ESBMC refusal text mentions
 "mapping or dynamic array" as a generic example, not proof that the case is a
 mapping/dynamic-array bug.  The triage tag is now
 `ladder-refused-no-candidate`.
+
+Follow-up refinement:
+
+- `methodology_backlog.valid_put_no_r1r2_actionable` is now computed from
+  subject-level non-rollback detail shapes rather than the older
+  `normal-or-unknown` exit bucket.
+- New backlog fields:
+  - `valid_put_no_r1r2_formula_actionable`
+  - `valid_put_no_r1r2_candidate_surface_gap`
+  - `valid_put_no_r1r2_exit_only_unknown`
+  - `valid_put_no_r1r2_rollback_accounting_only`
+- Current subject-level split:
+  - `bugfix124`: formula `0`, candidate/surface `0`, rollback `24`.
+  - `real203`: formula `1`, candidate/surface `1`, rollback `7`.
+  - `peer182`: formula `0`, candidate/surface `11`, rollback `12`.
+
+Verification:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile
+  notes/coverage/scripts/rq1_veriput_triage.py`
+- `PYTHONPATH=notes/coverage/scripts:scripts pylint --errors-only
+  notes/coverage/scripts/rq1_veriput_triage.py`
+- `python3 notes/coverage/scripts/rq1_veriput_triage.py --benchmark all
+  --json --sample-limit 0`

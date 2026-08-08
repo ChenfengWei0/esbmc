@@ -193,6 +193,30 @@ def _no_r1r2_artifact_shape(test: dict[str, Any]) -> str:
     return "normal-unknown"
 
 
+def _no_r1r2_subject_detail_shape(row: dict[str, Any]) -> str:
+    shapes = []
+    for test in _valid_tests(row):
+        if test.get("kind") != "put":
+            continue
+        labels = set(str(v) for v in (test.get("oracle_classes") or []))
+        if "R1" in labels or "R2" in labels:
+            continue
+        shapes.append(_no_r1r2_artifact_shape(test))
+    if not shapes:
+        return "none"
+    for preferred in (
+            "normal-return-varies",
+            "normal-no-ladder-candidate",
+            "normal-exit-only",
+            "normal-unknown",
+    ):
+        if preferred in shapes:
+            return preferred
+    if "rollback" in shapes:
+        return "rollback"
+    return "unknown"
+
+
 def _valid_put_no_r1r2_exit_shape(row: dict[str, Any]) -> str:
     valid_puts = [test for test in _valid_tests(row) if test.get("kind") == "put"]
     if not valid_puts:
@@ -318,6 +342,7 @@ def summarize_dataset(root: Path, dataset: str,
     valid_put_combos: Counter[str] = Counter()
     no_r1r2_exit_shapes: Counter[str] = Counter()
     no_r1r2_detail_shapes: Counter[str] = Counter()
+    no_r1r2_detail_subjects: Counter[str] = Counter()
     strength_issue_counts: Counter[str] = Counter()
     artifact = Counter()
     examples: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -334,6 +359,7 @@ def summarize_dataset(root: Path, dataset: str,
         valid_put_combos.update(_valid_put_combo_counts(row))
         if bucket.startswith("valid-PUT-no-R1R2"):
             no_r1r2_exit_shapes[_valid_put_no_r1r2_exit_shape(row)] += 1
+            no_r1r2_detail_subjects[_no_r1r2_subject_detail_shape(row)] += 1
             for test in _valid_tests(row):
                 if test.get("kind") != "put":
                     continue
@@ -357,11 +383,20 @@ def summarize_dataset(root: Path, dataset: str,
     if valid_subjects:
         valid_subject_put_ratio = (
             valid_subjects - buckets["valid-no-PUT"]) / valid_subjects
+    nonrollback_no_r1r2 = sum(
+        count for shape, count in no_r1r2_detail_subjects.items()
+        if shape not in ("rollback", "none"))
     backlog = {
         "no_valid": buckets["no-valid"],
         "valid_no_put": buckets["valid-no-PUT"],
-        "valid_put_no_r1r2_actionable": (
-            buckets["valid-PUT-no-R1R2-normal-or-unknown"]),
+        "valid_put_no_r1r2_actionable": nonrollback_no_r1r2,
+        "valid_put_no_r1r2_formula_actionable": (
+            no_r1r2_detail_subjects["normal-return-varies"]),
+        "valid_put_no_r1r2_candidate_surface_gap": (
+            no_r1r2_detail_subjects["normal-no-ladder-candidate"]),
+        "valid_put_no_r1r2_exit_only_unknown": (
+            no_r1r2_detail_subjects["normal-exit-only"] +
+            no_r1r2_detail_subjects["normal-unknown"]),
         "valid_put_no_r1r2_rollback_accounting_only": (
             buckets["valid-PUT-no-R1R2-rollback"]),
     }
@@ -382,6 +417,8 @@ def summarize_dataset(root: Path, dataset: str,
         "valid_put_no_r1r2_exit_shapes": dict(sorted(no_r1r2_exit_shapes.items())),
         "valid_put_no_r1r2_detail_shapes": dict(
             sorted(no_r1r2_detail_shapes.items())),
+        "valid_put_no_r1r2_detail_subjects": dict(
+            sorted(no_r1r2_detail_subjects.items())),
         "valid_no_put_stage2_sources": dict(sorted(no_put_sources.items())),
         "strength_issue_counts": dict(sorted(strength_issue_counts.items())),
         "status_counts": dict(sorted(status_counts.items())),
@@ -426,6 +463,10 @@ def _print_human(summary: dict[str, Any]) -> None:
     if summary["valid_put_no_r1r2_detail_shapes"]:
         print("valid PUT no-R1/R2 detail shapes:")
         for key, value in summary["valid_put_no_r1r2_detail_shapes"].items():
+            print(f"  {key}: {value}")
+    if summary["valid_put_no_r1r2_detail_subjects"]:
+        print("valid PUT no-R1/R2 detail subjects:")
+        for key, value in summary["valid_put_no_r1r2_detail_subjects"].items():
             print(f"  {key}: {value}")
     if summary["valid_no_put_stage2_sources"]:
         print("valid-no-PUT stage2 sources:")
