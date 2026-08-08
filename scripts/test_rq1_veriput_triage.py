@@ -132,10 +132,36 @@ def test_triage_causes_distinguish_concrete_and_unobservable_puts():
         return bad
 
 
+def test_unsupported_calldata_beats_generic_not_parameterized_note():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        write_json(root / "bugfix124" / "subjects" / "StringArg" / "result.json",
+                   result_doc(
+                       valid=1,
+                       concrete_valid=1,
+                       tests=[{
+                           "kind": "concrete",
+                           "stage2_source": "certified_region",
+                           "put_json": put_json(root / "string-put.json", notes=[
+                               "declared parameter `description` is absent from "
+                               "the certified region, but type `string` cannot "
+                               "be synthesized as a full-domain fuzz input",
+                               "NOT PARAMETERIZED, per From a Region to a Test",
+                           ]),
+                       }],
+                       cert={"CERTIFIED": 1}))
+        rows = rq1_veriput_triage.triage_rows(root, ["bugfix124"])
+        bad = 0
+        bad += check(rows[0]["triage_cause"] == "unsupported-calldata-type",
+                     f"the specific unsupported calldata blocker wins: {rows}")
+        return bad
+
+
 def main():
     tests = [
         test_latest_redo_wins_and_buckets_are_strength_aware,
         test_triage_causes_distinguish_concrete_and_unobservable_puts,
+        test_unsupported_calldata_beats_generic_not_parameterized_note,
     ]
     bad = 0
     for test in tests:

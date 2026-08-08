@@ -114,10 +114,10 @@ def classify_valid_no_put(result: dict) -> str:
         put_json = _put_json_for_test(test)
         notes.extend(put_json.get("notes") or [])
     blob = _text_blob(notes)
-    if "NOT PARAMETERIZED" in blob:
-        return "not-parameterized-no-wide-rendered-coordinate"
     if "cannot be synthesized as a full-domain fuzz input" in blob:
         return "unsupported-calldata-type"
+    if "NOT PARAMETERIZED" in blob:
+        return "not-parameterized-no-wide-rendered-coordinate"
     if sources:
         return sources.most_common(1)[0][0]
     return "valid-no-PUT-unknown"

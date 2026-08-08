@@ -20547,7 +20547,11 @@ Update after latest RQ1 strength triage tooling:
   and several bugfix POP contracts.  The StandaloneReverseRegistrar blocker is
   `mapping(address => string)` returning a dynamic string, not the already
   supported scalar mapping getter case, so treat it cautiously rather than
-  patching blindly.
+  patching blindly.  A follow-up triage classification fix distinguishes
+  `acfix_021_CVE_2018_19832` as truly
+  `not-parameterized-no-wide-rendered-coordinate` (owner-only/no rendered
+  fuzzable dimension) and `acfix_3_5_088_EmergencyOracleFactory` as
+  `unsupported-calldata-type` because its missing parameter is `string`.
 - Verification for the triage tooling:
   `PYTHONDONTWRITEBYTECODE=1 python3 -m py_compile notes/coverage/scripts/rq1_veriput_triage.py scripts/test_rq1_veriput_triage.py`;
   `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test_rq1_veriput_triage.py`;
