@@ -21556,3 +21556,34 @@ Update after bulk adopting existing artifact summaries without ESBMC:
   `valid_put_with_R1_or_R2 <= put_valid`.  Peer still has 6 historical rows
   with `valid=None` and nonzero split counts; this predates the adoption and is
   handled by `Results/results_all.py::valid_count`.
+
+Update after enabling host-wide concurrency for real203:
+
+- Tried a bugfix124 unchecked-low-level-call timeout batch at `jobs=3`,
+  `memlimit=12GiB`.  The first three subjects each consumed the full 600s and
+  remained `no-output`; the remaining unchecked-low-level-call children were
+  stopped to avoid wasting time on the same low-yield shape.  Treat this family
+  as expensive/low-priority unless the region or external-call modeling changes.
+- Ran real203 no-output batch 1 at `jobs=3`, `memlimit=12GiB`:
+  `euler-xyz__euler-vault-kit__ProtocolConfig` recovered `raw=4`, `valid=4`,
+  `put_valid=3`, `valid_put_with_R1_or_R2=3`, with rich
+  `oracle_class_counts={R0:3,R1:15,R2:30}`.  `WstETHPriceFeed` recovered one
+  valid concrete replay.  `ENSRegistry`, `BaseBridgeReceiver`, and
+  `ENSRegistryWithFallback` stayed no-valid at 600s.  `MarketUpdateProposer`
+  fast-failed because nested `certify_all.py` applies its own 60%
+  MemAvailable guard: at 19.2GiB available, `memlimit=12GiB` exceeded the
+  internal 11.5GiB allowance.
+- Ran real203 no-output batch 2 at `jobs=3`, `memlimit=10GiB` to avoid the
+  nested MemAvailable refusal.  `TokenCallbackHandler` recovered
+  `raw=8`, `valid=8`, all concrete; `IRMSynth` recovered `raw=3`,
+  `valid=3`, all concrete.  `MarketUpdateProposer`, `LinearPremiumPriceOracle`,
+  `ConfiguratorProxy`, and `MigrationHelper` remained no-valid/no-output at
+  the 600s subject budget.
+- The new concrete-only successes (`WstETHPriceFeed`, `TokenCallbackHandler`,
+  `IRMSynth`) do not have certified regions in their current cert summaries;
+  they are cleared/not-certified fallback tests, so there is no immediate
+  zero-cost Stage4 conversion to PUT.
+- Latest official snapshot after these concurrent runs:
+  `real203`: `valid_cases=33`, `put_cases=26`, `r1r2_cases=18`,
+  `concrete_only=7`, `no_valid=170`, `valid_units=179`, `put_units=121`,
+  `r1r2_put_units=38`.
