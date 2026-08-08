@@ -9338,6 +9338,171 @@ def _source_function_abis(source):
     return out
 
 
+def _source_param_decl_type(raw):
+    text = re.sub(r"\s+", " ", (raw or "").strip())
+    if not text:
+        return None
+    text = re.sub(r"\s*=.*$", "", text).strip()
+    parts = text.split()
+    if len(parts) >= 2 and parts[-2] in ("memory", "calldata", "storage"):
+        parts = parts[:-1]
+    elif len(parts) >= 2:
+        parts = parts[:-1]
+    if not parts:
+        return None
+    return " ".join(parts)
+
+
+def _source_return_decl_type(raw):
+    text = _source_param_decl_type(raw)
+    return text
+
+
+def _interface_declaration(source, iface):
+    rx = re.compile(r"\binterface\s+" + re.escape(iface) +
+                    r"\s*(?:is\s*([^{]+))?\{", re.S)
+    m = rx.search(source or "")
+    if m is None:
+        return [], ""
+    start = m.end()
+    depth, i = 1, start
+    while i < len(source) and depth:
+        if source[i] == "{":
+            depth += 1
+        elif source[i] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    bases = []
+    for b in split_top_level(m.group(1) or ""):
+        name = b.strip()
+        if re.match(r"^[A-Za-z_]\w*$", name):
+            bases.append(name)
+    return bases, source[start:i]
+
+
+def _source_interface_function_stubs(source, iface):
+    """Default stubs for every source-declared interface function signature."""
+    seen_ifaces = set()
+    out = {}
+
+    def visit(name):
+        if name in seen_ifaces:
+            return
+        seen_ifaces.add(name)
+        bases, body = _interface_declaration(source, name)
+        for base in bases:
+            visit(base)
+        rx = re.compile(r"\bfunction\s+([A-Za-z_]\w*)\s*\((.*?)\)\s*([^;{]*)[;{]",
+                        re.S)
+        for m in rx.finditer(body):
+            params_abi, params_decl, ok = [], [], True
+            for item in split_top_level(m.group(2)):
+                if not item:
+                    continue
+                abi_ty = _function_sig_type(item)
+                decl_ty = _source_param_decl_type(item)
+                if not abi_ty or not decl_ty:
+                    ok = False
+                    break
+                params_abi.append(abi_ty)
+                params_decl.append(decl_ty)
+            if not ok:
+                continue
+            signature = f"{m.group(1)}({','.join(params_abi)})"
+            if signature in out:
+                continue
+            returns = []
+            rm = re.search(r"\breturns\s*\((.*?)\)", m.group(3), re.S)
+            if rm:
+                for item in split_top_level(rm.group(1)):
+                    if not item:
+                        continue
+                    ret_ty = _function_sig_type(item)
+                    ret_decl = _source_return_decl_type(item)
+                    if not ret_ty or not ret_decl:
+                        ok = False
+                        break
+                    returns.append((ret_ty, ret_decl))
+            if not ok:
+                continue
+            mut = "payable" if re.search(r"\bpayable\b", m.group(3)) else "pure"
+            ret_txt = ""
+            body_txt = "{}"
+            if returns:
+                if len(returns) != 1:
+                    continue
+                ret_ty, ret_decl = returns[0]
+                default = _abi_mock_expr_for_type(source, ret_ty, "", {})
+                ret_txt = f" returns ({ret_decl})"
+                body_txt = f"{{ return {default}; }}"
+            params_txt = ", ".join(params_decl)
+            out[signature] = (
+                f"  function {m.group(1)}({params_txt}) external {mut} "
+                f"override{ret_txt} {body_txt}")
+
+    visit(iface)
+    return out
+
+
+def complete_esbmc_interface_mocks(source, flat_source):
+    """Add missing inherited/overloaded stubs to ESBMCMock interface mocks."""
+    if not flat_source or "ESBMCMock_" not in source:
+        return source
+    lines = source.splitlines()
+    out, i = [], 0
+    rx = re.compile(r"^contract\s+(ESBMCMock_[A-Za-z_]\w*)\s+is\s+"
+                    r"([A-Za-z_]\w*)\s*\{")
+    while i < len(lines):
+        m = rx.match(lines[i])
+        if m is None:
+            out.append(lines[i])
+            i += 1
+            continue
+        iface = m.group(2)
+        start_out = len(out)
+        out.append(lines[i])
+        i += 1
+        body = []
+        depth = 1
+        while i < len(lines) and depth:
+            depth += lines[i].count("{") - lines[i].count("}")
+            if depth == 0:
+                break
+            body.append(lines[i])
+            i += 1
+        body_text = "\n".join(body)
+        existing = set()
+        for fm in re.finditer(r"\bfunction\s+([A-Za-z_]\w*)\s*\((.*?)\)",
+                              body_text, re.S):
+            params = []
+            ok = True
+            for item in split_top_level(fm.group(2)):
+                if not item:
+                    continue
+                ty = _function_sig_type(item)
+                if not ty:
+                    ok = False
+                    break
+                params.append(ty)
+            if ok:
+                existing.add(f"{fm.group(1)}({','.join(params)})")
+        out.extend(body)
+        stubs = _source_interface_function_stubs(flat_source, iface)
+        missing = [stub for sig, stub in sorted(stubs.items())
+                   if sig not in existing]
+        if missing:
+            out.insert(start_out + 1,
+                       "  // VeriPUT completed inherited/overloaded interface "
+                       "stubs missing from ESBMC's concrete mock.")
+            out.extend(missing)
+        if i < len(lines):
+            out.append(lines[i])
+            i += 1
+    return "\n".join(out) + ("\n" if source.endswith("\n") else "")
+
+
 def _literal_interface_state_addresses(source):
     out = []
     rx = re.compile(r"\b([A-Za-z_]\w*)\s+"
@@ -9944,6 +10109,7 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
         lines, _unused_setup_deployments = tolerate_unused_setup_deployments(
             lines, target_contract=contract)
     source = "\n".join(lines) + "\n"
+    source = complete_esbmc_interface_mocks(source, flat_source or "")
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")
     source = re.sub(r'from "\./', 'from "../src/', source)
@@ -10011,6 +10177,7 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
         lines, _unused_setup_deployments = tolerate_unused_setup_deployments(
             lines, target_contract=contract)
     source = "\n".join(lines) + "\n"
+    source = complete_esbmc_interface_mocks(source, flat_source or "")
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")
     source = re.sub(r'from "\./', 'from "../src/', source)

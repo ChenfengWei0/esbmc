@@ -684,6 +684,60 @@ contract MarketUpdateProposerCovTest is Test {
     return bad
 
 
+def test_esbmc_interface_mock_completion_adds_inherited_overloads():
+    flat = """\
+pragma solidity >=0.8.0;
+interface IBase {
+  function safeTransferFrom(address from, address to, uint256 tokenId) external;
+}
+interface IChild is IBase {
+  function safeTransferFrom(address from, address to, uint256 tokenId, bytes calldata data) external;
+  function ownerOf(uint256 tokenId) external view returns (address owner);
+}
+contract C { function f() external {} }
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C, IChild} from "./flat.sol";
+contract ESBMCMock_IChild is IChild {
+  function safeTransferFrom(address, address, uint256, bytes memory) external pure override {}
+  function ownerOf(uint256) external pure override returns (address) { return address(0); }
+}
+contract CCovTest is Test {
+  C c0;
+  function setUp() public { c0 = new C(); }
+  // claim: sol:@C@C@F@f#9:path:1
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 1)
+    put = ["", "  function test_put_C_f_path1() public {", "    c0.f();", "  }"]
+    text = assemble_put_source(
+        em, case, [put], "CCovTest_put", contract="C", unit="f",
+        flat_source=flat)
+    bad = 0
+    bad += check("VeriPUT completed inherited/overloaded interface stubs" in text,
+                 "the mock completion note is emitted")
+    bad += check("function safeTransferFrom(address, address, uint256) "
+                 "external pure override {}" in text,
+                 "the inherited overload is added to the ESBMC mock")
+    bad += check("function safeTransferFrom(address, address, uint256, "
+                 "bytes memory) external pure override {}" in text,
+                 "the existing overload is preserved")
+    return bad
+
+
 def test_runtime_interface_mock_lines_cover_literal_address_calls():
     with tempfile.TemporaryDirectory() as tmp:
         os.makedirs(os.path.join(tmp, "src"), exist_ok=True)
@@ -12317,6 +12371,7 @@ def main():
               test_constructor_param_interface_calls_are_mocked_before_deploy,
               test_constructor_param_hascode_args_are_etched_before_deploy,
               test_unsupported_skeleton_is_synthesized_for_certified_put_lift,
+              test_esbmc_interface_mock_completion_adds_inherited_overloads,
               test_runtime_interface_mock_lines_cover_literal_address_calls,
               test_constructor_external_interface_mocks_cover_router_factory_chain,
               test_runtime_interface_mocks_survive_constructor_mock_clear,

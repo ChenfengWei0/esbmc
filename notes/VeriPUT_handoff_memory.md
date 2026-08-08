@@ -22025,3 +22025,35 @@ Update after real203 no-coordinate sweep and constructor hasCode fix:
   with any valid PUT and only 5 with R1/R2-class PUTs.  The earlier higher
   R1/R2 count came from adopted artifact directories and should not guide
   scheduling decisions.
+
+Update after MigrationHelper mock-overload diagnosis:
+
+- Official RQ1 rerun for
+  `ensdomains__ens-contracts__MigrationHelper` initially produced
+  `raw=4`, `valid=0`, `put=0/4`.  The generated PUTs were semantically good
+  Stage4 candidates (`setController` and `setMigrationTarget`, each enc 6/7),
+  but Foundry validation failed at compile time:
+  `ESBMCMock_IBaseRegistrar... is abstract; missing safeTransferFrom(address,address,uint256)`.
+- Root cause: ESBMC's emitted concrete mock implemented the four-argument
+  `safeTransferFrom(address,address,uint256,bytes)` overload, but the source
+  interface inherited the three-argument ERC721 overload.  Solidity requires
+  the mock contract to implement inherited overloads too.
+- Fixed `scripts/solidity_path_put.py` in the Foundry assembly layer:
+  `complete_esbmc_interface_mocks` scans `ESBMCMock_<Iface> is <Iface>`
+  contracts and the flattened source's `interface <Iface> is <bases>`
+  declarations, then inserts missing inherited/overloaded default stubs before
+  renaming the test contract.  Existing ESBMC stubs are preserved.  This fix
+  applies to PUT and concrete fallback assembly and does not touch datasets or
+  ESBMC certification.
+- Added `test_esbmc_interface_mock_completion_adds_inherited_overloads`.
+  Verification passed:
+  `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `python3 scripts/test_solidity_path_put.py` -> 278/278;
+  `PYTHONPATH=scripts:notes/coverage/scripts pylint --errors-only scripts/solidity_path_put.py scripts/test_solidity_path_put.py`;
+  `git diff --check`.
+- Stage4-only probes from the existing MigrationHelper cert now pass without
+  re-running Stage2 ESBMC certification:
+  `setController` -> `B = 2/2`; `setMigrationTarget` -> `B = 2/2`.
+  Expected official RQ1 rerun should turn this subject from no-valid into four
+  valid PUTs, with enc=7 rows carrying R1/R2 post-state assertions and enc=6
+  rollback rows carrying only R0 exit-kind assertions.
