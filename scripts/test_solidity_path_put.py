@@ -2465,10 +2465,10 @@ def test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries():
         "state._allowances$496[msg.sender][_spender]": 1
     } and pin_skips == [], f"mapping pins are translated: {pins}, {pin_skips}")
     bad += check(query_region == [{
-        "name": "state._allowances$496[msg.sender][_spender]",
+        "name": "state._allowances[msg.sender][_spender]",
         "lo": "0", "hi": "0"
     }] and region_skips == [],
-                 f"mapping region entries are translated in the assert spec: "
+                 f"mapping region entries keep source spelling in the spec: "
                  f"{query_region}, {region_skips}")
     return bad
 

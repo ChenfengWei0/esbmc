@@ -4412,9 +4412,11 @@ def assert_query_region_entries(region, holes, layout, maps):
                         f"{name} (not passed to --path-cov-assert: `{mname}` "
                         "is not a queryable mapping member in solc's layout)")
                     continue
-                query_base = mapping_query_base(query_key, maps[query_key])
-                name = ("state." + query_base
-                        + "".join(f"[{k}]" for k in _keys) + tail)
+                source = mapping_source_key(maps[query_key]) or (mname + tail)
+                source_base, dot, source_member = source.partition(".")
+                source_tail = f".{source_member}" if dot else ""
+                name = ("state." + source_base
+                        + "".join(f"[{k}]" for k in _keys) + source_tail)
             elif not (layout and v in layout):
                 skipped.append(
                     f"{name} (not passed to --path-cov-assert: solc's layout "
