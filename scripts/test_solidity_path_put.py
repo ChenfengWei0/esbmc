@@ -79,6 +79,7 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                mapping_source_coord_alias,
                                prefer_esbmc_mapping_aliases,
                                no_oracle_reason, observed_env,
+                               constructor_sender_needs_nonzero,
                                normal_exit_region_retreat,
                                oracle_class_summary,
                                oracle_classes_for_rung,
@@ -691,6 +692,67 @@ contract CCovTest is Test {
                  "zero constructor arg rejected by source guard is repaired")
     bad += check("new C(address(uint160(0)), address(uint160(1)))" not in text,
                  "the guarded zero constructor arg is gone")
+    return bad
+
+
+def test_constructor_sender_nonzero_mint_repairs_zero_prank():
+    flat = """\
+pragma solidity >=0.8.0;
+contract C {
+  constructor(address recipient) {
+    recipient;
+    _mint(_msgSender(), 1);
+  }
+  function _msgSender() internal view returns (address) {
+    return msg.sender;
+  }
+  function _mint(address account, uint256 amount) internal {
+    require(account != address(0), "mint to the zero address");
+    amount;
+  }
+  function f() external {}
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    vm.startPrank(address(uint160(0)), address(uint160(0)));
+    c0 = new C(address(uint160(0)));
+    vm.stopPrank();
+  }
+  // claim: sol:@C@C@F@f#9:path:3
+  function test_cov_0() public {
+    vm.prank(address(uint160(0)));
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 3)
+    put = ["", "  function test_put_C_f_path3() public {", "    c0.f();", "  }"]
+    text = assemble_put_source(
+        em, case, [put], "CCovTest_put", contract="C", unit="f",
+        flat_source=flat)
+    bad = 0
+    bad += check(constructor_sender_needs_nonzero(flat, "C"),
+                 "constructor sender nonzero requirement is detected")
+    bad += check(
+        "vm.startPrank(address(uint160(1)), address(uint160(1)));" in text,
+        "zero constructor prank is repaired to a nonzero EOA")
+    bad += check(
+        "vm.startPrank(address(uint160(0)), address(uint160(0)));" not in text,
+        "the zero constructor prank is gone")
     return bad
 
 
@@ -3926,6 +3988,23 @@ def test_path_decision_guard_skips_true_constant_relation():
     bad = 0
     bad += check(lines == [], f"true constant guard is not emitted: {lines}")
     bad += check(skipped == [], f"true constant guard is not reported lost: {skipped}")
+    return bad
+
+
+def test_path_decision_guard_decimalizes_address_sized_hex():
+    literal = "0x7A250D5630B4CF539739DF2C5DACB4C659F2488D"
+    dec = str(int(literal, 16))
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": f"!(account != {literal})"}],
+        {"account": "uint256(uint160(account))"})
+    bad = 0
+    bad += check(lines == [
+        (f"!(account != {literal})",
+         f"    vm.assume(uint256(uint160(account)) != {dec});")
+    ], f"address-sized hex literal is numeric in guard: {lines}")
+    bad += check(skipped == [], f"nothing skipped: {skipped}")
+    bad += check(literal not in lines[0][1],
+                 "the emitted assume no longer contains a 40-hex literal")
     return bad
 
 
@@ -12762,6 +12841,7 @@ def main():
               test_constructor_param_interface_calls_are_mocked_before_deploy,
               test_constructor_param_hascode_args_are_etched_before_deploy,
               test_constructor_nonzero_address_guards_repair_zero_defaults,
+              test_constructor_sender_nonzero_mint_repairs_zero_prank,
               test_constructor_dynamic_array_defaults_cover_indexed_reads,
               test_unsupported_skeleton_is_synthesized_for_certified_put_lift,
               test_esbmc_interface_mock_completion_adds_inherited_overloads,
@@ -12857,6 +12937,7 @@ def main():
               test_path_decision_guard_renders_unary_bool_mapping_relation,
               test_path_decision_guard_negates_plain_unary_bool_claim,
               test_path_decision_guard_skips_true_constant_relation,
+              test_path_decision_guard_decimalizes_address_sized_hex,
               test_path_guard_materializes_state_coord_without_oracle_rung,
               test_path_guard_coord_idents_expand_scalar_store_aliases,
               test_path_guard_coord_idents_expand_mapping_source_aliases,

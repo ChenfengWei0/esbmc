@@ -4912,10 +4912,27 @@ def slot_inside_region_check(addr, slot, off, nbytes, lo, hi, what,
 # must NOT be re-cast: `uint256(someAddress)` is a compile error, while
 # `abi.encode(someAddress)` is exactly the 32-byte padding Solidity hashes.
 _KEY_LIT_RE = re.compile(r"^(?:0[xX][0-9a-fA-F]+|[0-9]+)$")
+_ADDRESS_SIZED_HEX_RE = re.compile(r"^0[xX]([0-9a-fA-F]{40})$")
 
 
 def key_expr_typed(text):
     return f"uint256({text})" if _KEY_LIT_RE.match(text.strip()) else text
+
+
+def numeric_literal_expr(text):
+    """Render a source numeric literal where Solidity must not infer address.
+
+    A 40-hex-digit literal is ambiguous in Solidity: in a numeric-looking
+    comparison such as `uint256(uint160(a)) != 0x7A25...`, solc treats the
+    literal as an address candidate and rejects it unless it is EIP-55
+    checksummed. Path guards are emitted into numeric `vm.assume` expressions,
+    so render address-sized hex as decimal to keep the expression numeric.
+    """
+    text = (text or "").strip()
+    m = _ADDRESS_SIZED_HEX_RE.match(text)
+    if m:
+        return str(int(m.group(1), 16))
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -5758,6 +5775,28 @@ def constructor_param_nonzero_specs(source, contract):
             "param_type": ptype,
         })
     return specs
+
+
+def constructor_sender_needs_nonzero(source, contract):
+    """Whether deploying `contract` with msg.sender == address(0) is invalid."""
+    chunk = _source_contract_chunk(source, contract)
+    if not source or not chunk:
+        return False
+    body = _constructor_body_text(chunk)
+    if not body:
+        return False
+    sender_terms = [
+        r"msg\s*\.\s*sender",
+        r"_msgSender\s*\(\s*\)",
+    ]
+    for term in sender_terms:
+        if re.search(term + r"\s*!=\s*address\s*\(\s*0\s*\)", body):
+            return True
+        if re.search(r"address\s*\(\s*0\s*\)\s*!=\s*" + term, body):
+            return True
+        if re.search(r"\b_mint\s*\(\s*" + term + r"\s*,", body):
+            return True
+    return False
 
 
 def apply_constructor_param_nonzero_args(lines, contract, specs):
@@ -7715,7 +7754,7 @@ def render_path_decision_term(term, coord_ident_abs):
     if "state." + term in coord_ident_abs:
         return coord_ident_abs["state." + term], None
     if _KEY_LIT_RE.match(term):
-        return term, None
+        return numeric_literal_expr(term), None
     return None, f"`{term}` is not nameable in this PUT"
 
 
@@ -10627,6 +10666,45 @@ def repair_pranked_constructor_origins(lines, contract):
     return out
 
 
+def repair_zero_sender_constructor_pranks(lines, contract, needs_nonzero):
+    """Avoid Foundry-only zero-sender constructor reverts when source forbids it."""
+    if not contract or not needs_nonzero:
+        return list(lines), 0
+    out, changed = [], 0
+    zero = r"address\s*\(\s*uint160\s*\(\s*0\s*\)\s*\)"
+    two_arg = re.compile(
+        r"^(\s*)vm\.(startPrank|prank)\s*\(\s*" + zero + r"\s*,\s*" +
+        zero + r"\s*\)\s*;\s*$")
+    one_arg = re.compile(
+        r"^(\s*)vm\.(startPrank|prank)\s*\(\s*" + zero + r"\s*\)\s*;\s*$")
+
+    def deploys_target_after(i):
+        for later in lines[i + 1:]:
+            if re.match(r"^\s*function\s+\w+\s*\(", later):
+                break
+            if re.search(r"\bnew\s+" + re.escape(contract) + r"\s*\(",
+                         later):
+                return True
+            if re.search(r"\bvm\.stopPrank\s*\(\s*\)\s*;", later):
+                break
+        return False
+
+    sender = "address(uint160(1))"
+    for i, line in enumerate(lines):
+        m = two_arg.match(line)
+        if m and deploys_target_after(i):
+            out.append(f"{m.group(1)}vm.{m.group(2)}({sender}, {sender});")
+            changed += 1
+            continue
+        m = one_arg.match(line)
+        if m and deploys_target_after(i):
+            out.append(f"{m.group(1)}vm.{m.group(2)}({sender});")
+            changed += 1
+            continue
+        out.append(line)
+    return out, changed
+
+
 def add_flat_import_symbols(lines, symbols):
     if not symbols:
         return lines
@@ -10687,6 +10765,10 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
         lines, _constructor_param_nonzero_repairs = \
             apply_constructor_param_nonzero_args(
                 lines, contract, constructor_param_nonzero_mocks)
+        lines, _constructor_sender_repairs = \
+            repair_zero_sender_constructor_pranks(
+                lines, contract,
+                constructor_sender_needs_nonzero(flat_source or "", contract))
         constructor_param_dynarray_mocks = \
             constructor_param_dynarray_min_lengths(flat_source or "", contract)
         lines, _constructor_param_dynarray_repairs = \
@@ -10762,6 +10844,10 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
         lines, _constructor_param_nonzero_repairs = \
             apply_constructor_param_nonzero_args(
                 lines, contract, constructor_param_nonzero_mocks)
+        lines, _constructor_sender_repairs = \
+            repair_zero_sender_constructor_pranks(
+                lines, contract,
+                constructor_sender_needs_nonzero(flat_source or "", contract))
         constructor_param_dynarray_mocks = \
             constructor_param_dynarray_min_lengths(flat_source or "", contract)
         lines, _constructor_param_dynarray_repairs = \
