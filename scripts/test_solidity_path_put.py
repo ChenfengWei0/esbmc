@@ -3814,6 +3814,11 @@ def test_path_decision_guard_splits_safe_boolean_shapes():
             ("_chosenNumber", ">", "0"),
             ("_chosenNumber", "<=", "100"),
         ], "negated conjunction means this path walked both conjuncts")
+    bad += check(path_conditions_from_branch_claim(
+        "!((_chosenNumber > 0 && _chosenNumber <= 100))") == [
+            ("_chosenNumber", ">", "0"),
+            ("_chosenNumber", "<=", "100"),
+        ], "extra outer parentheses do not hide the top-level conjunction")
     lines, skipped = path_decision_assumes(
         [{"branch_claim": "!(_chosenNumber > 0 && _chosenNumber <= 100)"}],
         {"_chosenNumber": "chosen"})
@@ -3832,6 +3837,9 @@ def test_path_decision_guard_splits_safe_boolean_shapes():
     bad += check(path_conditions_from_branch_claim(
         "msg.sender != InstanceBuyer && msg.sender != InstanceOwner") is None,
         "a disjunctive walked guard is not flattened into conjunctions")
+    bad += check(path_conditions_from_branch_claim(
+        "(msg.sender != InstanceBuyer && msg.sender != InstanceOwner)") is None,
+        "outer parentheses keep a disjunctive walked guard grouped")
     lines, skipped = path_decision_assumes(
         [{"branch_claim":
           "msg.sender != InstanceBuyer && msg.sender != InstanceOwner"}],

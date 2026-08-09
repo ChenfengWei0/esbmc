@@ -7562,13 +7562,39 @@ def unwrap_decision_not(text):
     text = (text or "").strip()
     negated = False
     while text.startswith("!(") and text.endswith(")"):
-        text = text[2:-1].strip()
+        text = strip_balanced_outer_parens(text[2:-1].strip())
         negated = not negated
-    return text, negated
+    return strip_balanced_outer_parens(text), negated
+
+
+def strip_balanced_outer_parens(text):
+    """Remove whole-expression parentheses without touching subexpressions."""
+    text = (text or "").strip()
+    changed = True
+    while changed and text.startswith("(") and text.endswith(")"):
+        changed = False
+        depth = 0
+        balanced = True
+        for idx, ch in enumerate(text):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0 and idx != len(text) - 1:
+                    balanced = False
+                    break
+                if depth < 0:
+                    balanced = False
+                    break
+        if balanced and depth == 0:
+            text = text[1:-1].strip()
+            changed = True
+    return text
 
 
 def split_top_level_bool(text, op):
     """Split `text` on a top-level boolean operator, if it is flat enough."""
+    text = strip_balanced_outer_parens(text)
     parts, start, depth = [], 0, 0
     i = 0
     while i < len(text):
@@ -7596,6 +7622,7 @@ def split_top_level_bool(text, op):
 
 
 def _path_condition_from_unwrapped(inner, negated):
+    inner = strip_balanced_outer_parens(inner)
     if split_top_level_bool(inner, "&&") or split_top_level_bool(inner, "||"):
         return None
     m = SIMPLE_DECISION_RE.match(inner)
