@@ -2,6 +2,59 @@
 
 Read this section first; the rest of the file is older coverage work.
 
+## VeriPUT RQ1 strict same-day plan, latest baseline
+
+Authoritative status after commits `76633c4a4d` and `2ec887988a`:
+
+- Total subjects: 509
+- Valid subjects: 242
+- No-valid subjects: 266
+- `valid-PUT-with-R1R2`: 153
+- `valid-PUT-no-R1R2`: 52
+- `valid-no-PUT`: 37
+- `PUT-with-R1R2-but-no-width`: 1
+
+Rates:
+
+- Valid: 47.5%
+- PUT among valid: 84.7%
+- R1/R2 among valid PUT: 74.6%
+- R1/R2 among all valid: 63.2%
+
+Same-day target: reach at least 357 valid subjects for a 70% raw-valid RQ1
+table, which means converting +115 no-valid rows.  Any remaining no-valid,
+no-PUT, and no-R1/R2 rows must end today with a terminal, machine-readable
+failure reason rather than another blind rerun.
+
+Strict schedule:
+
+- T+0:00-T+0:30: freeze queue and notes; no ESBMC.
+- T+0:30-T+2:00: inspect artifacts for all 266 no-valid, 37 no-PUT, 52
+  PUT-no-R1/R2, and 1 R1/R2-no-width rows.
+- T+2:00-T+5:00: code-only repair pass for width provenance,
+  concrete-to-PUT upgrade, replay guards, observable coordinates, and
+  no-witness region fallback.
+- T+5:00-T+6:00: one representative 600s validation per changed mechanism.
+- T+6:00-T+9:00: batch only direct-hit siblings if the representative improves.
+- T+9:00-T+11:00: second code-only repair pass from batch failures.
+- T+11:00-T+15:00: main conversion batch, aiming first for +115 valid.
+- T+15:00-T+18:00: strengthen the 37 no-PUT and 52 no-R1/R2 rows only when a
+  certified width/R1/R2 mechanism exists.
+- T+18:00-T+21:00: targeted rescue for path-goal-cap, OOM/killed, and
+  model-chain rows only with a concrete patch.
+- T+21:00-T+24:00: result normalization and audit; no debugging except artifact
+  serialization bugs.
+
+Hard gates:
+
+- No blind ESBMC reruns.
+- Fuzz/Foundry dry runs are refuters only.
+- Counted PUTs require both verifier-backed assertions and reference-contract
+  Foundry replay.
+- Dataset sources stay read-only.
+- Result JSON must preserve timing, raw/valid artifacts, concrete vs PUT, and
+  R0/R1/R2 labels or a precise failure reason.
+
 ## Current execution state (2026-08-09, canonical queue)
 
 Authoritative queue command:

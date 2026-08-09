@@ -2,6 +2,83 @@
 
 Last refreshed: 2026-08-09.
 
+## Strict 24-Hour Plan, Latest Baseline
+
+Use this section as the authoritative same-day plan.  Older sections below are
+historical snapshots.
+
+Latest canonical queue after commits `76633c4a4d` and `2ec887988a`:
+
+- Total subjects: 509
+- `valid-PUT-with-R1R2`: 153
+- `valid-PUT-no-R1R2`: 52
+- `valid-no-PUT`: 37
+- `PUT-with-R1R2-but-no-width`: 1
+- `no-valid`: 266
+
+Derived rates:
+
+- Valid: 242 / 509 = 47.5%
+- PUT among valid: 205 / 242 = 84.7%
+- R1/R2 among valid PUT: 153 / 205 = 74.6%
+- R1/R2 among all valid: 153 / 242 = 63.2%
+
+Hard target for a 70% raw-valid RQ1 table: at least 357 valid subjects, so the
+tool needs +115 valid subjects from the current no-valid pool.  The practical
+same-day target is not to magically convert all 266 no-valid rows; it is to
+convert the highest-yield 115+ rows and give every remaining row a terminal,
+machine-readable reason.
+
+### Non-Negotiable Gates
+
+- No blind ESBMC reruns.
+- A case may enter ESBMC only after a named mechanism predicts a changed result.
+- Fuzz and Foundry dry runs are refuters only.  They can reject bad regions,
+  guards, and R1/R2 candidates before ESBMC; they cannot prove validity.
+- A PUT counted in RQ1 needs both verifier-backed assertions and a Foundry
+  replay on the reference contract.  The Foundry replay is outside the 600s
+  ESBMC generation budget.
+- Datasets under `/home/samson/workspace/VeriPUT/Datasets` remain read-only.
+- Every result JSON must include timing, raw/valid artifact paths, concrete vs
+  PUT, and R0/R1/R2 labels or the precise failure reason.
+
+### 24-Hour Schedule
+
+| Window | Work | Exit condition |
+|---|---|---|
+| T+0:00-T+0:30 | Freeze baseline, refresh queues, commit notes only.  No ESBMC. | Latest counts and failure buckets recorded. |
+| T+0:30-T+2:00 | Inspect all non-terminal buckets by artifact, not rerun: 266 no-valid, 37 no-PUT, 52 PUT-no-R1/R2, 1 R1/R2-no-width. | Each bucket has a named blocker and a candidate mechanism or archive policy. |
+| T+2:00-T+5:00 | Code-only repair pass.  Priorities: width provenance, concrete-to-PUT upgrade, path/constructor guard replay, observable state coordinate recovery, no-witness region fallback. | Python tests pass; dry-run/fuzz refuters reject obviously bad candidates. |
+| T+5:00-T+6:00 | One representative validation per changed mechanism.  Maximum one 600s ESBMC run per mechanism sample. | Continue only if sample improves; otherwise stop that mechanism and record why. |
+| T+6:00-T+9:00 | Batch only direct-hit siblings for successful mechanisms, with controlled concurrency. | Stop a bucket after 3 consecutive same-reason failures or <20% yield in the first 12 direct-hit cases. |
+| T+9:00-T+11:00 | Second code-only repair pass using the first batch failures.  No broad reruns. | New patch either targets a dominant failure reason or is dropped. |
+| T+11:00-T+15:00 | Main conversion batch.  First target is +115 valid.  Prefer no-valid rows with existing witness/raw hints, then timeouts/killed rows only if the patch reduces path space. | Valid count reaches 357, or all high-yield buckets are exhausted with terminal reasons. |
+| T+15:00-T+18:00 | PUT-strengthening batch: convert the 37 valid-no-PUT rows and the 52 PUT-no-R1/R2 rows only when the new mechanism can produce certified width/R1/R2. | Record PUT/concrete and R0/R1/R2 deltas; do not rerun concrete-only rows without width provenance. |
+| T+18:00-T+21:00 | Final targeted rescue: path-goal-cap, OOM/killed, and model-chain rows only if a concrete code fix exists. | Otherwise archive as terminal failures; no speculative 600s spending. |
+| T+21:00-T+24:00 | Result normalization and audit.  No debugging unless a serialization bug corrupts artifacts. | All 509 subjects have canonical JSON, raw/valid archives, timing, oracle-class labels, and terminal status. |
+
+### Bucket Strategy
+
+- `no-valid` (266): primary source for the +115 valid target.  Start with rows
+  that already produced raw candidates, replay projects, driver diagnostics, or
+  timeouts likely affected by a region/guard/path-space fix.  Do not start with
+  low-evidence no-witness rows.
+- `valid-no-PUT` (37): only rerun after a certified width strategy exists.
+  Passing Foundry alone is not enough to claim PUT.
+- `valid-PUT-no-R1R2` (52): use the existing R0 proof as anchor, then attempt
+  R1/R2 by fuzz-refuting candidate coordinates before ESBMC certification.
+- `PUT-with-R1R2-but-no-width` (1): archive unless width provenance can be
+  rendered without changing the methodology.
+
+### Concurrency Policy
+
+- Start with `--jobs 4`; raise to `--jobs 6-8` only while system memory remains
+  stable.  Prefer per-process memory caps around 12-16GiB unless the case has a
+  known larger need.
+- Timeout remains 600s plus 60s wrapper grace.
+- OOM/killed rows are recorded and not retried today unless a memory/path-space
+  reduction patch lands.
+
 ## Ground Rules
 
 - Do not mutate `/home/samson/workspace/VeriPUT/Datasets`.
