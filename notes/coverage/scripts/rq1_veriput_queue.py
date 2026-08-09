@@ -201,6 +201,12 @@ def _today_action(row: dict, queue: str, queue_reason: str,
                 or cause == "rollback-unobservable"):
             return ("archive_r1r2_unobservable",
                     "do_not_rerun_for_r1r2")
+        if cause == "mapping-dynarray-unrendered":
+            return ("repair_mapping_dynarray_renderer",
+                    "rerun_only_after_mapping_dynarray_support")
+        if cause == "no-candidate-assertion":
+            return ("archive_no_candidate_assertion",
+                    "do_not_rerun_without_new_oracle_strategy")
         if primary_reason == "guard-nameability":
             return ("repair_guard_renderer",
                     "rerun_one_sample_after_guard_fix")
@@ -222,6 +228,9 @@ def _today_action(row: dict, queue: str, queue_reason: str,
         if queue_reason == "no-valid-with-artifact":
             return ("inspect_artifact_no_valid",
                     "rerun_only_after_artifact_specific_fix")
+        if primary_reason == "stale-resume-identity":
+            return ("rerun_stale_identity",
+                    "rerun_after_stable_commit_with_redo")
         if status == "error" or queue_reason == "no-valid-error":
             return ("inspect_pipeline_error",
                     "rerun_only_after_error_fix")

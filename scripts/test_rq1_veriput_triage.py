@@ -186,6 +186,76 @@ def test_triage_causes_distinguish_concrete_and_unobservable_puts():
         return bad
 
 
+def test_summary_put_json_marks_rollback_no_r1r2():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subject = root / "real203" / "subjects" / "SummaryRollback"
+        write_json(subject / "result.json",
+                   result_doc(
+                       valid=1,
+                       put_valid=1,
+                       tests=[{
+                           "kind": "put",
+                           "test": "test_put_C_path6",
+                           "oracle_classes": ["R0"],
+                       }],
+                       cert={"CERTIFIED": 1}))
+        summary = subject / "put" / "unit" / "put-summary.json"
+        write_json(summary, {
+            "deliverable_b": {
+                "rows": [{
+                    "kind": "put",
+                    "test": "test_put_C_path6",
+                    "unit": "unit",
+                    "enc": 6,
+                    "file": str(subject / "test.t.sol"),
+                    "valid_reference_test": True,
+                    "refused": False,
+                    "stale": False,
+                }]
+            }
+        })
+        write_json(subject / "put" / "unit" / "_wd" / "case" / "put.json", {
+            "kind": "put",
+            "test": "test_put_C_path6",
+            "stats": {
+                "oracle_classes": ["R0"],
+                "rollback_exit": True,
+                "oracle_skipped": ["ROLLBACK revert"],
+            },
+        })
+        rows = rq1_veriput_triage.triage_rows(root, ["real203"])
+        bad = 0
+        bad += check(rows[0]["quality_bucket"] == "valid-PUT-no-R1R2",
+                     f"summary row is counted as a valid R0-only PUT: {rows}")
+        bad += check(rows[0]["triage_cause"] == "rollback-unobservable",
+                     f"summary-side put.json carries rollback cause: {rows}")
+        return bad
+
+
+def test_no_valid_stale_resume_identity_is_not_generic_error():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subject = root / "peer182" / "subjects" / "StaleIdentity"
+        write_json(subject / "result.json",
+                   result_doc(
+                       valid=0,
+                       cert={"NOT-CERTIFIED": 1},
+                       status="error"))
+        log = subject / "logs" / "002-next-certify.stdout.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(
+            "[sweep] REFUSING to resume: 1 of 1 record(s) in "
+            "certify-results.jsonl do not match the identity on disk now\n")
+        rows = rq1_veriput_triage.triage_rows(root, ["peer182"])
+        bad = 0
+        bad += check(rows[0]["quality_bucket"] == "no-valid",
+                     f"stale resume remains a no-valid case: {rows}")
+        bad += check(rows[0]["triage_cause"] == "stale-resume-identity",
+                     f"stale resume has a specific rerun cause: {rows}")
+        return bad
+
+
 def test_unsupported_calldata_beats_generic_not_parameterized_note():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -269,6 +339,8 @@ def main():
         test_redo_archive_used_when_no_canonical_exists,
         test_adopted_artifacts_collapse_to_base_subject_id,
         test_triage_causes_distinguish_concrete_and_unobservable_puts,
+        test_summary_put_json_marks_rollback_no_r1r2,
+        test_no_valid_stale_resume_identity_is_not_generic_error,
         test_unsupported_calldata_beats_generic_not_parameterized_note,
         test_action_queue_demotes_hard_dynamic_mapping_no_r1r2,
         test_action_queue_demotes_no_wide_rendered_coordinate,

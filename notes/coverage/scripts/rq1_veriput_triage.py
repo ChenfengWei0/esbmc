@@ -125,6 +125,34 @@ def _put_json_has_r1r2(summary_path: Path, test: str | None) -> bool:
     return False
 
 
+def _put_json_for_summary_row(row: dict) -> dict:
+    test = row.get("test")
+    summary_path = row.get("summary_path")
+    if not test or not summary_path:
+        return {}
+    put_root = Path(summary_path).parent
+    for path in sorted(put_root.rglob("put.json")):
+        doc = _load_json(path)
+        if doc.get("test") == test:
+            return doc
+    return {}
+
+
+def _classify_r0_only_put_json(put_json: dict) -> str:
+    stats = put_json.get("stats") or {}
+    notes = _text_blob(put_json.get("notes") or [])
+    skipped = _text_blob(stats.get("oracle_skipped") or [])
+    if stats.get("rollback_exit") or "ROLLBACK revert" in skipped:
+        return "rollback-unobservable"
+    if stats.get("exit_kind") == "revert" or "path exits through a revert" in skipped:
+        return "revert-unobservable"
+    if "mapping or dynamic array" in notes or "mapping or dynamic array" in skipped:
+        return "mapping-dynarray-unrendered"
+    if "NOT ONE candidate assertion could be formed" in notes:
+        return "no-candidate-assertion"
+    return "normal-r0-only-other"
+
+
 def _row_is_unsupported_concrete(row: dict) -> bool:
     if row.get("kind") != "concrete":
         return False
@@ -145,6 +173,22 @@ def case_logs_contain(result_path: Path | None, *needles: str) -> bool:
     if not root.exists():
         return False
     for path in root.rglob("run*.log"):
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        if all(needle in text for needle in needles):
+            return True
+    return False
+
+
+def generated_logs_contain(result_path: Path | None, *needles: str) -> bool:
+    if result_path is None:
+        return False
+    root = result_path.parent / "logs"
+    if not root.exists():
+        return False
+    for path in root.glob("*.log"):
         try:
             text = path.read_text(errors="replace")
         except OSError:
@@ -225,6 +269,9 @@ def classify_no_valid(result: dict, result_path: Path | None = None) -> str:
     reason = row.get("early_stop_reason") or ""
     if cert.get("oom_units") or row.get("cert_oom_units"):
         return "oom"
+    if generated_logs_contain(result_path, "REFUSING to resume",
+                              "do not match the identity on disk now"):
+        return "stale-resume-identity"
     if case_logs_contain(result_path, "NAMED OBSTACLE", "No *.t.sol generated"):
         return "foundry-obstacle-no-test"
     if "no output after" in reason:
@@ -257,23 +304,17 @@ def classify_valid_no_put(result: dict) -> str:
     return "valid-no-PUT-unknown"
 
 
-def classify_no_r1r2(result: dict) -> str:
+def classify_no_r1r2(result: dict, result_path: Path | None = None) -> str:
     causes = Counter()
+    for row in summary_artifact_rows(result, result_path):
+        if row.get("kind") != "put" or not row.get("valid_reference_test"):
+            continue
+        if _put_json_has_r1r2(Path(row["summary_path"]), row.get("test")):
+            continue
+        causes[_classify_r0_only_put_json(_put_json_for_summary_row(row))] += 1
     for test in valid_put_tests(result):
         put_json = _put_json_for_test(test)
-        stats = put_json.get("stats") or {}
-        notes = _text_blob(put_json.get("notes") or [])
-        skipped = _text_blob(stats.get("oracle_skipped") or [])
-        if stats.get("rollback_exit") or "ROLLBACK revert" in skipped:
-            causes["rollback-unobservable"] += 1
-        elif stats.get("exit_kind") == "revert" or "path exits through a revert" in skipped:
-            causes["revert-unobservable"] += 1
-        elif "mapping or dynamic array" in notes or "mapping or dynamic array" in skipped:
-            causes["mapping-dynarray-unrendered"] += 1
-        elif "NOT ONE candidate assertion could be formed" in notes:
-            causes["no-candidate-assertion"] += 1
-        else:
-            causes["normal-r0-only-other"] += 1
+        causes[_classify_r0_only_put_json(put_json)] += 1
     if not causes:
         return "missing-valid-put-json"
     return causes.most_common(1)[0][0]
@@ -287,7 +328,7 @@ def classify(result: dict, bucket: str, result_path: Path | None = None) -> str:
     if bucket == "valid-no-PUT":
         return classify_valid_no_put(result)
     if bucket == "valid-PUT-no-R1R2":
-        return classify_no_r1r2(result)
+        return classify_no_r1r2(result, result_path)
     return "strong-enough"
 
 

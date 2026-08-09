@@ -43,18 +43,17 @@ The queue TSVs now include two extra scheduling columns:
 Current action counts:
 
 - `done`: 153
-- `archive_r1r2_unobservable`: 39
+- `archive_r1r2_unobservable`: 40
 - `archive_concrete_fallback`: 30
-- `archive_no_candidate_assertion`: 8
+- `archive_no_candidate_assertion`: 9
 - `archive_no_observable_width`: 1
 - `archive_no_witness`: 69
 - `archive_timeout_or_killed`: 87
 - `archive_low_evidence_no_valid`: 110
-- `repair_guard_renderer`: 3
-- `repair_mapping_dynarray_renderer`: 2
+- `repair_mapping_dynarray_renderer`: 3
 - `repair_width_gate`: 1
 - `inspect_artifact_no_valid`: 2
-- `inspect_pipeline_error`: 4
+- `rerun_stale_identity`: 4
 
 Do not blind-rerun the archived categories.  In particular:
 
@@ -68,11 +67,8 @@ Do not blind-rerun the archived categories.  In particular:
 
 Actionable small list before any benchmark rerun:
 
-- `repair_guard_renderer`:
-  - `peer182 / peer_ccsolbmc__escrow`
-  - `peer182 / peer_solar__array-utils`
-  - `real203 / euler-xyz__euler-vault-kit__DToken`
 - `repair_mapping_dynarray_renderer`:
+  - `peer182 / peer_solar__array-utils`
   - `peer182 / peer_solar__Greeter2`
   - `real203 / ensdomains__ens-contracts__StandaloneReverseRegistrar`
 - `repair_width_gate`:
@@ -80,11 +76,16 @@ Actionable small list before any benchmark rerun:
 - `inspect_artifact_no_valid`:
   - `peer182 / peer_ccsolbmc__ClockBoxContract`
   - `peer182 / peer_soltg__short_circuit_or_inside_branch`
-- `inspect_pipeline_error`:
+- `rerun_stale_identity`:
   - `bugfix124 / pop_032_PuttyV2`
   - `peer182 / peer_ccsolbmc__BERNIE`
   - `peer182 / peer_ccsolbmc__HOTDOGE`
   - `peer182 / peer_ccsolbmc__KOALA`
+
+The `rerun_stale_identity` rows failed because the repository head/dirty flag
+changed mid-sweep and the runner correctly refused to resume.  After committing
+the current scripts, these four may be rerun with `--redo`; that is a
+mechanism-specific rerun, not a blind sweep.
 
 Verification already run after this queue/accounting change:
 

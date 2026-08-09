@@ -43,10 +43,9 @@ Queue counts:
 
 1. Keep all archived categories out of ESBMC until final failure recording.
    This removes 344 low-yield rows from the active debug loop.
-2. Work only the 12 actionable rows:
-   `repair_guard_renderer` 3, `repair_mapping_dynarray_renderer` 2,
-   `repair_width_gate` 1, `inspect_artifact_no_valid` 2,
-   `inspect_pipeline_error` 4.
+2. Work only the 10 actionable rows:
+   `repair_mapping_dynarray_renderer` 3, `repair_width_gate` 1,
+   `inspect_artifact_no_valid` 2, `rerun_stale_identity` 4.
 3. For each action class, inspect artifacts first and write the mechanism in
    notes before touching ESBMC.
 4. After a code fix, run exactly one representative case from that class.  If
@@ -58,16 +57,9 @@ Queue counts:
 
 ## Actionable Rows
 
-### repair_guard_renderer
-
-- `peer182 / peer_ccsolbmc__escrow`
-- `peer182 / peer_solar__array-utils`
-- `real203 / euler-xyz__euler-vault-kit__DToken`
-
-Policy: rerun one sample only after a guard renderer fix.
-
 ### repair_mapping_dynarray_renderer
 
+- `peer182 / peer_solar__array-utils`
 - `peer182 / peer_solar__Greeter2`
 - `real203 / ensdomains__ens-contracts__StandaloneReverseRegistrar`
 
@@ -86,14 +78,16 @@ Policy: no rerun until width provenance/gating changes.
 
 Policy: artifact-specific diagnosis first; no generic rerun.
 
-### inspect_pipeline_error
+### rerun_stale_identity
 
 - `bugfix124 / pop_032_PuttyV2`
 - `peer182 / peer_ccsolbmc__BERNIE`
 - `peer182 / peer_ccsolbmc__HOTDOGE`
 - `peer182 / peer_ccsolbmc__KOALA`
 
-Policy: inspect logs and result JSON first; rerun only after a pipeline fix.
+Policy: these rows were interrupted by repo identity drift during a previous
+sweep.  After the current queue/triage scripts are committed, they may be
+rerun once with `--redo` because the failure mechanism is known.
 
 ## Explicit Non-Goals Today
 
