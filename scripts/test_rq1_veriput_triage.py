@@ -57,12 +57,13 @@ def result_doc(*, valid=0, put_valid=0, concrete_valid=0, tests=None,
     }
 
 
-def test_latest_redo_wins_and_buckets_are_strength_aware():
+def test_canonical_result_wins_over_redo_archive():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
-        old = root / "real203" / "subjects" / "S" / "result.json"
+        canonical = root / "real203" / "subjects" / "S" / "result.json"
         redo = root / "real203" / "subjects" / "S.redo.200.1" / "result.json"
-        write_json(old, result_doc(valid=0, cert={"NO-WITNESS-UNKNOWN": 1}))
+        write_json(canonical,
+                   result_doc(valid=0, cert={"NO-WITNESS-UNKNOWN": 1}))
         write_json(redo, result_doc(
             valid=1,
             put_valid=1,
@@ -78,11 +79,38 @@ def test_latest_redo_wins_and_buckets_are_strength_aware():
         rows = rq1_veriput_triage.triage_rows(root, ["real203"])
         bad = 0
         bad += check(len(rows) == 1 and rows[0]["subject_id"] == "S",
-                     f"latest redo collapses onto the base subject id: {rows}")
+                     f"redo archive collapses onto the base subject id: {rows}")
+        bad += check(rows[0]["quality_bucket"] == "no-valid",
+                     f"canonical result wins over redo archive: {rows}")
+        bad += check(rows[0]["triage_cause"] == "cert-no-witness-unknown",
+                     f"canonical no-valid cause is retained: {rows}")
+        return bad
+
+
+def test_redo_archive_used_when_no_canonical_exists():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        redo = root / "real203" / "subjects" / "S.redo.200.1" / "result.json"
+        write_json(redo, result_doc(
+            valid=1,
+            put_valid=1,
+            tests=[{
+                "kind": "put",
+                "oracle_classes": ["R0"],
+                "put_json": put_json(root / "p.json", stats={
+                    "oracle_classes": ["R0"],
+                    "exit_kind": "normal",
+                    "oracle_skipped": [],
+                }),
+            }]))
+        rows = rq1_veriput_triage.triage_rows(root, ["real203"])
+        bad = 0
+        bad += check(len(rows) == 1 and rows[0]["subject_id"] == "S",
+                     f"orphan redo collapses onto the base subject id: {rows}")
         bad += check(rows[0]["quality_bucket"] == "valid-PUT-no-R1R2",
-                     f"R0-only valid PUT is kept visible: {rows}")
+                     f"orphan redo remains usable evidence: {rows}")
         bad += check(rows[0]["triage_cause"] == "normal-r0-only-other",
-                     f"normal R0-only cause is actionable: {rows}")
+                     f"orphan redo cause is actionable: {rows}")
         return bad
 
 
@@ -237,7 +265,8 @@ def test_action_queue_demotes_no_wide_rendered_coordinate():
 
 def main():
     tests = [
-        test_latest_redo_wins_and_buckets_are_strength_aware,
+        test_canonical_result_wins_over_redo_archive,
+        test_redo_archive_used_when_no_canonical_exists,
         test_adopted_artifacts_collapse_to_base_subject_id,
         test_triage_causes_distinguish_concrete_and_unobservable_puts,
         test_unsupported_calldata_beats_generic_not_parameterized_note,

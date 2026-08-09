@@ -2,6 +2,102 @@
 
 Read this section first; the rest of the file is older coverage work.
 
+## Current execution state (2026-08-09, canonical queue)
+
+Authoritative queue command:
+
+```sh
+python3 notes/coverage/scripts/rq1_veriput_queue.py \
+  --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT \
+  --out-dir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/triage-queues
+```
+
+Important accounting fix now landed locally: `rq1_veriput_triage.py` prefers
+the canonical subject directory over `.redo.*` / `.adopted_from_*` archives
+whenever the canonical `subjects/<subject_id>/result.json` exists.  A redo
+archive is used only when no canonical result exists.  This matches
+`rq1_veriput_run.py --redo`, which archives the old canonical directory and
+writes the new result back to the canonical path.
+
+Latest canonical aggregate:
+
+- `valid-PUT-with-R1R2`: 153
+- `valid-PUT-no-R1R2`: 52
+- `valid-no-PUT`: 31
+- `PUT-with-R1R2-but-no-width`: 1
+- `no-valid`: 272
+
+Latest queue split:
+
+- `Done`: 153
+- `P0`: 84
+- `P1`: 2
+- `P2`: 145
+- `Archive`: 125
+
+The queue TSVs now include two extra scheduling columns:
+
+- `today_action`: what to do with the case today.
+- `rerun_policy`: whether an ESBMC rerun is allowed before a named code fix.
+
+Current action counts:
+
+- `done`: 153
+- `archive_r1r2_unobservable`: 39
+- `archive_concrete_fallback`: 30
+- `archive_no_candidate_assertion`: 8
+- `archive_no_observable_width`: 1
+- `archive_no_witness`: 69
+- `archive_timeout_or_killed`: 87
+- `archive_low_evidence_no_valid`: 110
+- `repair_guard_renderer`: 3
+- `repair_mapping_dynarray_renderer`: 2
+- `repair_width_gate`: 1
+- `inspect_artifact_no_valid`: 2
+- `inspect_pipeline_error`: 4
+
+Do not blind-rerun the archived categories.  In particular:
+
+- `cleared_not_certified_fallback` and `timeout_concrete_fallback` are valid
+  concrete replay evidence, not certified PUT regions.  Turning non-payable
+  value gates into fuzz tests without a certified width strategy would inflate
+  the PUT count but weaken the methodology claim.
+- Rollback paths can carry a real R0 exit oracle, but R1/R2 post-state rungs are
+  usually unobservable on chain because revert restores storage.  They should
+  not be rerun for R1/R2 unless the code changes what is observable.
+
+Actionable small list before any benchmark rerun:
+
+- `repair_guard_renderer`:
+  - `peer182 / peer_ccsolbmc__escrow`
+  - `peer182 / peer_solar__array-utils`
+  - `real203 / euler-xyz__euler-vault-kit__DToken`
+- `repair_mapping_dynarray_renderer`:
+  - `peer182 / peer_solar__Greeter2`
+  - `real203 / ensdomains__ens-contracts__StandaloneReverseRegistrar`
+- `repair_width_gate`:
+  - `bugfix124 / acfix_021_CVE_2018_19832`
+- `inspect_artifact_no_valid`:
+  - `peer182 / peer_ccsolbmc__ClockBoxContract`
+  - `peer182 / peer_soltg__short_circuit_or_inside_branch`
+- `inspect_pipeline_error`:
+  - `bugfix124 / pop_032_PuttyV2`
+  - `peer182 / peer_ccsolbmc__BERNIE`
+  - `peer182 / peer_ccsolbmc__HOTDOGE`
+  - `peer182 / peer_ccsolbmc__KOALA`
+
+Verification already run after this queue/accounting change:
+
+```sh
+python3 -m py_compile \
+  notes/coverage/scripts/rq1_veriput_triage.py \
+  notes/coverage/scripts/rq1_veriput_queue.py
+python3 scripts/test_rq1_veriput_triage.py
+python3 scripts/test_solidity_path_put.py
+```
+
+Results: triage tests 7/7 passed; PUT tests 293/293 passed.
+
 User constraints now:
 
 - RQ1 results are due today. Speed matters more than exhaustive diagnosis.

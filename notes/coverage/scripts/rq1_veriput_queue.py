@@ -126,15 +126,20 @@ def _queue(row: dict, facts: dict) -> tuple[str, int, str]:
 def _row_for_output(row: dict, facts: dict, queue: str, rank: int,
                     queue_reason: str) -> dict:
     subject_dir = Path(row["result_json"]).parent
+    primary_reason = _primary_reason(row, facts)
+    today_action, rerun_policy = _today_action(row, queue, queue_reason,
+                                               primary_reason)
     return {
         "queue": queue,
         "rank": rank,
+        "today_action": today_action,
+        "rerun_policy": rerun_policy,
         "dataset": row.get("dataset"),
         "subject_id": row.get("subject_id") or subject_dir.name,
         "contract": row.get("contract"),
         "quality_bucket": row.get("quality_bucket"),
         "queue_reason": queue_reason,
-        "primary_reason": _primary_reason(row, facts),
+        "primary_reason": primary_reason,
         "completion_status": row.get("completion_status"),
         "triage_cause": row.get("triage_cause"),
         "raw": row.get("raw"),
@@ -158,6 +163,80 @@ def _row_for_output(row: dict, facts: dict, queue: str, rank: int,
     }
 
 
+def _today_action(row: dict, queue: str, queue_reason: str,
+                  primary_reason: str) -> tuple[str, str]:
+    """One-day execution policy.
+
+    The queue rank says what deserves attention in principle.  This field says
+    what may be rerun today under the user's "no blind sweeps" rule.  In
+    particular, valid concrete fallbacks and rollback-only R1/R2 losses should
+    not consume another 600s run unless a new code path can change their class.
+    """
+    bucket = row.get("quality_bucket") or ""
+    cause = row.get("triage_cause") or ""
+    status = row.get("completion_status") or ""
+
+    if queue == "Done":
+        return "done", "do_not_rerun"
+
+    if bucket == "valid-no-PUT":
+        if primary_reason in {
+                "cleared_not_certified_fallback",
+                "timeout_concrete_fallback",
+        }:
+            return ("archive_concrete_fallback",
+                    "do_not_rerun_without_certified_width_strategy")
+        if primary_reason == "no-observable-oracle-no-width":
+            return ("archive_no_observable_width",
+                    "do_not_rerun_without_new_observable_coordinate")
+        return ("inspect_no_put_lift",
+                "rerun_only_after_lifter_or_width_change")
+
+    if bucket == "PUT-with-R1R2-but-no-width":
+        return ("repair_width_gate",
+                "rerun_only_after_width_provenance_change")
+
+    if bucket == "valid-PUT-no-R1R2":
+        if (primary_reason == "rollback-unobservable"
+                or cause == "rollback-unobservable"):
+            return ("archive_r1r2_unobservable",
+                    "do_not_rerun_for_r1r2")
+        if primary_reason == "guard-nameability":
+            return ("repair_guard_renderer",
+                    "rerun_one_sample_after_guard_fix")
+        if primary_reason == "guard-parser":
+            return ("repair_guard_parser",
+                    "rerun_one_sample_after_guard_fix")
+        if primary_reason == "mapping-dynarray-unrendered":
+            return ("repair_mapping_dynarray_renderer",
+                    "rerun_only_after_mapping_dynarray_support")
+        if primary_reason == "return-no-holding-rung":
+            return ("inspect_return_oracle",
+                    "rerun_only_after_return_liveness_change")
+        if primary_reason == "no-candidate-assertion":
+            return ("archive_no_candidate_assertion",
+                    "do_not_rerun_without_new_oracle_strategy")
+        return ("inspect_weak_put", "rerun_only_after_named_code_change")
+
+    if bucket == "no-valid":
+        if queue_reason == "no-valid-with-artifact":
+            return ("inspect_artifact_no_valid",
+                    "rerun_only_after_artifact_specific_fix")
+        if status == "error" or queue_reason == "no-valid-error":
+            return ("inspect_pipeline_error",
+                    "rerun_only_after_error_fix")
+        if primary_reason.startswith("cert-no-witness"):
+            return ("archive_no_witness",
+                    "do_not_rerun_without_region_strategy")
+        if primary_reason in {"stage2-no-output-timeout", "cert-killed"}:
+            return ("archive_timeout_or_killed",
+                    "do_not_rerun_until_final_failure_recording")
+        return ("archive_low_evidence_no_valid",
+                "do_not_rerun_without_new_hypothesis")
+
+    return ("inspect", "rerun_only_after_named_code_change")
+
+
 def build_queues(result_root: Path) -> tuple[list[dict], dict]:
     out_rows = []
     summary = {
@@ -178,6 +257,10 @@ def build_queues(result_root: Path) -> tuple[list[dict], dict]:
         summary["quality_counts"][row.get("quality_bucket")] += 1
         summary["primary_reason_counts"][rec["primary_reason"]] += 1
         summary["queue_reason_counts"][queue_reason] += 1
+        summary.setdefault("today_action_counts", Counter())
+        summary.setdefault("rerun_policy_counts", Counter())
+        summary["today_action_counts"][rec["today_action"]] += 1
+        summary["rerun_policy_counts"][rec["rerun_policy"]] += 1
     out_rows.sort(key=lambda r: (
         r["rank"], r["dataset"] or "", r["subject_id"] or ""))
     return out_rows, summary
@@ -193,6 +276,8 @@ def _jsonable_summary(summary: dict) -> dict:
         "quality_counts": dict(summary["quality_counts"]),
         "primary_reason_counts": dict(summary["primary_reason_counts"]),
         "queue_reason_counts": dict(summary["queue_reason_counts"]),
+        "today_action_counts": dict(summary["today_action_counts"]),
+        "rerun_policy_counts": dict(summary["rerun_policy_counts"]),
     }
 
 

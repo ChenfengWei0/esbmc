@@ -48,7 +48,18 @@ def latest_result_paths(result_root: Path, datasets: list[str]) -> list[tuple[st
         for path in subject_root.glob("*/result.json"):
             grouped[base_subject_id(path.parent.name)].append(path)
         for subject_id, paths in grouped.items():
-            latest = max(paths, key=lambda path: path.stat().st_mtime)
+            # `rq1_veriput_run.py --redo` archives the previous canonical
+            # subject directory as `<subject>.redo.<time>.<pid>` and then
+            # writes the new result back to `<subject>/`.  The archive can have
+            # a newer directory or file mtime than the canonical result,
+            # especially when external tools touch copied artifacts later.  For
+            # RQ1 accounting the canonical directory is authoritative whenever
+            # it exists; redo/adopted siblings are historical evidence only.
+            canonical = [
+                path for path in paths if path.parent.name == subject_id
+            ]
+            latest = canonical[0] if canonical else max(
+                paths, key=lambda path: path.stat().st_mtime)
             out.append((dataset, subject_id, latest))
     return sorted(out)
 
