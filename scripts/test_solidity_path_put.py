@@ -2615,12 +2615,13 @@ def test_path_guard_coord_idents_expand_scalar_store_aliases():
                  "source scalar pre-read is visible under ESBMC store name")
     lines, skipped = path_decision_assumes(
         [{"branch_claim": "!(_owner$413 == return_value$__msgSender$1)"}],
-        {**expanded, "return_value$__msgSender$1": "uint256(uint160(address(0)))"})
+        {**expanded, "msg.sender": "uint256(uint160(sender))"})
     bad += check(lines == [
         ("!(_owner$413 == return_value$__msgSender$1)",
-         "    vm.assume(_pre_owner == uint256(uint160(address(0))));")
+         "    vm.assume(_pre_owner == uint256(uint160(sender)));")
     ] and skipped == [],
-        f"store-named scalar guard renders: {lines}, {skipped}")
+        f"store-named scalar guard renders with __msgSender alias: "
+        f"{lines}, {skipped}")
     return bad
 
 

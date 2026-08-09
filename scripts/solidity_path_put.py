@@ -7705,10 +7705,15 @@ def path_condition_from_branch_claim(branch_claim):
     return rels[0] if rels else None
 
 
+RETURN_VALUE_MSG_SENDER_RE = re.compile(r"^return_value\$__msgSender\$\d+$")
+
+
 def render_path_decision_term(term, coord_ident_abs):
     term = (term or "").strip()
     if term in coord_ident_abs:
         return coord_ident_abs[term], None
+    if RETURN_VALUE_MSG_SENDER_RE.match(term) and "msg.sender" in coord_ident_abs:
+        return coord_ident_abs["msg.sender"], None
     if "state." + term in coord_ident_abs:
         return coord_ident_abs["state." + term], None
     if _KEY_LIT_RE.match(term):
