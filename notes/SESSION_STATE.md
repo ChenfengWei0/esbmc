@@ -19,19 +19,19 @@ archive is used only when no canonical result exists.  This matches
 `rq1_veriput_run.py --redo`, which archives the old canonical directory and
 writes the new result back to the canonical path.
 
-Latest canonical aggregate:
+Latest canonical aggregate after commit `f6fa1831f9` and the ClockBox rerun:
 
 - `valid-PUT-with-R1R2`: 153
 - `valid-PUT-no-R1R2`: 52
-- `valid-no-PUT`: 31
+- `valid-no-PUT`: 32
 - `PUT-with-R1R2-but-no-width`: 1
-- `no-valid`: 272
+- `no-valid`: 271
 
 Latest queue split:
 
 - `Done`: 153
-- `P0`: 84
-- `P1`: 2
+- `P0`: 85
+- `P1`: 1
 - `P2`: 141
 - `Archive`: 129
 
@@ -44,15 +44,19 @@ Current action counts:
 
 - `done`: 153
 - `archive_r1r2_unobservable`: 40
-- `archive_concrete_fallback`: 30
+- `archive_concrete_fallback`: 31
 - `archive_no_candidate_assertion`: 9
 - `archive_no_observable_width`: 1
 - `archive_no_witness`: 69
 - `archive_timeout_or_killed`: 90
 - `archive_low_evidence_no_valid`: 111
-- `repair_mapping_dynarray_renderer`: 3
-- `repair_width_gate`: 1
-- `inspect_artifact_no_valid`: 2
+- `archive_dynamic_oracle_unsupported_today`: 3
+- `archive_oracle_only_no_width`: 1
+- `archive_no_valid_width_or_replay_failed`: 1
+
+There are no remaining `repair_*`, `inspect_*`, or `rerun_*` today actions in
+the canonical queue.  Do not start another ESBMC run without a new mechanism
+that changes one of those archive classes.
 
 Do not blind-rerun the archived categories.  In particular:
 
@@ -66,15 +70,19 @@ Do not blind-rerun the archived categories.  In particular:
 
 Actionable small list before any benchmark rerun:
 
-- `repair_mapping_dynarray_renderer`:
-  - `peer182 / peer_solar__array-utils`
-  - `peer182 / peer_solar__Greeter2`
-  - `real203 / ensdomains__ens-contracts__StandaloneReverseRegistrar`
-- `repair_width_gate`:
-  - `bugfix124 / acfix_021_CVE_2018_19832`
-- `inspect_artifact_no_valid`:
-  - `peer182 / peer_ccsolbmc__ClockBoxContract`
-  - `peer182 / peer_soltg__short_circuit_or_inside_branch`
+- None remain after the current queue-policy update.  The old small list was
+  closed as follows:
+  - `peer182 / peer_ccsolbmc__ClockBoxContract`: fixed emitter replay repair
+    for sender-gated constructor mint paths and reran once.  Result:
+    `raw=1 valid=1 put=0/0 concrete=1/1`, bucket `valid-no-PUT`,
+    wall `326.928s`.
+  - `peer182 / peer_soltg__short_circuit_or_inside_branch`: archived as raw
+    PUTs blocked by point-width rendering and Foundry replay failure.
+  - `bugfix124 / acfix_021_CVE_2018_19832`: archived as verifier-backed
+    oracle-only / no rendered width (`fuzz_params=0`, `rendered_width={}`).
+  - `peer182 / peer_solar__array-utils`, `peer182 / peer_solar__Greeter2`,
+    and `real203 / ensdomains__ens-contracts__StandaloneReverseRegistrar`:
+    archived until a dynamic slot/string/array oracle strategy exists.
 Resolved stale-identity rows:
 
 - `bugfix124 / pop_032_PuttyV2`

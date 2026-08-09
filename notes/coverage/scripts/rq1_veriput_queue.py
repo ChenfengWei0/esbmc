@@ -56,6 +56,11 @@ def _bucket_text(text: str) -> str:
 def _put_artifact_facts(subject_dir: Path) -> dict:
     facts = {
         "put_json_count": 0,
+        "put_summary_rows": 0,
+        "put_summary_put_rows": 0,
+        "put_summary_width_false": 0,
+        "put_summary_green": 0,
+        "put_summary_forge_failure": 0,
         "path_guard_skipped": [],
         "oracle_skipped": [],
         "oracle_classes": Counter(),
@@ -76,6 +81,21 @@ def _put_artifact_facts(subject_dir: Path) -> dict:
             facts["oracle_skip_reason_counts"][_bucket_text(text)] += 1
         for klass in stats.get("oracle_classes") or []:
             facts["oracle_classes"][str(klass)] += 1
+    for summary in sorted(subject_dir.glob("put/**/put-summary.json")):
+        doc = _load_result(summary)
+        rows = ((doc.get("deliverable_b") or {}).get("rows") or [])
+        for row in rows:
+            facts["put_summary_rows"] += 1
+            if row.get("kind") != "put":
+                continue
+            facts["put_summary_put_rows"] += 1
+            gates = row.get("gates") or {}
+            if not gates.get("width"):
+                facts["put_summary_width_false"] += 1
+            if row.get("forge_status") == "Success":
+                facts["put_summary_green"] += 1
+            if row.get("forge_status") == "Failure":
+                facts["put_summary_forge_failure"] += 1
     return facts
 
 
@@ -128,7 +148,7 @@ def _row_for_output(row: dict, facts: dict, queue: str, rank: int,
     subject_dir = Path(row["result_json"]).parent
     primary_reason = _primary_reason(row, facts)
     today_action, rerun_policy = _today_action(row, queue, queue_reason,
-                                               primary_reason)
+                                               primary_reason, facts)
     return {
         "queue": queue,
         "rank": rank,
@@ -153,6 +173,9 @@ def _row_for_output(row: dict, facts: dict, queue: str, rank: int,
         "wall_total_s": row.get("wall_total_s"),
         "path_guard_skipped": len(facts["path_guard_skipped"]),
         "oracle_skipped": len(facts["oracle_skipped"]),
+        "put_summary_put_rows": facts["put_summary_put_rows"],
+        "put_summary_width_false": facts["put_summary_width_false"],
+        "put_summary_forge_failure": facts["put_summary_forge_failure"],
         "oracle_classes": ",".join(sorted(facts["oracle_classes"])),
         "sample_path_guard_skip": (
             facts["path_guard_skipped"][0] if facts["path_guard_skipped"]
@@ -164,7 +187,7 @@ def _row_for_output(row: dict, facts: dict, queue: str, rank: int,
 
 
 def _today_action(row: dict, queue: str, queue_reason: str,
-                  primary_reason: str) -> tuple[str, str]:
+                  primary_reason: str, facts: dict) -> tuple[str, str]:
     """One-day execution policy.
 
     The queue rank says what deserves attention in principle.  This field says
@@ -193,8 +216,8 @@ def _today_action(row: dict, queue: str, queue_reason: str,
                 "rerun_only_after_lifter_or_width_change")
 
     if bucket == "PUT-with-R1R2-but-no-width":
-        return ("repair_width_gate",
-                "rerun_only_after_width_provenance_change")
+        return ("archive_oracle_only_no_width",
+                "do_not_rerun_without_new_rendered_width_provenance")
 
     if bucket == "valid-PUT-no-R1R2":
         if (primary_reason == "rollback-unobservable"
@@ -202,8 +225,8 @@ def _today_action(row: dict, queue: str, queue_reason: str,
             return ("archive_r1r2_unobservable",
                     "do_not_rerun_for_r1r2")
         if cause == "mapping-dynarray-unrendered":
-            return ("repair_mapping_dynarray_renderer",
-                    "rerun_only_after_mapping_dynarray_support")
+            return ("archive_dynamic_oracle_unsupported_today",
+                    "do_not_rerun_without_dynamic_slot_oracle_strategy")
         if cause == "no-candidate-assertion":
             return ("archive_no_candidate_assertion",
                     "do_not_rerun_without_new_oracle_strategy")
@@ -214,8 +237,8 @@ def _today_action(row: dict, queue: str, queue_reason: str,
             return ("repair_guard_parser",
                     "rerun_one_sample_after_guard_fix")
         if primary_reason == "mapping-dynarray-unrendered":
-            return ("repair_mapping_dynarray_renderer",
-                    "rerun_only_after_mapping_dynarray_support")
+            return ("archive_dynamic_oracle_unsupported_today",
+                    "do_not_rerun_without_dynamic_slot_oracle_strategy")
         if primary_reason == "return-no-holding-rung":
             return ("inspect_return_oracle",
                     "rerun_only_after_return_liveness_change")
@@ -226,6 +249,12 @@ def _today_action(row: dict, queue: str, queue_reason: str,
 
     if bucket == "no-valid":
         if queue_reason == "no-valid-with-artifact":
+            put_rows = facts.get("put_summary_put_rows", 0)
+            if (put_rows > 0 and
+                    (facts.get("put_summary_width_false") == put_rows
+                     or facts.get("put_summary_forge_failure") > 0)):
+                return ("archive_no_valid_width_or_replay_failed",
+                        "do_not_rerun_without_new_width_or_replay_strategy")
             return ("inspect_artifact_no_valid",
                     "rerun_only_after_artifact_specific_fix")
         if primary_reason == "stale-resume-identity":

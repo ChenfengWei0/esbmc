@@ -23,19 +23,19 @@ python3 notes/coverage/scripts/rq1_veriput_queue.py \
   --out-dir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/triage-queues
 ```
 
-Quality counts:
+Quality counts after the ClockBox artifact-specific rerun:
 
 - `valid-PUT-with-R1R2`: 153
 - `valid-PUT-no-R1R2`: 52
-- `valid-no-PUT`: 31
+- `valid-no-PUT`: 32
 - `PUT-with-R1R2-but-no-width`: 1
-- `no-valid`: 272
+- `no-valid`: 271
 
 Queue counts:
 
 - `Done`: 153
-- `P0`: 84
-- `P1`: 2
+- `P0`: 85
+- `P1`: 1
 - `P2`: 141
 - `Archive`: 129
 
@@ -43,9 +43,9 @@ Queue counts:
 
 1. Keep all archived categories out of ESBMC until final failure recording.
    This removes 344 low-yield rows from the active debug loop.
-2. Work only the 6 remaining actionable rows:
-   `repair_mapping_dynarray_renderer` 3, `repair_width_gate` 1,
-   `inspect_artifact_no_valid` 2.
+2. The old 6 actionable rows have been resolved or reclassified.  ClockBox was
+   fixed and rerun once; the other five require new oracle/width strategies and
+   are not ESBMC-rerun candidates today.
 3. For each action class, inspect artifacts first and write the mechanism in
    notes before touching ESBMC.
 4. After a code fix, run exactly one representative case from that class.  If
@@ -55,28 +55,58 @@ Queue counts:
    have raw/valid artifacts, time stats, PUT/concrete label, R0/R1/R2 labels,
    and a failure reason.
 
-## Actionable Rows
+## Resolved Actionable Rows
 
-### repair_mapping_dynarray_renderer
+### dynamic mapping/array/string oracle unsupported today
 
 - `peer182 / peer_solar__array-utils`
 - `peer182 / peer_solar__Greeter2`
 - `real203 / ensdomains__ens-contracts__StandaloneReverseRegistrar`
 
-Policy: no rerun until mapping/dynamic-array rendering support changes.
+Policy: archive today; no rerun until a dynamic slot/string/array oracle
+strategy exists.  Current artifacts explicitly refuse whole mapping/dynamic
+array candidates and, for these cases, the remaining observable state is
+dynamic `address[]`, `mapping(uint8 => string)`, or `mapping(address =>
+string)`.
 
-### repair_width_gate
+### oracle-only / no rendered width
 
 - `bugfix124 / acfix_021_CVE_2018_19832`
 
-Policy: no rerun until width provenance/gating changes.
+Policy: archive today.  The artifact has verifier-backed R1/R2 assertions and
+Forge `Success`, but `fuzz_params=0` and `rendered_width={}`.  Counting it as a
+PUT would change the methodology rather than improve the tool.
 
-### inspect_artifact_no_valid
+### artifact-specific no-valid
 
-- `peer182 / peer_ccsolbmc__ClockBoxContract`
-- `peer182 / peer_soltg__short_circuit_or_inside_branch`
+- `peer182 / peer_ccsolbmc__ClockBoxContract`: fixed by commit
+  `f6fa1831f9` and rerun once.  New result is
+  `raw=1 valid=1 put=0/0 concrete=1/1`, bucket `valid-no-PUT`,
+  wall `326.928s`.
+- `peer182 / peer_soltg__short_circuit_or_inside_branch`: archive today.  It
+  has raw PUT artifacts, but all rendered widths are point-width
+  (`rendered_width={'a': 1}`) and one double-oracle replay already fails in
+  Foundry.  No further ESBMC run can fix that without a new width/replay
+  strategy.
 
-Policy: artifact-specific diagnosis first; no generic rerun.
+Policy: no generic rerun.
+
+## Current Today-Action Counts
+
+- `done`: 153
+- `archive_concrete_fallback`: 31
+- `archive_dynamic_oracle_unsupported_today`: 3
+- `archive_no_valid_width_or_replay_failed`: 1
+- `archive_oracle_only_no_width`: 1
+- `archive_r1r2_unobservable`: 40
+- `archive_no_candidate_assertion`: 9
+- `archive_no_observable_width`: 1
+- `archive_no_witness`: 69
+- `archive_timeout_or_killed`: 90
+- `archive_low_evidence_no_valid`: 111
+
+There are no remaining `repair_*`, `inspect_*`, or `rerun_*` today actions in
+the canonical queue.
 
 ### resolved stale identity reruns
 

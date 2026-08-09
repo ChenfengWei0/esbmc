@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "notes" / "coverage" / "scripts"))
 
 import rq1_veriput_triage  # noqa: E402
+import rq1_veriput_queue  # noqa: E402
 
 
 def check(cond, msg):
@@ -333,6 +334,116 @@ def test_action_queue_demotes_no_wide_rendered_coordinate():
     return bad
 
 
+def test_queue_archives_dynamic_mapping_oracle_without_rerun():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subject = root / "real203" / "subjects" / "DynamicMapping"
+        pj = subject / "put" / "unit" / "_wd" / "case" / "put.json"
+        write_json(subject / "result.json",
+                   result_doc(
+                       valid=1,
+                       put_valid=1,
+                       tests=[{
+                           "kind": "put",
+                           "oracle_classes": ["R0"],
+                           "put_json": put_json(
+                               pj,
+                               stats={"oracle_classes": ["R0"]},
+                               notes=[
+                                   "NOT ONE candidate assertion could be formed. "
+                                   "Every candidate was refused: values "
+                                   "(a mapping or dynamic array)",
+                               ]),
+                       }],
+                       cert={"CERTIFIED": 1}))
+        rows, _summary = rq1_veriput_queue.build_queues(root)
+        bad = 0
+        bad += check(rows[0]["today_action"]
+                     == "archive_dynamic_oracle_unsupported_today",
+                     f"dynamic mapping oracle is archived today: {rows}")
+        bad += check(rows[0]["rerun_policy"]
+                     == "do_not_rerun_without_dynamic_slot_oracle_strategy",
+                     f"dynamic mapping needs a new oracle strategy: {rows}")
+        return bad
+
+
+def test_queue_archives_oracle_only_put_without_width():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subject = root / "bugfix124" / "subjects" / "Widthless"
+        write_json(subject / "result.json",
+                   result_doc(valid=0, put_valid=0,
+                              cert={"CERTIFIED": 1}))
+        summary = subject / "put" / "unit" / "put-summary.json"
+        write_json(summary, {
+            "deliverable_b": {
+                "rows": [{
+                    "kind": "put",
+                    "test": "test_put_C_path7",
+                    "forge_status": "Success",
+                    "valid_reference_test": False,
+                    "gates": {
+                        "assert": True,
+                        "fuzz": False,
+                        "green": True,
+                        "width": False,
+                    },
+                }]
+            }
+        })
+        write_json(subject / "put" / "unit" / "_wd" / "case" / "put.json", {
+            "kind": "put",
+            "test": "test_put_C_path7",
+            "stats": {"oracle_classes": ["R0", "R1"]},
+        })
+        rows, _summary = rq1_veriput_queue.build_queues(root)
+        bad = 0
+        bad += check(rows[0]["quality_bucket"]
+                     == "PUT-with-R1R2-but-no-width",
+                     f"widthless oracle-only PUT is recognized: {rows}")
+        bad += check(rows[0]["today_action"]
+                     == "archive_oracle_only_no_width",
+                     f"widthless oracle-only PUT is not rerun today: {rows}")
+        return bad
+
+
+def test_queue_archives_no_valid_puts_blocked_by_width_or_replay():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subject = root / "peer182" / "subjects" / "WidthOrReplayFailed"
+        result = result_doc(valid=0, put_valid=0, cert={"CERTIFIED": 1})
+        result["put"]["raw"] = 2
+        result["put"]["put_raw"] = 2
+        write_json(subject / "result.json", result)
+        write_json(subject / "put" / "unit" / "put-summary.json", {
+            "deliverable_b": {
+                "rows": [{
+                    "kind": "put",
+                    "test": "test_put_C_path12",
+                    "forge_status": "Success",
+                    "valid_reference_test": False,
+                    "gates": {"width": False, "green": True},
+                }, {
+                    "kind": "put",
+                    "test": "test_put_C_path31",
+                    "forge_status": "Failure",
+                    "valid_reference_test": False,
+                    "gates": {"width": False, "green": False},
+                }]
+            }
+        })
+        rows, _summary = rq1_veriput_queue.build_queues(root)
+        bad = 0
+        bad += check(rows[0]["queue"] == "P1",
+                     f"raw no-valid artifact is still visible as P1: {rows}")
+        bad += check(rows[0]["today_action"]
+                     == "archive_no_valid_width_or_replay_failed",
+                     f"width/replay-blocked raw PUTs are not blind-rerun: {rows}")
+        bad += check(rows[0]["put_summary_width_false"] == 2,
+                     f"width-false rows are counted for audit: {rows}")
+        return bad
+
+
 def main():
     tests = [
         test_canonical_result_wins_over_redo_archive,
@@ -344,6 +455,9 @@ def main():
         test_unsupported_calldata_beats_generic_not_parameterized_note,
         test_action_queue_demotes_hard_dynamic_mapping_no_r1r2,
         test_action_queue_demotes_no_wide_rendered_coordinate,
+        test_queue_archives_dynamic_mapping_oracle_without_rerun,
+        test_queue_archives_oracle_only_put_without_width,
+        test_queue_archives_no_valid_puts_blocked_by_width_or_replay,
     ]
     bad = 0
     for test in tests:
