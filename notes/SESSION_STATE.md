@@ -75,6 +75,35 @@ In-progress code at the time this note was updated:
 - Next step is commit/push that patch, then run exactly one validation:
   `peer182 / peer_ccsolbmc__AssetTransfer` with timeout 600s and 10GiB memory.
 
+Update after commits `42a8b4e105` and `ee3ab785ea`:
+
+- OR/AND path guard rendering is committed and pushed. Direct-hit validation:
+  `peer_ccsolbmc__AssetTransfer` improved to `valid-PUT-with-R1R2`
+  (`raw=11 valid=10 put=10/11`, 68s), and
+  `peer_ccsolbmc__FrontRunner` improved to `valid-PUT-with-R1R2`
+  (`raw=6 valid=6 put=6/6`, 363s).
+- `peer_solar__LotteryMultipleWinners` and `peer_solar__GuardCheck` remained
+  `valid-PUT-no-R1R2`, but their ordinary path guards are now rendered:
+  current canonical artifacts show `path_guard_skipped=[]` for the relevant
+  join/donate paths. Their remaining blocker is `slot candidates asked=0` plus
+  no observable post-state on revert paths.
+- Important wrapper semantics: `rq1_veriput_run.py --redo` renames the old
+  canonical result directory to `.redo.<time>.<pid>` and writes the new result
+  back to the canonical subject directory. Do not inspect the newest `.redo.*`
+  directory as if it were the latest run; inspect
+  `/Results/RQ1/VeriPUT/<dataset>/subjects/<subject_id>/`.
+- New ESBMC internal patch under test: `src/goto-programs/goto_coverage.cpp`
+  now allows signed bit-vector state variables to emit R1 equality rungs only
+  in the Stage-3 assertion ladder. Stage-2 region/certification still uses the
+  old `coord_expressible()` gate and continues refusing signed bounds, so the
+  previous vacuous signed-interval risk is not reopened.
+- Direct non-wrapper validation for `LotteryMultipleWinners.join` with the
+  existing `assert/spec.json` produced:
+  `state: post == pre HOLDS`, `state: post != pre REFUTED`, while ordering,
+  interval and delta rungs stayed refused for signed. Next validation is a
+  single canonical rerun of `peer_solar__LotteryMultipleWinners`; expected
+  result is still one PUT, but now with an R1 oracle class.
+
 Update after commit `664dfde930`:
 
 - Added `notes/coverage/scripts/rq1_veriput_queue.py`.

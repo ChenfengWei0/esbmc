@@ -3883,6 +3883,22 @@ static bool coord_expressible(const type2tc &t, std::string &why)
   return false;
 }
 
+static bool coord_equality_expressible(const type2tc &t, std::string &why)
+{
+  if (coord_expressible(t, why))
+    return true;
+  if (is_signedbv_type(t))
+  {
+    why =
+      "it resolves to a SIGNED bit-vector. Equality rungs (post == pre / "
+      "post != pre) are emitted because they do not construct signed decimal "
+      "bounds; ordering, interval and delta rungs remain refused until signed "
+      "bound validation is implemented";
+    return true;
+  }
+  return false;
+}
+
 /*
 Solidity complete-path coverage (entry->exit path coverage for test gen).
 
@@ -10140,8 +10156,8 @@ void goto_coveraget::solidity_path_coverage()
         // and they are the class a flag-setting function is entirely about, so
         // the equality rungs are still emitted.
         std::string why;
-        const bool equality_ok = coord_expressible(vt, why);
-        const bool interval_ok = equality_ok && !is_bool_type(vt);
+        const bool equality_ok = coord_equality_expressible(vt, why);
+        const bool interval_ok = equality_ok && is_unsignedbv_type(vt);
         if (!equality_ok)
         {
           path_cov_refused_coords[oname] = why;
@@ -10167,7 +10183,8 @@ void goto_coveraget::solidity_path_coverage()
         {
           log_error(
             "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: variable "
-            "'{}' is BOOLEAN, but its spec contains structured R2 "
+            "'{}' is not an ordering-capable unsigned scalar, but its spec "
+            "contains structured R2 "
             "interval or delta candidate(s). Typed R2 arithmetic/interval "
             "terms require an "
             "ordering-capable unsigned scalar; silently dropping ASKED "
@@ -10530,8 +10547,8 @@ void goto_coveraget::solidity_path_coverage()
         // non-bool. Collapsing them builds `>=` on a bool operand, which is a
         // SIGABRT in smt_conv rather than a comparison.
         std::string ewhy;
-        const bool eq_ok = coord_expressible(et, ewhy);
-        const bool iv_ok = eq_ok && !is_bool_type(et);
+        const bool eq_ok = coord_equality_expressible(et, ewhy);
+        const bool iv_ok = eq_ok && is_unsignedbv_type(et);
         if (!eq_ok)
         {
           path_cov_refused_coords[v.name] =
@@ -10542,9 +10559,10 @@ void goto_coveraget::solidity_path_coverage()
         {
           log_error(
             "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: mapping "
-            "slot '{}' has BOOLEAN value type, but its spec contains interval "
-            "or delta candidate(s). Bool R2 supports equality only; ordering "
-            "and arithmetic over bool remain refused",
+            "slot '{}' is not an ordering-capable unsigned scalar, but its "
+            "spec contains interval or delta candidate(s). R2 supports "
+            "equality only for bool/signed values; ordering and arithmetic "
+            "remain refused",
             uid,
             v.name);
           exit(1);
