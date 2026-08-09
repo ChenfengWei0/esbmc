@@ -1,3 +1,55 @@
+# VeriPUT RQ1 handoff (2026-08-09)
+
+Read this section first; the rest of the file is older coverage work.
+
+User constraints now:
+
+- RQ1 results are due today. Speed matters more than exhaustive diagnosis.
+- Do not run blind benchmark sweeps. A case run must have either (a) no existing
+  result or (b) a specific code fix/hypothesis that can change that case.
+- Avoid wasting 600s on known low-yield buckets such as fast no-output,
+  unsupported, or budget-exhausted cases unless the deliverable needs a final
+  recorded failure row.
+- Dataset inputs under `/home/samson/workspace/VeriPUT/Datasets` are read-only.
+- RQ1 artifacts belong under
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT`.
+- JSON artifacts must retain raw and valid outputs, timing, concrete vs PUT,
+  and R0/R1/R2 oracle class counts. Foundry replay/double oracle is outside the
+  ESBMC generation timeout.
+
+Current aggregate results from existing JSON, before the path-guard alias
+repair is benchmark-rerun:
+
+| dataset | valid | PUT among valid | concrete-only | R1/R2 among valid |
+|---|---:|---:|---:|---:|
+| peer182 | 108/182 = 59.3% | 105/108 = 97.2% | 3/108 = 2.8% | 70/108 = 64.8% |
+| bugfix124 | 68/124 = 54.8% | 64/68 = 94.1% | 3/68 = 4.4% | 25/68 = 36.8% |
+| real203 | 58/203 = 28.6% | 35/58 = 60.3% | 23/58 = 39.7% | 23/58 = 39.7% |
+| all | 234/509 = 46.0% | 204/234 = 87.2% | 29/234 = 12.4% | 118/234 = 50.4% |
+
+Landed/in-progress code change:
+
+- `scripts/solidity_path_put.py` now expands path-guard coordinates across
+  source/store scalar names and source/store mapping names before rendering
+  `vm.assume` guards. This targets cases like CyberFox where raw R0/R1/R2 PUTs
+  were generated but double-oracle validation failed because guards such as
+  `_owner$413` and `_isBlackListedBot[account]` were dropped as "not nameable".
+- Verified without ESBMC:
+  `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py`
+  and `python3 scripts/test_solidity_path_put.py` (`289/289`).
+- Do not claim benchmark improvement until rerunning a directly affected case.
+
+Execution strategy from here:
+
+1. Commit/push the script-only fix so later runs have a stable code point.
+2. Build a high-yield queue from existing result JSON:
+   `valid-no-PUT`, `valid-PUT-no-R1R2`, `PUT-with-R1R2-but-no-width`, and
+   `path_guard_skipped`-bearing no-valid cases first.
+3. Run those with bounded parallelism. Skip no-output/unsupported/budget-only
+   clusters until the end; they are result-accounting rows, not likely fixes.
+4. Only after high-yield reruns finish, fill remaining missing/failure rows for
+   the submission table.
+
 # Where the work stands (2026-07-30, evening)
 
 Written to survive a context compaction. Read this, then

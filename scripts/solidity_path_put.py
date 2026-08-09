@@ -3310,6 +3310,65 @@ def mapping_source_coord_alias(name, maps):
     return alias
 
 
+def mapping_store_coord_alias(name, maps):
+    """Return the ESBMC store spelling for a source mapping-slot coordinate."""
+    if not name.startswith("state."):
+        return None
+    svar = name[len("state."):]
+    mname, slot_keys, slot_tail = parse_slot_name(svar)
+    if mname is None:
+        return None
+    source_key = mname + slot_tail
+    store_key = mapping_query_key(maps, source_key)
+    if not store_key or store_key == source_key:
+        return None
+    spec = (maps or {}).get(store_key)
+    store_base = mapping_query_base(store_key, spec)
+    if not store_base:
+        return None
+    return ("state." + store_base
+            + "".join(f"[{key}]" for key in slot_keys)
+            + slot_tail)
+
+
+def expand_path_guard_coord_idents(
+        coord_ident_abs, maps=None, state_store_names=None):
+    """Add source/store aliases so path guards can reuse existing pre-reads."""
+    out = dict(coord_ident_abs or {})
+    source_by_store = {
+        store: source for source, store in (state_store_names or {}).items()
+    }
+
+    changed = True
+    while changed:
+        changed = False
+        for name, ident in list(out.items()):
+            if not name.startswith("state."):
+                continue
+            svar = name[len("state."):]
+            mname, _slot_keys, _slot_tail = parse_slot_name(svar)
+            aliases = []
+            if mname is None:
+                store = (state_store_names or {}).get(svar)
+                source = source_by_store.get(svar)
+                if store:
+                    aliases.append("state." + store)
+                if source:
+                    aliases.append("state." + source)
+            else:
+                source_alias = mapping_source_coord_alias(name, maps)
+                store_alias = mapping_store_coord_alias(name, maps)
+                if source_alias:
+                    aliases.append(source_alias)
+                if store_alias:
+                    aliases.append(store_alias)
+            for alias in aliases:
+                if alias not in out:
+                    out[alias] = ident
+                    changed = True
+    return out
+
+
 def prefer_esbmc_mapping_aliases(maps):
     """Drop source-name rows when an ESBMC store-name alias exists."""
     aliases_by_source = {}
@@ -8861,8 +8920,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         else:
             asserts += a
         oracle_details.append(detail)
+    path_guard_coord_ident_abs = expand_path_guard_coord_idents(
+        coord_ident_abs, maps, state_store_names)
     path_guard_lines, path_guard_skipped = path_decision_assumes(
-        path_decisions, coord_ident_abs)
+        path_decisions, path_guard_coord_ident_abs)
     # ---- THE CALL HAS TO CARRY THE FLAG, OR THE GUARD IS NOT A GUARD -------
     #
     # Only a call ending in `catch {}` is rewritten. Anything else -- a catch

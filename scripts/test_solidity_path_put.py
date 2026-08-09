@@ -74,6 +74,7 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                exit_kind_asserted, find_unit_call,
                                fixture_from_esbmc_args, load_fixture_json,
                                assert_query_var_name,
+                               expand_path_guard_coord_idents,
                                layout_scalar_key,
                                mapping_source_coord_alias,
                                prefer_esbmc_mapping_aliases,
@@ -2592,6 +2593,62 @@ def test_mapping_store_aliases_have_source_path_guard_coordinate():
          "    vm.assume(_pre_blacklisted == 0);")
     ] and skipped == [],
         f"source alias lets unary mapping guard render: {lines}, {skipped}")
+    return bad
+
+
+def test_path_guard_coord_idents_expand_scalar_store_aliases():
+    aliases = {"_owner": "_owner$413"}
+    expanded = expand_path_guard_coord_idents(
+        {"state._owner": "_pre_owner"}, state_store_names=aliases)
+    bad = 0
+    bad += check(expanded["state._owner$413"] == "_pre_owner",
+                 "source scalar pre-read is visible under ESBMC store name")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "!(_owner$413 == return_value$__msgSender$1)"}],
+        {**expanded, "return_value$__msgSender$1": "uint256(uint160(address(0)))"})
+    bad += check(lines == [
+        ("!(_owner$413 == return_value$__msgSender$1)",
+         "    vm.assume(_pre_owner == uint256(uint160(address(0))));")
+    ] and skipped == [],
+        f"store-named scalar guard renders: {lines}, {skipped}")
+    return bad
+
+
+def test_path_guard_coord_idents_expand_mapping_source_aliases():
+    maps = {
+        "_isBlackListedBot": (3, "address", 1, 0, "_isBlackListedBot", None),
+        "_isBlackListedBot$534": (
+            3, "address", 1, 0, "_isBlackListedBot", None),
+    }
+    expanded = expand_path_guard_coord_idents(
+        {"state._isBlackListedBot$534[account]": "_pre_blacklisted"},
+        maps=maps)
+    bad = 0
+    bad += check(expanded["state._isBlackListedBot[account]"]
+                 == "_pre_blacklisted",
+                 "ESBMC mapping pre-read is visible under source name")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "!(!_isBlackListedBot[account])"}], expanded)
+    bad += check(lines == [
+        ("!(!_isBlackListedBot[account])",
+         "    vm.assume(_pre_blacklisted == 0);")
+    ] and skipped == [],
+        f"source-named mapping guard renders: {lines}, {skipped}")
+    return bad
+
+
+def test_path_guard_coord_idents_expand_mapping_store_aliases():
+    maps = {
+        "_isBlackListedBot": (3, "address", 1, 0, "_isBlackListedBot", None),
+        "_isBlackListedBot$534": (
+            3, "address", 1, 0, "_isBlackListedBot", None),
+    }
+    expanded = expand_path_guard_coord_idents(
+        {"state._isBlackListedBot[account]": "_pre_blacklisted"}, maps=maps)
+    bad = 0
+    bad += check(expanded["state._isBlackListedBot$534[account]"]
+                 == "_pre_blacklisted",
+                 "source mapping pre-read is visible under ESBMC store name")
     return bad
 
 
@@ -12707,6 +12764,9 @@ def main():
               test_path_decision_guard_renders_unary_bool_mapping_relation,
               test_path_decision_guard_negates_plain_unary_bool_claim,
               test_path_decision_guard_skips_true_constant_relation,
+              test_path_guard_coord_idents_expand_scalar_store_aliases,
+              test_path_guard_coord_idents_expand_mapping_source_aliases,
+              test_path_guard_coord_idents_expand_mapping_store_aliases,
               test_typed_R2_term_budget_is_VISIBLE_not_a_second_query,
               test_typed_R2_candidate_budget_caps_claims_and_shares_them,
               test_typed_R2_candidate_budget_reaches_every_variable_before_second_laps,
