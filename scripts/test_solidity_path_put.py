@@ -756,6 +756,77 @@ contract CCovTest is Test {
     return bad
 
 
+def test_constructor_sender_guarded_mint_repairs_matching_admin_arg():
+    flat = """\
+pragma solidity >=0.8.0;
+contract C {
+  address public admin;
+  address payable public feeAddress;
+  modifier onlyAdmin() {
+    require(msg.sender == admin, "Only admin");
+    _;
+  }
+  constructor(address _admin, address _feeAddress) {
+    admin = _admin;
+    mint(1);
+    feeAddress = payable(_feeAddress);
+  }
+  function mint(uint256 amount) public onlyAdmin {
+    _mint(msg.sender, amount);
+  }
+  function _mint(address account, uint256 amount) internal {
+    require(account != address(0), "mint to the zero address");
+    amount;
+  }
+  function decimals() external view returns (uint8) {
+    return 16;
+  }
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    vm.startPrank(address(uint160(0)), address(uint160(0)));
+    c0 = new C(address(uint160(0)), address(uint160(0)));
+    vm.stopPrank();
+  }
+  // claim: sol:@C@C@F@decimals#9:path:1
+  function test_cov_0() public {
+    c0.decimals();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@decimals#9", 1)
+    text = assemble_concrete_source(
+        em, case, "CCovTest_concrete", contract="C", unit="decimals",
+        flat_source=flat)
+    bad = 0
+    bad += check(constructor_sender_needs_nonzero(flat, "C"),
+                 "constructor detects mint-through-sender in a called method")
+    bad += check(
+        "vm.startPrank(address(uint160(1)), address(uint160(1)));" in text,
+        "zero constructor prank is repaired to the deploy sender")
+    bad += check(
+        "new C(address(uint160(1)), address(uint160(0)))" in text,
+        "the admin argument is repaired to match the deploy sender")
+    bad += check(
+        "new C(address(uint160(0)), address(uint160(0)))" not in text,
+        "the stale zero admin constructor replay is gone")
+    return bad
+
+
 def test_constructor_dynamic_array_defaults_cover_indexed_reads():
     flat = """\
 pragma solidity >=0.8.0;
@@ -12842,6 +12913,7 @@ def main():
               test_constructor_param_hascode_args_are_etched_before_deploy,
               test_constructor_nonzero_address_guards_repair_zero_defaults,
               test_constructor_sender_nonzero_mint_repairs_zero_prank,
+              test_constructor_sender_guarded_mint_repairs_matching_admin_arg,
               test_constructor_dynamic_array_defaults_cover_indexed_reads,
               test_unsupported_skeleton_is_synthesized_for_certified_put_lift,
               test_esbmc_interface_mock_completion_adds_inherited_overloads,

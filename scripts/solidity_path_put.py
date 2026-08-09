@@ -5699,9 +5699,9 @@ def _body_has_nonzero_address_guard(body, name):
     return any(re.search(pat, body) for pat in guarded)
 
 
-def _source_function_decls(chunk, fname):
+def _source_function_decl_infos(chunk, fname):
     rx = re.compile(r"\bfunction\s+" + re.escape(fname) +
-                    r"\s*\((.*?)\)\s*[^;{]*\{", re.S)
+                    r"\s*\((.*?)\)\s*([^;{]*)\{", re.S)
     out = []
     for m in rx.finditer(chunk or ""):
         params = []
@@ -5721,8 +5721,110 @@ def _source_function_decls(chunk, fname):
                     break
             i += 1
         if depth == 0:
-            out.append((params, chunk[start:i]))
+            out.append((params, m.group(2) or "", chunk[start:i]))
     return out
+
+
+def _source_function_decls(chunk, fname):
+    return [(params, body)
+            for params, _header_tail, body in
+            _source_function_decl_infos(chunk, fname)]
+
+
+def _source_modifier_body(chunk, name):
+    rx = re.compile(r"\bmodifier\s+" + re.escape(name) +
+                    r"\s*(?:\([^)]*\))?\s*[^;{]*\{", re.S)
+    m = rx.search(chunk or "")
+    if not m:
+        return None
+    start = m.end()
+    depth, i = 1, start
+    while i < len(chunk) and depth:
+        if chunk[i] == "{":
+            depth += 1
+        elif chunk[i] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        i += 1
+    if depth != 0:
+        return None
+    return chunk[start:i]
+
+
+def _source_modifier_names_from_header(header_tail):
+    skip = {
+        "public", "external", "internal", "private", "view", "pure",
+        "payable", "virtual", "override", "returns", "memory", "storage",
+        "calldata",
+    }
+    names = []
+    for m in re.finditer(r"\b([A-Za-z_]\w*)\b(?:\s*\([^;{}]*\))?",
+                         header_tail or ""):
+        name = m.group(1)
+        if name not in skip:
+            names.append(name)
+    return names
+
+
+def _body_has_sender_state_guard(body, state_name):
+    state = re.escape(state_name)
+    sender_terms = [r"msg\s*\.\s*sender", r"_msgSender\s*\(\s*\)"]
+    for sender in sender_terms:
+        if re.search(sender + r"\s*==\s*\b" + state + r"\b", body or ""):
+            return True
+        if re.search(r"\b" + state + r"\b\s*==\s*" + sender, body or ""):
+            return True
+    return False
+
+
+def _function_requires_sender_state(chunk, fname, state_name):
+    for _params, header_tail, body in _source_function_decl_infos(chunk, fname):
+        if _body_has_sender_state_guard(body, state_name):
+            return True
+        for modifier in _source_modifier_names_from_header(header_tail):
+            mod_body = _source_modifier_body(chunk, modifier)
+            if mod_body and _body_has_sender_state_guard(mod_body, state_name):
+                return True
+    return False
+
+
+def _body_mints_to_sender(body):
+    sender_terms = [
+        r"msg\s*\.\s*sender",
+        r"_msgSender\s*\(\s*\)",
+    ]
+    return any(re.search(r"\b_mint\s*\(\s*" + term + r"\s*,", body or "")
+               for term in sender_terms)
+
+
+def _constructor_calls_sender_mint(chunk, ctor_body):
+    if _body_mints_to_sender(ctor_body):
+        return True
+    call_rx = re.compile(r"\b([A-Za-z_]\w*)\s*\((.*?)\)\s*;?", re.S)
+    for m in call_rx.finditer(ctor_body or ""):
+        for _params, _header_tail, body in _source_function_decl_infos(
+                chunk, m.group(1)):
+            if _body_mints_to_sender(body):
+                return True
+    return False
+
+
+def _constructor_arg_controls_sender_guarded_call(chunk, ctor_body, pname):
+    assigned = []
+    assign_rx = re.compile(r"\b([A-Za-z_]\w*)\s*=\s*(?:payable\s*\(\s*)?\b" +
+                           re.escape(pname) + r"\b\s*\)?\s*;", re.S)
+    for m in assign_rx.finditer(ctor_body or ""):
+        assigned.append(m.group(1))
+    if not assigned:
+        return False
+    call_rx = re.compile(r"\b([A-Za-z_]\w*)\s*\((.*?)\)\s*;?", re.S)
+    for m in call_rx.finditer(ctor_body or ""):
+        fname = m.group(1)
+        for state_name in assigned:
+            if _function_requires_sender_state(chunk, fname, state_name):
+                return True
+    return False
 
 
 def _constructor_arg_flows_to_nonzero_guard(chunk, ctor_body, pname):
@@ -5762,17 +5864,23 @@ def constructor_param_nonzero_specs(source, contract):
     if not params or not body:
         return []
     specs = []
+    sender_mint_call = _constructor_calls_sender_mint(chunk, body)
     for idx, (pname, ptype) in enumerate(params):
         if _norm_ty(ptype) not in ("address", "address payable"):
             continue
-        if (not _body_has_nonzero_address_guard(body, pname) and
-                not _constructor_arg_flows_to_nonzero_guard(
-                    chunk, body, pname)):
+        match_sender = (sender_mint_call and
+                        _constructor_arg_controls_sender_guarded_call(
+                            chunk, body, pname))
+        if (not match_sender and
+                not _body_has_nonzero_address_guard(body, pname) and
+                not _constructor_arg_flows_to_nonzero_guard(chunk, body,
+                                                            pname)):
             continue
         specs.append({
             "param_index": idx,
             "param_name": pname,
             "param_type": ptype,
+            "match_sender": match_sender,
         })
     return specs
 
@@ -5796,6 +5904,8 @@ def constructor_sender_needs_nonzero(source, contract):
             return True
         if re.search(r"\b_mint\s*\(\s*" + term + r"\s*,", body):
             return True
+    if _constructor_calls_sender_mint(chunk, body):
+        return True
     return False
 
 
@@ -5824,7 +5934,7 @@ def apply_constructor_param_nonzero_args(lines, contract, specs):
             idx = spec["param_index"]
             if idx >= len(args) or not _is_zero_address_expr(args[idx]):
                 continue
-            seed = 1000 + idx
+            seed = 1 if spec.get("match_sender") else 1000 + idx
             addr = f"address(uint160({seed}))"
             if _is_address_payable_type(spec.get("param_type", "")):
                 addr = f"payable({addr})"
