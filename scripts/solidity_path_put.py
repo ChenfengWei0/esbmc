@@ -7583,6 +7583,8 @@ def split_top_level_bool(text, op):
 
 
 def _path_condition_from_unwrapped(inner, negated):
+    if split_top_level_bool(inner, "&&") or split_top_level_bool(inner, "||"):
+        return None
     m = SIMPLE_DECISION_RE.match(inner)
     if m:
         lhs, op, rhs = (m.group(1).strip(), m.group(2), m.group(3).strip())

@@ -3820,6 +3820,15 @@ def test_path_decision_guard_splits_safe_boolean_shapes():
             ("proposalId", "<=", "proposalCount"),
             ("proposalId", "!=", "0"),
         ], "plain disjunction means this path walked both negated arms")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim":
+          "msg.sender != InstanceBuyer && msg.sender != InstanceOwner"}],
+        {"msg.sender": "sender", "state.InstanceBuyer": "_pre_buyer",
+         "state.InstanceOwner": "_pre_owner"})
+    bad += check(lines == [] and skipped == [
+        ("'msg.sender != InstanceBuyer && msg.sender != InstanceOwner' "
+         "(not a simple binary decision)")
+    ], f"unsafe conjunction is skipped, not mis-rendered: {lines}, {skipped}")
     return bad
 
 
