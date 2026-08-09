@@ -3259,9 +3259,7 @@ def assert_query_var_name(name, layout, state_store_names=None):
     """Name a scalar state var the way ESBMC's assertion ladder resolves it."""
     if parse_slot_name(name)[0] is not None:
         return name
-    if name in (layout or {}):
-        return name
-    return name
+    return layout_scalar_key(name, layout, state_store_names) or name
 
 
 def restore_ladder_row_names(rows, state_store_names=None):

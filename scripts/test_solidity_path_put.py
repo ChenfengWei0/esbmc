@@ -2540,6 +2540,8 @@ def test_scalar_assert_vars_use_source_names_and_restore_legacy_rows():
     bad = 0
     bad += check(assert_query_var_name("_owner", layout, aliases) == "_owner",
                  "scalar assertion vars use the source storage name")
+    bad += check(assert_query_var_name("_owner$32", layout, aliases) == "_owner",
+                 "ESBMC scalar aliases are restored before the assertion ladder")
     bad += check(assert_query_var_name("_pendingOwner", layout, aliases)
                  == "_pendingOwner",
                  "scalar aliases are not sent to the assertion ladder")
