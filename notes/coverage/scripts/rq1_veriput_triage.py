@@ -379,6 +379,14 @@ def summary_artifact_totals(
     rows = summary_artifact_rows(result, result_path)
     if not rows and not paths:
         return None
+    if not rows:
+        # Some historical runs recorded `put_summary_paths` for units whose
+        # summary files have no deliverable rows, while the canonical
+        # result.json still carries valid concrete fallbacks in `put.raw_tests`
+        # / `put.valid_tests`.  An empty summary is not stronger evidence than
+        # the row-level totals; falling back avoids turning valid references
+        # into no-valid cases.
+        return None
     return {
         "raw": len(rows),
         "valid": sum(1 for row in rows if row.get("valid_reference_test")),

@@ -282,6 +282,34 @@ def test_unsupported_calldata_beats_generic_not_parameterized_note():
         return bad
 
 
+def test_empty_summary_does_not_erase_result_level_valid_tests():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subject = root / "bugfix124" / "subjects" / "ConcreteWithEmptySummary"
+        summary = subject / "put" / "unit" / "put-summary.json"
+        write_json(summary, {"deliverable_b": {"rows": []}})
+        doc = result_doc(
+            valid=1,
+            concrete_valid=1,
+            tests=[{
+                "kind": "concrete",
+                "stage2_source": "timeout_concrete_fallback",
+                "put_json": put_json(root / "concrete-put.json",
+                                     notes=["concrete-only fallback"]),
+            }],
+            cert={"KILLED": 1})
+        doc["put"]["summary_paths"] = [str(summary)]
+        write_json(subject / "result.json", doc)
+        rows = rq1_veriput_triage.triage_rows(root, ["bugfix124"])
+        bad = 0
+        bad += check(rows[0]["quality_bucket"] == "valid-no-PUT",
+                     f"empty summaries do not override valid result totals: "
+                     f"{rows}")
+        bad += check(rows[0]["valid"] == 1 and rows[0]["concrete_valid"] == 1,
+                     f"result-level concrete fallback totals survive: {rows}")
+        return bad
+
+
 def test_action_queue_demotes_hard_dynamic_mapping_no_r1r2():
     normal = {
         "dataset": "real203",
@@ -453,6 +481,7 @@ def main():
         test_summary_put_json_marks_rollback_no_r1r2,
         test_no_valid_stale_resume_identity_is_not_generic_error,
         test_unsupported_calldata_beats_generic_not_parameterized_note,
+        test_empty_summary_does_not_erase_result_level_valid_tests,
         test_action_queue_demotes_hard_dynamic_mapping_no_r1r2,
         test_action_queue_demotes_no_wide_rendered_coordinate,
         test_queue_archives_dynamic_mapping_oracle_without_rerun,
