@@ -5997,7 +5997,8 @@ void goto_coveraget::solidity_path_coverage()
           unit_id,
           loc.as_string(),
           from_expr(ns, "", condition),
-          arm});
+          arm,
+          false});
       return latch;
     };
 
@@ -11265,22 +11266,48 @@ void goto_coveraget::solidity_path_coverage()
 
       const size_t probe_claim_count =
         probe_goals.size() * physical_exits.size();
+      size_t sampled_exit_count = physical_exits.size();
       if (probe_claim_count > path_cov_max_goals)
       {
-        log_error(
+        sampled_exit_count = path_cov_max_goals / probe_goals.size();
+        if (sampled_exit_count == 0)
+          sampled_exit_count = 1;
+        for (const auto &goal : probe_goals)
+        {
+          auto gi = path_probe_goals.find(goal.id);
+          if (gi != path_probe_goals.end())
+            gi->second.exit_universe_truncated = true;
+        }
+        log_warning(
           "--path-cov-probe: unit '{}' needs {} probe claims ({} branch arms "
-          "x {} physical exits), exceeding --path-cov-max-goals {}. Refusing "
-          "instead of truncating the probe universe",
+          "x {} physical exits), exceeding --path-cov-max-goals {}. Sampling "
+          "{} physical exit(s) per branch arm instead of refusing. This is a "
+          "refutation-only probe: fired goals still provide witnesses, but "
+          "non-fired goals are reported UNKNOWN rather than PASSED because the "
+          "exit universe was not fully measured",
           unit_id,
           probe_claim_count,
           probe_goals.size(),
           physical_exits.size(),
-          path_cov_max_goals);
-        abort();
+          path_cov_max_goals,
+          sampled_exit_count);
       }
 
-      for (size_t exit_index = 0; exit_index < physical_exits.size();
-           ++exit_index)
+      std::vector<size_t> exit_indices;
+      exit_indices.reserve(sampled_exit_count);
+      if (sampled_exit_count >= physical_exits.size())
+      {
+        for (size_t i = 0; i < physical_exits.size(); ++i)
+          exit_indices.push_back(i);
+      }
+      else
+      {
+        for (size_t k = 0; k < sampled_exit_count; ++k)
+          exit_indices.push_back(
+            (k * physical_exits.size()) / sampled_exit_count);
+      }
+
+      for (const size_t exit_index : exit_indices)
       {
         auto pc = physical_exits[exit_index];
         const std::string exit_loc = pc->location.as_string();
@@ -11295,13 +11322,17 @@ void goto_coveraget::solidity_path_coverage()
       }
       log_status(
         "--path-cov-probe: unit '{}' added {} exit-latched claim(s) for {} "
-        "branch arm(s) at {} physical exit(s); complete-path denominator "
-        "remains {}",
+        "branch arm(s) at {} of {} physical exit(s); complete-path denominator "
+        "remains {}{}",
         unit_id,
-        probe_claim_count,
+        probe_goals.size() * exit_indices.size(),
         probe_goals.size(),
+        exit_indices.size(),
         physical_exits.size(),
-        all_claims.size());
+        all_claims.size(),
+        exit_indices.size() == physical_exits.size()
+          ? ""
+          : " (probe exit universe sampled; non-fired goals are unknown)");
     }
   }
 

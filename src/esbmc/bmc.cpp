@@ -2732,6 +2732,7 @@ void report_coverage(
           gj["decision_location"] = parse_claim_location(goal.decision_loc);
           gj["condition"] = prettify_solidity_expr(goal.condition);
           gj["arm"] = goal.arm;
+          gj["exit_universe_truncated"] = goal.exit_universe_truncated;
 
           size_t claims = 0, nF = 0, nP = 0, nU = 0, nB = 0;
           for (const auto &[key, meta] : goto_coveraget::path_probe_claims)
@@ -2754,7 +2755,10 @@ void report_coverage(
           }
           gj["claims_total"] = claims;
           gj["claim_status"] = {{"F", nF}, {"P", nP}, {"U", nU}, {"B", nB}};
-          gj["status"] = nF > 0 ? "F" : (nP == claims ? "P" : "U");
+          gj["status"] =
+            nF > 0 ? "F" : (goal.exit_universe_truncated
+                               ? "U"
+                               : (nP == claims ? "P" : "U"));
           if (nF > 0)
             ++fired;
 

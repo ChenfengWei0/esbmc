@@ -1,0 +1,7 @@
+CORE
+contract.sol
+--contract ProbeGoalCap --focus-function classify --solidity-path-coverage --branch-function-coverage --path-cov-probe --cov-report-json --solidity-max-tx 1 --all-witnesses --max-witnesses 4 --path-cov-max-goals 2 --memlimit 8g
+^WARNING: --path-cov-probe: unit 'sol:@C@ProbeGoalCap@F@classify#[0-9]+' needs [0-9]+ probe claims \([0-9]+ branch arms x [0-9]+ physical exits\), exceeding --path-cov-max-goals 2\. Sampling [0-9]+ physical exit\(s\) per branch arm instead of refusing\. This is a refutation-only probe: fired goals still provide witnesses, but non-fired goals are reported UNKNOWN rather than PASSED because the exit universe was not fully measured$
+^--path-cov-probe: unit 'sol:@C@ProbeGoalCap@F@classify#[0-9]+' added [0-9]+ exit-latched claim\(s\) for [0-9]+ branch arm\(s\) at [0-9]+ of [0-9]+ physical exit\(s\); complete-path denominator remains [0-9]+ \(probe exit universe sampled; non-fired goals are unknown\)$
+^--path-cov-probe: [0-9]+ of [0-9]+ branch-arm goal\(s\) fired; [0-9]+ complete execution observation\(s\), [0-9]+ unattributed; [0-9]+ varying coordinate pair\(s\), [0-9]+ outside-coordinate variation\(s\); blocker kept [0-9]+ and dropped [0-9]+ nondet value\(s\)$
+^VERIFICATION FAILED$

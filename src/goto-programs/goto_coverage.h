@@ -659,6 +659,7 @@ public:
     std::string decision_loc;
     std::string condition;
     std::string arm;
+    bool exit_universe_truncated = false;
   };
 
   struct path_probe_claimt
@@ -668,8 +669,8 @@ public:
   };
 
   // Probe goals are unique branch arms. Probe claims are their copies at
-  // distinct physical exits. Their outcomes and payloads never enter the
-  // complete-path claim ledger.
+  // distinct physical exits. When the exit product is sampled to stay under the
+  // goal cap, a non-firing goal is reported unknown rather than passed.
   static std::map<std::string, path_probe_goalt> path_probe_goals;
   static std::map<std::pair<std::string, std::string>, path_probe_claimt>
     path_probe_claims;
