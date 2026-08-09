@@ -7554,9 +7554,35 @@ def unwrap_decision_not(text):
     return text, negated
 
 
-def path_condition_from_branch_claim(branch_claim):
-    """Return the source condition this path walked, when it is simple."""
-    inner, negated = unwrap_decision_not(branch_claim)
+def split_top_level_bool(text, op):
+    """Split `text` on a top-level boolean operator, if it is flat enough."""
+    parts, start, depth = [], 0, 0
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch in "([":
+            depth += 1
+            i += 1
+            continue
+        if ch in ")]" and depth > 0:
+            depth -= 1
+            i += 1
+            continue
+        if depth == 0 and text.startswith(op, i):
+            parts.append(text[start:i].strip())
+            i += len(op)
+            start = i
+            continue
+        i += 1
+    if not parts:
+        return None
+    parts.append(text[start:].strip())
+    if any(not part for part in parts):
+        return None
+    return parts
+
+
+def _path_condition_from_unwrapped(inner, negated):
     m = SIMPLE_DECISION_RE.match(inner)
     if m:
         lhs, op, rhs = (m.group(1).strip(), m.group(2), m.group(3).strip())
@@ -7571,6 +7597,39 @@ def path_condition_from_branch_claim(branch_claim):
         return None
     walked_truth = term_negated if not negated else not term_negated
     return term, ("!=" if walked_truth else "=="), "0"
+
+
+def path_conditions_from_branch_claim(branch_claim):
+    """Return all simple source conditions this path walked."""
+    inner, negated = unwrap_decision_not(branch_claim)
+    if negated:
+        conjuncts = split_top_level_bool(inner, "&&")
+        if conjuncts:
+            out = []
+            for part in conjuncts:
+                rel = _path_condition_from_unwrapped(part, True)
+                if rel is None:
+                    return None
+                out.append(rel)
+            return out
+    else:
+        disjuncts = split_top_level_bool(inner, "||")
+        if disjuncts:
+            out = []
+            for part in disjuncts:
+                rel = _path_condition_from_unwrapped(part, False)
+                if rel is None:
+                    return None
+                out.append(rel)
+            return out
+    rel = _path_condition_from_unwrapped(inner, negated)
+    return [rel] if rel is not None else None
+
+
+def path_condition_from_branch_claim(branch_claim):
+    """Return the first source condition this path walked, when simple."""
+    rels = path_conditions_from_branch_claim(branch_claim)
+    return rels[0] if rels else None
 
 
 def render_path_decision_term(term, coord_ident_abs):
@@ -7620,24 +7679,24 @@ def path_decision_assumes(path_decisions, coord_ident_abs):
     seen = set()
     for dec in path_decisions or []:
         claim = dec.get("branch_claim") if isinstance(dec, dict) else None
-        rel = path_condition_from_branch_claim(claim)
-        if rel is None:
+        rels = path_conditions_from_branch_claim(claim)
+        if rels is None:
             skipped.append(f"{claim!r} (not a simple binary decision)")
             continue
-        lhs, op, rhs = rel
-        le, lerr = render_path_decision_term(lhs, coord_ident_abs)
-        re_, rerr = render_path_decision_term(rhs, coord_ident_abs)
-        if lerr or rerr:
-            skipped.append(f"{claim!r} ({lerr or rerr})")
-            continue
-        text = f"{le} {op} {re_}"
-        truth = constant_relation_truth(le, op, re_)
-        if truth is True:
-            continue
-        if text in seen:
-            continue
-        seen.add(text)
-        lines.append((claim, f"    vm.assume({text});"))
+        for lhs, op, rhs in rels:
+            le, lerr = render_path_decision_term(lhs, coord_ident_abs)
+            re_, rerr = render_path_decision_term(rhs, coord_ident_abs)
+            if lerr or rerr:
+                skipped.append(f"{claim!r} ({lerr or rerr})")
+                continue
+            text = f"{le} {op} {re_}"
+            truth = constant_relation_truth(le, op, re_)
+            if truth is True:
+                continue
+            if text in seen:
+                continue
+            seen.add(text)
+            lines.append((claim, f"    vm.assume({text});"))
     return lines, skipped
 
 
@@ -8771,6 +8830,32 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                 ok = materialize_r2_state_coord(cname) and ok
         return ok
 
+    def materialize_path_guard_state_terms():
+        for dec in path_decisions or []:
+            claim = dec.get("branch_claim") if isinstance(dec, dict) else None
+            rels = path_conditions_from_branch_claim(claim)
+            if rels is None:
+                continue
+            for lhs, _op, rhs in rels:
+                for term in (lhs, rhs):
+                    term = (term or "").strip()
+                    if (not term or term in coord_ident_abs
+                            or "state." + term in coord_ident_abs
+                            or _KEY_LIT_RE.match(term)
+                            or any(tok in term for tok in (" ", "&&", "||", "?"))
+                            or term.startswith("return_value$")
+                            or term.startswith("_ESBMC_aux")):
+                        continue
+                    cname = term if term.startswith("state.") else "state." + term
+                    svar = cname[len("state."):] if cname.startswith("state.") else cname
+                    mname, _slot_keys, _slot_tail = parse_slot_name(svar)
+                    if mname is not None:
+                        materialize_r2_state_coord(cname)
+                    elif (svar in point_texts
+                          or layout_scalar_key(svar, layout,
+                                               state_store_names) is not None):
+                        materialize_r2_state_coord(cname)
+
     # ---- THE ANTICHAIN. Only the rungs nothing else entails are rendered ----
     #
     # `assertGe` beside `assertGt` on the same pair detects exactly what the
@@ -8920,6 +9005,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         else:
             asserts += a
         oracle_details.append(detail)
+    materialize_path_guard_state_terms()
     path_guard_coord_ident_abs = expand_path_guard_coord_idents(
         coord_ident_abs, maps, state_store_names)
     path_guard_lines, path_guard_skipped = path_decision_assumes(

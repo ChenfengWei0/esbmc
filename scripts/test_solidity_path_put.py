@@ -84,6 +84,7 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                oracle_classes_for_rung,
                                partial_ladder_already_has_strict_oracle,
                                path_condition_from_branch_claim,
+                               path_conditions_from_branch_claim,
                                path_decision_assumes,
                                potential_rendered_widths_for_put,
                                rendered_env_coords_for_emitted_case,
@@ -3797,6 +3798,31 @@ def test_path_decision_guard_handles_double_negated_branch_claim():
     return bad
 
 
+def test_path_decision_guard_splits_safe_boolean_shapes():
+    bad = 0
+    bad += check(path_conditions_from_branch_claim(
+        "!(_chosenNumber > 0 && _chosenNumber <= 100)") == [
+            ("_chosenNumber", ">", "0"),
+            ("_chosenNumber", "<=", "100"),
+        ], "negated conjunction means this path walked both conjuncts")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "!(_chosenNumber > 0 && _chosenNumber <= 100)"}],
+        {"_chosenNumber": "chosen"})
+    bad += check(lines == [
+        ("!(_chosenNumber > 0 && _chosenNumber <= 100)",
+         "    vm.assume(chosen > 0);"),
+        ("!(_chosenNumber > 0 && _chosenNumber <= 100)",
+         "    vm.assume(chosen <= 100);"),
+    ] and skipped == [],
+        f"safe conjunction path guard renders both assumes: {lines}, {skipped}")
+    bad += check(path_conditions_from_branch_claim(
+        "proposalId > proposalCount || proposalId == 0") == [
+            ("proposalId", "<=", "proposalCount"),
+            ("proposalId", "!=", "0"),
+        ], "plain disjunction means this path walked both negated arms")
+    return bad
+
+
 def test_path_decision_guard_renders_unary_bool_mapping_relation():
     bad = 0
     bad += check(path_condition_from_branch_claim("!(!_isBlackListedBot[account])") ==
@@ -3824,6 +3850,29 @@ def test_path_decision_guard_negates_plain_unary_bool_claim():
     bad += check(lines == [("paused", "    vm.assume(_pre_paused == 0);")],
                  f"plain unary bool guard rendered: {lines}")
     bad += check(skipped == [], f"nothing skipped: {skipped}")
+    return bad
+
+
+def test_path_guard_materializes_state_coord_without_oracle_rung():
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={"msg.value": 0}, params=PARAMS, emitted=em,
+        case=case, layout=LAYOUT, ladder_rows=[], notes=notes,
+        path_decisions=[{"branch_claim": "!(msg.sender == owner)"}])
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced: {notes}")
+    bad += check("uint256 _pre_owner = (uint256(vm.load(address(c0)" in text,
+                 "path guard materializes owner even without an oracle rung")
+    bad += check("vm.assume(uint256(uint160(0)) == _pre_owner);" in text,
+                 "the state-backed path guard is rendered")
+    bad += check(stats["path_guard_assumes"] == 1
+                 and stats["path_guard_skipped"] == [],
+                 f"the guard is counted as established: {stats}")
     return bad
 
 
@@ -12761,9 +12810,11 @@ def main():
               test_path_decision_guard_renders_mapping_slot_relation,
               test_path_decision_guard_negates_plain_branch_claim,
               test_path_decision_guard_handles_double_negated_branch_claim,
+              test_path_decision_guard_splits_safe_boolean_shapes,
               test_path_decision_guard_renders_unary_bool_mapping_relation,
               test_path_decision_guard_negates_plain_unary_bool_claim,
               test_path_decision_guard_skips_true_constant_relation,
+              test_path_guard_materializes_state_coord_without_oracle_rung,
               test_path_guard_coord_idents_expand_scalar_store_aliases,
               test_path_guard_coord_idents_expand_mapping_source_aliases,
               test_path_guard_coord_idents_expand_mapping_store_aliases,
