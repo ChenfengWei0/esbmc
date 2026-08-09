@@ -2446,9 +2446,16 @@ def test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries():
                  and "_allowances$496" in query_maps,
                  f"query map drops the refused source name: {query_maps}")
     bad += check(region_slot_vars(region, query_maps) == [
-        "_allowances$496[msg.sender][_spender]"],
-                 f"certified source region is translated for ESBMC: "
+        "_allowances[msg.sender][_spender]"],
+                 f"certified source region is reused in source spelling: "
                  f"{region_slot_vars(region, query_maps)}")
+    alias_region = {
+        "state._allowances$496[msg.sender][_spender]": (0, 0),
+    }
+    bad += check(region_slot_vars(alias_region, query_maps) == [
+        "_allowances[msg.sender][_spender]"],
+                 f"certified alias region is restored to source spelling: "
+                 f"{region_slot_vars(alias_region, query_maps)}")
     bad += check(slots == ["_allowances$496[msg.sender][_spender]"],
                  f"source-access priority asks the internal store: {slots}")
     bad += check(used == {"_allowances$496"} and skipped == [],

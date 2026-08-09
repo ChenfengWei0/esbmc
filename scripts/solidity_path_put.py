@@ -4251,11 +4251,14 @@ def region_slot_vars(region, maps):
         mname, _keys, tail = parse_slot_name(v)
         if mname is None:
             continue
-        query_key = mapping_query_key(maps, mname + tail)
+        source_key = mname + tail
+        query_key = mapping_query_key(maps, source_key)
         if query_key is None or not queryable_mapping(maps, query_key):
             continue
-        query_base = mapping_query_base(query_key, maps[query_key])
-        qv = query_base + "".join(f"[{k}]" for k in _keys) + tail
+        source = mapping_source_key(maps[query_key]) or source_key
+        source_base, dot, source_member = source.partition(".")
+        source_tail = f".{source_member}" if dot else ""
+        qv = source_base + "".join(f"[{k}]" for k in _keys) + source_tail
         if qv not in out:
             out.append(qv)
     return out
@@ -11560,7 +11563,11 @@ def main():
         for v in direct_slot_vars:
             mname, _keys, tail = parse_slot_name(v)
             if mname is not None:
-                direct_mkeys.add(mname + tail)
+                source_key = mname + tail
+                direct_mkeys.add(source_key)
+                query_key = mapping_query_key(query_maps, source_key)
+                if query_key is not None:
+                    direct_mkeys.add(query_key)
         source_slot_vars, source_mkeys, source_slot_skipped = \
             source_access_slot_vars(
                 [] if slot_accesses is None else slot_accesses,
