@@ -3331,6 +3331,16 @@ def mapping_store_coord_alias(name, maps):
             + slot_tail)
 
 
+def mapping_source_slot_var(name, spec, keys):
+    """Return the source spelling for a mapping-slot ladder variable."""
+    source = mapping_source_key(spec) or name
+    source_base, dot, source_member = source.partition(".")
+    source_tail = f".{source_member}" if dot else ""
+    return (source_base
+            + "".join(f"[{key}]" for key in keys)
+            + source_tail)
+
+
 def expand_path_guard_coord_idents(
         coord_ident_abs, maps=None, state_store_names=None):
     """Add source/store aliases so path guards can reuse existing pre-reads."""
@@ -3504,8 +3514,7 @@ def propose_slot_vars(maps, params, budget=SLOT_VAR_BUDGET, log=print,
                 f"not a rung that was refused.")
             combos = combos[:budget]
         for keys in combos:
-            out.append(query_base + "".join(f"[{k}]" for k in keys)
-                       + (f".{member}" if member else ""))
+            out.append(mapping_source_slot_var(mname, maps[mname], keys))
     return out
 
 
@@ -4363,10 +4372,7 @@ def source_access_slot_vars(accesses, maps, params=None, state_types=None,
                 rendered.append(name)
             if not rendered:
                 continue
-            query_base = mapping_query_base(mkey, spec)
-            coord = query_base + "".join(f"[{k}]" for k in rendered)
-            if member:
-                coord += "." + member
+            coord = mapping_source_slot_var(mkey, spec, rendered)
             if coord not in out:
                 out.append(coord)
             used_mkeys.add(mkey)
@@ -4385,9 +4391,11 @@ def assert_query_pins(pins, layout, maps):
         if mname is not None:
             query_key = mapping_query_key(maps, mname + tail)
             if query_key is not None and queryable_mapping(maps, query_key):
-                query_base = mapping_query_base(query_key, maps[query_key])
-                qname = ("state." + query_base
-                         + "".join(f"[{k}]" for k in _keys) + tail)
+                source = mapping_source_key(maps[query_key]) or (mname + tail)
+                source_base, dot, source_member = source.partition(".")
+                source_tail = f".{source_member}" if dot else ""
+                qname = ("state." + source_base
+                         + "".join(f"[{k}]" for k in _keys) + source_tail)
                 keep[qname] = value
             else:
                 skipped.append(

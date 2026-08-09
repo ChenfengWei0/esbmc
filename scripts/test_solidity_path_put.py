@@ -2412,13 +2412,14 @@ def test_certified_region_mapping_slots_are_ASKED_before_guesses():
     return bad
 
 
-def test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries():
-    """The ladder resolves verifier store names, not solc source labels.
+def test_mapping_aliases_keep_source_names_for_ladder_vars():
+    """The ladder spec names mapping vars with solc/source labels.
 
     ERC-3643 measured the failure mode: solc reports `_allowances`, while
-    ESBMC's merged contract field is `_allowances$496`. The query side must
-    ask for the latter, but keep the same solc layout tuple so Foundry renders
-    the same storage slot.
+    ESBMC's merged contract field is `_allowances$496`. Queryability is checked
+    through the alias row, but the `vars` and region entries sent to
+    --path-cov-assert must keep source spelling; otherwise the ladder rejects
+    `state._allowances$496[...]` as a coordinate the unit cannot express.
     """
     from solidity_path_put import source_access_slot_vars  # noqa: E402
 
@@ -2456,14 +2457,15 @@ def test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries():
         "_allowances[msg.sender][_spender]"],
                  f"certified alias region is restored to source spelling: "
                  f"{region_slot_vars(alias_region, query_maps)}")
-    bad += check(slots == ["_allowances$496[msg.sender][_spender]"],
-                 f"source-access priority asks the internal store: {slots}")
+    bad += check(slots == ["_allowances[msg.sender][_spender]"],
+                 f"source-access priority asks the source slot: {slots}")
     bad += check(used == {"_allowances$496"} and skipped == [],
                  f"the alias suppresses fallback without skip noise: "
                  f"{used}, {skipped}")
     bad += check(pins == {
-        "state._allowances$496[msg.sender][_spender]": 1
-    } and pin_skips == [], f"mapping pins are translated: {pins}, {pin_skips}")
+        "state._allowances[msg.sender][_spender]": 1
+    } and pin_skips == [],
+                 f"mapping pins keep source spelling: {pins}, {pin_skips}")
     bad += check(query_region == [{
         "name": "state._allowances[msg.sender][_spender]",
         "lo": "0", "hi": "0"
@@ -2473,7 +2475,7 @@ def test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries():
     return bad
 
 
-def test_mapping_aliases_keep_struct_member_tails_queryable():
+def test_mapping_aliases_keep_struct_member_tails_source_named():
     from solidity_path_put import propose_slot_vars  # noqa: E402
 
     source_maps = {
@@ -2489,8 +2491,8 @@ def test_mapping_aliases_keep_struct_member_tails_queryable():
     bad += check("_balances$123.amount" in query_maps,
                  f"struct-valued mapping member keeps its member tail: "
                  f"{query_maps}")
-    bad += check(got[0] == "_balances$123[msg.sender].amount",
-                 f"fallback proposal uses the internal base and source tail: "
+    bad += check(got[0] == "_balances[msg.sender].amount",
+                 f"fallback proposal uses the source base and member tail: "
                  f"{got}")
     return bad
 
@@ -12922,8 +12924,8 @@ def main():
               test_source_access_slots_render_state_struct_member_keys,
               test_the_CANDIDATE_BUDGET_says_what_it_dropped,
               test_certified_region_mapping_slots_are_ASKED_before_guesses,
-              test_mapping_aliases_use_ESBMC_store_names_for_ladder_queries,
-              test_mapping_aliases_keep_struct_member_tails_queryable,
+              test_mapping_aliases_keep_source_names_for_ladder_vars,
+              test_mapping_aliases_keep_struct_member_tails_source_named,
               test_scalar_layout_aliases_use_source_slots_for_foundry_rendering,
         test_scalar_assert_vars_use_source_names_and_restore_legacy_rows,
               test_state_store_aliases_have_one_canonical_entry_coordinate,

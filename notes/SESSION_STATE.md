@@ -576,3 +576,46 @@ Operational notes:
 - Reruns are justified only when a code fix plausibly changes the result; avoid
   blind repeats of full-budget no-valid cases like `TOAD` until region/unit
   scheduling or ESBMC modeling changes.
+
+## VeriPUT RQ1 state, 2026-08-09 09:55 CST
+
+Current process audit at 09:04 CST showed no active VeriPUT/ESBMC runners.
+Treat older "active runner" bullets above as historical, not authoritative.
+
+Strict execution policy for the rest of today:
+
+- Do not broad-rerun no-evidence no-valid cases.
+- Rerun only cases directly hit by a new code fix, then expand only if the
+  representative hit rate is good.
+- A valid PUT must pass both gates: verifier-backed assertions and Foundry
+  replay on the reference contract. Foundry replay is a refutation guard, not a
+  proof.
+
+Current aggregate after targeted reruns:
+
+- `valid-PUT-with-R1R2`: 128
+- `valid-PUT-no-R1R2`: 73
+- `valid-no-PUT`: 31
+- `PUT-with-R1R2-but-no-width`: 1
+- `no-valid`: 276
+
+New code fix in progress:
+
+- Mapping slot names now stay source-named for all assertion-ladder inputs:
+  `vars`, certified region entries, and mapping pins. ESBMC store aliases such
+  as `balances$7` / `_allowances$496` are still used only to prove that the
+  mapping is queryable through solc layout metadata.
+- Motivation: `BasicToken.balanceOf` and ERC20-like cases had source-named
+  `region` but `oracle_vars` or pins still used `state.<map>$id[...]`, causing
+  `--path-cov-assert` to refuse with "region coordinate ... cannot be
+  expressed".
+- Unit test: `python3 scripts/test_solidity_path_put.py` passed (291/291).
+- Direct-hit validation:
+  - `bugfix124 rcx_reentrancy__0xb5e1...__SmartFix`: changed from
+    `valid-PUT-no-R1R2` to `valid-PUT-with-R1R2`; latest `put.json` asks
+    `balances[0]`, no unanswered mapping slot, R0/R1.
+  - `peer182 peer_ccsolbmc__eNew`: changed from mapping-dynarray-unrendered
+    `valid-PUT-no-R1R2` to `valid-PUT-with-R1R2`; wall about 593s.
+  - `peer182 peer_solar__BasicToken` was rerun before the mapping-pin half of
+    the fix and still showed `state.balances$7[0]` refusal from pins. It should
+    be eligible for one justified rerun after this fix if time allows.
