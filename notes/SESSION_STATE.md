@@ -709,3 +709,58 @@ New code fix in progress:
   - `peer182 peer_solar__BasicToken` was rerun before the mapping-pin half of
     the fix and still showed `state.balances$7[0]` refusal from pins. It should
     be eligible for one justified rerun after this fix if time allows.
+
+## VeriPUT RQ1 state, 2026-08-09 11:40 CST
+
+New pushed fix:
+
+- `db33c1d1cd [scripts] Repair Foundry replay guards`
+  - Path-guard numeric literal rendering now converts 40-hex-digit literals to
+    decimal before emitting `vm.assume(...)`. This fixes Solidity 0.8.x treating
+    address-sized hex constants as EIP-55 address literals in numeric contexts.
+  - Constructor replay now repairs zero-sender deployment pranks when the target
+    constructor source explicitly forbids a zero sender, including
+    `_mint(_msgSender(), ...)`.
+  - Verified with `python3 scripts/test_solidity_path_put.py` (293/293).
+
+Representative validations before spending ESBMC budget:
+
+- `peer_ccsolbmc__CyberFox.addBotToBlackList`: copying the existing Foundry
+  project to `/tmp` and replacing only the 40-hex guard literal with decimal
+  made `forge test --json` report `test_put_CyberFox_addBotToBlackList_path31`
+  as `Success`.
+- `reprod_DCFToken.setCfg`: copying the existing Foundry project and replacing
+  only `vm.startPrank(address(uint160(0)), address(uint160(0)))` with nonzero
+  made two of the three `setCfg` PUTs pass Foundry; the failing one was a real
+  R2 assertion refutation, not setUp failure.
+
+Official one-shot reruns after the fix:
+
+- `peer182 peer_ccsolbmc__CyberFox`: `raw=1 valid=1 put=1/1`, bucket
+  `valid-PUT-with-R1R2`, wall `599.6s`, max RSS about `10.2GiB`.
+- `bugfix124 reprod_DCFToken`: `raw=9 valid=7 put=7/9`, bucket
+  `valid-PUT-with-R1R2`, wall `617.959s`, max RSS about `1.7GiB`.
+
+Current aggregate after queue refresh:
+
+- `valid-PUT-with-R1R2`: 151
+- `valid-PUT-no-R1R2`: 52
+- `valid-no-PUT`: 31
+- `PUT-with-R1R2-but-no-width`: 1
+- `no-valid`: 274
+
+Queue status:
+
+- `Done`: 151
+- `P0`: 84
+- `P1`: 2
+- `P2`: 145
+- Remaining canonical raw-no-valid cases are only:
+  - `peer_ccsolbmc__ClockBoxContract`: one raw concrete fallback, no PUT; reason
+    `cert-no-path`. Lower priority unless a concrete replay/constructor issue is
+    found.
+  - `peer_soltg__short_circuit_or_inside_branch`: two raw PUT artifacts with
+    R0/R1/R2, but rendered width is `a=1`; one Forge success is still not B
+    because width gate is false, and the other is a real assertion failure.
+    The dropped `return_value$_f$N` path guard alone is not enough to make this a
+    valid PUT, so do not spend an ESBMC rerun on it without a new width strategy.
