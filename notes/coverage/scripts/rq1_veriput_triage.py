@@ -273,7 +273,7 @@ def classify_no_valid(result: dict, result_path: Path | None = None) -> str:
                               "do not match the identity on disk now"):
         return "stale-resume-identity"
     if case_logs_contain(result_path, "NAMED OBSTACLE", "No *.t.sol generated"):
-        return "foundry-obstacle-no-test"
+        return "model-chain-obstacle-no-test"
     if "no output after" in reason:
         return "stage2-no-output-timeout"
     if "no Stage-2 candidate" in reason:

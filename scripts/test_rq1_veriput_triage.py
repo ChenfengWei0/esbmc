@@ -257,6 +257,29 @@ def test_no_valid_stale_resume_identity_is_not_generic_error():
         return bad
 
 
+def test_no_valid_named_obstacle_is_model_chain_mismatch():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subject = root / "real203" / "subjects" / "NamedObstacle"
+        write_json(subject / "result.json",
+                   result_doc(valid=0, cert={"KILLED": 1}, status="ok"))
+        log = (subject / "put" / "unit" / "_wd" / "case" / "emit"
+               / "run.log")
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(
+            "WARNING: --solidity-path-coverage: NAMED OBSTACLE -- "
+            "the model and the chain disagree\n"
+            "WARNING: No Foundry test cases collected. No *.t.sol generated.\n")
+        rows = rq1_veriput_triage.triage_rows(root, ["real203"])
+        bad = 0
+        bad += check(rows[0]["quality_bucket"] == "no-valid",
+                     f"named obstacle remains no-valid: {rows}")
+        bad += check(rows[0]["triage_cause"]
+                     == "model-chain-obstacle-no-test",
+                     f"named obstacle is a model/chain blocker: {rows}")
+        return bad
+
+
 def test_unsupported_calldata_beats_generic_not_parameterized_note():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -480,6 +503,7 @@ def main():
         test_triage_causes_distinguish_concrete_and_unobservable_puts,
         test_summary_put_json_marks_rollback_no_r1r2,
         test_no_valid_stale_resume_identity_is_not_generic_error,
+        test_no_valid_named_obstacle_is_model_chain_mismatch,
         test_unsupported_calldata_beats_generic_not_parameterized_note,
         test_empty_summary_does_not_erase_result_level_valid_tests,
         test_action_queue_demotes_hard_dynamic_mapping_no_r1r2,

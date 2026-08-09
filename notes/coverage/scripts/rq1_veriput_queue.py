@@ -263,6 +263,9 @@ def _today_action(row: dict, queue: str, queue_reason: str,
         if status == "error" or queue_reason == "no-valid-error":
             return ("inspect_pipeline_error",
                     "rerun_only_after_error_fix")
+        if primary_reason == "model-chain-obstacle-no-test":
+            return ("archive_model_chain_obstacle",
+                    "do_not_rerun_without_model_semantics_fix")
         if primary_reason.startswith("cert-no-witness"):
             return ("archive_no_witness",
                     "do_not_rerun_without_region_strategy")
