@@ -436,3 +436,71 @@ Concurrency rule as of this snapshot:
 - Do not add another runner until one or two heavy ESBMC children exit. When
   memory frees, continue with the remaining stale peer no-valid queue, skipping
   subjects already in active sessions.
+
+## VeriPUT RQ1 state, 2026-08-09 later CST
+
+Additional pushed fixes:
+
+- `4ff37e53e7 [scripts] Parse nested negated path guards`
+  - `unwrap_decision_not()` now strips nested `!(...)` layers and toggles the
+    path-condition polarity each time.
+  - Fixes branch claims like `!(!(msg.sender == owner))`, which previously
+    parsed as lhs ``!(msg.sender`` and made the generated PUT lose a path
+    guard.
+  - Verified with `python3 -m py_compile scripts/solidity_path_put.py
+    scripts/test_solidity_path_put.py` and
+    `python3 scripts/test_solidity_path_put.py` (283/283).
+- `0dd4b7cb73 [scripts] Render unary boolean path guards`
+  - `path_condition_from_branch_claim()` now renders simple boolean branch
+    claims as numeric guards, e.g. `!(!_isBlackListedBot[account])` becomes
+    `_isBlackListedBot[account] == 0` when the term is nameable.
+  - Motivation: `peer_ccsolbmc__CyberFox.addBotToBlackList` produced a wide
+    PUT with R0/R1 but `valid_reference_test=false`; its `put.json` showed
+    `path_guard_skipped` for `!(!_isBlackListedBot[account])`, so the Foundry
+    PUT could fuzz into an already-blacklisted account and violate the
+    certified normal path. This fix is refutation-safe: unnameable terms still
+    skip.
+  - Verified with `python3 -m py_compile ...` and
+    `python3 scripts/test_solidity_path_put.py` (285/285).
+
+Updated peer recovery progress:
+
+- `peer182` snapshot after Address/Lunar/ShibaSamurai but before pending
+  StarNFTProxy/wLitiSale/BERNIE/ShibaKiyo and targeted CyberFox/ShibaJail/
+  shibabread rerun: total 182, valid 106, PUT 103, R1/R2 67; buckets
+  `{'valid-PUT-with-R1R2': 67, 'no-valid': 76, 'valid-PUT-no-R1R2': 36,
+  'valid-no-PUT': 3}`.
+- New successful peer recoveries since the older 95-valid snapshot include:
+  `Ryujin`, `PROGEV2`, `PONY`, `DogeRocket`, `shibabread` (valid PUT but no
+  R1/R2), `MayoOcho`, `TokenVesting`, `Galaxium` (valid concrete only),
+  `Address`, `Lunar`, and `ShibaSamurai`.
+- Still notable no-valid / weak cases from these batches:
+  - `TOAD`: full 600s budget-exhausted no-valid.
+  - `MiraNft`: full 600s budget-exhausted no-valid.
+  - `BurnableERC20`: full 600s budget-exhausted no-valid.
+  - `ClockBoxContract`: emitted one raw concrete fallback for `decimals`, but
+    double-oracle valid count was 0.
+  - `CyberFox`: old run emitted one raw PUT with R0/R1 and wide `account`, but
+    double-oracle valid count was 0; targeted rerun started after the unary
+    bool guard fix.
+
+Active runner sessions at this snapshot:
+
+- `98846`: peer batch `Address BurnableERC20 StarNFTProxy wLitiSale`.
+  `Address` succeeded with valid PUT+R1/R2; `BurnableERC20` exhausted budget
+  no-valid; `StarNFTProxy` and `wLitiSale` still running.
+- `40240`: peer batch `ShibaSamurai Lunar BERNIE ShibaKiyo`.
+  `Lunar` and `ShibaSamurai` succeeded with valid PUT+R1/R2; `BERNIE` and
+  `ShibaKiyo` still running.
+- `24264`: targeted rerun batch `CyberFox ShibaJail shibabread`, started after
+  the unary bool guard fix. Purpose is to test whether the guard/R2-budget
+  fixes improve `CyberFox` no-valid and `ShibaJail`/`shibabread` no-R1/R2.
+
+Operational notes:
+
+- Do not mutate `/home/samson/workspace/VeriPUT/Datasets`.
+- Existing active runners were started with `--timeout 600 --wrapper-grace 60
+  --memlimit-gib 8 --jobs 2 --redo`.
+- Reruns are justified only when a code fix plausibly changes the result; avoid
+  blind repeats of full-budget no-valid cases like `TOAD` until region/unit
+  scheduling or ESBMC modeling changes.
