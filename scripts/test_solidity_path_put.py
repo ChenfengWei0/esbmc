@@ -75,6 +75,7 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                fixture_from_esbmc_args, load_fixture_json,
                                assert_query_var_name,
                                layout_scalar_key,
+                               mapping_source_coord_alias,
                                prefer_esbmc_mapping_aliases,
                                no_oracle_reason, observed_env,
                                normal_exit_region_retreat,
@@ -2560,6 +2561,37 @@ def test_state_store_aliases_have_one_canonical_entry_coordinate():
     bad += check(canonical_state_coord_name("msg.sender", aliases)
                  == "msg.sender",
                  "non-state coordinates are unchanged")
+    return bad
+
+
+def test_mapping_store_aliases_have_source_path_guard_coordinate():
+    maps = {
+        "_isBlackListedBot$534": (
+            12, "address", 1, 0, "_isBlackListedBot", None),
+        "_balances$1.amount": (
+            7, "address", 32, 0, "_balances", "amount"),
+    }
+    bad = 0
+    bad += check(mapping_source_coord_alias(
+        "state._isBlackListedBot$534[account]", maps)
+        == "state._isBlackListedBot[account]",
+        "mapping store alias exposes the source path-guard coordinate")
+    bad += check(mapping_source_coord_alias(
+        "state._balances$1[msg.sender].amount", maps)
+        == "state._balances[msg.sender].amount",
+        "mapping struct-member alias keeps its source member tail")
+    bad += check(mapping_source_coord_alias(
+        "state._unknown$1[account]", maps) is None,
+        "unknown mapping aliases are not guessed from spelling")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "!(!_isBlackListedBot[account])"}],
+        {"state._isBlackListedBot$534[account]": "_pre_blacklisted",
+         "state._isBlackListedBot[account]": "_pre_blacklisted"})
+    bad += check(lines == [
+        ("!(!_isBlackListedBot[account])",
+         "    vm.assume(_pre_blacklisted == 0);")
+    ] and skipped == [],
+        f"source alias lets unary mapping guard render: {lines}, {skipped}")
     return bad
 
 
@@ -12768,6 +12800,7 @@ def main():
               test_scalar_layout_aliases_use_source_slots_for_foundry_rendering,
         test_scalar_assert_vars_use_source_names_and_restore_legacy_rows,
               test_state_store_aliases_have_one_canonical_entry_coordinate,
+              test_mapping_store_aliases_have_source_path_guard_coordinate,
               test_contract_state_store_aliases_read_solc_declaration_ids,
               test_assert_query_keeps_state_pins_for_the_certified_slice,
               test_assert_query_region_keeps_slots_but_drops_state_scalars,

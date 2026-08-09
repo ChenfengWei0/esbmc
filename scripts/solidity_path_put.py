@@ -3288,6 +3288,28 @@ def canonical_state_coord_name(name, state_store_names=None):
     return "state." + source_by_store.get(svar, svar)
 
 
+def mapping_source_coord_alias(name, maps):
+    """Return the source spelling for an ESBMC mapping-slot coordinate."""
+    if not name.startswith("state."):
+        return None
+    svar = name[len("state."):]
+    mname, slot_keys, slot_tail = parse_slot_name(svar)
+    if mname is None:
+        return None
+    mkey = mname + slot_tail
+    spec = (maps or {}).get(mkey)
+    if not spec or len(spec) < 6:
+        return None
+    source_base, member = spec[4], spec[5]
+    if not source_base or source_base == mname:
+        return None
+    alias = ("state." + source_base
+             + "".join(f"[{key}]" for key in slot_keys))
+    if member:
+        alias += "." + member
+    return alias
+
+
 def prefer_esbmc_mapping_aliases(maps):
     """Drop source-name rows when an ESBMC store-name alias exists."""
     aliases_by_source = {}
@@ -8657,6 +8679,10 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                 pre_reads.append(f"    uint256 {ident} = {rd};")
             coord_ident[cname] = ident
             coord_ident_abs[cname] = ident
+            source_alias = mapping_source_coord_alias(cname, maps)
+            if source_alias:
+                coord_ident[source_alias] = ident
+                coord_ident_abs[source_alias] = ident
             return True
         if cname in point_texts:
             coord_ident[cname] = point_texts[cname]
