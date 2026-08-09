@@ -123,6 +123,23 @@ Update after commits `7f99c72b10` and `49a6da2fb6`:
   `valid-PUT-with-R1R2=148`, `valid-PUT-no-R1R2=53`,
   `valid-no-PUT=31`, `no-valid=276`.
 
+Update after commit `efb8cf5bfe`:
+
+- Scalar assertion vars are now restored from ESBMC store aliases before
+  sending `vars` to `--path-cov-assert`; e.g. `owner$3` becomes source
+  layout name `owner`.
+- Direct validation: `real203 / ensdomains__ens-contracts__Ownable` improved
+  to `valid-PUT-with-R1R2` in 20s (`raw=3 valid=3 put=2/2 concrete=1/1`).
+  The `isOwner` PUT now has `oracle_classes ["R0", "R1", "R2"]` over `owner`.
+- Current aggregate after this validation:
+  `valid-PUT-with-R1R2=149`, `valid-PUT-no-R1R2=52`,
+  `valid-no-PUT=31`, `no-valid=276`.
+- Cheap weak cases inspected but not worth rerunning without a new mechanism:
+  `peer_soltg__branches_merge_variables_3` and `peer_soltg__while_1` are
+  pure/local-assertion functions with no storage or return oracle to render;
+  `peer_solar__Greeter2` needs string mapping slot support
+  (`mapping(uint8 => string) helloByLang`) before R1/R2 can be emitted.
+
 Update after commit `664dfde930`:
 
 - Added `notes/coverage/scripts/rq1_veriput_queue.py`.
