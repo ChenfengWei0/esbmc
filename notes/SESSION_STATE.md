@@ -32,8 +32,8 @@ Latest queue split:
 - `Done`: 153
 - `P0`: 84
 - `P1`: 2
-- `P2`: 145
-- `Archive`: 125
+- `P2`: 141
+- `Archive`: 129
 
 The queue TSVs now include two extra scheduling columns:
 
@@ -48,12 +48,11 @@ Current action counts:
 - `archive_no_candidate_assertion`: 9
 - `archive_no_observable_width`: 1
 - `archive_no_witness`: 69
-- `archive_timeout_or_killed`: 87
-- `archive_low_evidence_no_valid`: 110
+- `archive_timeout_or_killed`: 90
+- `archive_low_evidence_no_valid`: 111
 - `repair_mapping_dynarray_renderer`: 3
 - `repair_width_gate`: 1
 - `inspect_artifact_no_valid`: 2
-- `rerun_stale_identity`: 4
 
 Do not blind-rerun the archived categories.  In particular:
 
@@ -76,16 +75,17 @@ Actionable small list before any benchmark rerun:
 - `inspect_artifact_no_valid`:
   - `peer182 / peer_ccsolbmc__ClockBoxContract`
   - `peer182 / peer_soltg__short_circuit_or_inside_branch`
-- `rerun_stale_identity`:
-  - `bugfix124 / pop_032_PuttyV2`
-  - `peer182 / peer_ccsolbmc__BERNIE`
-  - `peer182 / peer_ccsolbmc__HOTDOGE`
-  - `peer182 / peer_ccsolbmc__KOALA`
+Resolved stale-identity rows:
 
-The `rerun_stale_identity` rows failed because the repository head/dirty flag
-changed mid-sweep and the runner correctly refused to resume.  After committing
-the current scripts, these four may be rerun with `--redo`; that is a
-mechanism-specific rerun, not a blind sweep.
+- `bugfix124 / pop_032_PuttyV2`
+- `peer182 / peer_ccsolbmc__BERNIE`
+- `peer182 / peer_ccsolbmc__HOTDOGE`
+- `peer182 / peer_ccsolbmc__KOALA`
+
+All four were rerun after the queue/triage commits with `--redo`,
+`--timeout 600`, `--wrapper-grace 60`, `--memlimit-gib 12`, `--jobs 1`.
+All four now have real `budget-exhausted/no-valid/raw=0` results rather than
+stale resume errors.  Do not rerun them again without a new region strategy.
 
 Verification already run after this queue/accounting change:
 

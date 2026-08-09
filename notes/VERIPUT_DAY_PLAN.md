@@ -36,16 +36,16 @@ Queue counts:
 - `Done`: 153
 - `P0`: 84
 - `P1`: 2
-- `P2`: 145
-- `Archive`: 125
+- `P2`: 141
+- `Archive`: 129
 
 ## One-Day Work Order
 
 1. Keep all archived categories out of ESBMC until final failure recording.
    This removes 344 low-yield rows from the active debug loop.
-2. Work only the 10 actionable rows:
+2. Work only the 6 remaining actionable rows:
    `repair_mapping_dynarray_renderer` 3, `repair_width_gate` 1,
-   `inspect_artifact_no_valid` 2, `rerun_stale_identity` 4.
+   `inspect_artifact_no_valid` 2.
 3. For each action class, inspect artifacts first and write the mechanism in
    notes before touching ESBMC.
 4. After a code fix, run exactly one representative case from that class.  If
@@ -78,16 +78,17 @@ Policy: no rerun until width provenance/gating changes.
 
 Policy: artifact-specific diagnosis first; no generic rerun.
 
-### rerun_stale_identity
+### resolved stale identity reruns
 
 - `bugfix124 / pop_032_PuttyV2`
 - `peer182 / peer_ccsolbmc__BERNIE`
 - `peer182 / peer_ccsolbmc__HOTDOGE`
 - `peer182 / peer_ccsolbmc__KOALA`
 
-Policy: these rows were interrupted by repo identity drift during a previous
-sweep.  After the current queue/triage scripts are committed, they may be
-rerun once with `--redo` because the failure mechanism is known.
+Status: rerun once after the triage commits with 600s generation timeout,
+60s wrapper grace, 12GiB memory, and `--redo`.  All four are now real
+`budget-exhausted/no-valid/raw=0` rows.  Do not rerun them again without a new
+region strategy.
 
 ## Explicit Non-Goals Today
 
