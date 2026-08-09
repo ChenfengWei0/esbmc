@@ -7616,6 +7616,19 @@ def _path_condition_from_unwrapped(inner, negated):
 
 def path_conditions_from_branch_claim(branch_claim):
     """Return all simple source conditions this path walked."""
+    groups = path_condition_groups_from_branch_claim(branch_claim)
+    if groups is None or any(len(group) != 1 for group in groups):
+        return None
+    return [group[0] for group in groups]
+
+
+def path_condition_groups_from_branch_claim(branch_claim):
+    """Return conjunctive groups of source conditions this path walked.
+
+    Each outer list item is ANDed with the next.  A multi-relation inner list
+    is ORed.  This keeps `!(A && B)` as two ordinary assumes while allowing the
+    false side of `A && B` to be rendered as `!A || !B`.
+    """
     inner, negated = unwrap_decision_not(branch_claim)
     if negated:
         conjuncts = split_top_level_bool(inner, "&&")
@@ -7625,8 +7638,17 @@ def path_conditions_from_branch_claim(branch_claim):
                 rel = _path_condition_from_unwrapped(part, True)
                 if rel is None:
                     return None
-                out.append(rel)
+                out.append([rel])
             return out
+        disjuncts = split_top_level_bool(inner, "||")
+        if disjuncts:
+            group = []
+            for part in disjuncts:
+                rel = _path_condition_from_unwrapped(part, True)
+                if rel is None:
+                    return None
+                group.append(rel)
+            return [group]
     else:
         disjuncts = split_top_level_bool(inner, "||")
         if disjuncts:
@@ -7635,10 +7657,19 @@ def path_conditions_from_branch_claim(branch_claim):
                 rel = _path_condition_from_unwrapped(part, False)
                 if rel is None:
                     return None
-                out.append(rel)
+                out.append([rel])
             return out
+        conjuncts = split_top_level_bool(inner, "&&")
+        if conjuncts:
+            group = []
+            for part in conjuncts:
+                rel = _path_condition_from_unwrapped(part, False)
+                if rel is None:
+                    return None
+                group.append(rel)
+            return [group]
     rel = _path_condition_from_unwrapped(inner, negated)
-    return [rel] if rel is not None else None
+    return [[rel]] if rel is not None else None
 
 
 def path_condition_from_branch_claim(branch_claim):
@@ -7694,20 +7725,34 @@ def path_decision_assumes(path_decisions, coord_ident_abs):
     seen = set()
     for dec in path_decisions or []:
         claim = dec.get("branch_claim") if isinstance(dec, dict) else None
-        rels = path_conditions_from_branch_claim(claim)
-        if rels is None:
+        groups = path_condition_groups_from_branch_claim(claim)
+        if groups is None:
             skipped.append(f"{claim!r} (not a simple binary decision)")
             continue
-        for lhs, op, rhs in rels:
-            le, lerr = render_path_decision_term(lhs, coord_ident_abs)
-            re_, rerr = render_path_decision_term(rhs, coord_ident_abs)
-            if lerr or rerr:
-                skipped.append(f"{claim!r} ({lerr or rerr})")
+        for group in groups:
+            texts = []
+            tautology = False
+            for lhs, op, rhs in group:
+                le, lerr = render_path_decision_term(lhs, coord_ident_abs)
+                re_, rerr = render_path_decision_term(rhs, coord_ident_abs)
+                if lerr or rerr:
+                    skipped.append(f"{claim!r} ({lerr or rerr})")
+                    texts = []
+                    break
+                text = f"{le} {op} {re_}"
+                truth = constant_relation_truth(le, op, re_)
+                if len(group) == 1 and truth is True:
+                    tautology = True
+                    break
+                if len(group) > 1 and truth is True:
+                    tautology = True
+                    break
+                if len(group) > 1 and truth is False:
+                    continue
+                texts.append(text)
+            if tautology or not texts:
                 continue
-            text = f"{le} {op} {re_}"
-            truth = constant_relation_truth(le, op, re_)
-            if truth is True:
-                continue
+            text = texts[0] if len(texts) == 1 else "(" + " || ".join(texts) + ")"
             if text in seen:
                 continue
             seen.add(text)

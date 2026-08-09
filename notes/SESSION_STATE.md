@@ -17,15 +17,25 @@ User constraints now:
   and R0/R1/R2 oracle class counts. Foundry replay/double oracle is outside the
   ESBMC generation timeout.
 
-Current aggregate results from existing JSON, before the path-guard alias
-repair is benchmark-rerun:
+Current aggregate results from existing JSON after the source-named mapping
+ladder fixes and before the OR path-guard benchmark validation:
 
-| dataset | valid | PUT among valid | concrete-only | R1/R2 among valid |
+| dataset | strong PUT with R1/R2 | valid PUT no R1/R2 | valid concrete-only | no valid |
 |---|---:|---:|---:|---:|
-| peer182 | 108/182 = 59.3% | 105/108 = 97.2% | 3/108 = 2.8% | 70/108 = 64.8% |
-| bugfix124 | 68/124 = 54.8% | 64/68 = 94.1% | 3/68 = 4.4% | 25/68 = 36.8% |
-| real203 | 58/203 = 28.6% | 35/58 = 60.3% | 23/58 = 39.7% | 23/58 = 39.7% |
-| all | 234/509 = 46.0% | 204/234 = 87.2% | 29/234 = 12.4% | 118/234 = 50.4% |
+| peer182 | 79 | 26 | 3 | 74 |
+| bugfix124 | 40 | 21 | 5 | 57 |
+| real203 | 23 | 12 | 23 | 145 |
+| all | 142 | 59 | 31 | 276 |
+
+Current queue split from `rq1_veriput_queue.py`:
+
+- Done=142, P0=91, P1=4, P2=145, Archive=127.
+- Primary P0 work is not "run more"; it is to clear specific failure
+  mechanisms: `guard-nameability`, `mapping-dynarray-unrendered`,
+  `return-no-holding-rung`, and raw R1/R2 PUTs with invalid replay width.
+- Low-yield buckets (`rollback-unobservable`, `cert-no-coordinate`,
+  `cleared_not_certified_fallback`, no-output/time-budget-only rows) should be
+  recorded but not debugged first.
 
 Landed/in-progress code change:
 
@@ -41,14 +51,29 @@ Landed/in-progress code change:
 
 Execution strategy from here:
 
-1. Commit/push the script-only fix so later runs have a stable code point.
-2. Build a high-yield queue from existing result JSON:
-   `valid-no-PUT`, `valid-PUT-no-R1R2`, `PUT-with-R1R2-but-no-width`, and
-   `path_guard_skipped`-bearing no-valid cases first.
-3. Run those with bounded parallelism. Skip no-output/unsupported/budget-only
-   clusters until the end; they are result-accounting rows, not likely fixes.
-4. Only after high-yield reruns finish, fill remaining missing/failure rows for
-   the submission table.
+1. Stop blind sweeps. A benchmark rerun needs a named mechanism expected to
+   change that case.
+2. Commit/push script fixes before running a batch so each result has a stable
+   code point.
+3. Validate a mechanism on 1-2 direct-hit samples. For the OR guard change the
+   first sample is `peer_ccsolbmc__AssetTransfer` because the old artifact
+   dropped `msg.sender != InstanceBuyer && msg.sender != InstanceOwner` and had
+   no oracle-skip blocker.
+4. Expand only if the direct-hit sample improves. Otherwise go back to code,
+   not queue execution.
+5. Keep all RQ1 result artifacts under
+   `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT` with raw/valid tests,
+   time stats, failure reason, concrete-vs-PUT, R0/R1/R2 classes, and
+   double-oracle replay outcome. Dataset sources remain read-only.
+
+In-progress code at the time this note was updated:
+
+- `scripts/solidity_path_put.py` has a tested OR path-guard renderer:
+  false side of `A && B` becomes one `vm.assume(!A || !B)` and true side of
+  `A || B` becomes one `vm.assume(A || B)`.
+- `python3 scripts/test_solidity_path_put.py` passes (`291/291`).
+- Next step is commit/push that patch, then run exactly one validation:
+  `peer182 / peer_ccsolbmc__AssetTransfer` with timeout 600s and 10GiB memory.
 
 Update after commit `664dfde930`:
 

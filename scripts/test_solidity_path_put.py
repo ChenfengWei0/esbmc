@@ -3829,15 +3829,29 @@ def test_path_decision_guard_splits_safe_boolean_shapes():
             ("proposalId", "<=", "proposalCount"),
             ("proposalId", "!=", "0"),
         ], "plain disjunction means this path walked both negated arms")
+    bad += check(path_conditions_from_branch_claim(
+        "msg.sender != InstanceBuyer && msg.sender != InstanceOwner") is None,
+        "a disjunctive walked guard is not flattened into conjunctions")
     lines, skipped = path_decision_assumes(
         [{"branch_claim":
           "msg.sender != InstanceBuyer && msg.sender != InstanceOwner"}],
         {"msg.sender": "sender", "state.InstanceBuyer": "_pre_buyer",
          "state.InstanceOwner": "_pre_owner"})
-    bad += check(lines == [] and skipped == [
-        ("'msg.sender != InstanceBuyer && msg.sender != InstanceOwner' "
-         "(not a simple binary decision)")
-    ], f"unsafe conjunction is skipped, not mis-rendered: {lines}, {skipped}")
+    bad += check(lines == [
+        ("msg.sender != InstanceBuyer && msg.sender != InstanceOwner",
+         "    vm.assume((sender == _pre_buyer || sender == _pre_owner));")
+    ] and skipped == [],
+        f"false conjunction renders as a disjunctive assume: "
+        f"{lines}, {skipped}")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "!(msg.sender == owner || members[msg.sender] == 1)"}],
+        {"msg.sender": "sender", "state.owner": "_pre_owner",
+         "state.members[msg.sender]": "_pre_member"})
+    bad += check(lines == [
+        ("!(msg.sender == owner || members[msg.sender] == 1)",
+         "    vm.assume((sender == _pre_owner || _pre_member == 1));")
+    ] and skipped == [],
+        f"true disjunction renders as one OR assume: {lines}, {skipped}")
     return bad
 
 
