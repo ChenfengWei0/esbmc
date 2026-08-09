@@ -50,6 +50,26 @@ Execution strategy from here:
 4. Only after high-yield reruns finish, fill remaining missing/failure rows for
    the submission table.
 
+Update after commit `664dfde930`:
+
+- Added `notes/coverage/scripts/rq1_veriput_queue.py`.
+  It writes queue TSV/summary artifacts under
+  `/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/triage-queues`.
+- Current queue split from existing artifacts:
+  P0=110, P1=4, P2=145, Archive=127, Done=123.
+- P0 reason split: 60 valid-weak-with-dropped-guard, 8
+  valid-weak-with-dropped-oracle, 42 valid-weak without a dropped-guard signal.
+- The latest generator fix does two things:
+  1. Safe path-guard splitting for `!(A && B)` and plain `A || B`.
+  2. Path-guard-only state/mapping pre-read materialization, so guards over
+     `owner`, `balances[msg.sender]`, `programOperators[msg.sender]`, etc. can
+     render even when no R1/R2 oracle rung already read that coordinate.
+- Verified without ESBMC:
+  `python3 -m py_compile scripts/solidity_path_put.py scripts/test_solidity_path_put.py notes/coverage/scripts/rq1_veriput_queue.py`
+  and `python3 scripts/test_solidity_path_put.py` (`291/291`).
+- Next validation, when allowed, must be a tiny P0 dropped-guard sample only.
+  Candidate commands were generated from the queue; do not run broad sweeps.
+
 # Where the work stands (2026-07-30, evening)
 
 Written to survive a context compaction. Read this, then
