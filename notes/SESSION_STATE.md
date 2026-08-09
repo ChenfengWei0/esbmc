@@ -104,6 +104,25 @@ Update after commits `42a8b4e105` and `ee3ab785ea`:
   single canonical rerun of `peer_solar__LotteryMultipleWinners`; expected
   result is still one PUT, but now with an R1 oracle class.
 
+Update after commits `7f99c72b10` and `49a6da2fb6`:
+
+- Signed equality validation succeeded end-to-end:
+  `peer_solar__LotteryMultipleWinners` improved to
+  `valid-PUT-with-R1R2` (`raw=3 valid=3 put=1/1 concrete=2/2`, 291s).
+  Its PUT now records `oracle_classes ["R0", "R1"]` and a state oracle
+  `state: post == pre`.
+- `return_value$__msgSender$N` is now rendered as the current `msg.sender`
+  expression when building path guard assumes. This is intentionally limited
+  to `__msgSender`; do not generalize arbitrary `return_value$_owner` or
+  `return_value$_isOwner` to storage without a proof of the helper body.
+- Direct-hit peer validation for the `__msgSender` alias succeeded:
+  `peer_ccsolbmc__ChinaCoin`, `peer_ccsolbmc__KizunaInu`, and
+  `peer_ccsolbmc__TESTDONTBUY` all improved to `valid-PUT-with-R1R2`.
+  Each costs about 600s, so do not use this family for more sampling.
+- Current aggregate after the two batches:
+  `valid-PUT-with-R1R2=148`, `valid-PUT-no-R1R2=53`,
+  `valid-no-PUT=31`, `no-valid=276`.
+
 Update after commit `664dfde930`:
 
 - Added `notes/coverage/scripts/rq1_veriput_queue.py`.
