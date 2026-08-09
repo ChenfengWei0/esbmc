@@ -132,6 +132,7 @@ CONCRETE_FALLBACK_WITNESS_CHECKS = {
 CONCRETE_ONLY_STAGE2_SOURCES = {
     "cleared-concrete-fallback": "cleared_not_certified_fallback",
     "timeout-concrete-fallback": "timeout_concrete_fallback",
+    "no-coordinate-concrete-fallback": "cleared_not_certified_fallback",
 }
 
 # Byte for byte the driver's own printers (solidity_path_generalise.py:800,
@@ -310,6 +311,65 @@ def timeout_concrete_fallback_rows(record):
                 "claims_decided": journal.get("claims_decided"),
                 "claims_total": journal.get("claims_total"),
                 "partial": journal.get("partial"),
+            },
+        })
+    return rows
+
+
+def no_coordinate_concrete_fallback_rows(record):
+    """Complete NO-COORDINATE witnesses with no JSON detail rows.
+
+    Some Stage-2 runs reach the no-generalizable-coordinate exit before writing
+    `generalise-result.json`.  The sweep row still carries the complete
+    `cov-ce-journal.json` summary in `partial_witness_journal`: those witnesses
+    are not certified regions, but they are the same concrete-replay
+    opportunities as the structured COMPLETE-WITNESS-NO-COORDINATE rows.
+    """
+    if str(record.get("bucket") or "").upper() != "NO-COORDINATE":
+        return []
+    if record.get("certified") or record.get("not_certified"):
+        return []
+    journal = record.get("partial_witness_journal") or {}
+    if not isinstance(journal, dict):
+        return []
+    if journal.get("complete") is not True:
+        return []
+    try:
+        witness_count = int(journal.get("witness_count") or 0)
+    except (TypeError, ValueError):
+        witness_count = 0
+    if witness_count <= 0:
+        return []
+    row_pins = parse_pins(record.get("pins"))
+    rows = []
+    for path in journal.get("paths") or []:
+        if not isinstance(path, dict):
+            continue
+        enc = claim_path_id_int(path.get("path_id"))
+        path_function = path.get("path_function")
+        if enc is None or not path_function:
+            continue
+        try:
+            path_witnesses = int(path.get("witness_count") or 0)
+        except (TypeError, ValueError):
+            path_witnesses = 0
+        if path_witnesses <= 0:
+            continue
+        rows.append({
+            "enc": str(enc),
+            "path_function": str(path_function),
+            "region": {},
+            "pins": row_pins,
+            "reason": (
+                record.get("no_coordinate_reason")
+                or "Stage-2 complete witness has no generalizable coordinate"),
+            "detail": {
+                "witness_check": "COMPLETE-WITNESS-NO-COORDINATE",
+                "source_stage": journal.get("source_stage"),
+                "source_context": journal.get("source_context"),
+                "claims_decided": journal.get("claims_decided"),
+                "claims_total": journal.get("claims_total"),
+                "complete": journal.get("complete"),
             },
         })
     return rows
@@ -498,10 +558,12 @@ def stage2_path_accounting(cert_path, only=""):
         not_certified = record.get("not_certified") or {}
         out["certified"] += len(certified)
         out["not_certified"] += len(not_certified)
+        no_coord_fallback = no_coordinate_concrete_fallback_rows(record)
         witnessed = record.get("witnessed")
         if isinstance(witnessed, int):
             out["witnessed"] += witnessed
-            gap = witnessed - len(certified) - len(not_certified)
+            gap = (witnessed - len(certified) - len(not_certified)
+                   - len(no_coord_fallback))
             if gap > 0:
                 out["no_verdict"] += gap
         else:
@@ -509,6 +571,7 @@ def stage2_path_accounting(cert_path, only=""):
         for enc, reason in not_certified.items():
             cls = classify_not_certified(record, enc, reason)
             out[cls] += 1
+        out["concrete_fallback"] += len(no_coord_fallback)
     return out
 
 
@@ -909,6 +972,27 @@ def main():
                 rows.append((key, is_poc, r["unit"], path_function,
                              enc_i, None, None, [], False, {}, exit_kind,
                              row_subject, "timeout-concrete-fallback",
+                             fb["region"], {}, fb["pins"],
+                             fb["detail"].get("witness_check")))
+            for fb in no_coordinate_concrete_fallback_rows(r):
+                try:
+                    enc_i = int(fb["enc"])
+                except ValueError:
+                    print(f"  SKIP {key}.{r['unit']} enc={fb['enc']}: the "
+                          "complete no-coordinate witness path id is not "
+                          "numeric, so this concrete fallback cannot be "
+                          "resolved")
+                    continue
+                n_cleared_fallback += 1
+                path_function = fb.get("path_function") or r.get("path_function")
+                if not stage4_selector_matches(
+                        args.only, key, r["unit"], path_function):
+                    continue
+                exit_kind = report_exit_kind(
+                    r.get("enumeration_report"), path_function, enc_i)
+                rows.append((key, is_poc, r["unit"], path_function,
+                             enc_i, None, None, [], False, {}, exit_kind,
+                             row_subject, "no-coordinate-concrete-fallback",
                              fb["region"], {}, fb["pins"],
                              fb["detail"].get("witness_check")))
         if r.get("bucket") != "CERTIFIED":

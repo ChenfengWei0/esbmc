@@ -98,6 +98,30 @@ def main():
                 }],
             },
         },
+        {
+            "benchmark": "bench",
+            "unit": "no_coord_journal",
+            "bucket": "NO-COORDINATE",
+            "witnessed": 1,
+            "pins": {"msg.value": 0},
+            "certified": {},
+            "not_certified": {},
+            "no_coordinate_reason": "every coordinate was pinned by request",
+            "partial_witness_journal": {
+                "source_stage": "no-generalizable-coordinate",
+                "source_context": "path-enumeration-or-probe",
+                "partial": False,
+                "complete": True,
+                "claims_decided": 12,
+                "claims_total": 12,
+                "witness_count": 8,
+                "paths": [{
+                    "path_id": "7",
+                    "path_function": "sol:@C@BadAuction@F@bid#42",
+                    "witness_count": 8,
+                }],
+            },
+        },
     ]
     with tempfile.NamedTemporaryFile("w", delete=False) as fh:
         path = fh.name
@@ -137,6 +161,19 @@ def main():
         bad += check("timeout-fallback-matches-runner-inferred-timeout",
                      [(r["enc"], r["path_function"]) for r in inferred_rows],
                      [("15", "sol:@C@Token@F@approve#972")])
+        no_coord_rows = put_all.no_coordinate_concrete_fallback_rows(
+            records[4])
+        bad += check("no-coordinate-complete-journal-fallback",
+                     [(r["enc"], r["path_function"], r["region"], r["pins"],
+                       r["detail"]["witness_check"]) for r in no_coord_rows],
+                     [("7", "sol:@C@BadAuction@F@bid#42", {},
+                       {"msg.value": 0}, "COMPLETE-WITNESS-NO-COORDINATE")])
+        no_coord_accounting = put_all.stage2_path_accounting(
+            path, "bench.no_coord_journal")
+        bad += check("no-coordinate-journal-counts-as-fallback",
+                     no_coord_accounting["concrete_fallback"], 1)
+        bad += check("no-coordinate-journal-not-no-verdict",
+                     no_coord_accounting["no_verdict"], 0)
         bad += check("structured-method-unsupported",
                      target["method_unsupported"], 1)
         bad += check("selected-no-verdict", target["no_verdict"], 0)
