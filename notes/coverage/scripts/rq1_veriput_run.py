@@ -3311,7 +3311,12 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     start = time.monotonic()
     subject_id = target_row["subject_id"]
     case_dir = Path(args.result_root) / dataset_label / "subjects" / _safe_name(subject_id)
-    prepare_case_dir(case_dir, force_fresh=bool(args.redo))
+    # CE discovery may be launched by the existing worker command, which
+    # carries --redo for full generation. It must never archive/replace the
+    # canonical result directory while collecting refutation-only evidence.
+    prepare_case_dir(
+        case_dir,
+        force_fresh=bool(args.redo and not args.ce_collection_only))
     cert_path = case_dir / "cert" / "certify-results.jsonl"
     ast_cache_root = Path(args.ast_cache_root).expanduser().resolve()
     subject = subject_unit_manifest.resolve_subject(
