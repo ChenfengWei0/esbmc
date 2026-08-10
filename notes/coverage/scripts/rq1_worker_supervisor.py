@@ -46,6 +46,32 @@ def _manifest_count(path: Path) -> int:
         return sum(1 for row in reader if row.get("bench") and row.get("subject"))
 
 
+def _partition_manifest(path: Path, local_parallel: int,
+                        remote_parallel: int) -> tuple[Path, Path, int, int]:
+    """Write disjoint host shards so local and remote never repeat a case."""
+    with path.open(newline="") as stream:
+        reader = csv.DictReader(stream, delimiter="\t")
+        fields = list(reader.fieldnames or [])
+        rows = [row for row in reader if row.get("bench") and row.get("subject")]
+    total_slots = max(1, local_parallel + remote_parallel)
+    local_target = min(len(rows), max(0, round(len(rows) * local_parallel /
+                                                total_slots)))
+    if rows and local_parallel and local_target == 0:
+        local_target = 1
+    if len(rows) > 1 and remote_parallel and local_target == len(rows):
+        local_target -= 1
+    local_rows, remote_rows = rows[:local_target], rows[local_target:]
+    stem = path.with_suffix("")
+    local_path = Path(f"{stem}.local.tsv")
+    remote_path = Path(f"{stem}.remote.tsv")
+    for out, shard in ((local_path, local_rows), (remote_path, remote_rows)):
+        with out.open("w", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=fields, delimiter="\t")
+            writer.writeheader()
+            writer.writerows(shard)
+    return local_path, remote_path, len(local_rows), len(remote_rows)
+
+
 def _alive(pid: object) -> bool:
     try:
         return int(pid) > 0 and Path(f"/proc/{int(pid)}").exists()
@@ -53,10 +79,10 @@ def _alive(pid: object) -> bool:
         return False
 
 
-def _base_local_args(args: argparse.Namespace, index: int) -> list[str]:
+def _base_local_args(args: argparse.Namespace, index: int, manifest: Path) -> list[str]:
     stem = f"/tmp/veriput_rq1_local_worker_{index}"
     return [
-        sys.executable, str(LOCAL), "--tsv", str(args.manifest),
+        sys.executable, str(LOCAL), "--tsv", str(manifest),
         "--state", f"{stem}_state.json", "--progress", f"{stem}_progress.jsonl",
         "--interpret-out", f"{stem}_interpret.json", "--adopt-out",
         f"{stem}_adopt.json", "--lease-file", "/tmp/veriput_rq1_case_leases.json",
@@ -78,34 +104,43 @@ def start(args: argparse.Namespace, action: dict | None = None) -> dict:
     if existing_workers and all(_alive(row.get("pid")) for row in existing_workers):
         return {"started": False, "reason": "already-running", "case_count": count,
                 "workers": existing_workers}
+    local_manifest, remote_manifest, local_cases, remote_cases = (
+        _partition_manifest(args.manifest, args.local_parallel,
+                            args.remote_parallel))
     workers = []
-    for index in range(args.local_parallel):
+    for index in range(min(args.local_parallel, local_cases)):
         log = Path(f"/tmp/veriput_rq1_local_worker_{index}.log")
         log_stream = log.open("ab")
-        proc = subprocess.Popen(_base_local_args(args, index), stdout=log_stream,
+        command = _base_local_args(args, index, local_manifest)
+        proc = subprocess.Popen(command, stdout=log_stream,
                                 stderr=subprocess.STDOUT, start_new_session=True)
         log_stream.close()
         workers.append({"kind": "local", "index": index, "pid": proc.pid,
-                        "log": str(log), "command": _base_local_args(args, index)})
+                        "log": str(log), "command": command})
     remote_cmd = [
-        sys.executable, str(REMOTE), "--tsv", str(args.manifest),
+        sys.executable, str(REMOTE), "--tsv", str(remote_manifest),
         "--host", args.remote_host, "--limit", "0", "--loop",
         "--timeout", str(args.timeout_s), "--esbmc-run-timeout", str(args.timeout_s),
         "--case-parallel", str(args.remote_parallel),
         "--max-case-parallel", str(args.remote_parallel),
         "--memlimit-gib", str(args.remote_memlimit_gib),
         "--esbmc-rss-limit-gib", str(args.remote_rss_limit_gib),
+        "--sync-code", "--sync-veriput", "--remote-build",
         "--sync-results-back", "--start-pull-loop",
     ]
-    log = Path("/tmp/veriput_rq1_remote_worker_supervisor.log")
-    log_stream = log.open("ab")
-    proc = subprocess.Popen(remote_cmd, stdout=log_stream, stderr=subprocess.STDOUT,
-                            start_new_session=True)
-    log_stream.close()
-    workers.append({"kind": "remote", "pid": proc.pid, "log": str(log),
-                    "command": remote_cmd})
+    if remote_cases:
+        log = Path("/tmp/veriput_rq1_remote_worker_supervisor.log")
+        log_stream = log.open("ab")
+        proc = subprocess.Popen(remote_cmd, stdout=log_stream, stderr=subprocess.STDOUT,
+                                start_new_session=True)
+        log_stream.close()
+        workers.append({"kind": "remote", "pid": proc.pid, "log": str(log),
+                        "command": remote_cmd})
     state = {"schema": "veriput-rq1-worker-supervisor/v1", "started_ts": time.time(),
-             "manifest": str(args.manifest), "case_count": count, "workers": workers,
+             "manifest": str(args.manifest), "local_manifest": str(local_manifest),
+             "remote_manifest": str(remote_manifest), "case_count": count,
+             "local_case_count": local_cases, "remote_case_count": remote_cases,
+             "workers": workers,
              "local_parallel": args.local_parallel, "remote_parallel": args.remote_parallel}
     _write(args.state, state)
     return {"started": True, **state}

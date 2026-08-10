@@ -263,7 +263,7 @@ def start_remote_worker(args, cases: list[dict]) -> dict:
     esbmc_rss_limit_kib = int(float(args.esbmc_rss_limit_gib) * 1024 * 1024)
 
     worker = f"""
-set -u
+set -euo pipefail
 cd {shlex.quote(str(args.remote_esbmc))}
 export VERIPUT_ROOT={shlex.quote(str(args.remote_veriput))}
 export RESULT_ROOT={shlex.quote(str(args.remote_veriput))}/Results/RQ1/VeriPUT
@@ -702,6 +702,32 @@ echo "[remote-build] $(date -Is) done"
     ]
 
 
+def remote_preflight(args) -> dict:
+    """Require the synced trees and executable before acquiring any case lease."""
+    script = f"""
+set -euo pipefail
+test -d {shlex.quote(str(args.remote_esbmc))}
+test -d {shlex.quote(str(args.remote_veriput))}
+test -f {shlex.quote(str(args.remote_esbmc / 'notes/coverage/scripts/rq1_veriput_run.py'))}
+test -f {shlex.quote(str(args.remote_esbmc / 'notes/coverage/scripts/rq1_esbmc_result_interpret.py'))}
+test -x {shlex.quote(str(args.remote_esbmc / 'build/src/esbmc/esbmc'))}
+"""
+    proc = subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", args.host,
+         f"bash -lc {shlex.quote(script)}"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    return {
+        "returncode": proc.returncode,
+        "stdout": proc.stdout.strip(),
+        "stderr": proc.stderr.strip(),
+        "ready": proc.returncode == 0,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tsv", type=Path, default=DEFAULT_TSV)
@@ -900,6 +926,8 @@ def main() -> int:
                 state,
                 args.state,
             )
+            if state["sync_code"]["returncode"] != 0:
+                raise SystemExit("remote ESBMC sync failed; refusing remote worker start")
     if args.remote_build:
         state["phase"] = "remote-build"
         write_state(args.state, state)
@@ -913,6 +941,8 @@ def main() -> int:
                 state,
                 args.state,
             )
+            if state["remote_build_result"]["returncode"] != 0:
+                raise SystemExit("remote ESBMC build failed; refusing remote worker start")
     if args.sync_veriput:
         state["phase"] = "syncing-veriput"
         write_state(args.state, state)
@@ -926,6 +956,19 @@ def main() -> int:
                 state,
                 args.state,
             )
+            if state["sync_veriput"]["returncode"] != 0:
+                raise SystemExit("remote VeriPUT sync failed; refusing remote worker start")
+    if not args.dry_run:
+        state["phase"] = "remote-preflight"
+        write_state(args.state, state)
+        state["remote_preflight"] = remote_preflight(args)
+        write_state(args.state, state)
+        if not state["remote_preflight"]["ready"]:
+            state["phase"] = "remote-preflight-failed"
+            write_state(args.state, state)
+            raise SystemExit(
+                "remote preflight failed: synced ESBMC/VeriPUT tree or ESBMC binary "
+                "is unavailable; refusing to acquire remote case leases")
     if not args.dry_run and cases:
         state["phase"] = "starting-worker"
         write_state(args.state, state)
