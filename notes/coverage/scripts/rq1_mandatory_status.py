@@ -22,6 +22,105 @@ WATCHDOG = HERE / "rq1_watchdog_status.py"
 DISPATCHER = HERE / "rq1_repair_dispatcher.py"
 REVIEW_DISPATCHER = HERE / "rq1_review_dispatcher.py"
 
+SUMMARY_KEYS = (
+    "implemented_progress_provisional_gross",
+    "implemented_progress_provisional",
+    "fully_integrated_progress_gross",
+    "fully_integrated_progress",
+    "theoretical_progress_gross",
+    "theoretical_progress",
+    "put_theoretical_progress_gross",
+    "put_theoretical_progress",
+    "r1r2_theoretical_progress_gross",
+    "r1r2_theoretical_progress",
+)
+
+
+def _extract_key_values(text: str) -> dict[str, str]:
+    out = {}
+    for key in SUMMARY_KEYS:
+        match = re.search(rf"^{re.escape(key)}=(.+)$", text, re.MULTILINE)
+        if match:
+            out[key] = match.group(1).strip()
+    return out
+
+
+def _extract_json_section(text: str, heading: str) -> dict:
+    marker = f"{heading}:\n"
+    start = text.find(marker)
+    if start < 0:
+        return {}
+    brace = text.find("{", start + len(marker))
+    if brace < 0:
+        return {}
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(brace, len(text)):
+        ch = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    value = json.loads(text[brace:index + 1])
+                except json.JSONDecodeError:
+                    return {}
+                return value if isinstance(value, dict) else {}
+    return {}
+
+
+def _print_ledger_summary(stdout: str) -> None:
+    actual = _extract_json_section(stdout, "actual_rq1_progress")
+    resources = _extract_json_section(stdout, "resource_maximization")
+    print("mandatory_progress_summary:")
+    for key, value in _extract_key_values(stdout).items():
+        print(f"  {key}={value}")
+    for key in (
+            "subjects",
+            "valid_cases",
+            "no_valid_cases",
+            "put_cases",
+            "no_put_cases",
+            "r1r2_cases",
+            "no_r1r2_cases",
+    ):
+        if key in actual:
+            print(f"  actual_{key}={actual[key]}")
+    print(f"  resource_maximized={bool(resources.get('maximized'))}")
+    reasons = resources.get("reasons") or []
+    if reasons:
+        print("  resource_not_maximized_reasons=" + ";".join(map(str, reasons)))
+
+
+def _worker_counts(doc: dict) -> tuple[int, int, int, int, int]:
+    local_worker = doc.get("local_worker") if isinstance(
+        doc.get("local_worker"), dict) else {}
+    remote_worker = doc.get("remote_worker") if isinstance(
+        doc.get("remote_worker"), dict) else {}
+    progress = doc.get("worker_progress") if isinstance(
+        doc.get("worker_progress"), dict) else {}
+    local_running = int(local_worker.get("running_case_count") or 0)
+    remote_running = int(remote_worker.get("running_case_count") or 0)
+    recent_done = int(progress.get("recent_done_count_in_tail") or 0)
+    recent_done += int(remote_worker.get("recent_done_count_in_tail") or 0)
+    recent_failed = int(progress.get("recent_failed_count_in_tail") or 0)
+    recent_failed += int(remote_worker.get("recent_failed_count_in_tail") or 0)
+    recent_oom = int(progress.get("recent_oom_count_in_tail") or 0)
+    recent_oom += int(remote_worker.get("recent_oom_count_in_tail") or 0)
+    return local_running, remote_running, recent_done, recent_failed, recent_oom
+
 
 def _print_watchdog_hard_alerts(stdout: str) -> None:
     try:
@@ -31,7 +130,6 @@ def _print_watchdog_hard_alerts(stdout: str) -> None:
         print("  watchdog_json_parse_failed=true")
         return
     subagents = doc.get("subagents") if isinstance(doc.get("subagents"), dict) else {}
-    local_worker = doc.get("local_worker") if isinstance(doc.get("local_worker"), dict) else {}
     remote_worker = doc.get("remote_worker") if isinstance(doc.get("remote_worker"), dict) else {}
     progress = doc.get("worker_progress") if isinstance(doc.get("worker_progress"), dict) else {}
     active = int(
@@ -41,8 +139,8 @@ def _print_watchdog_hard_alerts(stdout: str) -> None:
         or len(subagents.get("active_details") or [])
         or 0)
     minimum = int(subagents.get("min_active_required") or 5)
-    local_running = int(progress.get("currently_running_count") or 0)
-    remote_running = int(remote_worker.get("running_case_count") or 0)
+    local_running, remote_running, recent_done_count, recent_failed_count, \
+        recent_oom_count = _worker_counts(doc)
     total_running = max(local_running, 0) + max(remote_running, 0)
     print("mandatory_hard_alerts:")
     print(f"  active_subagents={active}")
@@ -62,8 +160,9 @@ def _print_watchdog_hard_alerts(stdout: str) -> None:
     recent_done = progress.get("recent_done_tail") or []
     recent_failed = progress.get("recent_failed_tail") or []
     recent_weak = progress.get("recent_weak_tail") or []
-    print(f"  recent_done_count_in_tail={len(recent_done)}")
-    print(f"  recent_failed_count_in_tail={len(recent_failed)}")
+    print(f"  recent_done_count_in_tail={recent_done_count}")
+    print(f"  recent_failed_count_in_tail={recent_failed_count}")
+    print(f"  recent_oom_count_in_tail={recent_oom_count}")
     print(f"  recent_weak_count_in_tail={len(recent_weak)}")
     for label, rows in (
             ("recent_done", recent_done[-3:]),
@@ -111,7 +210,17 @@ def main() -> int:
         cmd.extend(["--applied", args.applied])
     if args.no_remote_probe:
         cmd.append("--no-remote-probe")
-    proc = subprocess.run(cmd, check=False)
+    proc = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    _print_ledger_summary(proc.stdout)
+    if proc.stderr:
+        print(f"ledger_stderr_tail={proc.stderr[-1000:]}")
+    print(proc.stdout, end="")
     print("watchdog_status:")
     watchdog_proc = subprocess.run(
         [sys.executable, str(WATCHDOG)],
