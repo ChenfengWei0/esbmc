@@ -1,14 +1,17 @@
 # RQ1 VeriPUT 自动化流程
 
-本文档是主 agent 必须执行的硬流程。仓库内 Python 脚本不能直接调用
-Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`，所以自动化边界
-如下：
+本文档是 `rq1_autopilot_daemon.py` 执行的硬流程。仓库内 Python 脚本不能直接调用
+Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`；该边界通过
+`rq1_host_bridge.py` 的显式外部命令协议处理，缺少 bridge 时必须报告 blocked，
+不得伪造成功。
 
 - 仓库脚本负责：决策、门禁、状态汇总、变化触发打印、completion/review 入账、
   理论覆盖清单、worker 启动许可、失败反馈。
-- 主 agent 负责：严格消费脚本输出的 host-level action queue，实际调用
-  `spawn_agent` / `wait_agent` / `close_agent`，并把结果回写脚本 ledger。
-- 禁止主 agent 手写替代状态。每次状态必须来自脚本输出。
+- `rq1_host_bridge.py` 负责：顺序消费 host action、调用注入的 host bridge 命令、
+  写入结果、动态 lease/running、close ack；没有注入命令时保留 blocked 状态。
+- `rq1_autopilot_daemon.py` 负责：持续调用 feedback、autopilot、host bridge 和
+  mandatory status，并以 lock 防止重复 daemon。
+- 禁止手写替代状态。每次状态必须来自脚本输出。
 
 ## 固定循环
 
@@ -31,6 +34,7 @@ Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`，所以自动化边
      `theory_delta`、`commit decision`、`next_action`。
    - 缺字段则 review 无效，patch 保持 `pending`。
    - `needs-work` / `rejected`：理论 delta 记 `0` 或回扣，自动生成后续 repair。
+     该 patch 的 review_round 固定为 1；后续 repair 必须使用新的 patch_id。
    - `accepted`：必须有 commit sha；没有 commit sha 不得进入 net theory。
 
 3. 关闭完成线程
@@ -55,19 +59,20 @@ Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`，所以自动化边
 5. 派发 subagent
 
    - 只消费 `rq1_agent_control.py` 输出的 `spawn_agent` 动作。
-   - 每个新 subagent 必须显式 `reasoning_effort=medium`。
+   - 每个新 subagent 必须显式 `reasoning_effort=high`。
    - 派发后立即顺序登记，不能并行写 ledger：
      `rq1_subagent_orchestrator.py lease ...`
      `rq1_subagent_orchestrator.py running ...`
    - 最低 active 阈值是 `3`。低于 3 且有可派任务时，必须继续派发。
    - write-mode 任务必须有独占 `write_scope`；readonly review 可并发。
 
-6. review 通过后的 commit
+6. review 后的 commit
 
-   - 只有 `rq1_review_ingest.py` 判定 accepted 且记录 commit sha 后，才能把对应
-     patch 算入 net theory。
-   - review 通过后必须触发 commit；commit sha 必须回写 subagent ledger。
-   - review 不通过时不得提交该 patch，并必须派 repair。
+   - accepted、needs-work、rejected 都必须自动尝试 commit 本次实际文件改动；
+     没有文件改动时不伪造 commit。
+   - 只有 accepted 且记录 commit sha 后，才能把对应 patch 算入 net theory。
+   - review 不通过时理论仍为 0/回扣，并必须派新的 repair patch。
+   - 同一个 patch 最多 review 一次；ledger 和 dispatcher 都拒绝第二次。
 
 7. 理论覆盖清单
 
@@ -96,11 +101,33 @@ Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`，所以自动化边
    - repair dispatcher 必须基于 ticket 重新生成 subagent 任务。
    - 理论覆盖必须有增有减；被 worker 反证的 case 从 net theory 中扣除。
 
+10. 自动运行入口
+
+   - 启动持续控制：
+     `python3 notes/coverage/scripts/rq1_autopilot_daemon.py --interval-s 30`
+   - 单轮审计：
+     `python3 notes/coverage/scripts/rq1_autopilot_daemon.py --once`
+   - 停止：创建 `/tmp/veriput_rq1_autopilot.stop`。
+   - host bridge 的 spawn/close 命令分别由
+     `VERIPUT_HOST_SPAWN_COMMAND` / `VERIPUT_HOST_CLOSE_COMMAND` 注入；资源探针
+     和超限 interrupt 分别由 `VERIPUT_HOST_RESOURCE_COMMAND` /
+     `VERIPUT_HOST_INTERRUPT_COMMAND` 注入。`rq1_host_preflight.py` 会在 daemon
+     中检查这些命令；缺失时 host action 阻塞且状态为 hard fail。worker action
+     默认调用 `rq1_worker_supervisor.py`。
+   - subagent watchdog 以 RSS、runtime、heartbeat 三项门禁监督 agent；超过阈值
+     自动写入 interrupt action，host bridge 成功后再 close/ack。
+   - worker 反馈由 `rq1_feedback_controller.py --scan` 写入：
+     `/tmp/veriput_rq1_feedback_events.jsonl`、
+     `/tmp/veriput_rq1_theory_blocks.jsonl` 和 repair tickets；theory manifest
+     下一轮自动排除 active block。
+
 ## 资源最大化规则
 
 - active subagents 目标：至少 `3`。
 - subagent 总容量：`24`。
 - 本机 worker 和远程 worker 只在 theory manifest 合法时启动。
+- worker supervisor 默认本机 3 个 pump、远程 2-case 并发；每个进程有独立
+  state/progress/log，远程 pump 负责 rsync/adopt 回写。
 - 如果资源未最大化，状态报告必须给出具体原因，例如：
   pending close、active below 3、write conflict、stale agent、theory manifest empty、
   worker stopped by gate。

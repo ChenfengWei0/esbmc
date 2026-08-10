@@ -41,6 +41,7 @@ DEFAULT_REPORT_CACHE = Path("/tmp/veriput_rq1_autopilot_report_cache.json")
 HOST_ONLY_ACTIONS = {
     "spawn_agent",
     "close_agent_or_ack_not_found",
+    "interrupt_agent",
     "start_workers_on_theory_manifest",
 }
 
@@ -395,7 +396,8 @@ def main() -> int:
     review.add_argument("--reviewed-agent-id", required=True)
     review.add_argument("--reviewer-id", default="")
     review.add_argument("--patch-id", required=True)
-    review.add_argument("--auto-commit", action="store_true")
+    review.add_argument("--auto-commit", action=argparse.BooleanOptionalAction,
+                        default=True)
     review.add_argument("--commit-message", default="")
 
     completion = sub.add_parser("ingest-completion")

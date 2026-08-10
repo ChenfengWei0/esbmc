@@ -109,7 +109,7 @@ def _git(args: list[str]) -> subprocess.CompletedProcess[str]:
 def _auto_commit(paths: list[str], message: str) -> str:
     existing = [path for path in paths if Path(path).exists()]
     if not existing:
-        raise SystemExit("accepted review 要自动 commit，但没有可提交路径")
+        raise SystemExit("review 要自动 commit，但没有可提交路径")
     add = _git(["add", "--", *existing])
     if add.returncode != 0:
         raise SystemExit(add.stderr.strip() or add.stdout.strip())
@@ -144,12 +144,26 @@ def _record_review(agent_id: str, reviewer_id: str, verdict: str, note: str,
     if proc.returncode != 0:
         if not allow_event_only:
             raise SystemExit(proc.stderr.strip() or proc.stdout.strip())
+        prior = []
+        try:
+            prior = [json.loads(line) for line in DEFAULT_REVIEW_EVENTS.read_text(
+                errors="replace").splitlines() if line.strip()]
+        except (OSError, json.JSONDecodeError):
+            prior = []
+        if any(row.get("event") == "review"
+               and str(row.get("agent_id") or "") == agent_id
+               and str(row.get("patch_id") or "") == str(event.get("patch_id") or "")
+               for row in prior if isinstance(row, dict)):
+            raise SystemExit(
+                "REVIEW_ROUND_LIMIT: event-only patch already reviewed once; "
+                "create a new repair patch_id")
         event = dict(event)
         event.update({
             "event": "review",
             "agent_id": agent_id,
             "reviewer_id": reviewer_id,
             "verdict": verdict,
+            "review_round": 1,
             "commit_sha": commit_sha,
             "note": note,
             "orchestrator_record": "missing-agent-event-only",
@@ -167,7 +181,8 @@ def main() -> int:
     parser.add_argument("--reviewer-id")
     parser.add_argument("--patch-id", default="")
     parser.add_argument("--commit-message", default="")
-    parser.add_argument("--auto-commit", action="store_true")
+    parser.add_argument("--auto-commit", action=argparse.BooleanOptionalAction,
+                        default=True)
     parser.add_argument("--event-only-if-missing", action="store_true")
     parser.add_argument("--record-invalid", action="store_true")
     args = parser.parse_args()
@@ -211,7 +226,7 @@ def main() -> int:
 
     changed_paths = _changed_paths(values["changed_code"] + "\n" + text)
     commit_sha = ""
-    if verdict == "accepted" and args.auto_commit:
+    if args.auto_commit and changed_paths:
         subject = args.commit_message or f"[scripts] Integrate {args.patch_id or 'RQ1 patch'}"
         commit_sha = _auto_commit(changed_paths, subject)
     elif verdict == "accepted":

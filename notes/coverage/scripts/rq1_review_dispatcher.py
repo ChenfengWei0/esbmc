@@ -293,6 +293,10 @@ def build_review_queue(subagents: Path, extra_subagents: Path,
         review_status = str(agent.get("review_status") or "pending")
         if review_status == "accepted":
             continue
+        if int(agent.get("review_round") or 0) >= 1:
+            # A needs-work/rejected patch is repaired into a new patch_id; the
+            # original patch is never reviewed a second time.
+            continue
         patch_id = str(agent.get("patch_id") or "")
         if patch_id in PUT_REVIEW_PATCH_IDS:
             continue
@@ -317,6 +321,8 @@ def build_review_queue(subagents: Path, extra_subagents: Path,
         if patch_id not in PUT_REVIEW_PATCH_IDS:
             continue
         if str(agent.get("review_status") or "pending") == "accepted":
+            continue
+        if int(agent.get("review_round") or 0) >= 1:
             continue
         if patch_id in seen_put_patch_ids:
             continue
@@ -353,7 +359,9 @@ def build_review_queue(subagents: Path, extra_subagents: Path,
         "rule": (
             "Every completed write-mode patch, including legacy completed "
             "records that have patch_id+write_scope but omitted mode, with "
-            "review_status other than accepted must be cross-reviewed. Review "
+            "review_status other than accepted and review_round=0 must be "
+            "cross-reviewed once. A needs-work/rejected patch must receive a "
+            "new patch_id before another review. Review "
             "assignments are sharded so pending patches cannot hide inside a "
             "coarse bucket. Net "
             "theoretical coverage must not count pending/rejected/needs-work "

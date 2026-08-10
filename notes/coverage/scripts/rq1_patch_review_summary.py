@@ -118,6 +118,7 @@ def _bucket_row(source: str, agent: dict, verdict: str,
         "review_fields": _extract_review_fields(note),
         "missing_review_fields": missing_fields,
         "verdict": verdict,
+        "review_round": int(agent.get("review_round") or 0),
     }
 
 
@@ -244,10 +245,16 @@ def build_summary(paths: list[Path], review_events: Path) -> dict:
                 "note": note,
             }, verdict, missing_fields))
     buckets = _reconcile_buckets(buckets)
+    round_violations = [
+        row for rows in buckets.values() for row in rows
+        if int(row.get("review_round") or 0) > 1
+    ]
     return {
         "schema": "veriput-rq1-patch-review-summary/v1",
         "reviewed_ledgers": [str(path) for path in paths] + [str(review_events)],
         "counts": {key: len(value) for key, value in buckets.items()},
+        "review_round_limit": 1,
+        "review_round_violations": round_violations,
         "net_theory_rule": (
             "Only accepted write-mode patches may raise net theoretical "
             "coverage, and accepted reviews must record a commit sha. Pending, "

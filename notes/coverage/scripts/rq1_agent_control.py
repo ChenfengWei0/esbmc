@@ -274,7 +274,7 @@ Subjects:
 """
     return {
         "action": "spawn_agent",
-        "reasoning_effort": "medium",
+        "reasoning_effort": "high",
         "bucket_key": assignment.get("bucket_key"),
         "mode": assignment.get("mode"),
         "write_scope": assignment.get("write_scope") or [],
@@ -485,7 +485,7 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int,
         "actions": actions,
         "rule": (
             "Consume actions in order. Do not start workers while the manifest "
-            "is empty. Spawn actions must use reasoning_effort=medium and must "
+            "is empty. Spawn actions must use reasoning_effort=high and must "
             "be recorded via rq1_subagent_orchestrator.py lease/running. Keep "
             f"at least {min_active} active subagents whenever repair/review assignments "
             f"exist. Follow {FLOW_DOC}."),

@@ -29,6 +29,7 @@ from rq1_no_valid_progress import (
 
 DEFAULT_OUT = Path("/tmp/veriput_rq1_theory_covered_cases.tsv")
 DEFAULT_CASE_CLAIMS = Path("/tmp/veriput_rq1_case_theory_claims.jsonl")
+DEFAULT_BLOCKS = Path("/tmp/veriput_rq1_theory_blocks.jsonl")
 
 
 def _load_rows(tsv: Path) -> list[dict]:
@@ -60,6 +61,26 @@ def _load_case_claims(path: Path, include_provisional: bool) -> list[dict]:
     return rows
 
 
+def _load_blocked_keys(path: Path) -> set[tuple[str, str]]:
+    blocked = set()
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return blocked
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict) or not row.get("active", True):
+            continue
+        bench = str(row.get("bench") or "")
+        subject = str(row.get("subject") or "")
+        if bench and subject:
+            blocked.add((bench, subject))
+    return blocked
+
+
 def _patch_category_claims(patch_ids: set[str]) -> list[dict]:
     claims = []
     for batch in PATCH_BATCHES:
@@ -87,7 +108,8 @@ def _patch_category_claims(patch_ids: set[str]) -> list[dict]:
 
 
 def build_manifest(rows: list[dict], patch_ids: set[str],
-                   case_claims: list[dict]) -> tuple[list[dict], dict]:
+                   case_claims: list[dict],
+                   blocked_keys: set[tuple[str, str]] | None = None) -> tuple[list[dict], dict]:
     claims = _patch_category_claims(patch_ids)
     out = []
     seen_subjects: set[tuple[str, str]] = set()
@@ -97,8 +119,11 @@ def build_manifest(rows: list[dict], patch_ids: set[str],
         for row in rows
     }
     used_case_claims = 0
+    blocked_keys = blocked_keys or set()
     for claim in case_claims:
         key = (str(claim.get("bench") or ""), str(claim.get("subject") or ""))
+        if key in blocked_keys:
+            continue
         if key in seen_subjects:
             continue
         base = dict(by_subject.get(key) or {
@@ -124,7 +149,8 @@ def build_manifest(rows: list[dict], patch_ids: set[str],
             if row.get("category") != claim["category"]:
                 continue
             key = (str(row.get("bench") or ""), str(row.get("subject") or ""))
-            if not key[0] or not key[1] or key in seen_subjects:
+            if (not key[0] or not key[1] or key in seen_subjects
+                    or key in blocked_keys):
                 continue
             limit = int(claim.get("limit") or 0)
             if limit > 0 and used >= limit:
@@ -180,6 +206,7 @@ def main() -> int:
                         type=Path,
                         default=DEFAULT_EXTRA_SUBAGENTS)
     parser.add_argument("--case-claims", type=Path, default=DEFAULT_CASE_CLAIMS)
+    parser.add_argument("--blocks", type=Path, default=DEFAULT_BLOCKS)
     parser.add_argument("--include-provisional", action="store_true")
     args = parser.parse_args()
 
@@ -195,7 +222,9 @@ def main() -> int:
         patch_ids.update(review_sets["provisional"])
         review_status = "accepted-with-commit-or-provisional"
     case_claims = _load_case_claims(args.case_claims, args.include_provisional)
-    manifest, details = build_manifest(rows, patch_ids, case_claims)
+    blocked_keys = _load_blocked_keys(args.blocks)
+    manifest, details = build_manifest(rows, patch_ids, case_claims, blocked_keys)
+    details["blocked_case_count"] = len(blocked_keys)
     for row in manifest:
         row["theory_review_status"] = review_status
     write_tsv(args.out, manifest)
@@ -209,6 +238,7 @@ def main() -> int:
             if args.include_provisional else []),
         "rejected_patch_ids_excluded": sorted(review_sets["rejected"]),
         "case_claims": str(args.case_claims),
+        "theory_blocks": str(args.blocks),
         "details": details,
         "worker_rule": (
             "rq1_local_pump.py and rq1_remote_pump.py must run this TSV by "

@@ -13,6 +13,7 @@ import argparse
 import contextlib
 import fcntl
 import json
+import re
 import subprocess
 import sys
 import time
@@ -26,7 +27,7 @@ DEFAULT_LOCK = Path("/tmp/veriput_rq1_subagents.lock")
 DEFAULT_REVIEW_EVENTS = Path("/tmp/veriput_rq1_review_events.jsonl")
 DEFAULT_MAX_AGENTS = 24
 DEFAULT_STALE_MINUTES = 20.0
-REQUIRED_REASONING_EFFORT = "medium"
+REQUIRED_REASONING_EFFORT = "high"
 AUTOCLOSE = Path(__file__).resolve().parent / "rq1_subagent_autoclose.py"
 
 
@@ -50,6 +51,18 @@ def plan_by_slot() -> dict[str, dict]:
             "expected_coverage": coverage,
         }
     return out
+
+
+def dynamic_plan(slot: str) -> dict | None:
+    """Return a per-cycle repair slot without reusing historical slots."""
+    if not re.fullmatch(r"R\d{8}-\d{2}", slot):
+        return None
+    return {
+        "slot": slot,
+        "task": "dynamic RQ1 repair shard",
+        "write_scope": ["<dynamic-assignment-scope>"],
+        "expected_coverage": "dynamic repair feedback",
+    }
 
 
 def load_state(path: Path) -> dict:
@@ -116,7 +129,10 @@ def scope_conflicts(scope_a: list[str], scope_b: list[str]) -> list[str]:
 
 
 def lease_slot(state: dict, slot: str, agent_id: str, mode: str,
-               allow_pending_close: bool = False) -> dict:
+               allow_pending_close: bool = False,
+               write_scope: list[str] | None = None,
+               task: str = "",
+               expected_coverage: str = "") -> dict:
     pending = pending_close_count()
     if pending and not allow_pending_close:
         raise SystemExit(
@@ -124,7 +140,10 @@ def lease_slot(state: dict, slot: str, agent_id: str, mode: str,
             f"pending_close_count={pending}; close or ack before leasing")
     plan = plan_by_slot()
     if slot not in plan:
-        raise SystemExit(f"unknown slot {slot}")
+        dynamic = dynamic_plan(slot)
+        if dynamic is None:
+            raise SystemExit(f"unknown slot {slot}")
+        plan[slot] = dynamic
     if mode not in ("write", "readonly"):
         raise SystemExit("--mode must be write or readonly")
     for existing in state.get("agents") or []:
@@ -137,6 +156,12 @@ def lease_slot(state: dict, slot: str, agent_id: str, mode: str,
                 f"agent_id={agent_id} existing_status={status} "
                 f"slot={existing.get('slot')}")
     lease = dict(plan[slot])
+    if write_scope:
+        lease["write_scope"] = list(write_scope)
+    if task:
+        lease["task"] = task
+    if expected_coverage:
+        lease["expected_coverage"] = expected_coverage
     lease.update({
         "agent_id": agent_id,
         "mode": mode,
@@ -190,6 +215,13 @@ def review_agent(
         if agent.get("agent_id") == agent_id:
             if agent.get("mode") != "write":
                 raise SystemExit("only write-mode agents require review")
+            review_round = int(agent.get("review_round") or 0)
+            if review_round >= 1:
+                raise SystemExit(
+                    "REVIEW_ROUND_LIMIT: patch may be reviewed at most once; "
+                    f"agent_id={agent_id} patch_id={agent.get('patch_id')} "
+                    f"review_round={review_round}; create a new repair patch_id")
+            agent["review_round"] = 1
             agent["review_status"] = verdict
             agent["reviewed_ts"] = now()
             agent["reviewer_id"] = reviewer_id
@@ -207,6 +239,7 @@ def review_agent(
                 "reviewer_id": reviewer_id,
                 "patch_id": agent.get("patch_id"),
                 "verdict": verdict,
+                "review_round": 1,
                 "commit_sha": commit_sha.strip(),
                 "note": note,
                 "write_scope": agent.get("write_scope") or [],
@@ -335,6 +368,19 @@ def watchdog_report(state: dict, stale_minutes: float) -> dict:
     return {
         "schema": "veriput-rq1-subagent-watchdog/v1",
         "active_count": len(active),
+        "active_details": [
+            {
+                "agent_id": agent.get("agent_id"),
+                "slot": agent.get("slot"),
+                "task": agent.get("task"),
+                "mode": agent.get("mode"),
+                "write_scope": agent.get("write_scope") or [],
+                "leased_ts": agent.get("leased_ts"),
+                "running_ts": agent.get("running_ts"),
+                "reasoning_effort": agent.get("reasoning_effort"),
+            }
+            for agent in active
+        ],
         "completed_count": len(completed),
         "queued_count": len(queued_slots),
         "capacity_configured": int(state.get("max_concurrent_threads_per_session")
@@ -361,7 +407,7 @@ def watchdog_report(state: dict, stale_minutes: float) -> dict:
             "Completion must state inspected failure artifacts, inspected code, "
             "root cause, fix target, and theoretical coverage. Accepted "
             "reviews must record a commit sha, and every spawned subagent must "
-            "be explicitly requested with reasoning_effort=medium."),
+            "be explicitly requested with reasoning_effort=high."),
     }
 
 
@@ -380,6 +426,9 @@ def main() -> int:
     lease.add_argument("--slot", required=True)
     lease.add_argument("--agent-id", required=True)
     lease.add_argument("--mode", choices=("write", "readonly"), default="write")
+    lease.add_argument("--write-scope", action="append", default=[])
+    lease.add_argument("--task", default="")
+    lease.add_argument("--expected-coverage", default="")
     lease.add_argument("--allow-pending-close", action="store_true")
     running = sub.add_parser("running")
     running.add_argument("--agent-id", required=True)
@@ -400,7 +449,9 @@ def main() -> int:
         with locked_state(args.state, args.lock) as state:
             if args.cmd == "lease":
                 result = lease_slot(state, args.slot, args.agent_id, args.mode,
-                                    args.allow_pending_close)
+                                    args.allow_pending_close,
+                                    args.write_scope, args.task,
+                                    args.expected_coverage)
             elif args.cmd == "running":
                 result = mark_running(state, args.agent_id)
             elif args.cmd == "complete":

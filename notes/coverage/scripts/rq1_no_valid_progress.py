@@ -37,7 +37,7 @@ DEFAULT_DEADLINE_HOURS = 16.0
 DEFAULT_REMOTE_HOST = "invmut-w2"
 DEFAULT_REQUIRED_SUBAGENTS = 24
 DEFAULT_MIN_ACTIVE_SUBAGENTS = 3
-DEFAULT_SUBAGENT_REASONING_EFFORT = "medium"
+DEFAULT_SUBAGENT_REASONING_EFFORT = "high"
 
 HARD_REQUIREMENTS = (
     "Do not report N/204 from memory; run this script or quote its last output.",
@@ -65,7 +65,7 @@ HARD_REQUIREMENTS = (
     "A reviewed patch counts toward net theoretical_progress only when "
     "review_status=accepted and the subagent record contains a commit sha. "
     "Review without a commit is incomplete and remains provisional at most.",
-    "Every spawned subagent must be requested with reasoning_effort=medium. "
+    "Every spawned subagent must be requested with reasoning_effort=high. "
     "Config-file defaults are not considered a hard guarantee unless the "
     "subagent ledger records the explicit effort.",
     "Workers may run only the theory-covered case manifest by default.  Broad "
@@ -586,8 +586,8 @@ def init_subagent_state(path: Path, force: bool = False) -> dict:
                 "agent record also has review_commit, commit_sha, commit, or "
                 "patch_commit."),
             "reasoning_effort": (
-                "Spawn calls must explicitly request reasoning_effort=medium; "
-                "records without reasoning_effort=medium are noncompliant."),
+                "Spawn calls must explicitly request reasoning_effort=high; "
+                "records without reasoning_effort=high are noncompliant."),
         },
     }
     path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
