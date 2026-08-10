@@ -70,9 +70,9 @@ DEFAULT_VERIPUT_ROOT = Path(os.environ.get(
 DEFAULT_RESULT_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1" / "VeriPUT"
 DEFAULT_AST_CACHE_ROOT = Path("/tmp/veriput_rq1_ast_cache")
 DEFAULT_STAGE2_UNIT_TIMEOUT_CAP_S = 0
-DEFAULT_ADAPTIVE_STAGE2_UNIT_TIMEOUT_CAP_S = 0
+DEFAULT_ADAPTIVE_STAGE2_UNIT_TIMEOUT_CAP_S = 120
 DEFAULT_CONCRETE_ONLY_STAGE4_TIMEOUT_CAP_S = 0
-DEFAULT_STAGE2_STAGE4_RESERVE_S = 0
+DEFAULT_STAGE2_STAGE4_RESERVE_S = 120
 ADAPTIVE_STAGE2_MANY_UNIT_THRESHOLD = 4
 ADAPTIVE_STAGE2_EXPENSIVE_TIER_THRESHOLD = 65
 DATASET_LABEL = {
@@ -653,6 +653,60 @@ def _adopt_stale_artifacts(row: dict, stale: dict | None) -> dict:
     return _annotate_result_accounting(merged)
 
 
+def _load_case_result_doc(case_dir: Path) -> dict | None:
+    try:
+        doc = json.loads((case_dir / "result.json").read_text(errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return doc if isinstance(doc, dict) else None
+
+
+def _case_result_row(doc: dict | None) -> dict | None:
+    if not isinstance(doc, dict):
+        return None
+    row = doc.get("row")
+    if isinstance(row, dict):
+        return row
+    return doc
+
+
+def _case_result_needs_normalized_write(case_dir: Path, candidate: dict) -> bool:
+    doc = _load_case_result_doc(case_dir)
+    current = _case_result_row(doc)
+    if not isinstance(current, dict):
+        return True
+    return (
+        _row_strength(candidate) > _row_strength(current)
+        or _row_needs_normalized_adoption(current, candidate))
+
+
+def _write_normalized_case_result(case_dir: Path, row: dict, *,
+                                  reason: str) -> bool:
+    """Write recovered artifact strength back to subject result.json.
+
+    Worker feedback and results_all.py use the per-subject result.json as the
+    canonical RQ1 ledger.  A runner resume/adoption pass must therefore persist
+    rows recovered from retained Stage-4 artifacts, not only update the dataset
+    journal, otherwise valid PUTs are repeatedly reported as no-valid.
+    """
+
+    if not _case_result_needs_normalized_write(case_dir, row):
+        return False
+    doc = _load_case_result_doc(case_dir) or {
+        "schema": "veriput-rq1-case-result/v1",
+    }
+    doc["row"] = _annotate_result_accounting(row)
+    normalization = dict(doc.get("normalization") or {})
+    normalization.update({
+        "normalized_at": _utc_now(),
+        "reason": reason,
+        "source": "rq1_veriput_run.adopt_existing_subject_results",
+    })
+    doc["normalization"] = normalization
+    _write_json(case_dir / "result.json", doc)
+    return True
+
+
 def _row_needs_resume_retry(row: dict | None) -> bool:
     """Resume should not make old empty no-valid rows terminal.
 
@@ -1189,8 +1243,20 @@ def adopt_existing_subject_results(result_root: Path,
                 continue
         else:
             row = _merge_put_summary_into_row(row, case_dir)
+        stale_row = _best_stale_artifact_row(
+            target_row, dataset_label, case_dir, row)
+        row = _adopt_stale_artifacts(row, stale_row)
         row["key"] = key
         row["subject_id"] = subject_id
+        normalized_case_result = _write_normalized_case_result(
+            case_dir,
+            row,
+            reason=(
+                "retained Stage-4 artifacts or normalized result row are "
+                "stronger than canonical subject result.json"),
+        )
+        if normalized_case_result:
+            row["normalized_subject_result_json"] = True
         current = updated.get(key)
         if (_row_strength(row) <= _row_strength(current)
                 and not _row_needs_normalized_adoption(current, row)):
@@ -4271,6 +4337,13 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                 stale_row = _best_stale_artifact_row(
                     target_row, dataset_label, case_dir, row)
                 row = _adopt_stale_artifacts(row, stale_row)
+                if _write_normalized_case_result(
+                        case_dir,
+                        row,
+                        reason=(
+                            "subject-level runner exception recovered a "
+                            "stronger retained Stage-4 artifact row")):
+                    row["normalized_subject_result_json"] = True
             _append_jsonl(journal, row)
             write_dataset_manifest(Path(args.result_root), dataset_label, journal)
             attempted += 1
@@ -4413,10 +4486,11 @@ def main(argv=None) -> int:
     ap.add_argument("--stage2-stage4-reserve-s", type=int,
                     default=DEFAULT_STAGE2_STAGE4_RESERVE_S,
                     help="reserve this many subject-generation seconds for "
-                         "Stage 4 after each Stage-2 unit. Default 0 derives "
+                         "Stage 4 after each Stage-2 unit. Set 0 to derive "
                          "the reserve from the concrete/timeout Stage-4 "
-                         "minimums so partial witness journals can still be "
-                         "materialized instead of becoming no-output rows")
+                         "minimums. The default keeps a larger materialization "
+                         "window so partial witness journals do not become "
+                         "no-output rows")
     ap.add_argument("--wrapper-grace", type=int, default=60,
                     help="subprocess cleanup/writeout slack outside the tool budget")
     ap.add_argument("--min-remaining-s", type=int, default=20,
