@@ -20,6 +20,9 @@ DEFAULT_REPAIR_TICKETS = Path("/tmp/veriput_rq1_repair_tickets.jsonl")
 DEFAULT_DISPATCH_QUEUE = Path("/tmp/veriput_rq1_dispatch_queue.json")
 DEFAULT_NO_VALID_TSV = Path("/tmp/veriput_no_valid_root_causes.tsv")
 DEFAULT_RESULTS_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
+DEFAULT_LIMIT = 24
+DEFAULT_SUBJECTS_PER_ASSIGNMENT = 4
+DEFAULT_MIN_ASSIGNMENTS = 12
 
 
 SCOPE_MAP = (
@@ -163,6 +166,29 @@ def _scope_key(scopes: list[str], category: str) -> str:
     return "RQ1_RUNNER"
 
 
+def _row_priority(row: dict) -> tuple[int, str, str, str]:
+    category = str(row.get("category") or "")
+    result_bucket = str(row.get("result_bucket") or "")
+    valid = int(row.get("valid") or 0)
+    put_valid = int(row.get("put_valid") or 0)
+    r1r2 = int(row.get("r1r2") or 0)
+    if valid <= 0 or result_bucket == "NO_VALID_AFTER_RUN" or \
+            category.startswith("ESBMC_"):
+        rank = 0
+    elif put_valid <= 0:
+        rank = 1
+    elif r1r2 <= 0:
+        rank = 2
+    else:
+        rank = 3
+    return (
+        rank,
+        category,
+        str(row.get("bench") or ""),
+        str(row.get("subject") or ""),
+    )
+
+
 def _default_scopes(category: str) -> list[str]:
     if category.startswith("ESBMC_"):
         return ["src/solidity-frontend/*.cpp", "src/goto-programs/goto_coverage.cpp"]
@@ -183,6 +209,70 @@ def _default_scopes(category: str) -> list[str]:
             "notes/coverage/scripts/certify_all.py"]
 
 
+def _stable_group_key(scopes: list[str], category: str) -> str:
+    return f"{_scope_key(scopes, category)}::{category or 'UNKNOWN'}"
+
+
+def _dataset_band(bench: object) -> str:
+    value = str(bench or "")
+    if value.startswith("peer"):
+        return "peer"
+    if value.startswith("bugfix"):
+        return "bugfix"
+    if value.startswith(("real", "stress")):
+        return "stress"
+    return value or "unknown"
+
+
+def _failure_family(row: dict) -> str:
+    category = str(row.get("category") or "")
+    original = str(row.get("original_category") or "")
+    root = str(row.get("root_cause") or "").lower()
+    subject = str(row.get("subject") or "")
+    if category == "NO_VALID_AFTER_RUN":
+        if "NOT_CERTIFIED" in original or "certify" in root:
+            return "certify-not-certified"
+        if "NO_PATH" in original or "no path" in root:
+            return "certify-no-path"
+        if "PATH_COV_GOAL_CAP" in original or "goal cap" in root:
+            return "certify-path-cap"
+        if "NO_WITNESS" in original or "witness" in root:
+            return "certify-no-witness"
+        if "ESBMC" in original:
+            return "esbmc-no-valid"
+        if "RUNNER" in original or "STAGE" in original:
+            return "runner-no-valid"
+        return "no-valid-other"
+    if category == "NO_PUT_MATERIALIZATION":
+        if "L1Block" in subject or "constant" in root or "pure" in root:
+            return "no-put-static-or-constant"
+        if "getter" in root:
+            return "no-put-getter"
+        if "CERTIFY" in original:
+            return "no-put-after-certify"
+        return "no-put-materialization"
+    if category == "NO_R1R2_ORACLE":
+        if "rollback" in root or "revert" in root:
+            return "r1r2-rollback-frame"
+        if "getter" in root:
+            return "r1r2-getter"
+        return "r1r2-oracle"
+    return category.lower() or "unknown"
+
+
+def _repair_group_key(scopes: list[str], category: str, row: dict) -> str:
+    return "::".join((
+        _scope_key(scopes, category),
+        category or "UNKNOWN",
+        _failure_family(row),
+        _dataset_band(row.get("bench")),
+    ))
+
+
+def _scope_signature(scopes: list[str]) -> tuple[str, ...]:
+    return tuple(sorted(str(item) for item in scopes))
+
+
 def _assignment_prompt(group: dict) -> str:
     subjects = group["subjects"][:8]
     subject_lines = "\n".join(
@@ -192,13 +282,25 @@ def _assignment_prompt(group: dict) -> str:
         f"r1r2={item.get('r1r2')} result={item.get('result_file') or item.get('subject_dir')}"
         for item in subjects)
     scopes = ", ".join(group["write_scope"])
+    mode = group.get("mode") or "write"
+    if mode == "readonly_root_cause":
+        mode_rule = (
+            "Mode: readonly_root_cause. Do not edit files. Return a precise "
+            "code-level root-cause report and minimal patch plan for the "
+            "write-owner of this scope.")
+    else:
+        mode_rule = (
+            "Mode: write-owner. Patch only the assigned write scope; do not "
+            "overlap writes with other assignments.")
     return f"""Read notes/coverage/scripts/rq1_subagent_prompt_rules.md first.
 Do NOT run ESBMC, ctest, pytest, RQ1, certify_all, put_all,
 solidity_path_put, or any benchmark case. Do NOT modify
 /home/samson/workspace/VeriPUT/Datasets.
 
 Autonomous repair task for bucket {group['bucket_key']}.
+Shard {group.get('shard_index', 1)}/{group.get('shard_count', 1)}.
 Write scope is exclusive: {scopes}.
+{mode_rule}
 
 Failure/weak-result subjects to inspect:
 {subject_lines}
@@ -208,11 +310,89 @@ code before editing. If the old theoretical coverage is contradicted by these
 results, explain which coverage claim must be reduced. Patch only the assigned
 write scope. Completion must include inspected artifacts, inspected code,
 code-level root cause, changed paths, theoretical coverage delta (+/-), and
-confirmation that Datasets were untouched."""
+confirmation that Datasets were untouched.
+
+This assignment is an immediate intervention generated from failed or weak
+worker feedback. Do not wait for any worker batch to finish. Your final report
+must state:
+1. failed_cases: the concrete subjects/artifacts inspected.
+2. prior_theory_failure: which previous patch/category claim was contradicted.
+3. code_fix: what code changed and why this is the failure path.
+4. theory_delta: +N/-N no-valid or PUT/R1/R2 quality delta.
+5. review_needed: the patch_id/scope that must be cross-reviewed before net
+   theory can increase."""
+
+
+def _split_group(group: dict, subjects_per_assignment: int) -> list[dict]:
+    subjects = list(group.get("subjects") or [])
+    if subjects_per_assignment <= 0 or len(subjects) <= subjects_per_assignment:
+        group = dict(group)
+        group["subject_count"] = len(subjects)
+        group["bucket_subject_total"] = len(subjects)
+        group["base_bucket_key"] = group["bucket_key"]
+        group["shard_index"] = 1
+        group["shard_count"] = 1
+        group["prompt"] = _assignment_prompt(group)
+        return [group]
+    shards = []
+    shard_count = (len(subjects) + subjects_per_assignment - 1) // \
+        subjects_per_assignment
+    for index in range(shard_count):
+        shard = dict(group)
+        shard["subjects"] = subjects[index * subjects_per_assignment:
+                                    (index + 1) * subjects_per_assignment]
+        shard["subject_count"] = len(shard["subjects"])
+        shard["bucket_subject_total"] = len(subjects)
+        shard["base_bucket_key"] = group["bucket_key"]
+        shard["shard_index"] = index + 1
+        shard["shard_count"] = shard_count
+        shard["bucket_key"] = f"{group['bucket_key']}#{index + 1:02d}"
+        shard["prompt"] = _assignment_prompt(shard)
+        shards.append(shard)
+    return shards
+
+
+def _interleave_shards(groups: list[dict],
+                       subjects_per_assignment: int,
+                       limit: int) -> list[dict]:
+    """Round-robin buckets so large feedback classes cannot starve others."""
+    shard_lists = [
+        _split_group(group, subjects_per_assignment)
+        for group in groups
+    ]
+    assignments = []
+    cursor = 0
+    while any(cursor < len(shards) for shards in shard_lists):
+        for shards in shard_lists:
+            if cursor >= len(shards):
+                continue
+            assignments.append(shards[cursor])
+            if limit > 0 and len(assignments) >= limit:
+                return assignments
+        cursor += 1
+    return assignments
+
+
+def _mark_write_modes(assignments: list[dict]) -> None:
+    """Keep one writer per exact scope while still dispatching broad triage."""
+    owners: set[tuple[str, ...]] = set()
+    for assignment in assignments:
+        signature = _scope_signature(assignment.get("write_scope") or [])
+        if signature in owners:
+            assignment["mode"] = "readonly_root_cause"
+            assignment["write_conflict_rule"] = (
+                "A prior assignment owns this exact write scope. This shard "
+                "must not edit files; it should inspect artifacts/source and "
+                "return root-cause findings for the write-owner.")
+        else:
+            owners.add(signature)
+            assignment["mode"] = "write"
+        assignment["prompt"] = _assignment_prompt(assignment)
 
 
 def build_dispatch(repair_tickets: Path, results_root: Path, no_valid_tsv: Path,
-                   limit: int) -> dict:
+                   limit: int, subjects_per_assignment: int,
+                   min_assignments: int) -> dict:
     root_causes = _root_cause_index(no_valid_tsv)
     rows = []
     for ticket in _jsonl(repair_tickets):
@@ -232,15 +412,24 @@ def build_dispatch(repair_tickets: Path, results_root: Path, no_valid_tsv: Path,
             "result_file": ticket.get("subject_dir"),
         })
     rows.extend(
-        _canonical_weak_rows(results_root, root_causes, limit=max(limit, 0)))
+        _canonical_weak_rows(
+            results_root,
+            root_causes,
+            limit=max(limit * max(1, subjects_per_assignment), 0),
+        ))
+    rows.sort(key=_row_priority)
 
     grouped: OrderedDict[str, dict] = OrderedDict()
     for row in rows:
         category = str(row.get("category") or "")
         scopes = list(row.get("suggested_write_scope") or _default_scopes(category))
-        key = _scope_key(scopes, category)
+        key = _repair_group_key(scopes, category, row)
         group = grouped.setdefault(key, {
             "bucket_key": key,
+            "scope_key": _scope_key(scopes, category),
+            "category": category,
+            "failure_family": _failure_family(row),
+            "dataset_band": _dataset_band(row.get("bench")),
             "write_scope": scopes,
             "subjects": [],
             "priority": "normal",
@@ -248,13 +437,12 @@ def build_dispatch(repair_tickets: Path, results_root: Path, no_valid_tsv: Path,
         group["subjects"].append(row)
         if row.get("priority") == "high" or not int(row.get("valid") or 0):
             group["priority"] = "high"
-    assignments = []
-    for key, group in grouped.items():
-        group["subject_count"] = len(group["subjects"])
-        group["prompt"] = _assignment_prompt(group)
-        assignments.append(group)
-        if limit > 0 and len(assignments) >= limit:
-            break
+    total_weak_subjects = sum(
+        len(group.get("subjects") or []) for group in grouped.values())
+    assignments = _interleave_shards(
+        list(grouped.values()), subjects_per_assignment,
+        max(limit, min_assignments))
+    _mark_write_modes(assignments)
     return {
         "schema": "veriput-rq1-repair-dispatch/v1",
         "generated_ts": time.time(),
@@ -262,12 +450,29 @@ def build_dispatch(repair_tickets: Path, results_root: Path, no_valid_tsv: Path,
         "no_valid_tsv": str(no_valid_tsv),
         "results_root": str(results_root),
         "assignment_count": len(assignments),
+        "min_assignment_target": min_assignments,
+        "write_owner_count": sum(
+            1 for item in assignments if item.get("mode") == "write"),
+        "readonly_root_cause_count": sum(
+            1 for item in assignments
+            if item.get("mode") == "readonly_root_cause"),
+        "base_bucket_count": len(grouped),
+        "total_weak_subjects": total_weak_subjects,
+        "assigned_subject_capacity": sum(
+            int(item.get("subject_count") or 0) for item in assignments),
+        "assignment_limit": limit,
         "assignments": assignments,
+        "subjects_per_assignment": subjects_per_assignment,
         "rule": (
             "Whenever assignment_count > 0, the main agent must spawn or reuse "
             "subagents for these assignments instead of manually handling every "
-            "failure. If the subagent tool is at capacity, close completed "
-            "agents first and record that capacity was the blocker."),
+            "failure. Assignments are split by write scope, result bucket, "
+            "failure family, dataset band, and small shards so more than ten "
+            "agents can investigate contradicted theory slices in parallel. "
+            "If the subagent tool is at capacity, close completed agents first "
+            "and record that capacity was the blocker. Only one write-owner "
+            "may edit an exact write scope; duplicate-scope shards are "
+            "readonly_root_cause to avoid write conflicts."),
     }
 
 
@@ -281,10 +486,18 @@ def main() -> int:
                         type=Path,
                         default=DEFAULT_NO_VALID_TSV)
     parser.add_argument("--out", type=Path, default=DEFAULT_DISPATCH_QUEUE)
-    parser.add_argument("--limit", type=int, default=8)
+    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
+    parser.add_argument("--subjects-per-assignment",
+                        type=int,
+                        default=DEFAULT_SUBJECTS_PER_ASSIGNMENT)
+    parser.add_argument("--min-assignments",
+                        type=int,
+                        default=DEFAULT_MIN_ASSIGNMENTS)
     args = parser.parse_args()
     doc = build_dispatch(args.repair_tickets, args.results_root,
-                         args.no_valid_tsv, args.limit)
+                         args.no_valid_tsv, args.limit,
+                         args.subjects_per_assignment,
+                         args.min_assignments)
     args.out.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
     print(json.dumps(doc, indent=2, sort_keys=True))
     return 0
