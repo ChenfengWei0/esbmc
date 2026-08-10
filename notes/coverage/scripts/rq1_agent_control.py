@@ -895,6 +895,7 @@ def _print_text(doc: dict, changed: dict | None) -> None:
                     ("correctness_argument", "是否正确"),
                     ("verdict", "review结论"),
                     ("theory_delta", "理论变化"),
+                    ("commit decision", "提交决定"),
                     ("next_action", "下一步"),
             ):
                 value = _review_field(note, field) or "<缺失>"
