@@ -825,6 +825,137 @@ def _ce_collection_value(value):
     return str(value) if isinstance(value, int) else value
 
 
+def _journal_entries_for_paths(cwd, paths, path_function=None):
+    """Return the journal rows that exactly identify the enumerated paths.
+
+    ``paths`` contains the normalized coordinate projection used by the
+    generaliser.  That projection deliberately drops aggregate state and
+    external-call values, so it is not sufficient as a replay witness by
+    itself.  The CE journal is the authoritative source for those values.
+
+    Matching is by the complete path identity, not by ``enc`` alone.  Path
+    numbers are local to a function and certification-query journals may carry
+    suffixed ids; accepting an ambiguous or foreign row here would turn a
+    real witness into a plausible-looking, but wrong, replay artifact.
+    """
+    journal_path = os.path.join(cwd, "cov-ce-journal.json")
+    try:
+        with open(journal_path, encoding="utf-8") as stream:
+            journal = json.load(stream)
+    except (OSError, json.JSONDecodeError):
+        return journal_path, None, {}, ["cov-ce-journal.json is absent or invalid"]
+    if journal.get("kind") != "solidity-complete-path-ce-journal":
+        return journal_path, journal, {}, [
+            "cov-ce-journal.json has an unsupported kind"]
+    rows = journal.get("witnesses")
+    if not isinstance(rows, dict):
+        return journal_path, journal, {}, [
+            "cov-ce-journal.json has no witness map"]
+
+    wanted = {}
+    for enc, depth, _ce in paths:
+        wanted[(str(int(enc)), str(int(depth)))] = (enc, depth)
+    found = {}
+    errors = []
+    for value in rows.values():
+        if not isinstance(value, dict):
+            continue
+        pf, _unit, pid = _journal_claim_parts(value)
+        try:
+            key = (str(int(pid)), str(int(value.get("path_depth"))))
+        except (TypeError, ValueError):
+            continue
+        if path_function and not same_path_function(pf, path_function):
+            continue
+        target = wanted.get(key)
+        if target is None:
+            continue
+        enc, depth = target
+        if enc in found:
+            errors.append(
+                f"multiple journal rows matched path enc={enc} depth={depth}")
+            continue
+        found[enc] = value
+    for enc, depth, _ce in paths:
+        if enc not in found:
+            errors.append(
+                f"no exact journal witness for path enc={enc} depth={depth}")
+    return journal_path, journal, found, errors
+
+
+def _journal_ce_artifact(journal, entry, path_ce, members, decisions,
+                         refused, caveats):
+    """Build an explicit, non-certifying artifact from one solver witness.
+
+    The artifact intentionally carries observed environment/state and
+    external-call values separately from source-call inputs.  Those observed
+    values must not silently become fuzz coordinates or nondeterministic test
+    setup.  This file records evidence only; Stage 4 still has to materialize
+    and replay it, and Stage 2/3 must still certify any PUT claim.
+    """
+    path_function, unit, path_id = _journal_claim_parts(entry)
+    return {
+        "schema": "veriput-ce-artifact/1",
+        "kind": "solver-refutation-witness",
+        "verdict": "FAILED",
+        "proof": {
+            "certified": False,
+            "valid": False,
+            "put": False,
+            "r1r2": False,
+            "requires_stage4_replay": True,
+            "requires_stage2_certification": True,
+        },
+        "path": {
+            "enc": path_ce.get("enc"),
+            "depth": path_ce.get("depth"),
+            "path_id": str(path_id),
+            "path_function": path_function,
+            "unit": unit,
+            "condition": entry.get("condition"),
+        },
+        "coordinates": _ce_collection_value(path_ce.get("counterexample", {})),
+        "source_inputs": _ce_collection_value(entry.get("inputs") or []),
+        "observed_environment": _ce_collection_value(entry.get("env") or []),
+        "observed_entry_state": _ce_collection_value(
+            entry.get("entry_storage") or []),
+        "observed_final_state": _ce_collection_value(
+            entry.get("final_state") or []),
+        "observed_external_call_returns": _ce_collection_value(
+            entry.get("extcall_returns") or []),
+        "observed_return": {
+            "value": entry.get("return_value"),
+            "known": bool(entry.get("return_value_known")),
+        },
+        "observed_exit": {
+            "kind": "revert" if entry.get("revert_pre_rollback") else "normal",
+            "events": _ce_collection_value(entry.get("events") or []),
+        },
+        "members": _ce_collection_value(members),
+        "decisions": _ce_collection_value(decisions),
+        "unrendered_state": _ce_collection_value(
+            entry.get("state_written_unrendered") or []),
+        "refused_coordinates": list(refused or []),
+        "caveats": list(caveats or []),
+        "witness": {
+            "real_solver_witness": True,
+            "witness_count": _journal_witness_count(entry),
+            "payload_symbols_protected": bool(
+                entry.get("payload_symbols_protected")),
+            "entry_storage_known": bool(entry.get("entry_storage_known", True)),
+        },
+        "source": {
+            "kind": "cov-ce-journal",
+            "journal_complete": bool(journal.get("complete")),
+            "journal_partial": bool(journal.get("partial")),
+            "claims_decided": journal.get("claims_decided"),
+            "claims_total": journal.get("claims_total"),
+            "coverage_is_complete": bool(journal.get("complete")) and
+            journal.get("claims_decided") == journal.get("claims_total"),
+        },
+    }
+
+
 def write_ce_collection(cwd, args, scope_label, paths, refused, caveats,
                         members, path_decisions, *, status, reason=None):
     """Persist refutation evidence without promoting it to a test or proof."""
@@ -832,6 +963,23 @@ def write_ce_collection(cwd, args, scope_label, paths, refused, caveats,
     journal_copy = os.path.join(cwd, "ce-witness-journal.json")
     if os.path.exists(journal):
         shutil.copyfile(journal, journal_copy)
+    _journal_path, journal_data, journal_rows, journal_errors = \
+        _journal_entries_for_paths(cwd, paths, args.path_function)
+    ce_artifacts = []
+    if journal_data is not None:
+        for enc, depth, ce in paths:
+            entry = journal_rows.get(enc)
+            if entry is None:
+                continue
+            ce_artifacts.append(_journal_ce_artifact(
+                journal_data,
+                entry,
+                {"enc": enc, "depth": depth,
+                 "counterexample": ce},
+                members.get(enc, []),
+                path_decisions.get(enc, []),
+                refused,
+                caveats))
     data = {
         "schema": "veriput-ce-collection/1",
         "status": status,
@@ -853,6 +1001,21 @@ def write_ce_collection(cwd, args, scope_label, paths, refused, caveats,
             }
             for enc, depth, ce in paths
         ],
+        # This is evidence, not a certification result.  The exact journal row
+        # is retained so later concrete/PUT stages do not have to reconstruct
+        # aggregate state or external-call observations from a flattened CE.
+        "ce_artifacts": ce_artifacts,
+        "ce_artifact_schema": "veriput-ce-artifact/1",
+        "ce_artifact_errors": journal_errors,
+        "ce_artifact_source": {
+            "path": _journal_path,
+            "journal_complete": bool(journal_data and
+                                       journal_data.get("complete")),
+            "journal_partial": bool(journal_data and
+                                     journal_data.get("partial")),
+            "claims_decided": (journal_data or {}).get("claims_decided"),
+            "claims_total": (journal_data or {}).get("claims_total"),
+        },
         "refused_coordinates": list(refused or []),
         "caveats": list(caveats or []),
         "cov_report": file_identity(enumeration_report_snapshot_path(cwd)),
