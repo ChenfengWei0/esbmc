@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -21,6 +23,7 @@ DEFAULT_STATE = Path("/tmp/veriput_rq1_subagents.json")
 DEFAULT_MAX_AGENTS = 24
 DEFAULT_STALE_MINUTES = 20.0
 REQUIRED_REASONING_EFFORT = "medium"
+AUTOCLOSE = Path(__file__).resolve().parent / "rq1_subagent_autoclose.py"
 
 
 def now() -> float:
@@ -63,6 +66,25 @@ def save_state(path: Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
 
 
+def pending_close_count() -> int:
+    proc = subprocess.run(
+        [sys.executable, str(AUTOCLOSE), "plan"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(
+            "subagent autoclose plan failed; cannot lease more agents")
+    try:
+        doc = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(
+            f"subagent autoclose plan emitted invalid JSON: {exc}") from exc
+    return int(doc.get("pending_close_count") or 0)
+
+
 def active_agents(state: dict) -> list[dict]:
     return [
         agent for agent in state.get("agents") or []
@@ -78,7 +100,13 @@ def scope_conflicts(scope_a: list[str], scope_b: list[str]) -> list[str]:
     return sorted(a & b)
 
 
-def lease_slot(state: dict, slot: str, agent_id: str, mode: str) -> dict:
+def lease_slot(state: dict, slot: str, agent_id: str, mode: str,
+               allow_pending_close: bool = False) -> dict:
+    pending = pending_close_count()
+    if pending and not allow_pending_close:
+        raise SystemExit(
+            "COMPLETED_SUBAGENTS_NOT_CLOSED: "
+            f"pending_close_count={pending}; close or ack before leasing")
     plan = plan_by_slot()
     if slot not in plan:
         raise SystemExit(f"unknown slot {slot}")
@@ -312,6 +340,7 @@ def main() -> int:
     lease.add_argument("--slot", required=True)
     lease.add_argument("--agent-id", required=True)
     lease.add_argument("--mode", choices=("write", "readonly"), default="write")
+    lease.add_argument("--allow-pending-close", action="store_true")
     running = sub.add_parser("running")
     running.add_argument("--agent-id", required=True)
     complete = sub.add_parser("complete")
@@ -341,7 +370,8 @@ def main() -> int:
                          indent=2,
                          sort_keys=True))
     elif args.cmd == "lease":
-        print(json.dumps(lease_slot(state, args.slot, args.agent_id, args.mode),
+        print(json.dumps(lease_slot(state, args.slot, args.agent_id, args.mode,
+                                    args.allow_pending_close),
                          indent=2, sort_keys=True))
         save_state(args.state, state)
     elif args.cmd == "running":

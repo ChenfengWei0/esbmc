@@ -26,6 +26,7 @@ THEORY_CASES = HERE / "rq1_theory_covered_cases.py"
 THEORY_CASES_OUT = Path("/tmp/veriput_rq1_theory_covered_cases.tsv")
 DISPATCH_QUEUE = Path("/tmp/veriput_rq1_dispatch_queue.json")
 PATCH_REVIEW_SUMMARY = HERE / "rq1_patch_review_summary.py"
+AUTOCLOSE = HERE / "rq1_subagent_autoclose.py"
 MIN_PENDING_REPAIR_ASSIGNMENTS = 10
 RESULTS_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 STATUS_DELTA_CACHE = Path("/tmp/veriput_rq1_mandatory_status_snapshot.json")
@@ -640,6 +641,41 @@ def _print_feedback_dispatch_summary(ledger_stdout: str,
             f" scope={','.join(ticket.get('suggested_write_scope') or [])}")
 
 
+def _autoclose_plan() -> dict:
+    proc = subprocess.run(
+        [sys.executable, str(AUTOCLOSE), "plan"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    try:
+        doc = json.loads(proc.stdout) if proc.returncode == 0 else {}
+    except json.JSONDecodeError:
+        doc = {}
+    doc["_returncode"] = proc.returncode
+    doc["_stderr_tail"] = proc.stderr[-1000:]
+    return doc
+
+
+def _print_autoclose_status() -> None:
+    plan = _autoclose_plan()
+    pending = int(plan.get("pending_close_count") or 0)
+    print("subagent_autoclose_status:")
+    print(f"  returncode={plan.get('_returncode')}")
+    print(f"  pending_close_count={pending}")
+    if plan.get("_stderr_tail"):
+        print(f"  stderr_tail={plan.get('_stderr_tail')}")
+    for item in (plan.get("pending_close") or [])[:12]:
+        print(
+            f"  pending_close={item.get('agent_id')}"
+            f" slot={item.get('slot')} patch={item.get('patch_id')}")
+    if pending:
+        print(
+            "  HARD_ALERT=COMPLETED_SUBAGENTS_NOT_CLOSED;"
+            "close_or_ack_before_spawning_more=true")
+
+
 def _print_theory_manifest_status() -> None:
     proc = subprocess.run(
         [sys.executable, str(THEORY_CASES), "--out", str(THEORY_CASES_OUT)],
@@ -786,6 +822,8 @@ def _status_snapshot(ledger_stdout: str, watchdog_stdout: str) -> dict:
             feedback.get("no_r1r2_quality_debt_count"),
         "repair_assignment_count":
             dispatch.get("assignment_count") or len(dispatch.get("assignments") or []),
+        "pending_close_count":
+            int(_autoclose_plan().get("pending_close_count") or 0),
         "review_pending": counts.get("pending"),
         "review_accepted": counts.get("accepted"),
         "review_needs_work": counts.get("needs-work"),
@@ -847,6 +885,16 @@ def _hard_gate_exit_code(watchdog_stdout: str) -> int:
         or len(subagents.get("active_details") or [])
         or 0)
     minimum = int(subagents.get("min_active_required") or 5)
+    close_plan = _autoclose_plan()
+    pending_close = int(close_plan.get("pending_close_count") or 0)
+    if pending_close > 0:
+        print("mandatory_hard_fail:")
+        print("  exit_code=5")
+        print(
+            "  reason=COMPLETED_SUBAGENTS_NOT_CLOSED;"
+            f"pending_close_count={pending_close}")
+        print("  required_action=close_or_ack_completed_agents_before_spawn")
+        return 5
     dispatch = _json_file(DISPATCH_QUEUE)
     assignments = int(dispatch.get("assignment_count") or len(
         dispatch.get("assignments") or []) or 0)
@@ -1016,6 +1064,7 @@ def main() -> int:
     _print_watchdog_hard_alerts(watchdog_proc.stdout)
     _print_worker_mn_summary(watchdog_proc.stdout)
     _print_recent_canonical_results()
+    _print_autoclose_status()
     _print_theory_manifest_status()
     _print_feedback_dispatch_summary(proc.stdout, watchdog_proc.stdout)
     _print_report_completeness(proc.stdout, watchdog_proc.stdout)
