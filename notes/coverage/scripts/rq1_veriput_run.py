@@ -111,6 +111,11 @@ def _safe_name(text: str) -> str:
     return "".join(keep).strip("_") or "unnamed"
 
 
+def _run_key(subject_id: str, *, ce_collection_only: bool = False) -> str:
+    prefix = "ce-collection" if ce_collection_only else "gen:veriput"
+    return f"{prefix}:{subject_id}"
+
+
 def _is_under(path: Path, root: Path) -> bool:
     try:
         path.expanduser().resolve().relative_to(root.expanduser().resolve())
@@ -3018,6 +3023,102 @@ def _certify_argv_for_remaining(job: dict, remaining_s: float, run_timeout_s: in
     return argv
 
 
+def _copy_ce_collection_artifacts(source: Path, destination: Path) -> list[str]:
+    """Copy Stage-1 evidence into the subject result without promoting it."""
+    destination.mkdir(parents=True, exist_ok=True)
+    copied = []
+    for name in ("ce-collection.json", "ce-witness-journal.json",
+                 "cov-ce-journal.json", "enumeration-report.json",
+                 "generalise-progress.json", "run-config.json", "driver.log"):
+        candidate = source / name
+        if not candidate.is_file():
+            continue
+        target = destination / name
+        shutil.copy2(candidate, target)
+        copied.append(str(target))
+    return copied
+
+
+def run_ce_collection_subject(subject: PreparedSubject, case_dir: Path,
+                              jobs: list[dict], args) -> tuple[dict, dict]:
+    """Collect one bounded CE for a subject without touching RQ1 test results."""
+    collection_root = case_dir / "ce-collection"
+    started = time.monotonic()
+    stage = {
+        "stage": "ce-collection",
+        "status": "no-unit",
+        "budget_s": 60,
+        "unit": None,
+        "path_function": None,
+        "artifact_paths": [],
+    }
+    if jobs:
+        job = jobs[0]
+        unit = str(job["unit"])
+        stage.update({"unit": unit,
+                      "path_function": job.get("path_function")})
+        out_path = collection_root / "certify-results.jsonl"
+        argv = _certify_argv_for_remaining(
+            job, remaining_s=60, run_timeout_s=60,
+            memlimit_gib=args.memlimit_gib, unit_timeout_cap_s=60,
+            out_path=out_path, stage_mem_fraction=args.stage_mem_fraction,
+            esbmc_bin=getattr(args, "esbmc", "") or None,
+            stage4_reserve_s=0)
+        argv.append("--ce-collection-only")
+        result = run_command(
+            argv, 60 + args.wrapper_grace,
+            case_dir / "logs" / f"ce-{_safe_name(unit)}")
+        source = Path(job["certification_budget"]["workdir"])
+        artifact_dir = collection_root / _safe_name(unit)
+        copied = _copy_ce_collection_artifacts(source, artifact_dir)
+        stage.update(result)
+        stage.update({
+            "stage": "ce-collection",
+            "unit": unit,
+            "path_function": job.get("path_function"),
+            "source_workdir": str(source),
+            "artifact_paths": copied,
+            "artifact_present": any(
+                Path(path).name == "ce-collection.json" for path in copied),
+        })
+
+    elapsed = round(time.monotonic() - started, 3)
+    summary = {
+        "schema": "veriput-rq1-ce-collection/1",
+        "subject_id": subject.subject_id,
+        "benchmark": subject.benchmark,
+        "contract": subject.contract,
+        "budget_s": 60,
+        "wall_s": elapsed,
+        "stage": stage,
+        "note": (
+            "Refutation evidence only. This record is neither a valid test "
+            "nor a PUT/region proof and must not enter RQ1 validity counts."),
+    }
+    _write_json(collection_root / "summary.json", summary)
+    row = {
+        "key": f"ce-collection:{subject.subject_id}",
+        "schema": "veriput-rq1-ce-collection-row/1",
+        "stage": "ce_collection",
+        "subject_id": subject.subject_id,
+        "benchmark": subject.benchmark,
+        "contract": subject.contract,
+        "status": stage["status"],
+        "artifact_present": stage.get("artifact_present", False),
+        "unit": stage.get("unit"),
+        "wall_total_s": elapsed,
+        "raw": 0,
+        "valid": 0,
+        "put_raw": 0,
+        "put_valid": 0,
+        "concrete_raw": 0,
+        "concrete_valid": 0,
+        "quality_bucket": "ce-only",
+        "summary": str(collection_root / "summary.json"),
+    }
+    return row, summary
+
+
 def _append_esbmc_arg(argv: list[str], value: str) -> list[str]:
     return list(argv) + [f"--esbmc-arg={value}"]
 
@@ -3262,6 +3363,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
 
     _write_json(case_dir / "unit-schedule.json", schedule)
     jobs = list(schedule.get("jobs") or [])
+    if args.ce_collection_only:
+        return run_ce_collection_subject(subject, case_dir, jobs, args)
     if result_status == "ok" and not jobs:
         result_status, failure_reason = _empty_schedule_status_reason(schedule)
         if result_status == "no-units":
@@ -4187,7 +4290,9 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
 def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                           done: dict[str, dict], args) -> int:
     selected = [row for row in rows
-                if f"gen:veriput:{row['subject_id']}" not in done]
+                if _run_key(
+                    row["subject_id"],
+                    ce_collection_only=args.ce_collection_only) not in done]
     if not selected:
         return 0
     if args.jobs <= 1:
@@ -4391,7 +4496,10 @@ def write_dataset_manifest(root: Path, dataset_label: str, journal: Path) -> Non
             "quality_bucket": dict(sorted(quality.items())),
         },
     }
-    _write_json(root / dataset_label / "manifest.json", doc)
+    manifest_name = (
+        "ce-collection-manifest.json"
+        if journal.name == "ce-collection-results.jsonl" else "manifest.json")
+    _write_json(root / dataset_label / manifest_name, doc)
 
 
 def build_dry_run(args) -> dict:
@@ -4463,6 +4571,10 @@ def main(argv=None) -> int:
                          "prepared flat.sol size to get early throughput")
     ap.add_argument("--result-root", default=str(DEFAULT_RESULT_ROOT))
     ap.add_argument("--ast-cache-root", default=str(DEFAULT_AST_CACHE_ROOT))
+    ap.add_argument("--ce-collection-only", action="store_true",
+                    help="collect at most one bounded 60-second CE artifact "
+                         "per subject. This does not generate tests or update "
+                         "canonical RQ1 validity results.")
     ap.add_argument("--timeout", type=int, default=600,
                     help="whole subject generation budget, seconds")
     ap.add_argument("--esbmc-run-timeout", type=int, default=600,
@@ -4654,6 +4766,9 @@ def main(argv=None) -> int:
         if args.esbmc_run_timeout > args.timeout:
             raise RQ1RunError("--esbmc-run-timeout must not exceed --timeout")
         validate_jobs(args)
+        if args.ce_collection_only:
+            args.timeout = 60
+            args.esbmc_run_timeout = 60
         args.veriput_root = str(veriput_root)
         args.result_root = str(result_root)
         args.ast_cache_root = str(ast_cache_root)
@@ -4663,9 +4778,11 @@ def main(argv=None) -> int:
 
         dataset_label, rows = target_rows(veriput_root, args.benchmark,
                                           args.subject_id, args.limit, args.order)
-        journal = result_root / dataset_label / "results.jsonl"
+        journal_name = ("ce-collection-results.jsonl"
+                        if args.ce_collection_only else "results.jsonl")
+        journal = result_root / dataset_label / journal_name
         done = _latest_rows(journal) if args.resume and not args.redo else {}
-        if args.resume and not args.redo:
+        if args.resume and not args.redo and not args.ce_collection_only:
             done = adopt_existing_subject_results(
                 result_root, dataset_label, rows, journal, done)
             retryable = retryable_resume_rows(done, args.resume_quality_floor)
@@ -4678,7 +4795,9 @@ def main(argv=None) -> int:
                           for key, row in retryable.items())),
                       flush=True)
         for target_row in rows:
-            if f"gen:veriput:{target_row['subject_id']}" in done:
+            if _run_key(
+                    target_row["subject_id"],
+                    ce_collection_only=args.ce_collection_only) in done:
                 print(f"[rq1] skip recorded {target_row['subject_id']}")
         attempted = run_selected_subjects(rows, dataset_label, journal, done, args)
         if attempted == 0:
