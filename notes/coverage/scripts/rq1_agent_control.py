@@ -522,8 +522,6 @@ def _tracked_snapshot(doc: dict) -> dict:
         "review_assignment_count": doc.get("review_assignment_count"),
         "theory_manifest_case_count": doc.get("theory_manifest_case_count"),
         "actual_progress": doc.get("actual_progress"),
-        "local_memory": doc.get("local_memory"),
-        "remote_memory": doc.get("remote_memory"),
         "local_worker_running_case_count": doc.get(
             "local_worker_running_case_count"),
         "remote_worker_running_case_count": doc.get(
@@ -532,11 +530,87 @@ def _tracked_snapshot(doc: dict) -> dict:
             "total_worker_running_case_count"),
         "local_worker_process_count": doc.get("local_worker_process_count"),
         "remote_worker_process_count": doc.get("remote_worker_process_count"),
-        "remote_worker_process_details": doc.get(
-            "remote_worker_process_details"),
-        "stale_worker_progress": doc.get("stale_worker_progress"),
-        "remote_memory": doc.get("remote_memory"),
-        "worker_progress": doc.get("worker_progress"),
+        "stale_worker_progress": {
+            "local_progress_running_without_process":
+                (doc.get("stale_worker_progress") or {}).get(
+                    "local_progress_running_without_process"),
+            "remote_progress_running_without_process":
+                (doc.get("stale_worker_progress") or {}).get(
+                    "remote_progress_running_without_process"),
+            "local_stale_lease_count":
+                (doc.get("stale_worker_progress") or {}).get(
+                    "local_stale_lease_count"),
+            "remote_stale_lease_count":
+                (doc.get("stale_worker_progress") or {}).get(
+                    "remote_stale_lease_count"),
+            "local_stale_lease_keys": [
+                [
+                    item.get("bench"),
+                    item.get("subject"),
+                    item.get("key"),
+                ]
+                for item in (
+                    (doc.get("stale_worker_progress") or {}).get(
+                        "local_stale_leases") or [])
+            ],
+            "remote_stale_lease_keys": [
+                [
+                    item.get("bench"),
+                    item.get("subject"),
+                    item.get("lease"),
+                ]
+                for item in (
+                    (doc.get("stale_worker_progress") or {}).get(
+                        "remote_stale_leases") or [])
+            ],
+        },
+        "worker_progress": {
+            "recent_done_count_in_tail":
+                (doc.get("worker_progress") or {}).get(
+                    "recent_done_count_in_tail"),
+            "recent_failed_count_in_tail":
+                (doc.get("worker_progress") or {}).get(
+                    "recent_failed_count_in_tail"),
+            "recent_oom_count_in_tail":
+                (doc.get("worker_progress") or {}).get(
+                    "recent_oom_count_in_tail"),
+            "recent_weak_or_failed_count_in_tail":
+                (doc.get("worker_progress") or {}).get(
+                    "recent_weak_or_failed_count_in_tail"),
+            "currently_running_keys": [
+                [
+                    item.get("bench"),
+                    item.get("subject"),
+                    item.get("status"),
+                    item.get("bucket"),
+                ]
+                for item in (
+                    (doc.get("worker_progress") or {}).get(
+                        "currently_running_cases") or [])
+            ],
+            "recent_failed_keys": [
+                [
+                    item.get("bench"),
+                    item.get("subject"),
+                    item.get("status"),
+                    item.get("bucket"),
+                ]
+                for item in (
+                    (doc.get("worker_progress") or {}).get(
+                        "recent_failed_tail") or [])
+            ],
+            "recent_weak_keys": [
+                [
+                    item.get("bench"),
+                    item.get("subject"),
+                    item.get("status"),
+                    item.get("bucket"),
+                ]
+                for item in (
+                    (doc.get("worker_progress") or {}).get(
+                        "recent_weak_tail") or [])
+            ],
+        },
         "host_tool_boundary": doc.get("host_tool_boundary"),
         "gate": doc.get("gate"),
         "hard_fail": doc.get("hard_fail"),
