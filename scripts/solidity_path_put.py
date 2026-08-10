@@ -12739,6 +12739,94 @@ def constructor_param_interface_mock_specs(forge_project, contract):
             continue
         add_cast_calls(body, pname, pname, idx)
 
+    # Constructors often first bind an address argument to an interface-typed
+    # local and only then call through that local:
+    #
+    #   IRouter router = IRouter(route);
+    #   IFactory(router.factory()).createPair(...);
+    #
+    # The direct-cast matcher above deliberately does not treat `router` as a
+    # constructor argument. Keep the alias tied to the original argument so
+    # the replay can install the mock before `new Contract(...)` executes.
+    interface_aliases = {}
+    alias_rx = re.compile(
+        r"\b([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*=\s*"
+        r"([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)\s*;")
+    for _alias_type, alias_name, _cast_type, param_name in alias_rx.findall(
+            body):
+        found = by_name.get(param_name)
+        if found is None:
+            continue
+        idx, ptype = found
+        if _norm_ty(ptype) not in ("address", "address payable"):
+            continue
+        interface_aliases[alias_name] = (idx, param_name, _alias_type)
+
+    def add_alias_method(alias_name, alias_info, iface, fname):
+        idx, ctor_pname, _alias_type = alias_info
+        choice = _unique_function_choice(functions.get(fname) or [])
+        if choice is None:
+            return
+        signature, returns = choice
+        key = (idx, iface, signature)
+        if key in seen:
+            return
+        seen.add(key)
+        specs.append({
+            "param_index": idx,
+            "param_name": ctor_pname,
+            "interface": iface,
+            "signature": signature,
+            "returns": returns,
+            "via_alias": alias_name,
+            "nonzero_address_returns": False,
+        })
+
+    for alias_name, alias_info in interface_aliases.items():
+        for fname in sorted(set(re.findall(
+                r"\b" + re.escape(alias_name)
+                + r"\s*\.\s*([A-Za-z_]\w*)\s*\(", body))):
+            add_alias_method(alias_name, alias_info,
+                             alias_info[2], fname)
+
+    # If an aliased call returns an address which is immediately cast to
+    # another interface, the second call is made at that returned address,
+    # not at the original constructor argument. We intentionally use
+    # address(0) as the returned address: the first mock below establishes
+    # that value and the second mock is installed at the same deterministic
+    # address. This is enough to make the local replay executable while the
+    # certified ESBMC region remains unchanged.
+    chained_rx = re.compile(
+        r"\b([A-Za-z_]\w*)\s*\(\s*"
+        r"([A-Za-z_]\w*)\s*\.\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*\)"
+        r"\s*\.\s*([A-Za-z_]\w*)\s*\(")
+    for outer_iface, alias_name, first_name, second_name in chained_rx.findall(
+            body):
+        alias_info = interface_aliases.get(alias_name)
+        if alias_info is None:
+            continue
+        add_alias_method(alias_name, alias_info, alias_info[2], first_name)
+        choice = _unique_function_choice(functions.get(second_name) or [])
+        if choice is None:
+            continue
+        signature, returns = choice
+        idx, ctor_pname, _alias_type = alias_info
+        key = (idx, outer_iface, signature, "address(0)")
+        if key in seen:
+            continue
+        seen.add(key)
+        specs.append({
+            "param_index": idx,
+            "param_name": ctor_pname,
+            "interface": outer_iface,
+            "signature": signature,
+            "returns": returns,
+            "via_alias": alias_name,
+            "via_chain": first_name,
+            "mock_address": "address(0)",
+            "nonzero_address_returns": False,
+        })
+
     getter_cast_rx = re.compile(
         r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\(\s*\)"
         r"\s*\)\s*\)*\s*\.\s*([A-Za-z_]\w*)\s*\(")
@@ -13054,6 +13142,7 @@ def apply_constructor_param_interface_mocks(lines, contract, specs, source,
                 continue
             seen.add(key)
             mock_name = f"_esbmc_ctor_arg_mock_{changed}_{len(local)}"
+            target_expr = str(spec.get("mock_address") or addr_expr)
             returns = spec.get("returns") or []
             if returns:
                 exprs = []
@@ -13075,12 +13164,14 @@ def apply_constructor_param_interface_mocks(lines, contract, specs, source,
             local += [
                 f"{indent}// ESBMC constructor fixture: local Foundry has no "
                 f"code at constructor argument `{spec['param_name']}`.",
-                f"{indent}address {mock_name} = {addr_expr};",
             ]
-            if not _is_precompile_address_expr(addr_expr):
-                local.append(f"{indent}vm.etch({mock_name}, hex\"00\");")
+            if target_expr == addr_expr:
+                local.append(f"{indent}address {mock_name} = {addr_expr};")
+                if not _is_precompile_address_expr(addr_expr):
+                    local.append(f"{indent}vm.etch({mock_name}, hex\"00\");")
+                target_expr = mock_name
             local.append(
-                f"{indent}vm.mockCall({mock_name}, "
+                f"{indent}vm.mockCall({target_expr}, "
                 f"abi.encodeWithSignature(\"{signature}\"), {ret});")
         if local:
             out.extend(local)
