@@ -261,6 +261,12 @@ protected:
       return false;
     return it->second.count(tgt) != 0;
   }
+  bool should_deploy_static_contract_instance(const std::string &c_name) const
+  {
+    if (tgt_cnt_set.size() != 1)
+      return true; // whole-file / multi-target mode keeps legacy deployment
+    return c_name == *tgt_cnt_set.begin();
+  }
   void
   get_static_contract_instance_ref(const std::string &c_name, exprt &new_expr);
   void get_inherit_static_contract_instance_name(
@@ -1212,6 +1218,10 @@ protected:
   /// should then fall back to `member_exprt(base, "_ESBMC_bind_cname", ...)`.
   bool get_bind_shadow_read(const exprt &base, exprt &shadow_out);
   void get_nondet_expr(const typet &t, exprt &new_expr);
+  void get_solidity_nondet_value(
+    const typet &t,
+    const locationt &loc,
+    exprt &new_expr);
 
   /// T2.4 — Yul precise lowering for inline assembly blocks.
   /// `try_lower_yul_block_precise` walks an `InlineAssembly` AST node and

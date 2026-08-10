@@ -15,6 +15,7 @@
 #include <util/i2string.h>
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
+#include <util/std_types.h>
 #include <util/message.h>
 #include <fstream>
 #include <set>
@@ -722,28 +723,46 @@ bool solidity_convertert::get_statement(
     if (
       get_sol_type(return_exrp_type) == SolidityGrammar::SolType::TUPLE_RETURNS)
     {
-      if (
-        stmt["expression"]["nodeType"].get<std::string>() !=
-          "TupleExpression" &&
-        stmt["expression"]["nodeType"].get<std::string>() != "Conditional" &&
-        stmt["expression"]["nodeType"].get<std::string>() != "FunctionCall")
-      {
-        log_error("Unexpected tuple");
-        return true;
-      }
-
       // get tuple instance
       std::string tname, tid;
       if (get_tuple_instance_name(*current_functionDecl, tname, tid))
         return true;
       if (context.find_symbol(tid) == nullptr)
       {
-        log_error("cannot find tuple instance symbol: {}", tid);
-        return true;
+        exprt tuple_dump;
+        if (get_tuple_definition(*current_functionDecl))
+          return true;
+        if (get_tuple_instance(*current_functionDecl, tuple_dump))
+          return true;
+      }
+      if (context.find_symbol(tid) == nullptr)
+      {
+        exprt ignored;
+        if (get_expr(stmt["expression"], ignored))
+          return true;
+        exprt return_expr = code_returnt();
+        mark_source_return(return_expr);
+        move_to_back_block(return_expr);
+        new_expr = code_skipt();
+        break;
       }
 
       // get lhs
       exprt lhs = symbol_expr(*context.find_symbol(tid));
+      auto overapproximate_tuple_return = [&]() -> bool {
+        const struct_typet &lhs_struct = to_struct_type(lhs.type());
+        for (const auto &comp : lhs_struct.components())
+        {
+          exprt lop;
+          if (get_tuple_member_call(lhs.identifier(), comp, lop))
+            return true;
+
+          exprt rop;
+          get_solidity_nondet_value(comp.type(), lop.location(), rop);
+          get_tuple_assignment(stmt, lop, rop);
+        }
+        return false;
+      };
 
       if (
         stmt["expression"]["nodeType"].get<std::string>() == "TupleExpression")
@@ -756,36 +775,47 @@ bool solidity_convertert::get_statement(
         current_lhsDecl = true;
         exprt rhs;
         if (get_expr(stmt["expression"], rhs))
-          return true;
-        current_lhsDecl = false;
-
-        size_t ls = to_struct_type(lhs.type()).components().size();
-        size_t rs = rhs.operands().size();
-        if (ls != rs)
         {
-          log_debug(
-            "soldiity",
-            "Handling return tuple.\nlhs = {}\nrhs = {}",
-            lhs.to_string(),
-            rhs.to_string());
-          log_error("Internal tuple error.");
-        }
-
-        for (size_t i = 0; i < ls; i++)
-        {
-          // lop: struct member call (e.g. tuple.men0)
-          exprt lop;
-          if (get_tuple_member_call(
-                lhs.identifier(),
-                to_struct_type(lhs.type()).components().at(i),
-                lop))
+          current_lhsDecl = false;
+          if (overapproximate_tuple_return())
             return true;
+        }
+        else
+        {
+          current_lhsDecl = false;
 
-          // rop: constant/symbol
-          exprt rop = rhs.operands().at(i);
+          size_t ls = to_struct_type(lhs.type()).components().size();
+          size_t rs = rhs.operands().size();
+          if (ls != rs)
+          {
+            log_warning(
+              "tuple return literal has {} slot(s), but the declared return "
+              "tuple has {} slot(s); over-approximating missing slots",
+              rs,
+              ls);
+          }
 
-          // do assignment
-          get_tuple_assignment(stmt, lop, rop);
+          for (size_t i = 0; i < ls; i++)
+          {
+            // lop: struct member call (e.g. tuple.men0)
+            exprt lop;
+            if (get_tuple_member_call(
+                  lhs.identifier(),
+                  to_struct_type(lhs.type()).components().at(i),
+                  lop))
+              return true;
+
+            // rop: constant/symbol, or nondet if solc/ABI lowering produced a
+            // tuple shape that is shorter than the declared return tuple.
+            exprt rop;
+            if (i < rs)
+              rop = rhs.operands().at(i);
+            else
+              get_solidity_nondet_value(lop.type(), lop.location(), rop);
+
+            // do assignment
+            get_tuple_assignment(stmt, lop, rop);
+          }
         }
       }
       else if (
@@ -795,54 +825,88 @@ bool solidity_convertert::get_statement(
         const nlohmann::json &conditional = stmt["expression"];
         const nlohmann::json &true_expr = conditional["trueExpression"];
         const nlohmann::json &false_expr = conditional["falseExpression"];
-        if (
-          true_expr.value("nodeType", "") != "TupleExpression" ||
-          false_expr.value("nodeType", "") != "TupleExpression" ||
-          !true_expr.contains("components") ||
-          !false_expr.contains("components"))
-        {
-          log_error("Unexpected tuple conditional return structure");
-          return true;
-        }
+        const std::size_t cond_front_base =
+          (current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl)
+            .operands()
+            .size();
 
         exprt cond_expr;
         if (get_expr(conditional["condition"], cond_expr))
           return true;
+        code_blockt cond_hoisted;
+        hoist_operands_read_by(cond_expr, cond_front_base, cond_hoisted);
 
         const struct_typet &lhs_struct = to_struct_type(lhs.type());
-        const auto &true_components = true_expr["components"];
-        const auto &false_components = false_expr["components"];
-        for (size_t i = 0; i < lhs_struct.components().size(); ++i)
-        {
-          if (
-            i >= true_components.size() || i >= false_components.size() ||
-            true_components[i].is_null() || false_components[i].is_null())
-          {
-            log_error(
-              "tuple conditional return: branch arity mismatch at slot {}", i);
+
+        auto build_tuple_return_arm =
+          [&](const nlohmann::json &branch, codet &arm) -> bool {
+          const std::size_t arm_front_base =
+            (current_functionDecl ? expr_frontBlockDecl : ctor_frontBlockDecl)
+              .operands()
+              .size();
+          const std::size_t arm_back_base =
+            (current_functionDecl ? expr_backBlockDecl : ctor_backBlockDecl)
+              .operands()
+              .size();
+
+          const bool tuple_literal =
+            branch.value("nodeType", "") == "TupleExpression" &&
+            branch.contains("components") && branch["components"].is_array();
+          const nlohmann::json *components =
+            tuple_literal ? &branch["components"] : nullptr;
+
+          exprt ignored;
+          if (!tuple_literal && get_expr(branch, ignored))
             return true;
+
+          for (size_t i = 0; i < lhs_struct.components().size(); ++i)
+          {
+            exprt lop;
+            if (get_tuple_member_call(
+                  lhs.identifier(), lhs_struct.components().at(i), lop))
+              return true;
+
+            exprt value;
+            if (
+              tuple_literal && i < components->size() &&
+              !(*components)[i].is_null())
+            {
+              if (get_expr((*components)[i], value))
+                return true;
+            }
+            else
+            {
+              get_solidity_nondet_value(lop.type(), lop.location(), value);
+            }
+
+            get_tuple_assignment(stmt, lop, value);
           }
 
-          exprt lop;
-          if (get_tuple_member_call(
-                lhs.identifier(), lhs_struct.components().at(i), lop))
-            return true;
+          arm = code_skipt();
+          flush_pending_into_body(arm, arm_front_base, arm_back_base);
+          return false;
+        };
 
-          exprt true_value, false_value;
-          if (get_expr(true_components[i], true_value))
-            return true;
-          if (get_expr(false_components[i], false_value))
-            return true;
+        codet then_arm, else_arm;
+        if (build_tuple_return_arm(true_expr, then_arm))
+          return true;
+        if (build_tuple_return_arm(false_expr, else_arm))
+          return true;
 
-          convert_type_expr(ns, true_value, lop, empty_json);
-          convert_type_expr(ns, false_value, lop, empty_json);
+        codet if_expr("ifthenelse");
+        if_expr.copy_to_operands(cond_expr, then_arm, else_arm);
+        if_expr.location() = cond_expr.location();
 
-          exprt ternary("if", lop.type());
-          ternary.copy_to_operands(cond_expr, true_value, false_value);
-          get_tuple_assignment(stmt, lop, ternary);
+        if (cond_hoisted.operands().empty())
+          move_to_back_block(if_expr);
+        else
+        {
+          cond_hoisted.copy_to_operands(if_expr);
+          move_to_back_block(cond_hoisted);
         }
       }
-      else
+      else if (
+        stmt["expression"]["nodeType"].get<std::string>() == "FunctionCall")
       {
         // return func(); ==>
         // tuple1.mem0 = tuple0.mem0; return;
@@ -877,17 +941,31 @@ bool solidity_convertert::get_statement(
                 stmt["expression"],
                 stmt["expression"]["typeDescriptions"],
                 func_call))
-            return true;
-          get_tuple_function_call(func_call);
+            rhs_is_nondet = true;
+          else
+            get_tuple_function_call(func_call);
         }
 
         size_t ls = to_struct_type(lhs.type()).components().size();
-        size_t rs =
-          rhs_is_nondet ? ls : to_struct_type(rhs.type()).components().size();
-        if (ls != rs)
+        size_t rs = ls;
+        if (!rhs_is_nondet)
         {
-          log_error("Unexpected tuple structure");
-          abort();
+          if (!rhs.type().is_struct())
+            rhs_is_nondet = true;
+          else
+          {
+            rs = to_struct_type(rhs.type()).components().size();
+            if (ls != rs)
+            {
+              log_warning(
+                "tuple return: callee tuple shape has {} slot(s), but the "
+                "declared return tuple has {} slot(s); over-approximating "
+                "the returned slots",
+                rs,
+                ls);
+              rhs_is_nondet = true;
+            }
+          }
         }
 
         for (size_t i = 0; i < ls; i++)
@@ -904,7 +982,7 @@ bool solidity_convertert::get_statement(
           exprt rop;
           if (rhs_is_nondet)
           {
-            get_nondet_expr(lop.type(), rop);
+            get_solidity_nondet_value(lop.type(), lop.location(), rop);
           }
           else if (get_tuple_member_call(
                      rhs.identifier(),
@@ -914,6 +992,33 @@ bool solidity_convertert::get_statement(
 
           // do assignment
           get_tuple_assignment(stmt, lop, rop);
+        }
+      }
+      else
+      {
+        // Tuple-typed expressions are not always direct tuple literals or
+        // calls after Solidity/ABI lowering. If no tuple_instance exists to
+        // split, preserve expression evaluation side effects and soundly
+        // over-approximate each return slot.
+        exprt ignored;
+        if (get_expr(stmt["expression"], ignored))
+        {
+          if (overapproximate_tuple_return())
+            return true;
+        }
+        else
+        {
+          const struct_typet &lhs_struct = to_struct_type(lhs.type());
+          for (const auto &comp : lhs_struct.components())
+          {
+            exprt lop;
+            if (get_tuple_member_call(lhs.identifier(), comp, lop))
+              return true;
+
+            exprt rop;
+            get_solidity_nondet_value(comp.type(), lop.location(), rop);
+            get_tuple_assignment(stmt, lop, rop);
+          }
         }
       }
       // do return in the end
@@ -1706,6 +1811,26 @@ bool solidity_convertert::get_statement(
 
     code_blockt havoc_block;
 
+    auto emit_havoc_assign = [&](const nlohmann::json &decl, bool is_state) {
+      if (decl.empty() || decl.value("nodeType", "") != "VariableDeclaration")
+        return;
+
+      exprt var_expr;
+      if (get_var_decl_ref(decl, is_state, var_expr))
+        return;
+      if (var_expr.is_nil() || var_expr.type().is_nil())
+        return;
+
+      exprt nondet_val;
+      get_nondet_expr(var_expr.type(), nondet_val);
+      if (nondet_val.is_nil() || nondet_val.type().is_nil())
+        return;
+
+      code_assignt assign(var_expr, nondet_val);
+      assign.location() = loc;
+      havoc_block.copy_to_operands(assign);
+    };
+
     if (
       stmt.contains("externalReferences") &&
       stmt["externalReferences"].is_array())
@@ -1730,19 +1855,9 @@ bool solidity_convertert::get_statement(
         if (decl.empty() || decl["nodeType"] != "VariableDeclaration")
           continue;
 
-        // Resolve the variable to a symbol expression
         bool is_state =
           decl.contains("stateVariable") && decl["stateVariable"].get<bool>();
-        exprt var_expr;
-        if (get_var_decl_ref(decl, is_state, var_expr))
-          continue; // best-effort: skip if resolution fails
-
-        // Assign nondet value
-        exprt nondet_val;
-        get_nondet_expr(var_expr.type(), nondet_val);
-        code_assignt assign(var_expr, nondet_val);
-        assign.location() = loc;
-        havoc_block.copy_to_operands(assign);
+        emit_havoc_assign(decl, is_state);
       }
 
       // Also havoc variables referenced via .slot (state variables modified
@@ -1764,15 +1879,12 @@ bool solidity_convertert::get_statement(
         if (decl.empty() || decl["nodeType"] != "VariableDeclaration")
           continue;
 
-        exprt var_expr;
-        if (get_var_decl_ref(decl, true, var_expr))
+        const bool is_state = decl.value("stateVariable", false);
+        const bool is_storage =
+          is_state || decl.value("storageLocation", std::string()) == "storage";
+        if (!is_storage)
           continue;
-
-        exprt nondet_val;
-        get_nondet_expr(var_expr.type(), nondet_val);
-        code_assignt assign(var_expr, nondet_val);
-        assign.location() = loc;
-        havoc_block.copy_to_operands(assign);
+        emit_havoc_assign(decl, is_state);
       }
     }
 
@@ -1874,6 +1986,18 @@ bool is_supported_yul_builtin(const std::string &name)
   return ok.count(name) != 0;
 }
 
+bool try_follow_yul_symbol_type(const namespacet &ns, typet &t)
+{
+  while (t.id() == "symbol")
+  {
+    const symbolt *sym = ns.lookup(to_symbol_type(t).get_identifier());
+    if (sym == nullptr)
+      return false;
+    t = sym->type;
+  }
+  return true;
+}
+
 // Storage byte size for the value types supported by single-slot struct
 // packing: unsigned integers (address is uint160 -> 20 bytes) and bool.
 // Signed ints (unpack would need `signextend`, unsupported), bytesN (modelled
@@ -1885,8 +2009,8 @@ bool yul_pack_value_byte_size(
   unsigned &bytes)
 {
   typet rt = t;
-  while (rt.id() == "symbol")
-    rt = ns.follow(rt);
+  if (!try_follow_yul_symbol_type(ns, rt))
+    return false;
   if (rt.id() == "bool")
   {
     bytes = 1;
@@ -2228,6 +2352,7 @@ bool solidity_convertert::convert_yul_expression(
         args[i], src_to_decl, slot_refs, locals, loc, dst);
     };
     auto u256_const = [&](const BigInt &v) { return from_integer(v, u256); };
+    auto cast_u256 = [&](exprt &e) { solidity_gen_typecast(ns, e, u256); };
     // ---- THIS TERNARY IS A PATH DECISION, AND IT IS MEASURED ----
     //
     // Used by `lt`/`gt`/`eq` (below), `slt`/`sgt`, and `iszero`. A ternary's
@@ -2271,6 +2396,8 @@ bool solidity_convertert::convert_yul_expression(
       exprt a, b;
       if (eval_arg(0, a) || eval_arg(1, b))
         return true;
+      cast_u256(a);
+      cast_u256(b);
       if (fname == "add")
         out = plus_exprt(a, b);
       else if (fname == "sub")
@@ -2299,6 +2426,8 @@ bool solidity_convertert::convert_yul_expression(
       exprt a, b;
       if (eval_arg(0, a) || eval_arg(1, b))
         return true;
+      cast_u256(a);
+      cast_u256(b);
       if (fname == "div")
         out = div_exprt(a, b);
       else
@@ -2319,6 +2448,9 @@ bool solidity_convertert::convert_yul_expression(
       exprt a, b, m;
       if (eval_arg(0, a) || eval_arg(1, b) || eval_arg(2, m))
         return true;
+      cast_u256(a);
+      cast_u256(b);
+      cast_u256(m);
       exprt inner;
       if (fname == "addmod")
         inner = plus_exprt(a, b);
@@ -2339,6 +2471,8 @@ bool solidity_convertert::convert_yul_expression(
       exprt a, b;
       if (eval_arg(0, a) || eval_arg(1, b))
         return true;
+      cast_u256(a);
+      cast_u256(b);
       exprt cond;
       if (fname == "lt")
         cond = binary_relation_exprt(a, "<", b);
@@ -2381,6 +2515,7 @@ bool solidity_convertert::convert_yul_expression(
       exprt a;
       if (eval_arg(0, a))
         return true;
+      cast_u256(a);
       equality_exprt cond(a, u256_const(0));
       out = bool_to_u256(cond);
       out.type() = u256;
@@ -2396,6 +2531,8 @@ bool solidity_convertert::convert_yul_expression(
       exprt a, b;
       if (eval_arg(0, a) || eval_arg(1, b))
         return true;
+      cast_u256(a);
+      cast_u256(b);
       const char *id = (fname == "and")  ? "bitand"
                        : (fname == "or") ? "bitor"
                                          : "bitxor";
@@ -2412,6 +2549,7 @@ bool solidity_convertert::convert_yul_expression(
       exprt a;
       if (eval_arg(0, a))
         return true;
+      cast_u256(a);
       out = exprt("bitnot", u256);
       out.copy_to_operands(a);
       out.location() = loc;
@@ -2427,6 +2565,8 @@ bool solidity_convertert::convert_yul_expression(
       exprt s, v;
       if (eval_arg(0, s) || eval_arg(1, v))
         return true;
+      cast_u256(s);
+      cast_u256(v);
       const char *id = (fname == "shl") ? "shl" : "lshr";
       exprt shifted(id, u256);
       shifted.copy_to_operands(v, s);
@@ -2540,8 +2680,8 @@ bool solidity_convertert::convert_yul_expression(
       if (lval.type().id() == "pointer")
         lval = dereference_exprt(base, base.type().subtype());
       typet rt = lval.type();
-      while (rt.id() == "symbol")
-        rt = ns.follow(rt);
+      if (!try_follow_yul_symbol_type(ns, rt))
+        return true;
 
       if (rt.id() == "struct")
       {
@@ -2995,8 +3135,8 @@ bool solidity_convertert::convert_yul_statement(
     if (lval.type().id() == "pointer")
       lval = dereference_exprt(base, base.type().subtype());
     typet rt = lval.type();
-    while (rt.id() == "symbol")
-      rt = ns.follow(rt);
+    if (!try_follow_yul_symbol_type(ns, rt))
+      return true;
 
     if (rt.id() == "struct")
     {

@@ -229,11 +229,14 @@ Completion MUST report this shape for every reviewed patch_id:
 4. verdict: accepted / rejected / needs-work.
 5. theory_delta: exact +N/-N no-valid coverage or +N/-N PUT/R1/R2 quality
    coverage. Use 0 when the patch is useful but not evidence-backed.
-6. next_action: if rejected/needs-work, name the repair bucket and exclusive
+6. covered_cases: exact benchmark/subject cases with old result bucket that
+   the positive delta covers. An accepted verdict requires this field and a
+   positive, case-level +N delta; otherwise verdict MUST be needs-work.
+7. next_action: if rejected/needs-work, name the repair bucket and exclusive
    write scope that must be dispatched immediately.
 
 A review that does not explain changed_code, prior_failure,
-correctness_argument, verdict, theory_delta, and next_action is invalid and
+correctness_argument, verdict, theory_delta, covered_cases, and next_action is invalid and
 must keep review_status=pending."""
 
 

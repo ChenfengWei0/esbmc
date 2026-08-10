@@ -340,8 +340,9 @@ bool solidity_convertert::get_unbound_function(
     // cannot disagree about which entries exist. A disagreement would be silent
     // in the worst direction: an entry this loop kept but the pass did not
     // instrument is a unit the harness can enter and no claim ever measures.
-    const bool focus_applies = !focus_func.empty() && tgt_cnt_set.size() == 1 &&
-                               c_name == *tgt_cnt_set.begin();
+    const bool focus_applies =
+      !focus_func.empty() && tgt_cnt_set.size() == 1 &&
+      (c_name == *tgt_cnt_set.begin() || is_strict_base_of_target(c_name));
 
     for (const auto &method : methods)
     {

@@ -104,6 +104,26 @@ import subprocess
 import sys
 import time
 
+
+def ensure_foundry_tools_on_path():
+    path = os.environ.get("PATH", "")
+    dirs = path.split(os.pathsep) if path else []
+    candidates = [
+        os.path.expanduser("~/.foundry/bin"),
+        os.path.expanduser("~/.local/bin"),
+        "/home/administrator/.foundry/bin",
+        "/home/administrator/.local/bin",
+    ]
+    extra = [
+        d for d in candidates
+        if d not in dirs and os.path.exists(os.path.join(d, "forge"))
+    ]
+    if extra:
+        os.environ["PATH"] = os.pathsep.join(extra + dirs)
+
+
+ensure_foundry_tools_on_path()
+
 from solidity_ast_dependencies import (SLOT_DEPENDENCY_POLICY,
                                         contract_state_esbmc_store_names,
                                         path_function_declaration_id,
@@ -111,6 +131,7 @@ from solidity_ast_dependencies import (SLOT_DEPENDENCY_POLICY,
                                         unit_state_dependencies)
 
 UINT256_MAX = (1 << 256) - 1
+ADDRESS_MAX = (1 << 160) - 1
 DYNAMIC_RENDERED_WIDTH = 2
 
 
@@ -203,6 +224,16 @@ SOLVER_SELECTION_ARGS = {
     "--default-solver",
 }
 
+ESBMC_SINGLETON_ARGS = {
+    "--cov-report-json",
+    "--div-by-zero-check",
+    "--generate-foundry-testcase",
+    "--overflow-check",
+    "--path-cov-arith-resolve",
+    "--result-only",
+    "--solidity-path-coverage",
+}
+
 
 def check_esbmc_args(extra):
     """The refusal, or None. Applied to what the CALLER passes, never to the
@@ -233,6 +264,19 @@ def check_esbmc_args(extra):
 def esbmc_args_select_solver(extra):
     """Whether caller-supplied ESBMC args already choose a solver."""
     return any(a in SOLVER_SELECTION_ARGS for a in extra or [])
+
+
+def dedup_esbmc_singleton_args(args):
+    """Preserve repeated value-taking args, but drop duplicate singleton flags."""
+    out = []
+    seen = set()
+    for arg in args or []:
+        if arg in ESBMC_SINGLETON_ARGS and arg in seen:
+            continue
+        out.append(arg)
+        if arg in ESBMC_SINGLETON_ARGS:
+            seen.add(arg)
+    return out
 
 
 # ---- WHICH CELL A RUN IS IN, AND WHY THE ARTEFACT HAS TO SAY SO --------------
@@ -274,6 +318,11 @@ CELLS = {
 }
 
 
+SYNTHETIC_EMITTER_PROBE_CAP_S = 60
+SYNTHETIC_EMITTER_PROBE_FRACTION = 0.25
+SYNTHETIC_EMITTER_MIN_PROBE_S = 10
+
+
 def cell_of(scope, max_tx):
     """(name, rule) for this run's configuration. Never guesses a name."""
     if scope not in ("focus", "whole") and max_tx == 2:
@@ -287,6 +336,38 @@ def cell_of(scope, max_tx):
                       f"the two command lines INVOCATION_DECISIONS.md settles, "
                       f"so this run belongs to no table. Say what it is for "
                       f"before quoting it anywhere"))
+
+
+def synthetic_emitter_probe_budget(full_budget, timeout_s, synthetic_available):
+    """Cap the concrete emitter when a synthetic preamble can replace it.
+
+    The emitter is useful evidence when it returns quickly, but it is not the
+    proof gate for a certified region.  If a synthetic preamble is available,
+    letting testcase generation consume the whole Stage-4 budget leaves the
+    assertion ladder and R2 proof with seconds.  That turns certified regions
+    into concrete-only replays for a scheduling reason.
+    """
+
+    if not synthetic_available:
+        return full_budget
+    full_budget = max(1, int(full_budget))
+    timeout_s = max(1, int(timeout_s))
+    cap = int(timeout_s * SYNTHETIC_EMITTER_PROBE_FRACTION)
+    cap = max(SYNTHETIC_EMITTER_MIN_PROBE_S, cap)
+    cap = min(SYNTHETIC_EMITTER_PROBE_CAP_S, cap)
+    return max(1, min(full_budget, cap))
+
+
+def budget_with_followup_reserve(full_budget, reserve_s, enabled):
+    """Leave verifier time for the next proof query when there is room."""
+
+    full_budget = max(1, int(full_budget))
+    reserve_s = max(0, int(reserve_s))
+    if not enabled or reserve_s <= 0:
+        return full_budget
+    if full_budget <= reserve_s + 5:
+        return full_budget
+    return max(1, full_budget - reserve_s)
 
 
 def run_esbmc(esbmc, sol, ast, contract, unit, extra, cwd, max_tx, timeout,
@@ -317,7 +398,7 @@ def run_esbmc(esbmc, sol, ast, contract, unit, extra, cwd, max_tx, timeout,
         cmd += ["--focus-function", unit]
     elif scope != "whole":
         cmd += ["--focus-function", scope]
-    cmd += extra
+    cmd += dedup_esbmc_singleton_args(extra)
     t0 = time.time()
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     out = p.stdout + p.stderr
@@ -674,7 +755,8 @@ def rung_asserts_a_change(text):
     pre`, it is wrapped in the same try/catch, and it is GREEN. So the wrapper
     alone is not the fault and the fix is not "never emit under try/catch".
     """
-    if re.match(r"^post (!=|>|<) pre$", text):
+    text = canonical_oracle_rung_text(text)
+    if re.match(r"^(?:post (!=|>|<) pre|pre (!=|>|<) post)$", text):
         return True
     # A value/interval tied to an input or arithmetic term is a postcondition
     # of the successful call. On a swallowed revert `post == pre`; unless the
@@ -689,6 +771,20 @@ def rung_asserts_a_change(text):
     # only a literal zero is safe to execute after a swallowed revert.
     m = re.match(r"^(?:post - pre|pre - post) in \[([^,]+),", text)
     return bool(m) and m.group(1).strip() != "0"
+
+
+def rung_is_revert_observable_frame(text):
+    """Whether a state rung remains observable after a reverting call.
+
+    Solidity restores storage on both ordinary reverts and rollback reverts.
+    A post/pre equality, or either non-strict ordering over the same restored
+    value, can therefore still be asserted after the call. Strict order and
+    disequality rungs claim a successful-call change and stay unobservable.
+    """
+    text = canonical_oracle_rung_text(text)
+    return re.match(
+        r"^(?:post (?:==|>=|<=) pre|pre (?:==|>=|<=) post)$",
+        text) is not None
 
 
 # Rung text -> a renderer producing forge-std assertion lines.  `post`/`pre`
@@ -1612,7 +1708,9 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
         state = state_ids.get(ref)
         if state is not None:
             state_name = f"state.{state[0]}"
-            if state_name in rendered_by_kind.get(expected_kind, set()):
+            if (state_name in rendered_by_kind.get(expected_kind, set())
+                    or (type_coord_kind(state[1]) == expected_kind
+                        and target_readable(state[0]))):
                 return {"kind": "coord", "name": state_name}, state_name
         env_name = env_coord_name(n)
         if env_name and env_name in rendered_by_kind.get(expected_kind, set()):
@@ -1918,8 +2016,7 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 return None
             names.append(name)
         ty = _norm_ty((n.get("typeDescriptions") or {}).get("typeString") or "")
-        query_base = mapping_query_base(query_key, maps[query_key])
-        return query_base + "".join(f"[{name}]" for name in names) + tail, ty
+        return mapping_source_slot_var(query_key, maps[query_key], names), ty
 
     def state_member_lhs(n):
         if not layout:
@@ -2476,11 +2573,21 @@ def propose_r2_batch(ladder_rows, params, source_literals=(), depth=1,
     for name in sorted(verdicts):
         rows = verdicts[name]
         if "post >= pre" not in rows or "post <= pre" not in rows:
+            equality_measured = (
+                rows.get("post == pre") in ("HOLDS", "REFUTED")
+                or rows.get("post != pre") in ("HOLDS", "REFUTED"))
             if (has_bool_endpoint and rows.get("post == pre") in
                     ("HOLDS", "REFUTED") and rows.get("post != pre") in
                     ("HOLDS", "REFUTED")):
                 allvars.append(name)
                 target_kinds[name] = "bool"
+                continue
+            if equality_measured:
+                allvars.append(name)
+                target_kinds[name] = "num"
+                log(f"[put]   typed R2 for {name}: the R1 ladder emitted no "
+                    "ordering pair, so delta candidates are not proposed, but "
+                    "absolute/equality R2 candidates are still meaningful")
                 continue
             log(f"[put]   typed R2 omitted for {name}: the R1 ladder emitted "
                 "no ordering pair, so this is not an ordering-capable "
@@ -2704,6 +2811,33 @@ def schedule_source_r2_specs(source_specs, typed_specs, log=print):
     return source + typed
 
 
+def r2_coord_tuple_from_type(name, sol_type):
+    """One rendered-coordinate tuple for an R2 endpoint name, or None."""
+    lk = lift_kind(sol_type)
+    if lk is None:
+        return None
+    kind, width = lk
+    coord_kind = {
+        "address": "id",
+        "bytes": "id",
+        "bool": "bool",
+    }.get(kind, "num")
+    coord_width = (20 if kind == "address" else
+                   (width // 8 if kind == "bytes" else None))
+    return name, coord_kind, coord_width
+
+
+def append_r2_coord_once(coords, entry):
+    """Append one R2 coordinate descriptor without duplicating its name/kind."""
+    if entry is None:
+        return False
+    key = (entry[0], entry[1])
+    if key in {(name, kind) for name, kind, _width in coords}:
+        return False
+    coords.append(entry)
+    return True
+
+
 def r2_terms_from_specs(specs):
     """Canonical term lookup consumed by the Foundry renderer."""
     out = {}
@@ -2726,6 +2860,52 @@ def r2_terms_from_specs(specs):
                     remember(item["lo"])
                     remember(item["hi"])
     return out
+
+
+def region_r2_literals(region, pins, params, state_types=None):
+    """Numeric endpoint literals contributed by the certified entry slice.
+
+    These are proposal seeds only.  They do not prove an oracle; every surviving
+    candidate still has to pass the ESBMC ladder.  They matter because many
+    benchmark units write constants or bounded calldata endpoints into state,
+    and the source AST often does not carry those as literals after flattening.
+    """
+
+    coord_types = {name: sol_type for name, sol_type in params or []}
+    for name, sol_type in (state_types or {}).items():
+        coord_types.setdefault("state." + name, sol_type)
+    out, evidence, seen = [], [], set()
+
+    def coord_accepts_numeric(name):
+        kind = lift_kind(coord_types.get(name))
+        if kind is None:
+            return name not in coord_types
+        return kind[0] in ("uint", "int", "bytes", "address")
+
+    def add(value, origin):
+        try:
+            ivalue = int(str(value), 0)
+        except (TypeError, ValueError):
+            return
+        if ivalue < 0 or ivalue > UINT256_MAX or ivalue in seen:
+            return
+        seen.add(ivalue)
+        out.append(ivalue)
+        evidence.append(f"R2 region literal {ivalue} from {origin}")
+
+    for name, bounds in sorted((region or {}).items()):
+        if not coord_accepts_numeric(name):
+            continue
+        try:
+            lo, hi = bounds
+        except (TypeError, ValueError):
+            continue
+        add(lo, f"{name}.lo")
+        add(hi, f"{name}.hi")
+    for name, value in sorted((pins or {}).items()):
+        if coord_accepts_numeric(name):
+            add(value, f"{name} pin")
+    return out, evidence
 
 
 FORGE_RESULT_RE = re.compile(r"^\s*\[(PASS|FAIL[^\]]*)\]\s+(\w+)\s*\(")
@@ -2777,17 +2957,39 @@ def fuzz_prefilter_verdicts(labels, forge_out):
 def forge_json_test_results(forge_out):
     """Test-name keyed Forge JSON results, or an empty map on malformed data."""
     try:
-        suites = json.loads(forge_out or "")
+        data = json.loads(forge_out or "")
     except (TypeError, ValueError):
-        suites = {}
+        return {}
     seen = {}
-    if isinstance(suites, dict):
-        for suite in suites.values():
-            if not isinstance(suite, dict):
+
+    def visit(node, test_name=None):
+        if isinstance(node, list):
+            for item in node:
+                visit(item, test_name)
+            return
+        if not isinstance(node, dict):
+            return
+        local_test = test_name
+        for key in ("name", "test", "test_name"):
+            value = node.get(key)
+            if isinstance(value, str) and value:
+                local_test = value.split("(", 1)[0]
+                break
+        if node.get("status") and local_test and local_test != "setUp":
+            seen[local_test] = node
+        test_results = node.get("test_results")
+        if isinstance(test_results, dict):
+            for name, result in test_results.items():
+                fn = str(name).split("(", 1)[0]
+                if fn != "setUp":
+                    visit(result, fn)
+        for key, value in node.items():
+            if key == "test_results":
                 continue
-            for name, result in (suite.get("test_results") or {}).items():
-                if isinstance(result, dict):
-                    seen[name.split("(", 1)[0]] = result
+            if isinstance(value, (dict, list)):
+                visit(value, local_test)
+
+    visit(data)
     return seen
 
 
@@ -2815,6 +3017,44 @@ def fuzz_prefilter_json_verdicts(labels, forge_out):
         else:
             out[name] = "NOT-RUN"
     return out
+
+
+def forge_failure_is_unlabeled_call_revert(reason):
+    """A Forge probe failed before reaching the labeled candidate assertion."""
+    text = str(reason or "").lower()
+    if not text:
+        return False
+    return (
+        "panic: assertion failed" in text
+        or "evmerror: revert" in text
+        or "revert" == text.strip()
+        or text.strip().startswith("revert:"))
+
+
+def stable_unlabeled_revert_from_forge_prefilter(prefilter):
+    """Return a reason when every rendered R2 probe dies before its label.
+
+    Fuzz is still only a refuter here.  A labeled failure removes one candidate;
+    an unlabeled Solidity revert says something cheaper and different: the
+    call did not reach the post-state/return oracle, so those R1/R2 candidates
+    are unobservable for this path and Stage 4 should emit the R0 revert
+    oracle instead of spending ESBMC time proving post-state facts.
+    """
+    rendered = [
+        c for c in (prefilter or {}).get("candidates", [])
+        if c.get("test") and c.get("marker")
+    ]
+    if not rendered:
+        return None
+    failures = [
+        c for c in rendered
+        if c.get("verdict") == "NOT-RUN"
+        and forge_failure_is_unlabeled_call_revert(c.get("reason"))
+    ]
+    if len(failures) != len(rendered):
+        return None
+    reasons = sorted({str(c.get("reason") or "") for c in failures})
+    return reasons[0] if len(reasons) == 1 else "; ".join(reasons[:3])
 
 
 def r2_candidates(specs):
@@ -2919,6 +3159,9 @@ def skipped_forge_r2_evidence(specs, candidate_budget, reason, fuzz_runs):
     """Complete accounting for a Forge prefilter that issued no process."""
     candidates = r2_candidates(specs)
     return {
+        "refutation_only": True,
+        "proves_candidates": False,
+        "proof_consumer": "ESBMC",
         "requested": len(candidates),
         "selected": min(len(candidates), candidate_budget),
         "candidate_budget": candidate_budget,
@@ -2939,6 +3182,84 @@ def skipped_forge_r2_evidence(specs, candidate_budget, reason, fuzz_runs):
             "verdict": "NOT-RUN",
             "reason": reason,
         } for candidate in candidates],
+    }
+
+
+def r2_class_counter(candidates_or_rows):
+    """R2 oracle-class combo counts for proposed candidates or verifier rows."""
+    counts = {}
+    for item in candidates_or_rows or []:
+        text = item.get("text") if isinstance(item, dict) else item[1]
+        classes = oracle_classes_for_rung(text)
+        combo = "+".join(oracle_class_summary([{"classes": classes}]))
+        if combo:
+            counts[combo] = counts.get(combo, 0) + 1
+    return counts
+
+
+def r2_verifier_row_accounting(rows):
+    """Verifier-backed R2 row counts. Only HOLDS is proof."""
+    r2_rows = []
+    for var, text, verdict in rows or []:
+        classes = oracle_classes_for_rung(text)
+        if "R2" not in classes:
+            continue
+        r2_rows.append({
+            "var": var,
+            "text": text,
+            "verdict": verdict,
+            "classes": classes,
+            "class_combo": "+".join(
+                oracle_class_summary([{"classes": classes}])),
+        })
+    return {
+        "rows": r2_rows,
+        "rows_total": len(r2_rows),
+        "proved": sum(1 for row in r2_rows if row["verdict"] == "HOLDS"),
+        "refuted": sum(1 for row in r2_rows if row["verdict"] == "REFUTED"),
+        "unknown": sum(1 for row in r2_rows
+                       if row["verdict"] not in ("HOLDS", "REFUTED")),
+        "proved_combo_counts": r2_class_counter(
+            row for row in r2_rows if row["verdict"] == "HOLDS"),
+        "row_combo_counts": r2_class_counter(r2_rows),
+    }
+
+
+def r2_ladder_accounting(specs, filtered_specs=None, verifier_rows=None,
+                         fuzz_prefilter=None, *, requested=False,
+                         dedup_dropped=0, skip_reason=None):
+    """Stable R2 candidate/refute/proof metadata for RQ1 quality stats."""
+    candidates = r2_candidates(specs)
+    filtered = r2_candidates(filtered_specs if filtered_specs is not None
+                             else specs)
+    verifier = r2_verifier_row_accounting(verifier_rows or [])
+    fuzz = fuzz_prefilter or {"enabled": False}
+    return {
+        "requested": bool(requested),
+        "candidate_count": len(candidates),
+        "candidate_combo_counts": r2_class_counter(candidates),
+        "candidate_examples": candidates[:8],
+        "dedup_dropped": int(dedup_dropped or 0),
+        "fuzz_refutation_only": bool(fuzz.get("refutation_only", True)),
+        "fuzz_proves_candidates": bool(fuzz.get("proves_candidates", False)),
+        "fuzz_refuted": int(fuzz.get("refuted") or 0),
+        "fuzz_not_refuted": int(fuzz.get("not_refuted") or 0),
+        "fuzz_not_run": int(fuzz.get("not_run") or 0),
+        "fuzz_selected": int(fuzz.get("selected") or 0),
+        "fuzz_rendered": int(fuzz.get("rendered") or 0),
+        "survivors_sent_to_esbmc": len(filtered),
+        "esbmc_rows_total": verifier["rows_total"],
+        "esbmc_proved": verifier["proved"],
+        "esbmc_refuted": verifier["refuted"],
+        "esbmc_unknown": verifier["unknown"],
+        "proved_combo_counts": verifier["proved_combo_counts"],
+        "row_combo_counts": verifier["row_combo_counts"],
+        "verifier_rows": verifier["rows"],
+        "skip_reason": skip_reason,
+        "proof_consumer": "ESBMC",
+        "soundness_note": (
+            "Forge fuzz is used only to refute candidates with concrete "
+            "counterexamples. HOLDS/PUT-valid requires ESBMC proof."),
     }
 
 
@@ -3047,6 +3368,12 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
 
         fresh = [(v, t, d) for v, t, d in rows
                  if is_r2_row(t) and (v, t) not in seen]
+        if any(v == RETURN_VAR for v, _t, _d in fresh):
+            for v, t, d in rows:
+                if (v == RETURN_VAR and t.startswith(RETLIVE_PREFIX)
+                        and (v, t) not in seen):
+                    fresh.insert(0, (v, t, d))
+                    seen.add((v, t))
         for v, t, d in fresh:
             seen.add((v, t))
             if stage == 1 and t.startswith(("post - pre in [", "pre - post in [")):
@@ -3102,6 +3429,8 @@ def partial_ladder_already_has_strict_oracle(rows, summary, stats):
     oracles, but they are exactly the weak no-R1/R2 case this gate must not
     freeze in place.
     """
+    if not stats:
+        return False
     oracle_classes = set(stats.get("oracle_classes") or [])
     non_r0_asserts = (stats.get("state_asserts", 0)
                       + stats.get("return_asserts", 0))
@@ -3116,24 +3445,57 @@ def oracle_classes_for_rung(text):
     out = []
     if not text:
         return out
-    stripped = text.strip()
+    stripped = canonical_oracle_rung_text(text)
     if "retlive" in stripped:
         return out
-    if re.search(r"\b(post|return)(\.\d+)?\s*(==|!=|>=|>|<=|<)\s*pre\b",
-                 stripped):
+    pre = r"\(?\s*pre\s*\)?"
+    value = r"\(?\s*(?:post|return)(?:\.\d+)?\s*\)?"
+    cmp_op = r"(?:==|!=|>=|>|<=|<)"
+    if (re.search(value + r"\s*" + cmp_op + r"\s*" + pre, stripped) or
+            re.search(pre + r"\s*" + cmp_op + r"\s*" + value, stripped) or
+            re.search(r"\bpre\s*-\s*post\s*in\s*\[", stripped)):
         out.append("R1")
-    if re.search(r"\bpost\s*-\s*pre\s+in\s+\[", stripped):
+    if re.search(r"\(?\s*(post\s*-\s*pre|pre\s*-\s*post)\s*\)?\s*in\s*\[",
+                 stripped):
         out.append("R2")
-    elif re.search(r"\b(post|return)(\.\d+)?\s+in\s+\[", stripped):
+    elif re.search(r"\(?\s*(post|return)(\.\d+)?\s*\)?\s*in\s*\[",
+                   stripped):
         out.append("R2")
     else:
-        m = re.match(r"\s*(post|return)(?:\.\d+)?\s*(==|!=|>=|>|<=|<)\s*(.+?)\s*$",
+        m = re.match(
+            r"\s*\(?\s*(post|return)(?:\.\d+)?\s*\)?\s*"
+            r"(==|!=|>=|>|<=|<)\s*(.+?)\s*$",
                      stripped)
         if m:
-            rhs = m.group(3).strip()
+            rhs = strip_balanced_outer_parens(m.group(3).strip())
             if rhs != "pre":
                 out.append("R2")
     return out
+
+
+def canonical_oracle_rung_text(text):
+    """Normalize harmless renderer differences in verifier rung text.
+
+    ESBMC-side rows and source/R2-proposed rows have historically disagreed on
+    whitespace around `in[...]`, parenthesized `post-pre`, and the direction of
+    pre/post comparisons.  Those are notation differences, not different
+    oracles; keeping the renderer stricter than the metadata classifier turns a
+    certified R1/R2 row into an R0-only PUT.
+    """
+
+    s = re.sub(r"\s+", " ", (text or "").strip())
+    s = re.sub(r"\(\s*(post|pre|return(?:\.\d+)?)\s*\)", r"\1", s)
+    s = re.sub(r"\(\s*(post)\s*-\s*(pre)\s*\)", r"\1 - \2", s)
+    s = re.sub(r"\(\s*(pre)\s*-\s*(post)\s*\)", r"\1 - \2", s)
+    s = re.sub(r"\b(post|pre)\s*-\s*(pre|post)\b", r"\1 - \2", s)
+    s = re.sub(r"\b(post - pre|pre - post)\s*in\s*\[", r"\1 in [", s)
+    s = re.sub(r"\b(post|return(?:\.\d+)?)\s*in\s*\[", r"\1 in [", s)
+    s = re.sub(r"\]\s*with\s*\(?\s*(post|pre)\s*>=\s*(pre|post)\s*\)?",
+               r"] with \1 >= \2", s)
+    s = re.sub(r"\[\s*", "[", s)
+    s = re.sub(r"\s*\]", "]", s)
+    s = re.sub(r"\s*,\s*", ", ", s)
+    return s
 
 
 def oracle_class_summary(details):
@@ -3146,6 +3508,158 @@ def oracle_class_summary(details):
     return sorted(seen, key=lambda x: order.get(x, 99))
 
 
+def oracle_coordinate_class(name):
+    """Statistical bucket for a coordinate named by an emitted oracle."""
+    if not name:
+        return "unknown"
+    if name == RETURN_VAR or name.startswith(RETURN_VAR + "."):
+        return "return"
+    if name.startswith("state."):
+        return "state"
+    if name in globals().get("ESTABLISHABLE_ENV_COORDS", frozenset()):
+        return "env"
+    if name.startswith(globals().get("ENV_PREFIXES", ())):
+        return "env"
+    if re.fullmatch(r"\d+", str(name)):
+        return "literal"
+    return "calldata"
+
+
+def oracle_coordinate_names_for_rung(text, r2_terms=None):
+    """Coordinates explicitly named by one canonical R1/R2 rung.
+
+    This is metadata only.  Rendering still decides whether a term is safe to
+    assert; the list here exists so later RQ tables can distinguish return,
+    state, environment, and calldata-backed R2 endpoints without re-parsing
+    Forge source.
+    """
+    text = canonical_oracle_rung_text(text)
+    out, seen = [], set()
+    spellings = return_rung_term_spellings(text) + post_rung_term_spellings(text)
+    for spelling in spellings:
+        term = (r2_terms or {}).get(spelling)
+        names = r2_term_coord_names(term)
+        if not names and re.fullmatch(
+                r"(?:state\.)?[A-Za-z_]\w*(?:\[[^\]]+\]|\.[A-Za-z_]\w*)*",
+                spelling or ""):
+            names = [spelling]
+        for name in names:
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+    return out
+
+
+def oracle_detail(layer, var, text, *, classes=None, verdict="HOLDS",
+                  emitted_in_test=True, guarded=False, r2_terms=None):
+    """Uniform metadata row for one emitted oracle."""
+    canonical = canonical_oracle_rung_text(text)
+    classes = list(classes if classes is not None
+                   else oracle_classes_for_rung(canonical))
+    combo = "+".join(oracle_class_summary([{"classes": classes}]))
+    coords = [{
+        "name": name,
+        "class": oracle_coordinate_class(name),
+    } for name in oracle_coordinate_names_for_rung(canonical, r2_terms)]
+    return {
+        "layer": layer,
+        "var": var,
+        "text": text,
+        "canonical_text": canonical,
+        "classes": classes,
+        "class_combo": combo,
+        "coordinates": coords,
+        "coordinate_classes": sorted({c["class"] for c in coords}),
+        "verdict": verdict,
+        "emitted_in_test": emitted_in_test,
+        "guarded": bool(guarded),
+    }
+
+
+def oracle_stats_summary(details):
+    """Stable aggregate fields for R0/R1/R2 and coordinate-class accounting."""
+    class_counts = {"R0": 0, "R1": 0, "R2": 0}
+    combo_counts = {}
+    coord_classes = set()
+    for d in details or []:
+        for c in d.get("classes") or []:
+            if c in class_counts:
+                class_counts[c] += 1
+        combo = d.get("class_combo") or "+".join(
+            oracle_class_summary([{"classes": d.get("classes") or []}]))
+        if combo:
+            combo_counts[combo] = combo_counts.get(combo, 0) + 1
+        for c in d.get("coordinate_classes") or []:
+            coord_classes.add(c)
+    return {
+        "oracle_classes": oracle_class_summary(details),
+        "oracle_class_counts": {k: v for k, v in class_counts.items() if v},
+        "oracle_class_combinations": sorted(combo_counts),
+        "oracle_class_combo_counts": combo_counts,
+        "oracle_coordinate_classes": sorted(coord_classes),
+    }
+
+
+def empty_oracle_stats():
+    """Zero-valued oracle metadata with the same shape as a real PUT."""
+    return {
+        "oracle_classes": [],
+        "oracle_class_counts": {},
+        "oracle_class_combinations": [],
+        "oracle_class_combo_counts": {},
+        "oracle_coordinate_classes": [],
+        "assertion_oracles": [],
+    }
+
+
+def stage4_materialization_metadata(kind, stats=None, *, reason=None,
+                                    fallback_after_put_attempt=False,
+                                    r2_requested=False,
+                                    r2_fuzz_prefilter=None):
+    """Machine-readable PUT/R0/R1/R2 accounting for every Stage-4 artefact."""
+    stats = stats or {}
+    oracle_classes = stats.get("oracle_classes") or []
+    rendered_width = stats.get("rendered_width") or {}
+    wide = sorted(k for k, v in rendered_width.items() if v > 1)
+    is_put = kind == "put"
+    has_r1r2 = bool(set(oracle_classes) & {"R1", "R2"})
+    oracle_tags = oracle_class_summary(
+        [{"classes": oracle_classes}]) if oracle_classes else []
+    put_failure = None
+    if not is_put:
+        put_failure = reason or "not materialized as PUT"
+    elif not wide:
+        put_failure = "no rendered coordinate has width greater than one"
+    elif int(stats.get("asserts") or 0) - int(stats.get("guarded_asserts") or 0) <= 0:
+        put_failure = "no unconditional assertion oracle rendered"
+    r1r2_failure = None
+    if not has_r1r2:
+        r1r2_failure = reason or "no verifier-backed R1/R2 oracle rendered"
+    return {
+        "is_put": is_put,
+        "is_concrete": kind == "concrete",
+        "is_refusal": kind == "refusal",
+        "put_failure_reason": put_failure,
+        "r1r2_failure_reason": r1r2_failure,
+        "fallback_after_put_attempt": bool(fallback_after_put_attempt),
+        "wide_fuzz_coords": wide,
+        "oracle_classes": list(oracle_classes),
+        "oracle_tags": oracle_tags,
+        "has_R0": "R0" in oracle_classes,
+        "has_R1": "R1" in oracle_classes,
+        "has_R2": "R2" in oracle_classes,
+        "has_R1_or_R2": has_r1r2,
+        "oracle_class_counts": stats.get("oracle_class_counts") or {},
+        "oracle_class_combinations":
+            stats.get("oracle_class_combinations") or [],
+        "oracle_class_combo_counts":
+            stats.get("oracle_class_combo_counts") or {},
+        "r2_requested": bool(r2_requested),
+        "r2_fuzz_prefilter": r2_fuzz_prefilter or {"enabled": False},
+        "r2_ladder": stats.get("r2_ladder") or {},
+    }
+
+
 def _norm_ty(t):
     """A Solidity type spelled the one way, for comparing a parameter's type
     against a mapping's key type. Module level, not nested in `main()`, so the
@@ -3154,6 +3668,42 @@ def _norm_ty(t):
     for suf in (" payable", " memory", " calldata", " storage"):
         t = t.replace(suf, "")
     return {"uint": "uint256", "int": "int256"}.get(t, t)
+
+
+def _source_identity_type_name(sol_type, *, allow_bare=False):
+    """Source type name for values encoded as an address, if known.
+
+    Solc-backed AST type strings spell user identities as `contract C` or
+    `interface I`; those are safe to fuzz as 160-bit addresses and cast back at
+    the call site.  Bare names are accepted only by source-level constructor
+    skeleton repair, where ESBMC has already said the literal is unrenderable
+    and the replay preamble only needs a syntactic identity placeholder.
+    """
+    t = _norm_ty(sol_type)
+    for prefix in ("contract ", "interface "):
+        if t.startswith(prefix):
+            name = t[len(prefix):].strip()
+            return name if name else None
+    if allow_bare and re.match(
+            r"^[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*$", t):
+        if t in ("address", "bool", "string", "bytes", "address payable"):
+            return None
+        if re.match(r"^(?:u?int)(?:\d+)?$", t):
+            return None
+        if re.match(r"^bytes\d+$", t):
+            return None
+        return t
+    return None
+
+
+def _address_expr_for_source_type(sol_type, addr_expr, *, allow_bare=False):
+    if _is_address_payable_type(sol_type):
+        return f"payable({addr_expr})"
+    t = _norm_ty(sol_type)
+    name = _source_identity_type_name(sol_type, allow_bare=allow_bare)
+    if name is not None:
+        return f"{name}({addr_expr})"
+    return addr_expr
 
 
 def state_key_expr_for_type(sol_type, read_expr):
@@ -3286,6 +3836,119 @@ def canonical_state_coord_name(name, state_store_names=None):
     return "state." + source_by_store.get(svar, svar)
 
 
+def _state_coord_type(name, state_types, state_store_names=None):
+    if not name.startswith("state."):
+        return None
+    svar = name[len("state."):]
+    source = canonical_state_coord_name(name, state_store_names)[len("state."):]
+    return (state_types or {}).get(source) or (state_types or {}).get(svar)
+
+
+def _is_address_like_state_type(sol_type):
+    t = _norm_ty(sol_type or "")
+    return (t in ("address", "address payable")
+            or t.startswith("contract ")
+            or t.startswith("interface "))
+
+
+def promote_zero_sender_owner_slice(region, holes, pins, establish,
+                                    state_types=None, state_store_names=None,
+                                    state_dependencies=None):
+    """Lift an ESBMC-only zero-sender owner slice into an executable relation.
+
+    Foundry cannot prank `address(0)`.  A common ESBMC-certified ownership
+    slice is therefore recorded as two point facts:
+
+      msg.sender == 0, state._owner == 0
+
+    The executable PUT equivalent is a verifier query over non-zero senders
+    with an entry relation materialized before the call:
+
+      msg.sender in [1, ADDRESS_MAX], state._owner := msg.sender
+
+    This is deliberately narrow.  It triggers only for one address-like scalar
+    state coordinate pinned at zero, preferably one the unit dependency closure
+    names.  Ambiguous zero address pins stay unchanged and are refused by the
+    normal sender establishment check rather than guessed.
+    """
+
+    region = dict(region or {})
+    holes = {k: list(v) for k, v in (holes or {}).items()}
+    pins = dict(pins or {})
+    establish = list(establish or [])
+
+    sender_zero = False
+    if region.get("msg.sender") == (0, 0) or region.get("msg.sender") == [0, 0]:
+        sender_zero = True
+    if pins.get("msg.sender") == 0:
+        sender_zero = True
+    if not sender_zero:
+        return region, holes, pins, establish, None
+
+    existing_targets = {
+        e.get("target") for e in establish if isinstance(e, dict)
+    }
+    dep_names = set(state_dependencies or ())
+    dep_coords = set()
+    for name in dep_names:
+        dep_coords.add("state." + name)
+        dep_coords.add(canonical_state_coord_name("state." + name,
+                                                  state_store_names))
+
+    candidates = []
+    for table, is_region in ((pins, False), (region, True)):
+        for name, value in table.items():
+            if not name.startswith("state."):
+                continue
+            if name in existing_targets:
+                continue
+            if parse_slot_name(name[len("state."):])[0] is not None:
+                continue
+            if is_region:
+                if value != (0, 0) and value != [0, 0]:
+                    continue
+            elif value != 0:
+                continue
+            if not _is_address_like_state_type(
+                    _state_coord_type(name, state_types, state_store_names)):
+                continue
+            canonical = canonical_state_coord_name(name, state_store_names)
+            candidates.append((name, canonical))
+
+    if dep_coords:
+        candidates = [
+            c for c in candidates
+            if c[0] in dep_coords or c[1] in dep_coords
+        ]
+    unique = []
+    seen = set()
+    for name, canonical in candidates:
+        key = canonical
+        if key in seen:
+            continue
+        unique.append((name, canonical))
+        seen.add(key)
+    if len(unique) != 1:
+        return region, holes, pins, establish, None
+
+    target, _canonical = unique[0]
+    pins.pop("msg.sender", None)
+    if region.get("msg.sender") == (0, 0) or region.get("msg.sender") == [0, 0]:
+        region.pop("msg.sender", None)
+    pins.pop(target, None)
+    region.pop(target, None)
+    region["msg.sender"] = (1, ADDRESS_MAX)
+    holes.pop("msg.sender", None)
+    establish.append({"target": target, "source": "msg.sender"})
+    note = (f"msg.sender == 0 with {target} == 0 was promoted to executable "
+            f"entry relation `{target} := msg.sender` and "
+            f"msg.sender in [1, {ADDRESS_MAX}]; Foundry cannot prank "
+            "address(0), so the verifier-backed Stage-4 ladder is re-run over "
+            "the non-zero sender slice rather than replaying the old zero "
+            "point")
+    return region, holes, pins, establish, note
+
+
 def mapping_source_coord_alias(name, maps):
     """Return the source spelling for an ESBMC mapping-slot coordinate."""
     if not name.startswith("state."):
@@ -3375,6 +4038,430 @@ def expand_path_guard_coord_idents(
                     out[alias] = ident
                     changed = True
     return out
+
+
+def _path_guard_source_file(path_decisions):
+    for dec in path_decisions or []:
+        if isinstance(dec, dict) and dec.get("file"):
+            return dec.get("file")
+    return None
+
+
+def _source_function_names_from_decisions(path_decisions):
+    out = []
+    for dec in path_decisions or []:
+        if not isinstance(dec, dict):
+            continue
+        name = dec.get("function")
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _strip_source_expr(text):
+    return strip_balanced_outer_parens((text or "").strip())
+
+
+def _source_text_for_path_decisions(path_decisions, source_text=None):
+    source = source_text or ""
+    if source:
+        return source
+    source_file = _path_guard_source_file(path_decisions)
+    if not source_file:
+        return ""
+    try:
+        with open(source_file) as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _substitute_source_params(expr, bindings):
+    out = expr or ""
+    for name, value in sorted((bindings or {}).items(),
+                              key=lambda item: -len(item[0])):
+        out = re.sub(r"\b" + re.escape(name) + r"\b", value, out)
+    return out
+
+
+def _source_function_name_candidates(internal_name, source):
+    names = []
+    for name in (internal_name, internal_name[1:] if internal_name.startswith("_")
+                 else None):
+        if name and name not in names and _source_function_decls(source, name):
+            names.append(name)
+    return names
+
+
+def source_return_scalar_terms_for_path_guards(path_decisions,
+                                               source_text=None):
+    """Underlying scalar terms for bool helper-return path decisions.
+
+    ESBMC names source-level helper-call results as `return_value$f$n`.
+    For helpers shaped like `return slot[key] > 0`, a false bool path guard is
+    exactly `slot[key] == 0`, so the PUT can guard on the scalar slot once it is
+    materialized.  Other bool expressions stay unexpanded.
+    """
+    source = _source_text_for_path_decisions(path_decisions, source_text)
+    if not source:
+        return {}
+    source_lines = source.splitlines()
+    decl_cache = {}
+    out = {}
+    for dec in path_decisions or []:
+        if not isinstance(dec, dict):
+            continue
+        claim = dec.get("branch_claim") or ""
+        symbols = re.findall(r"\b(return_value\$([A-Za-z_]\w*)\$\d+)\b",
+                             claim)
+        if not symbols:
+            continue
+        try:
+            line_no = int(dec.get("line") or 0)
+        except (TypeError, ValueError):
+            continue
+        if line_no <= 0 or line_no > len(source_lines):
+            continue
+        line = source_lines[line_no - 1]
+        for symbol, internal_fname in symbols:
+            fnames = _source_function_name_candidates(internal_fname, source)
+            if not fnames:
+                continue
+            calls, call_fname = [], None
+            for fname in fnames:
+                calls = list(re.finditer(r"\b" + re.escape(fname) +
+                                         r"\s*\(([^()]*)\)", line))
+                if calls:
+                    call_fname = fname
+                    break
+            if not calls or call_fname is None:
+                continue
+            decl_cache.setdefault(
+                call_fname, _source_function_decl_infos(source, call_fname))
+            # A path decision line normally contains the single helper call
+            # whose return_value appears in the claim.  If the same helper is
+            # repeated on one line, keep the source order used by ESBMC.
+            call_index = [s for s, f in symbols].index(symbol)
+            call = calls[min(call_index, len(calls) - 1)]
+            args = split_top_level(call.group(1))
+            for params, header_tail, body in decl_cache.get(call_fname) or []:
+                if not _source_function_header_is_readonly(header_tail):
+                    continue
+                if len(params) != len(args):
+                    continue
+                ret = re.search(r"\breturn\s+([^;]+);", body or "")
+                if not ret:
+                    continue
+                rexpr = _strip_source_expr(ret.group(1))
+                scalar = None
+                m = re.match(r"^(.+?)\s*(?:>|!=)\s*0$", rexpr)
+                if m:
+                    scalar = m.group(1)
+                else:
+                    m = re.match(r"^0\s*<\s*(.+)$", rexpr)
+                    if m:
+                        scalar = m.group(1)
+                if scalar is None:
+                    continue
+                bindings = {pname: arg for (pname, _pty), arg
+                            in zip(params, args)}
+                out[symbol] = _strip_source_expr(
+                    _substitute_source_params(scalar, bindings))
+                break
+    return out
+
+
+def source_path_guard_aliases(path_decisions, coord_ident_abs, maps=None,
+                              state_store_names=None, source_text=None):
+    """Aliases for path guards introduced by internal helper calls.
+
+    Stage-1 decisions are source-level and may name helper parameters or locals
+    (`sender`, `to`, `senderBalance`) while the PUT can render only entry
+    calldata/env/storage coordinates.  This pass propagates simple source
+    aliases along the observed helper-call chain, then exposes those helper
+    names to `path_decision_assumes`.
+    """
+    source = _source_text_for_path_decisions(path_decisions, source_text)
+    if not source:
+        return {}
+    names = _source_function_names_from_decisions(path_decisions)
+    if not names:
+        return {}
+    decls = {name: _source_function_decl_infos(source, name) for name in names}
+    all_decls = {}
+    for call_name in set(re.findall(r"\b([A-Za-z_]\w*)\s*\(", source)):
+        if call_name not in all_decls:
+            got = _source_function_decl_infos(source, call_name)
+            if got:
+                all_decls[call_name] = got
+    idents = expand_path_guard_coord_idents(
+        coord_ident_abs, maps, state_store_names)
+    aliases_by_func = {names[0]: dict(idents)}
+    global_aliases = {}
+
+    def state_lookup(name):
+        for key in ("state." + name, name):
+            if key in idents:
+                return idents[key]
+        return None
+
+    def key_coord_name(expr, aliases):
+        expr = _strip_source_expr(expr)
+        if expr in ("msg.sender", "_msgSender()"):
+            return "msg.sender"
+        if expr in idents:
+            return expr
+        if "state." + expr in idents:
+            return "state." + expr
+        rendered = aliases.get(expr)
+        if rendered is not None:
+            for name, ident in idents.items():
+                if ident == rendered:
+                    return name
+            if rendered == idents.get("msg.sender"):
+                return "msg.sender"
+        if _KEY_LIT_RE.match(expr):
+            return expr
+        return None
+
+    def mapping_alias(expr, aliases):
+        m = re.match(r"^([A-Za-z_]\w*)\s*\[(.+)\]$", _strip_source_expr(expr))
+        if not m:
+            return None
+        base, key = m.group(1), m.group(2)
+        kcoord = key_coord_name(key, aliases)
+        if not kcoord:
+            return None
+        for prefix in (base, (state_store_names or {}).get(base)):
+            if not prefix:
+                continue
+            name = f"state.{prefix}[{kcoord}]"
+            if name in idents:
+                return idents[name]
+        for name, ident in idents.items():
+            if name.startswith("state.") and name.endswith(f"[{kcoord}]"):
+                svar = name[len("state."):]
+                mname, _keys, tail = parse_slot_name(svar)
+                if mname and (mname == base or
+                              mapping_source_key((maps or {}).get(mname + tail))
+                              == base + tail):
+                    return ident
+        return None
+
+    def expr_alias(expr, aliases):
+        expr = _strip_source_expr(expr)
+        if not expr:
+            return None
+        if expr in aliases:
+            return aliases[expr]
+        if expr in idents:
+            return idents[expr]
+        direct_state = state_lookup(expr)
+        if direct_state is not None:
+            return direct_state
+        if expr in ("msg.sender", "_msgSender()"):
+            return idents.get("msg.sender")
+        if expr == "msg.value":
+            return idents.get("msg.value")
+        if re.fullmatch(r"address\s*\(\s*0\s*\)", expr):
+            return "0"
+        if _KEY_LIT_RE.match(expr):
+            return numeric_literal_expr(expr)
+        mapped = mapping_alias(expr, aliases)
+        if mapped is not None:
+            return mapped
+        m = re.match(r"^[A-Za-z_]\w*\s*\((.*)\)$", expr, re.S)
+        if m:
+            parts = split_top_level(m.group(1))
+            if len(parts) == 1:
+                inner = expr_alias(parts[0], aliases)
+                if inner is not None:
+                    return inner
+        for op in ("+", "-", "*", "/"):
+            parts = split_top_level_bool(expr, op)
+            if parts and len(parts) == 2:
+                lhs, rhs = expr_alias(parts[0], aliases), expr_alias(parts[1], aliases)
+                if lhs is not None and rhs is not None:
+                    return f"({lhs} {op} {rhs})"
+        return None
+
+    def single_return_alias(function_name, aliases):
+        fnames = [function_name]
+        if function_name.startswith("_"):
+            fnames.append(function_name[1:])
+        candidates = []
+        for fname in fnames:
+            candidates.extend(all_decls.get(fname) or decls.get(fname) or [])
+        for params2, header_tail, body2 in candidates:
+            if not _source_function_header_is_readonly(header_tail):
+                continue
+            if params2:
+                continue
+            m = re.search(r"\breturn\s+([^;]+);", body2 or "")
+            if not m:
+                continue
+            got = expr_alias(m.group(1), aliases)
+            if got is not None:
+                return got
+        return None
+
+    def address_expr_from_rendered(rendered):
+        rendered = (rendered or "").strip()
+        if not rendered:
+            return None
+        m = re.fullmatch(
+            r"uint256\s*\(\s*uint160\s*\(\s*([A-Za-z_]\w*)\s*\)\s*\)",
+            rendered)
+        if m:
+            return m.group(1)
+        if re.fullmatch(r"address\s*\([^;{}]+\)", rendered):
+            return rendered
+        if re.fullmatch(r"[A-Za-z_]\w*", rendered):
+            return rendered
+        return f"address(uint160({rendered}))"
+
+    def balance_receiver_expr(expr, aliases):
+        expr = _strip_source_expr(expr)
+        if expr in ("msg.sender", "_msgSender()"):
+            return address_expr_from_rendered(idents.get("msg.sender"))
+        if expr == "tx.origin":
+            return address_expr_from_rendered(idents.get("tx.origin"))
+        if expr in aliases:
+            return address_expr_from_rendered(aliases.get(expr))
+        if expr in idents:
+            return address_expr_from_rendered(idents.get(expr))
+        if "state." + expr in idents:
+            return address_expr_from_rendered(idents.get("state." + expr))
+        m = re.fullmatch(r"(?:address|payable)\s*\((.+)\)", expr, re.S)
+        if m:
+            inner = balance_receiver_expr(m.group(1), aliases)
+            return inner if inner is not None else expr
+        return None
+
+    def balance_return_aliases(aliases):
+        """Map ESBMC's address.balance helper returns back to source terms."""
+        source_lines = source.splitlines()
+        out = {}
+        balance_access = re.compile(
+            r"((?:address|payable)\s*\([^)]*\)|msg\.sender|tx\.origin|"
+            r"[A-Za-z_]\w*)\s*\.balance")
+        for dec in path_decisions or []:
+            if not isinstance(dec, dict):
+                continue
+            claim = dec.get("branch_claim") or ""
+            symbols = re.findall(r"\b(return_value\$_get_balance\$\d+)\b",
+                                 claim)
+            if not symbols:
+                continue
+            try:
+                line_no = int(dec.get("line") or 0)
+            except (TypeError, ValueError):
+                continue
+            if line_no <= 0 or line_no > len(source_lines):
+                continue
+            receivers = balance_access.findall(source_lines[line_no - 1])
+            if len(receivers) < len(symbols):
+                continue
+            for symbol, receiver in zip(symbols, receivers):
+                got = balance_receiver_expr(receiver, aliases)
+                if got is not None:
+                    out[symbol] = f"{got}.balance"
+        return out
+
+    def return_value_aliases(aliases):
+        out = {}
+        for dec in path_decisions or []:
+            if not isinstance(dec, dict):
+                continue
+            claim = dec.get("branch_claim") or ""
+            for fname in re.findall(r"\breturn_value\$([A-Za-z_]\w*)\$\d+\b",
+                                    claim):
+                key = re.search(r"\b(return_value\$" + re.escape(fname) +
+                                r"\$\d+)\b", claim)
+                if key is None:
+                    continue
+                got = single_return_alias(fname, aliases)
+                if got is not None:
+                    out[key.group(1)] = got
+        for symbol, term in source_return_scalar_terms_for_path_guards(
+                path_decisions, source).items():
+            got = expr_alias(term, aliases)
+            if got is not None:
+                out[symbol] = got
+        out.update(balance_return_aliases(aliases))
+        return out
+
+    def bind_call_aliases(body, aliases):
+        updates = {}
+        for callee, arg_text in re.findall(
+                r"\b([A-Za-z_]\w*)\s*\(([^;{}]*)\)\s*;", body):
+            if callee in {"require", "assert", "revert", "emit"}:
+                continue
+            candidates = all_decls.get(callee) or decls.get(callee) or []
+            if not candidates:
+                continue
+            args = split_top_level(arg_text)
+            for params2, _header_tail, body2 in candidates:
+                if len(params2) != len(args):
+                    continue
+                callee_aliases = dict(idents)
+                for (pname, _pty), arg in zip(params2, args):
+                    got = expr_alias(arg, aliases)
+                    if got is not None:
+                        callee_aliases[pname] = got
+                updates.setdefault(callee, {}).update(callee_aliases)
+                updates.setdefault(callee, {}).update(local_aliases_for_body(
+                    body2, callee_aliases))
+        return updates
+
+    def local_aliases_for_body(body, aliases):
+        found = {}
+        cur = dict(aliases)
+        for stmt in (body or "").split(";"):
+            line = stmt.strip()
+            m = re.match(
+                r"^(?:[A-Za-z_][A-Za-z0-9_<>,.\[\]]*"
+                r"(?:\s+(?:memory|storage|calldata))?\s+)+"
+                r"([A-Za-z_]\w*)\s*=\s*(.+)$", line, re.S)
+            if not m:
+                continue
+            name, rhs = m.group(1), m.group(2)
+            if name in {"if", "for", "while", "return"}:
+                continue
+            got = expr_alias(rhs, cur)
+            if got is not None:
+                cur[name] = got
+                found[name] = got
+        return found
+
+    for _round in range(3):
+        changed = False
+        for name in names:
+            for _params, _header_tail, body in decls.get(name) or []:
+                aliases = dict(idents)
+                aliases.update(aliases_by_func.get(name, {}))
+                locals_found = local_aliases_for_body(body, aliases)
+                if locals_found:
+                    aliases.update(locals_found)
+                    merged = aliases_by_func.setdefault(name, dict(idents))
+                    for k, v in locals_found.items():
+                        if merged.get(k) != v:
+                            merged[k] = v
+                            changed = True
+                for callee, caliases in bind_call_aliases(body, aliases).items():
+                    merged = aliases_by_func.setdefault(callee, dict(idents))
+                    for k, v in caliases.items():
+                        if merged.get(k) != v:
+                            merged[k] = v
+                            changed = True
+        if not changed:
+            break
+
+    for dec_name in names:
+        global_aliases.update(aliases_by_func.get(dec_name, {}))
+    global_aliases.update(return_value_aliases(global_aliases))
+    return {k: v for k, v in global_aliases.items()
+            if k not in idents and v is not None}
 
 
 def prefer_esbmc_mapping_aliases(maps):
@@ -3827,25 +4914,130 @@ def antichain(rows, revert_tolerant=False, point_values=None):
     return kept, implied
 
 
-def render_r2_term(term, pre, idents):
+def preserve_reverting_frame_rows(raw_rows, kept_rows, reverting_path):
+    """Keep verifier-backed frame rows on a reverting path.
+
+    The assertion ladder is allowed to report both a frame and change rows for
+    a rollback path.  The former is observable after the transaction returns:
+    EVM rollback restores the storage word, so the emitted ``post == pre``
+    assertion reads the chain's post-transaction state.  The latter describes a
+    value before rollback (or a return value from an execution that never
+    returns), and must stay dropped.
+
+    This is an explicit post-filter invariant rather than a synthetic oracle:
+    every row restored here was a verifier ``HOLDS`` row from the same ladder.
+    It also protects the frame from future antichain changes without allowing a
+    hidden intermediate state to become a PUT assertion.
+    """
+    if not reverting_path:
+        return kept_rows
+    present = {(var, canonical_oracle_rung_text(text))
+               for var, text, verdict in kept_rows
+               if verdict == "HOLDS"}
+    out = list(kept_rows)
+    for var, text, verdict in raw_rows:
+        key = (var, canonical_oracle_rung_text(text))
+        if (verdict == "HOLDS"
+                and rung_is_revert_observable_frame(text)
+                and key not in present):
+            out.append((var, text, verdict))
+            present.add(key)
+    return out
+
+
+def render_r2_term(term, pre, idents, typed_arith=False):
     """Render a verifier-certified term into Solidity, or return None."""
     kind = term.get("kind")
     if kind == "pre":
-        return pre
+        return f"uint256({pre})" if typed_arith else pre
     if kind == "coord":
-        return (idents or {}).get(term.get("name"))
+        ident = (idents or {}).get(term.get("name"))
+        if ident is None:
+            return None
+        return f"uint256({ident})" if typed_arith else ident
     if kind == "literal":
         value = str(term.get("value", ""))
-        return value if value.isdigit() else None
+        if not value.isdigit():
+            return None
+        return f"uint256({value})" if typed_arith else value
     if kind == "op":
-        lhs = render_r2_term(term.get("lhs", {}), pre, idents)
-        rhs = render_r2_term(term.get("rhs", {}), pre, idents)
+        lhs = render_r2_term(term.get("lhs", {}), pre, idents, True)
+        rhs = render_r2_term(term.get("rhs", {}), pre, idents, True)
         op = {"add": "+", "sub": "-", "mul": "*", "div": "/"}.get(
             term.get("op"))
         if lhs is None or rhs is None or op is None:
             return None
         return f"({lhs} {op} {rhs})"
     return None
+
+
+def scalar_dependency_vars(slot_dependencies, layout):
+    """Concrete scalar layout variables selected by a dependency set.
+
+    The coverage report names dependencies at source level. A struct-valued
+    state variable therefore arrives as `s`, while solc's scalar storage layout
+    exposes its readable members as `s.x`, `s.y`, ... . Treating the two tables
+    as a literal intersection drops every struct-member oracle.
+    """
+    if not slot_dependencies or not layout:
+        return []
+    out, seen = [], set()
+    for dep in slot_dependencies:
+        candidates = []
+        if dep in layout:
+            candidates.append(dep)
+        prefix = dep + "."
+        candidates.extend(name for name in sorted(layout) if name.startswith(prefix))
+        for name in candidates:
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+    return out
+
+
+def r1_priority_oracle_vars(region, pins, layout, query_maps,
+                            state_store_names=None):
+    """Readable certified state coordinates to ask the R1 ladder about first.
+
+    The first assertion ladder is the only source of R1 proof.  If the certified
+    region already names a readable state or mapping coordinate, asking the
+    ladder about it is a semantic oracle request, not a guess: ESBMC still has
+    to return a HOLDS row before the emitter can assert anything.  Environment
+    coordinates are deliberately reported as unsupported here because the
+    ladder's `vars` table is about post-state candidates, not Foundry
+    cheatcodes.
+    """
+
+    out, skipped, seen = [], [], set()
+    for coord in sorted(set(region or {}) | set(pins or {})):
+        if coord.startswith(ENV_PREFIXES):
+            skipped.append(
+                f"{coord}: environment coordinate is establishable/checkable "
+                "in Foundry, but it is not a post-state ladder variable")
+            continue
+        if not coord.startswith("state."):
+            continue
+        name = coord[len("state."):]
+        mname, _keys, tail = parse_slot_name(name)
+        if mname is not None:
+            mkey = mname + tail
+            if query_maps and mkey in query_maps:
+                if name not in seen:
+                    seen.add(name)
+                    out.append(name)
+            else:
+                skipped.append(
+                    f"{coord}: mapping slot is not in solc-derived query map")
+            continue
+        layout_name = layout_scalar_key(name, layout, state_store_names)
+        if layout_name is None:
+            skipped.append(
+                f"{coord}: no scalar storage slot in solc layout")
+            continue
+        if layout_name not in seen:
+            seen.add(layout_name)
+            out.append(layout_name)
+    return out, skipped
 
 
 def r2_term_coord_names(term):
@@ -3864,6 +5056,7 @@ def r2_term_coord_names(term):
 
 def return_rung_term_spellings(text):
     """Structured endpoint spellings a return rung may contain."""
+    text = canonical_oracle_rung_text(text)
     if text.startswith("return == "):
         return [text[len("return == "):]]
     m = re.match(r"^return in \[(.*), (.*)\]$", text)
@@ -3874,6 +5067,7 @@ def return_rung_term_spellings(text):
 
 def post_rung_term_spellings(text):
     """Structured endpoint spellings a post-state rung may contain."""
+    text = canonical_oracle_rung_text(text)
     if text.startswith("post == ") and text != "post == pre":
         return [text[len("post == "):]]
     m = re.match(r"^post in \[(.*), (.*)\]$", text)
@@ -3904,6 +5098,7 @@ def rung_assertions(text, pre, post, label, idents=None, idents_abs=None,
     address` is meaningless. Defaults to `idents` so every existing caller
     keeps its exact behaviour.
     """
+    text = canonical_oracle_rung_text(text)
     if idents_abs is None:
         idents_abs = idents
     lit = json.dumps(label)
@@ -3941,14 +5136,16 @@ def rung_assertions(text, pre, post, label, idents=None, idents_abs=None,
                         f"    assertGe({lhs} - {rhs}, {lo}, {lit});"),
                     _oracle_assert_line(
                         f"    assertLe({lhs} - {rhs}, {hi}, {lit});")]
-    m = re.match(r"^post (==|!=|>=|<=|>|<) pre$", text)
+    m = re.match(r"^(post|pre) (==|!=|>=|<=|>|<) (pre|post)$", text)
     if m:
-        op = m.group(1)
+        left_name, op, right_name = m.group(1), m.group(2), m.group(3)
+        lhs = post if left_name == "post" else pre
+        rhs = post if right_name == "post" else pre
         fn = {"==": "assertEq", ">=": "assertGe", "<=": "assertLe",
               ">": "assertGt", "<": "assertLt"}.get(op)
         if fn:
-            return [f"    {fn}({post}, {pre}, {lit});"]
-        return [f"    assertTrue({post} != {pre}, {lit});"]
+            return [f"    {fn}({lhs}, {rhs}, {lit});"]
+        return [f"    assertTrue({lhs} != {rhs}, {lit});"]
 
     def ends(m):
         """(lo, hi) as Solidity text, or None if either endpoint is unspellable."""
@@ -4033,6 +5230,9 @@ def return_kind(sol_type):
         return (t, cast)
     if t in ("address", "address payable"):
         return (t, "uint256(uint160({v}))")
+    identity = _source_identity_type_name(t)
+    if identity is not None:
+        return (identity, "uint256(uint160(address({v})))")
     return None
 
 
@@ -4045,6 +5245,7 @@ def return_rung_assertions(text, kind, var, label, idents_abs=None,
     script typed the local from the AST and the two disagree; rendering
     anyway would assert something neither of them said.
     """
+    text = canonical_oracle_rung_text(text)
     decl_t, tou = kind
     lit = json.dumps(label)
 
@@ -4400,6 +5601,12 @@ def assert_query_pins(pins, layout, maps):
                     f"{name} (not passed to --path-cov-assert: `{mname}` is "
                     "not a queryable mapping member in solc's layout)")
             continue
+        if not (layout and v in layout) and re.search(r"\$[0-9]+$", v):
+            skipped.append(
+                f"{name} (not passed to --path-cov-assert: solc's layout "
+                "does not list this ESBMC-internal state name, so it is a "
+                "semantic constant/immutable pin)")
+            continue
         keep[name] = value
     return keep, skipped
 
@@ -4493,6 +5700,13 @@ def _storage_layout_mapping_entries(label, base_slot, key_type, value_type,
             return {}
         kts.append((types.get(vt.get("key")) or {}).get("label") or "")
         vt = types.get(vt.get("value")) or {}
+    if vt.get("encoding") == "dynamic_array":
+        if not all(map_key_type_ok(k) for k in kts):
+            return out
+        ktxt = (kts[0].strip() if len(kts) == 1
+                else tuple(k.strip() for k in kts))
+        out[f"{label}.length"] = (mslot, ktxt, 32, 0, label, "length")
+        return out
     if (vt.get("encoding") != "inplace"
             or vt.get("numberOfBytes") is None
             or not all(map_key_type_ok(k) for k in kts)):
@@ -4692,6 +5906,12 @@ def storage_layout(project, contract):
             # must be; `map_slot_expr` hashes them in the same order.
             maps.update(_storage_layout_mapping_entries(e["label"], e["slot"],
                                                         kt, vt, types))
+            continue
+        if enc == "dynamic_array":
+            try:
+                out[f"{e['label']}.length"] = (int(e["slot"]), 0, 32)
+            except (KeyError, TypeError, ValueError):
+                pass
             continue
         # Only INPLACE value types can be read/written as a masked slot word.
         # A `bytes`/`string` slot holds a length-or-payload encoding, not the
@@ -4997,6 +6217,191 @@ def _function_defs(ast_path, contract, unit):
     return defs
 
 
+def _visible_contract_scopes(ast_path, contract):
+    ast = _load_ast(ast_path)
+    by_id, target = {}, None
+
+    def index(n):
+        nonlocal target
+        if isinstance(n, dict):
+            if n.get("nodeType") == "ContractDefinition":
+                if n.get("id") is not None:
+                    by_id[n["id"]] = n
+                if n.get("name") == contract:
+                    target = n
+            for v in n.values():
+                index(v)
+        elif isinstance(n, list):
+            for v in n:
+                index(v)
+
+    index(ast)
+    if target is None:
+        return [ast]
+    chain = target.get("linearizedBaseContracts") or [target.get("id")]
+    return [by_id[c] for c in reversed(chain) if c in by_id]
+
+
+def _public_state_getter_decl(ast_path, contract, unit):
+    """VariableDeclaration for the public state getter named `unit`, or None."""
+    for sc in _visible_contract_scopes(ast_path, contract):
+        for n in sc.get("nodes", []) or []:
+            if (isinstance(n, dict)
+                    and n.get("nodeType") == "VariableDeclaration"
+                    and n.get("stateVariable")
+                    and n.get("visibility") == "public"
+                    and n.get("name") == unit):
+                return n
+    return None
+
+
+def _split_top_level_commas(text):
+    out, cur, depth = [], [], 0
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append("".join(cur).strip())
+            cur = []
+            continue
+        cur.append(ch)
+    tail = "".join(cur).strip()
+    if tail:
+        out.append(tail)
+    return out
+
+
+def _mapping_type_parts(type_string):
+    text = (type_string or "").strip()
+    if not text.startswith("mapping(") or not text.endswith(")"):
+        return None
+    inner = text[len("mapping("):-1]
+    depth = 0
+    for i in range(len(inner) - 1):
+        ch = inner[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+        elif ch == "=" and inner[i + 1] == ">" and depth == 0:
+            return inner[:i].strip(), inner[i + 2:].strip()
+    return None
+
+
+def _array_type_part(type_string):
+    text = (type_string or "").strip()
+    if not text.endswith("]"):
+        return None
+    lb = text.rfind("[")
+    if lb <= 0:
+        return None
+    return text[:lb].strip()
+
+
+def _public_getter_signature_from_type(type_string):
+    """(params, returns) for Solidity's generated public state getter."""
+    params = []
+    cur = (type_string or "").strip()
+    depth = 0
+    while True:
+        mp = _mapping_type_parts(cur)
+        if mp is not None:
+            key_t, cur = mp
+            params.append((f"key{depth}", key_t))
+            depth += 1
+            continue
+        elem = _array_type_part(cur)
+        if elem is not None:
+            params.append((f"index{depth}", "uint256"))
+            cur = elem
+            depth += 1
+            continue
+        break
+    if not cur:
+        return params, []
+    return params, [("", cur)]
+
+
+def _struct_type_names(type_string):
+    text = (type_string or "").strip()
+    if not text.startswith("struct "):
+        return []
+    text = text[len("struct "):].strip()
+    text = text.split()[0] if text else ""
+    if not text:
+        return []
+    names = [text]
+    if "." in text:
+        names.append(text.rsplit(".", 1)[-1])
+    return names
+
+
+def _public_getter_struct_returns(ast_path, final_type):
+    """Return flattened public getter returns for a struct final value.
+
+    solc's generated getter for a public struct state variable does not return
+    the struct value as one ABI object.  It returns the ABI-returnable members as
+    a tuple and skips members such as mappings and ordinary arrays.  Stage 4 only
+    needs source-level return declarations for oracle rendering, so this mirrors
+    that public getter surface conservatively.
+    """
+    names = set(_struct_type_names(final_type))
+    if not names:
+        return None
+    ast = _load_ast(ast_path)
+    structs = []
+
+    def index(node):
+        if isinstance(node, dict):
+            if node.get("nodeType") == "StructDefinition":
+                candidates = {node.get("name") or ""}
+                canonical = node.get("canonicalName")
+                if canonical:
+                    candidates.add(canonical)
+                    candidates.add(str(canonical).rsplit(".", 1)[-1])
+                if names.intersection(candidates):
+                    structs.append(node)
+            for value in node.values():
+                index(value)
+        elif isinstance(node, list):
+            for value in node:
+                index(value)
+
+    index(ast)
+    if not structs:
+        return None
+    struct = structs[-1]
+    returns = []
+    for member in struct.get("members") or []:
+        if not isinstance(member, dict):
+            continue
+        ty = ((member.get("typeDescriptions") or {}).get("typeString")
+              or "")
+        if not ty or ty.startswith("mapping("):
+            continue
+        if _array_type_part(ty) is not None and not ty.startswith(("bytes", "string")):
+            continue
+        if ty.startswith("struct "):
+            continue
+        returns.append((member.get("name") or "", ty))
+    return returns
+
+
+def public_state_getter_signature(ast_path, contract, unit):
+    decl = _public_state_getter_decl(ast_path, contract, unit)
+    if decl is None:
+        return None
+    ty = (decl.get("typeDescriptions") or {}).get("typeString") or ""
+    params, returns = _public_getter_signature_from_type(ty)
+    if len(returns) == 1:
+        struct_returns = _public_getter_struct_returns(ast_path, returns[0][1])
+        if struct_returns is not None:
+            returns = struct_returns
+    return params, returns
+
+
 def _select_def(defs, arity, declaration_id=None):
     """The one declaration an `arity`-argument call resolves to, or None.
 
@@ -5115,7 +6520,8 @@ def _path_decision_relation_keys(path_decisions):
         if isinstance(dec, dict) and dec.get("synthetic_abi_gate"):
             continue
         claim = dec.get("branch_claim") if isinstance(dec, dict) else None
-        rel = path_condition_from_branch_claim(claim)
+        arm = dec.get("arm") if isinstance(dec, dict) else None
+        rel = path_condition_from_branch_claim(claim, arm)
         if rel is not None:
             out.add(_relation_key(*rel))
     return out
@@ -5254,7 +6660,10 @@ def function_params(ast_path, contract, unit, arity=None,
     """
     d = _select_def(_function_defs(ast_path, contract, unit), arity,
                     declaration_id)
-    return None if d is None else _decl_list(d, "parameters")
+    if d is not None:
+        return _decl_list(d, "parameters")
+    getter = public_state_getter_signature(ast_path, contract, unit)
+    return None if getter is None else getter[0]
 
 
 def function_returns(ast_path, contract, unit, arity=None,
@@ -5268,7 +6677,10 @@ def function_returns(ast_path, contract, unit, arity=None,
     """
     d = _select_def(_function_defs(ast_path, contract, unit), arity,
                     declaration_id)
-    return None if d is None else _decl_list(d, "returnParameters")
+    if d is not None:
+        return _decl_list(d, "returnParameters")
+    getter = public_state_getter_signature(ast_path, contract, unit)
+    return None if getter is None else getter[1]
 
 
 def function_state_mutability(ast_path, contract, unit, arity=None,
@@ -5282,6 +6694,8 @@ def function_state_mutability(ast_path, contract, unit, arity=None,
     """
     d = _select_def(_function_defs(ast_path, contract, unit), arity,
                     declaration_id)
+    if d is None and public_state_getter_signature(ast_path, contract, unit):
+        return "view"
     if d is None:
         return None
     mut = d.get("stateMutability")
@@ -5402,10 +6816,11 @@ def select_path_claim(report, unit, enc, path_function=None):
 # directions.  Anything else is NOT lifted -- reported, never silently kept as
 # a concrete literal that would read like a generalised one.
 def lift_kind(sol_type):
-    t = (sol_type or "").strip()
+    t = _norm_ty(sol_type)
     if t == "bool":
         return ("bool", 1)
-    if t in ("address", "address payable"):
+    if (t in ("address", "address payable")
+            or _source_identity_type_name(t) is not None):
         return ("address", 160)
     b = fixed_bytes_width(t)
     if b is not None:
@@ -5434,6 +6849,13 @@ def dynamic_calldata_signature_type(sol_type):
         return "string memory"
     if t == "bytes":
         return "bytes memory"
+    dyn_base = _source_dynamic_array_base_type(t)
+    if dyn_base is not None:
+        if _source_dynamic_array_base_type(dyn_base) is not None:
+            return None
+        elem = signature_type(dyn_base)
+        if elem is not None:
+            return f"{elem}[] memory"
     return None
 
 
@@ -5444,6 +6866,11 @@ def dynamic_default_call_arg(sol_type):
         return '""'
     if t == "bytes":
         return 'hex""'
+    dyn_base = _source_dynamic_array_base_type(t)
+    if (dyn_base is not None
+            and _source_dynamic_array_base_type(dyn_base) is None
+            and signature_type(dyn_base) is not None):
+        return f"new {signature_type(dyn_base)}[](0)"
     return None
 
 
@@ -5456,7 +6883,7 @@ def default_call_arg(sol_type):
     if kind == "bool":
         return "false"
     if kind == "address":
-        return "address(uint160(0))"
+        return _address_expr_for_source_type(sol_type, "address(uint160(0))")
     if kind == "bytes":
         return f"bytes{_width // 8}(0)"
     return "0"
@@ -5465,10 +6892,20 @@ def default_call_arg(sol_type):
 def signature_type(sol_type):
     """ABI signature spelling for a type whose omitted argument can be rebuilt."""
     t = _norm_ty(sol_type)
+    dyn_base = _source_dynamic_array_base_type(t)
+    if dyn_base is not None:
+        if _source_dynamic_array_base_type(dyn_base) is not None:
+            return None
+        elem = signature_type(dyn_base)
+        if elem is not None:
+            return f"{elem}[]"
+        return None
     if t == "address payable":
         return "address"
     if t in ("bool", "address"):
         return t
+    if _source_identity_type_name(t) is not None:
+        return "address"
     if fixed_bytes_width(t) is not None:
         return t
     m = re.match(r"^uint(\d+)?$", t)
@@ -5483,8 +6920,8 @@ def call_arg_expr(sol_type, kind, width, var):
     """Expression passed to the target unit for one lifted PUT coordinate."""
     if kind == "bytes":
         return f"bytes{width // 8}({var})"
-    if kind == "address" and (sol_type or "").strip() == "address payable":
-        return f"payable({var})"
+    if kind == "address":
+        return _address_expr_for_source_type(sol_type, var)
     return var
 
 
@@ -5575,6 +7012,68 @@ def source_constructor_param_types(forge_project, contract):
         forge_project, contract)]
 
 
+def _constructor_param_bound_literal(typ, value):
+    norm = (typ or "").strip()
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return None
+    if re.fullmatch(r"uint(?:[0-9]+)?", norm):
+        return str(max(0, value))
+    if re.fullmatch(r"int(?:[0-9]+)?", norm):
+        return str(value)
+    if norm in ("address", "address payable"):
+        return f"address(uint160({max(0, value)}))"
+    if norm == "bool":
+        return "true" if value else "false"
+    return None
+
+
+def constructor_state_region_param_overrides(source, contract,
+                                             constructor_params, region):
+    """Constructor arguments that can establish a certified state bound.
+
+    This is deliberately narrow: only direct assignments of the form
+    `stateVar = constructorParam` in the target constructor are used.  It keeps
+    synthetic replay from deploying a contract in an entry state outside a
+    certified `state.<v>` interval, without inventing vm.store havoc for state
+    bounds the ESBMC query did not havoc.
+    """
+    chunk = _source_contract_chunk(source or "", contract)
+    if not chunk:
+        return {}, []
+    body = _constructor_body_text(chunk)
+    if not body:
+        return {}, []
+    params = [(name, typ) for name, typ in (constructor_params or [])
+              if name and typ]
+    state_bounds = {
+        name[len("state."):]: bounds
+        for name, bounds in (region or {}).items()
+        if isinstance(name, str) and name.startswith("state.")
+    }
+    if not params or not state_bounds:
+        return {}, []
+    overrides = {}
+    notes = []
+    for idx, (pname, ptype) in enumerate(params):
+        for sname, (lo, _hi) in sorted(state_bounds.items()):
+            rx = re.compile(r"\b" + re.escape(sname) + r"\s*=\s*"
+                            + re.escape(pname) + r"\b")
+            if not rx.search(body):
+                continue
+            literal = _constructor_param_bound_literal(ptype, lo)
+            if literal is None:
+                continue
+            overrides[idx] = literal
+            notes.append(
+                f"synthetic constructor argument `{pname}` set to {literal} "
+                f"because constructor assigns `{sname} = {pname}` and the "
+                f"certified entry-state region bounds state.{sname}")
+            break
+    return overrides, notes
+
+
 def _source_constructor_params_from_source(source, contract):
     chunk = _source_contract_chunk(source, contract)
     if not chunk:
@@ -5611,6 +7110,52 @@ def _constructor_body_text(chunk):
                 return chunk[start:i]
         i += 1
     return ""
+
+
+def _constructor_preamble_text(chunk):
+    """Text between a constructor's parameter list and body."""
+    m = re.search(r"\bconstructor\s*\(", chunk or "")
+    if m is None:
+        return ""
+    depth, i = 1, m.end()
+    while i < len(chunk) and depth:
+        if chunk[i] == "(":
+            depth += 1
+        elif chunk[i] == ")":
+            depth -= 1
+        i += 1
+    if depth:
+        return ""
+    start = i
+    while i < len(chunk) and chunk[i] not in "{;":
+        i += 1
+    if i >= len(chunk) or chunk[i] != "{":
+        return ""
+    return chunk[start:i]
+
+
+def _constructor_initializer_calls(chunk):
+    """Base-constructor calls in a Solidity constructor preamble."""
+    preamble = _constructor_preamble_text(chunk)
+    if not preamble:
+        return []
+    out = []
+    for m in re.finditer(r"\b([A-Za-z_]\w*)\s*\(", preamble):
+        name = m.group(1)
+        depth, i = 1, m.end()
+        while i < len(preamble) and depth:
+            if preamble[i] == "(":
+                depth += 1
+            elif preamble[i] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        if depth:
+            continue
+        args = split_top_level(preamble[m.end():i])
+        out.append((name, args))
+    return out
 
 
 def _constructor_arg_span(stmt, contract):
@@ -5696,7 +7241,22 @@ def _body_has_nonzero_address_guard(body, name):
         r"address\s*\(\s*0\s*\)\s*!=\s*address\s*\(\s*\b" +
         plain + r"\b\s*\)",
     ]
-    return any(re.search(pat, body) for pat in guarded)
+    if any(re.search(pat, body) for pat in guarded):
+        return True
+    zero_equal = [
+        r"\b" + plain + r"\b\s*==\s*address\s*\(\s*0\s*\)",
+        r"address\s*\(\s*\b" + plain +
+        r"\b\s*\)\s*==\s*address\s*\(\s*0\s*\)",
+        r"address\s*\(\s*0\s*\)\s*==\s*\b" + plain + r"\b",
+        r"address\s*\(\s*0\s*\)\s*==\s*address\s*\(\s*\b" +
+        plain + r"\b\s*\)",
+    ]
+    for stmt in (body or "").split(";"):
+        if "revert" not in stmt and "require" not in stmt:
+            continue
+        if any(re.search(pat, stmt) for pat in zero_equal):
+            return True
+    return False
 
 
 def _source_function_decl_infos(chunk, fname):
@@ -5729,6 +7289,34 @@ def _source_function_decls(chunk, fname):
     return [(params, body)
             for params, _header_tail, body in
             _source_function_decl_infos(chunk, fname)]
+
+
+def _source_function_header_is_readonly(header_tail):
+    return bool(re.search(r"\b(?:view|pure)\b", header_tail or ""))
+
+
+def assigned_source_locals(source, contract, unit):
+    """Bare source names assigned inside the target unit body.
+
+    Stage-1 path decisions are reported in source terms.  A bare name that is
+    assigned before a branch may no longer denote the calldata coordinate with
+    the same spelling, so Stage 4 must not render it as a fuzz-parameter guard.
+    """
+    chunk = _source_contract_chunk(source, contract)
+    if not source or not chunk or not unit:
+        return set()
+    assigned = set()
+    assign_rx = re.compile(
+        r"(?:\+\+|--)\s*\b([A-Za-z_]\w*)\b|"
+        r"\b([A-Za-z_]\w*)\b\s*(?:\+\+|--|<<=|>>=|[+\-*/%&|^]=|"
+        r"(?<![!<>=])=(?!=|>))")
+    keywords = {"if", "else", "while", "for", "return", "require", "assert"}
+    for _params, body in _source_function_decls(chunk, unit):
+        for m in assign_rx.finditer(body or ""):
+            name = m.group(1) or m.group(2)
+            if name and name not in keywords:
+                assigned.add(name)
+    return assigned
 
 
 def _source_modifier_body(chunk, name):
@@ -5951,6 +7539,92 @@ def apply_constructor_param_nonzero_args(lines, contract, specs):
     return out, changed
 
 
+def _body_has_nonempty_dynamic_guard(body, name):
+    if not body or not name:
+        return False
+    name_rx = re.compile(r"\b" + re.escape(name) + r"\b")
+    # A constructor guard normally lives in one semicolon-terminated statement,
+    # often a multi-line require containing several parameters.
+    for stmt in body.split(";"):
+        if not name_rx.search(stmt):
+            continue
+        if '""' not in stmt and 'hex""' not in stmt:
+            continue
+        if "!=" in stmt or ".length" in stmt or "keccak256" in stmt:
+            return True
+    return False
+
+
+def constructor_param_nonempty_specs(source, contract):
+    """Dynamic constructor parameters guarded against empty values."""
+    chunk = _source_contract_chunk(source, contract)
+    if not source or not chunk:
+        return []
+    params = _source_constructor_params_from_source(source, contract)
+    body = _constructor_body_text(chunk)
+    if not params or not body:
+        return []
+    specs = []
+    for idx, (pname, ptype) in enumerate(params):
+        if _norm_ty(ptype) not in ("string", "bytes"):
+            continue
+        if not _body_has_nonempty_dynamic_guard(body, pname):
+            continue
+        specs.append({
+            "param_index": idx,
+            "param_name": pname,
+            "param_type": ptype,
+        })
+    return specs
+
+
+def _is_empty_dynamic_expr(expr):
+    text = re.sub(r"\s+", "", (expr or "").strip())
+    return text in ('""', 'hex""', 'bytes("")', "newbytes(0)")
+
+
+def apply_constructor_param_nonempty_args(lines, contract, specs):
+    """Replace empty dynamic constructor replay args rejected by source guards."""
+    if not contract or not specs:
+        return list(lines), 0
+    out, changed, i = [], 0, 0
+    rx = re.compile(r"\bnew\s+" + re.escape(contract) + r"\s*\(")
+    while i < len(lines):
+        if not rx.search(lines[i]):
+            out.append(lines[i])
+            i += 1
+            continue
+        end = _statement_end(lines, i)
+        stmt = "\n".join(lines[i:end + 1])
+        span = _constructor_arg_span(stmt, contract)
+        if span is None:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        start, close, args = span
+        new_args = list(args)
+        touched = False
+        for spec in specs:
+            idx = spec["param_index"]
+            if idx >= len(args) or not _is_empty_dynamic_expr(args[idx]):
+                continue
+            replacement = _source_type_default_expr(
+                spec.get("param_type", ""), 1000 + idx)
+            if replacement is None:
+                continue
+            new_args[idx] = replacement
+            touched = True
+        if not touched:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        new_stmt = stmt[:start] + ", ".join(new_args) + stmt[close:]
+        out.extend(new_stmt.split("\n"))
+        changed += 1
+        i = end + 1
+    return out, changed
+
+
 def constructor_param_dynarray_min_lengths(source, contract):
     """Minimum lengths for constructor dynamic-array params read by index."""
     chunk = _source_contract_chunk(source, contract)
@@ -6144,6 +7818,29 @@ def tolerate_unused_setup_deployments(lines, target_contract=None):
             i = stmt_end + 1
         cursor = end + 1
     out.extend(lines[cursor:])
+    return out, changed
+
+
+def drop_abstract_helper_unsupported_markers(lines):
+    """Remove non-executable helper-deployment UNSUPPORTED notes.
+
+    ESBMC may record that an unrelated setup helper is abstract/interface/library
+    and therefore was not instantiated.  Once stale concrete cases are removed,
+    keeping that comment in the PUT contract makes the deliverability gate treat
+    an otherwise executable target test as an unsupported no-op.  Target-call
+    UNSUPPORTED markers are deliberately left intact.
+    """
+    rx = re.compile(
+        r"^\s*//\s*UNSUPPORTED:\s+[A-Za-z_]\w*\s+is\s+abstract\s*/\s*"
+        r"an\s+interface\s*/\s*a\s+library\s+and\s+cannot\s+be\s+"
+        r"instantiated\s+with\s+`new`\s*$")
+    out = []
+    changed = 0
+    for line in lines:
+        if rx.match(line):
+            changed += 1
+            continue
+        out.append(line)
     return out, changed
 
 
@@ -6652,21 +8349,110 @@ def _source_type_default_expr(sol_type, seed=1):
     parameters may be interface/contract types even when the target unit's
     fuzzable calldata is scalar.  A nonzero address keeps the common
     `address(x) != address(0)` constructor guard satisfiable.
+    Dynamic source-level constructor placeholders are non-empty for the same
+    reason: production token/proxy constructors commonly reject empty names,
+    symbols, or byte payloads before the target unit can be replayed.
     """
+    t = _norm_ty(sol_type)
+    if t == "string":
+        return f'"VeriPUT{seed}"'
+    if t == "bytes":
+        return f'hex"{seed & 0xff:02x}"'
+    dyn_base = _source_dynamic_array_base_type(t)
+    if dyn_base is not None:
+        return f"new {_source_array_element_type_expr(dyn_base)}[](0)"
+    if re.fullmatch(r"int(?:[0-9]+)?", t):
+        return f"{'int256' if t == 'int' else t}(1)"
+    if (t in ("address", "address payable")
+            or _source_identity_type_name(sol_type) is not None):
+        addr = f"address(uint160({seed}))"
+        return _address_expr_for_source_type(sol_type, addr)
     default = default_call_arg(sol_type)
     if default is not None:
-        if _norm_ty(sol_type) in ("address", "address payable"):
-            addr = f"address(uint160({seed}))"
-            return f"payable({addr})" if _is_address_payable_type(sol_type) else addr
         return default
-    t = _norm_ty(sol_type)
-    if re.match(r"^[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*$", t):
-        return f"{t}(address(uint160({seed})))"
+    name = _source_identity_type_name(sol_type, allow_bare=True)
+    if name is not None:
+        return f"{name}(address(uint160({seed})))"
     return None
 
 
-def _source_custom_type_symbol(sol_type):
+def _point_value_for_name(name, region, pins):
+    if not name:
+        return None
+    if name in region:
+        try:
+            lo, hi = region[name]
+        except (TypeError, ValueError):
+            return None
+        if str(lo) == str(hi):
+            return str(lo)
+    if name in pins:
+        return str(pins[name])
+    return None
+
+
+def _point_int_for_name(name, region, pins):
+    value = _point_value_for_name(name, region, pins)
+    if value is None:
+        return None
+    try:
+        return int(str(value), 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def _source_point_expr(name, sol_type, region, pins):
+    """Render a source-level argument from a single-point Stage-2 witness."""
+
     t = _norm_ty(sol_type)
+    ivalue = _point_int_for_name(name, region, pins)
+    if ivalue is not None:
+        if t == "bool":
+            return "true" if ivalue else "false"
+        if re.fullmatch(r"uint(?:[0-9]+)?", t):
+            cast = "uint256" if t == "uint" else t
+            return f"{cast}({ivalue})"
+        if re.fullmatch(r"int(?:[0-9]+)?", t):
+            cast = "int256" if t == "int" else t
+            return f"{cast}({ivalue})"
+        if (t in ("address", "address payable")
+                or _source_identity_type_name(sol_type) is not None):
+            addr = f"address(uint160({ivalue}))"
+            return _address_expr_for_source_type(sol_type, addr)
+        m = re.fullmatch(r"bytes([1-9]|[12][0-9]|3[0-2])", t)
+        if m:
+            return f"{t}(0)"
+    length = _point_int_for_name(f"{name}.length", region, pins)
+    if length is not None:
+        if t == "bytes":
+            return "hex\"" + ("00" * max(0, min(length, 32))) + "\""
+        if t == "string":
+            return "\"" + ("A" * max(0, min(length, 32))) + "\""
+    return None
+
+
+def _source_dynamic_array_base_type(sol_type):
+    t = _norm_ty(sol_type).strip()
+    if not t.endswith("[]"):
+        return None
+    base = t[:-2].strip()
+    return base or None
+
+
+def _source_array_element_type_expr(sol_type):
+    t = _norm_ty(sol_type).strip()
+    if t.startswith("struct "):
+        t = t[len("struct "):].strip()
+    return t
+
+
+def _source_custom_type_symbol(sol_type):
+    base = _source_dynamic_array_base_type(sol_type)
+    if base is not None:
+        sol_type = base
+    t = _source_identity_type_name(sol_type, allow_bare=True) or _norm_ty(sol_type)
+    if t.startswith("struct "):
+        t = t[len("struct "):].strip()
     if not re.match(r"^[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*$", t):
         return None
     if t in ("address", "bool", "string", "bytes", "address payable"):
@@ -6756,6 +8542,146 @@ def synthesize_unsupported_case_replay(emitted, case, contract, unit, params,
     notes.append("unsupported skeleton repaired by synthesizing a local "
                  "deployment and target call from source declarations")
     return repaired, repaired_case, True
+
+
+def synthesize_minimal_emitted_case(out_dir, contract, unit, path_function, enc,
+                                    params, constructor_params, notes,
+                                    region=None, pins=None, flat_source=""):
+    """Create a minimal `.cov.t.sol` when ESBMC's concrete emitter timed out.
+
+    The certified-region route does not trust this file for proof. It only
+    needs a syntactic Foundry preamble and one target call that the existing
+    lifter can rewrite into a PUT. The path identity still comes from Stage 2,
+    and the oracle ladder still comes from `--path-cov-assert`.
+    """
+    if not contract or not unit or not path_function:
+        notes.append("synthetic emitter fallback unavailable: missing "
+                     "contract, unit, or path_function")
+        return None, None
+    if params is None:
+        notes.append("synthetic emitter fallback unavailable: declared "
+                     "parameters are unavailable")
+        return None, None
+
+    call_args = []
+    for idx, (_name, ty) in enumerate(named_params(params)):
+        expr = _source_point_expr(_name, ty, region or {}, pins or {})
+        if expr is None:
+            expr = _source_type_default_expr(ty, 2000 + idx)
+        if expr is None:
+            notes.append("synthetic emitter fallback unavailable: target "
+                         f"parameter {idx} has unsynthesizable type `{ty}`")
+            return None, None
+        call_args.append(expr)
+
+    constructor_params = list(constructor_params or [])
+    ctor_overrides, ctor_override_notes = \
+        constructor_state_region_param_overrides(
+            flat_source or "", contract, constructor_params, region or {})
+    notes.extend(ctor_override_notes)
+    ctor_args = []
+    for idx, item in enumerate(constructor_params):
+        _pname, ty = item if isinstance(item, (list, tuple)) else ("", item)
+        expr = ctor_overrides.get(idx)
+        if expr is not None:
+            ctor_args.append(expr)
+            continue
+        expr = _source_type_default_expr(ty, 1000 + idx)
+        if expr is None:
+            notes.append("synthetic emitter fallback unavailable: constructor "
+                         f"parameter {idx} has unsynthesizable type `{ty}`")
+            return None, None
+        ctor_args.append(expr)
+
+    import_symbols = [contract]
+    custom_symbols = {
+        sym for sym in (
+            _source_custom_type_symbol(ty)
+            for _name, ty in list(named_params(params))
+        ) if sym
+    } | {
+        sym for sym in (
+            _source_custom_type_symbol(
+                item[1] if isinstance(item, (list, tuple)) else item)
+            for item in (constructor_params or [])
+        ) if sym
+    }
+    for sym in sorted(custom_symbols):
+        if sym not in import_symbols:
+            import_symbols.append(sym)
+
+    test_contract = f"{contract}CovTest"
+    lines = [
+        "// SPDX-License-Identifier: MIT",
+        "// Auto-generated by VeriPUT after ESBMC emitted no concrete test.",
+        "pragma solidity >=0.8.0;",
+        "",
+        'import {Test} from "forge-std/Test.sol";',
+        f'import {{{", ".join(import_symbols)}}} from "./flat.sol";',
+        "",
+        f"contract {test_contract} is Test {{",
+        f"  {contract} c0;",
+        "  function setUp() public {",
+        f"    c0 = new {contract}({', '.join(ctor_args)});",
+        "  }",
+        f"  // claim: {path_function}:path:{enc}",
+        "  function test_cov_0() public {",
+        "    // VeriPUT synthesized this call from source declarations; the",
+        "    // certified region and all oracle claims still come from ESBMC.",
+        f"    c0.{unit}({', '.join(call_args)});",
+        "  }",
+        "}",
+    ]
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"{contract}.synthetic.cov.t.sol")
+    with open(path, "w") as stream:
+        stream.write("\n".join(lines) + "\n")
+    emitted = EmittedFile(path)
+    case = emitted.case_for(path_function, enc)
+    if case is None:
+        notes.append("synthetic emitter fallback failed: synthesized case "
+                     "could not be re-identified")
+        return None, None
+    notes.append("synthetic emitter fallback used: ESBMC produced no "
+                 ".cov.t.sol, so VeriPUT synthesized a minimal Foundry "
+                 "preamble from source declarations")
+    return emitted, case
+
+
+def assemble_deploy_only_source(contract, unit, enc, constructor_params):
+    """Concrete reference artefact for constructor-only subjects."""
+    ctor_args = []
+    for idx, ty in enumerate(constructor_params or []):
+        expr = _source_type_default_expr(ty, 1000 + idx)
+        if expr is None:
+            raise ValueError(
+                "deploy-only replay constructor parameter "
+                f"{idx} has unsynthesizable type `{ty}`")
+        ctor_args.append(expr)
+    import_symbols = [contract]
+    for sym in sorted({
+            _source_custom_type_symbol(ty)
+            for ty in (constructor_params or [])
+            if _source_custom_type_symbol(ty)
+    }):
+        if sym not in import_symbols:
+            import_symbols.append(sym)
+    new_contract = f"{contract}_{unit}_deploy_concrete{enc}_fb"
+    lines = [
+        "// SPDX-License-Identifier: MIT",
+        "// Auto-generated by VeriPUT for a deploy-only Stage-2 row.",
+        "pragma solidity >=0.8.0;",
+        "",
+        'import {Test} from "forge-std/Test.sol";',
+        f'import {{{", ".join(import_symbols)}}} from "./flat.sol";',
+        "",
+        f"contract {new_contract} is Test {{",
+        f"  function test_deploy_only_{enc}() public {{",
+        f"    new {contract}({', '.join(ctor_args)});",
+        "  }",
+        "}",
+    ]
+    return "\n".join(lines) + "\n", new_contract
 
 
 def rendered_env_coords_for_emitted_case(emitted, case, unit, region):
@@ -6849,6 +8775,13 @@ def establish_env_sender(body, call_i, region, holes, pins, used,
     if lo is None:
         return body, call_i, None, None, [], None, None
 
+    if lo == 0 and hi == 0:
+        return (
+            body, call_i, None, None, [],
+            "msg.sender == 0 cannot be established with Foundry `vm.prank`: "
+            "the certified slice is executable in ESBMC's address domain but "
+            "not in Foundry's sender cheatcode domain", None)
+
     sig_add, pre_add = None, []
     if hi > lo:
         var = "p_msg_sender"
@@ -6863,7 +8796,10 @@ def establish_env_sender(body, call_i, region, holes, pins, used,
         # Same call the parameter path makes, holes included: `bound_lines`
         # renders each as `vm.assume(x != h)`, and a hole removes one value out
         # of an interval so rejection stays rare by construction.
-        sender_holes = sorted(holes.get("msg.sender", ()))
+        sender_holes = set(holes.get("msg.sender", ()))
+        if lo <= 0 <= hi:
+            sender_holes.add(0)
+        sender_holes = sorted(sender_holes)
         pre_add = bound_lines(var, "address", 160, lo, hi, sender_holes)
         sender_expr = var
         prank = f"    vm.prank({var});"
@@ -6875,7 +8811,11 @@ def establish_env_sender(body, call_i, region, holes, pins, used,
                   f"`{var}`, so this PUT ranges over the certified sender "
                   f"interval rather than over one point of it"
                 + (f", and the {len(sender_holes)} punched value(s) are "
-                   f"excluded by vm.assume" if sender_holes else ""))
+                   f"excluded by vm.assume" if sender_holes else "")
+                + ("; 0 is excluded because Foundry cannot prank "
+                   "address(0), and the remaining executable subregion is a "
+                   "subset of the certified region"
+                   if lo <= 0 <= hi else ""))
     else:
         sender_expr = f"address(uint160({lo}))"
         prank = f"    vm.prank({sender_expr});"
@@ -7648,8 +9588,10 @@ def bound_lines(pname, kind, width, lo, hi, holes):
 #
 # ⛔ WHY THE EMITTER HAS TO READ IT. The literal `ROLLBACK` appeared ZERO times
 # in this file before this block: the fact existed in the log and NO reader
-# consumed it, so layer-2/3 rungs were emitted on reverting paths as though the
-# state they compare were observable. It is not.
+# consumed it, so change/return rungs were emitted on reverting paths as though
+# the state they compare were observable. It is not. The exception is a frame
+# rung over the restored state: after a revert, the chain can observe exactly
+# the pre-call value, so `post == pre` remains a sound oracle.
 #
 # A reverting path's assertion is planted BEFORE the operation that fails, and
 # that placement is not negotiable -- put after it, the assertion is unreachable
@@ -7663,19 +9605,19 @@ def bound_lines(pname, kind, width, lo, hi, holes):
 # region pinning state._distributor to [0, 0]. Restored state cannot refute
 # `post == pre`; pre-rollback state can.
 #
-# §oracle already settles what to do: "A test for a reverting path carries the
+# §oracle settles ordinary reverts: "A test for a reverting path carries the
 # first layer alone, since a revert undoes what the other two would have
-# compared." This is the wiring for that sentence.
+# compared." Rollback warnings are more precise than that ordinary exit-kind
+# report: they say the restored post-state is modelled, so frame rungs survive.
 ROLLBACK_EXIT_RE = re.compile(
     r"--path-cov-assert: unit '([^']*)' path enc=(\d+) exits through a "
     r"ROLLBACK revert")
 
 ROLLBACK_UNOBSERVABLE = (
     "this path exits through a ROLLBACK revert, so the value the ladder "
-    "compared is the one between the write and the rollback -- a moment no "
-    "test and no chain can read. A revert restores storage, so the only "
-    "post-state a test can observe on this path is the pre-state, and the "
-    "only layer left with anything to say is the exit kind")
+    "compared for change/return rungs is the one between the write and the "
+    "rollback -- a moment no test and no chain can read. A revert restores "
+    "storage, so frame rungs over the restored post-state remain observable")
 
 REVERT_UNOBSERVABLE = (
     "this path exits through a revert according to the Stage-1 path report, "
@@ -7768,35 +9710,50 @@ def split_top_level_bool(text, op):
     return parts
 
 
-def _path_condition_from_unwrapped(inner, negated):
+def _path_condition_from_unwrapped(inner, negated, arm=None):
     inner = strip_balanced_outer_parens(inner)
     if split_top_level_bool(inner, "&&") or split_top_level_bool(inner, "||"):
         return None
+    while inner.startswith("!") and not inner.startswith("!="):
+        rest = inner[1:].strip()
+        if not rest:
+            return None
+        inner = strip_balanced_outer_parens(rest)
+        negated = not negated
     m = SIMPLE_DECISION_RE.match(inner)
     if m:
         lhs, op, rhs = (m.group(1).strip(), m.group(2), m.group(3).strip())
         return lhs, (op if negated else DECISION_NEGATE_OP[op]), rhs
     term = inner.strip()
-    term_negated = False
-    if term.startswith("!") and not term.startswith("!="):
-        term = term[1:].strip()
-        term_negated = True
     if (not term or term.startswith("(") or term.endswith(")")
             or any(op in term for op in DECISION_NEGATE_OP)):
         return None
-    walked_truth = term_negated if not negated else not term_negated
+    walked_truth = negated
+    if arm == "fall-through":
+        walked_truth = not walked_truth
     return term, ("!=" if walked_truth else "=="), "0"
 
 
-def path_conditions_from_branch_claim(branch_claim):
+def path_conditions_from_branch_claim(branch_claim, arm=None):
     """Return all simple source conditions this path walked."""
-    groups = path_condition_groups_from_branch_claim(branch_claim)
+    groups = path_condition_groups_from_branch_claim(branch_claim, arm)
     if groups is None or any(len(group) != 1 for group in groups):
         return None
     return [group[0] for group in groups]
 
 
-def path_condition_groups_from_branch_claim(branch_claim):
+def path_condition_terms_from_branch_claim(branch_claim, arm=None):
+    groups = path_condition_groups_from_branch_claim(branch_claim, arm)
+    if groups is None:
+        return None
+    terms = []
+    for group in groups:
+        for lhs, _op, rhs in group:
+            terms.extend((lhs, rhs))
+    return terms
+
+
+def path_condition_groups_from_branch_claim(branch_claim, arm=None):
     """Return conjunctive groups of source conditions this path walked.
 
     Each outer list item is ANDed with the next.  A multi-relation inner list
@@ -7809,7 +9766,7 @@ def path_condition_groups_from_branch_claim(branch_claim):
         if conjuncts:
             out = []
             for part in conjuncts:
-                rel = _path_condition_from_unwrapped(part, True)
+                rel = _path_condition_from_unwrapped(part, True, arm)
                 if rel is None:
                     return None
                 out.append([rel])
@@ -7818,7 +9775,7 @@ def path_condition_groups_from_branch_claim(branch_claim):
         if disjuncts:
             group = []
             for part in disjuncts:
-                rel = _path_condition_from_unwrapped(part, True)
+                rel = _path_condition_from_unwrapped(part, True, arm)
                 if rel is None:
                     return None
                 group.append(rel)
@@ -7828,7 +9785,7 @@ def path_condition_groups_from_branch_claim(branch_claim):
         if disjuncts:
             out = []
             for part in disjuncts:
-                rel = _path_condition_from_unwrapped(part, False)
+                rel = _path_condition_from_unwrapped(part, False, arm)
                 if rel is None:
                     return None
                 out.append([rel])
@@ -7837,18 +9794,18 @@ def path_condition_groups_from_branch_claim(branch_claim):
         if conjuncts:
             group = []
             for part in conjuncts:
-                rel = _path_condition_from_unwrapped(part, False)
+                rel = _path_condition_from_unwrapped(part, False, arm)
                 if rel is None:
                     return None
                 group.append(rel)
             return [group]
-    rel = _path_condition_from_unwrapped(inner, negated)
+    rel = _path_condition_from_unwrapped(inner, negated, arm)
     return [[rel]] if rel is not None else None
 
 
-def path_condition_from_branch_claim(branch_claim):
+def path_condition_from_branch_claim(branch_claim, arm=None):
     """Return the first source condition this path walked, when simple."""
-    rels = path_conditions_from_branch_claim(branch_claim)
+    rels = path_conditions_from_branch_claim(branch_claim, arm)
     return rels[0] if rels else None
 
 
@@ -7856,7 +9813,7 @@ RETURN_VALUE_MSG_SENDER_RE = re.compile(r"^return_value\$__msgSender\$\d+$")
 
 
 def render_path_decision_term(term, coord_ident_abs):
-    term = (term or "").strip()
+    term = strip_balanced_outer_parens((term or "").strip())
     if term in coord_ident_abs:
         return coord_ident_abs[term], None
     if RETURN_VALUE_MSG_SENDER_RE.match(term) and "msg.sender" in coord_ident_abs:
@@ -7865,6 +9822,12 @@ def render_path_decision_term(term, coord_ident_abs):
         return coord_ident_abs["state." + term], None
     if _KEY_LIT_RE.match(term):
         return numeric_literal_expr(term), None
+    if term == "true":
+        return "true", None
+    if term == "false":
+        return "false", None
+    if re.fullmatch(r"address\s*\(\s*0\s*\)", term):
+        return "address(0)", None
     return None, f"`{term}` is not nameable in this PUT"
 
 
@@ -7898,13 +9861,15 @@ def constant_relation_truth(lhs, op, rhs):
     return None
 
 
-def path_decision_assumes(path_decisions, coord_ident_abs):
+def path_decision_assumes(path_decisions, coord_ident_abs, assigned_terms=None):
     """Conservative `vm.assume` guards from complete-path decisions."""
     lines, skipped = [], []
+    assigned_terms = set(assigned_terms or ())
     seen = set()
     for dec in path_decisions or []:
         claim = dec.get("branch_claim") if isinstance(dec, dict) else None
-        groups = path_condition_groups_from_branch_claim(claim)
+        arm = dec.get("arm") if isinstance(dec, dict) else None
+        groups = path_condition_groups_from_branch_claim(claim, arm)
         if groups is None:
             skipped.append(f"{claim!r} (not a simple binary decision)")
             continue
@@ -7912,6 +9877,17 @@ def path_decision_assumes(path_decisions, coord_ident_abs):
             texts = []
             tautology = False
             for lhs, op, rhs in group:
+                stale_terms = [
+                    t for t in (lhs, rhs)
+                    if t in assigned_terms and re.match(r"^[A-Za-z_]\w*$", t)
+                ]
+                if stale_terms:
+                    skipped.append(
+                        f"{claim!r} (`{stale_terms[0]}` is assigned inside "
+                        "the unit before this source decision may execute, so "
+                        "it is not the calldata coordinate)")
+                    texts = []
+                    break
                 le, lerr = render_path_decision_term(lhs, coord_ident_abs)
                 re_, rerr = render_path_decision_term(rhs, coord_ident_abs)
                 if lerr or rerr:
@@ -8034,7 +10010,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
               derived_by=None, rollback_exit=False, r2_terms=None,
               oracle_label_prefix="", exit_kind=None, state_types=None,
               lift_unconstrained_calldata=False, path_decisions=None,
-              establish=None, unit_payable=False, state_store_names=None):
+              establish=None, unit_payable=False, state_store_names=None,
+              flat_source=None):
     """The PUT function text, plus a per-part accounting for the report."""
     c_idx, cname, claims, (fs, fe) = case
     body = emitted.lines[fs + 1:fe]
@@ -8128,6 +10105,12 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # uint256 spelling above.
     coord_ident_return = {}
     used = {b[0] for b in emitted.blocks}
+    param_interface_specs_by_name = {}
+    for spec in unit_param_interface_mock_specs(flat_source or "", contract,
+                                                unit):
+        param_interface_specs_by_name.setdefault(spec["param_name"],
+                                                 []).append(spec)
+    param_interface_mock_calls = 0
 
     # The environment the emitted case runs under must be the one certified.
     # Foundry can establish msg.sender with prank and can establish msg.value
@@ -8169,9 +10152,14 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                 # subtracted twice and the interval would be reported narrower
                 # than it is -- narrow enough, on a width-2 coordinate, to fail
                 # the floor test and silently cost the whole PUT.
+                sender_render_holes = set(holes.get("msg.sender", ()))
+                if _slo <= 0 <= _shi:
+                    sender_render_holes.add(0)
                 rendered_width["msg.sender"] = (_shi - _slo + 1) - len(
-                    {h for h in holes.get("msg.sender", ())
-                     if _slo <= h <= _shi})
+                    {h for h in sender_render_holes if _slo <= h <= _shi})
+    elif env_note is not None:
+        notes.append(env_note)
+        return None, None
     sender_abs = observable_sender_expr_for_abs_r2(body, call_i,
                                                    env_sender_expr)
     if sender_abs is not None:
@@ -8333,6 +10321,23 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         sig.append((sig_ty, var))
         pre_lines += bound_lines(var, "uint" if kind == "bytes" else kind,
                                  width, lo, hi, param_holes)
+        for spec in param_interface_specs_by_name.get(pname, []):
+            returns = spec.get("returns") or []
+            if returns:
+                exprs = ", ".join(
+                    _abi_mock_expr_for_type(flat_source or "", typ, "", {},
+                                            prefer_true_bool=True)
+                    for typ in returns)
+                ret = f"abi.encode({exprs})"
+            else:
+                ret = "bytes(\"\")"
+            pre_lines += [
+                f"// ESBMC runtime fixture: local Foundry has no code at "
+                f"fuzzed interface parameter `{pname}`.",
+                f"vm.mockCall({var}, "
+                f"abi.encodeWithSignature(\"{spec['signature']}\"), {ret});",
+            ]
+            param_interface_mock_calls += 1
         repl[idx] = call_arg_expr(ptype, kind, width, var)
         lifted.append(pname)
         # ---- AN ADDRESS BOUNDS AN ABSOLUTE VALUE, NEVER A DELTA ------------
@@ -8461,6 +10466,29 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     key_expr_of = {}
     for idx, (pname, _pt) in enumerate(params):
         key_expr_of[pname] = repl.get(idx, args[idx].strip())
+    for idx, (pname, ptype) in enumerate(params):
+        if pname not in pins or pname in coord_ident_abs:
+            continue
+        expr = args[idx].strip()
+        lk = lift_kind(ptype)
+        if lk is None:
+            continue
+        kind, _width = lk
+        # A pinned ABI parameter is not a fuzz coordinate, but it is still a
+        # nameable endpoint: the assert spec contains it as a point region and
+        # the emitted test can spell the concrete replay expression.
+        if kind == "address":
+            coord_ident_abs[pname] = f"uint256(uint160({expr}))"
+        elif kind == "bool":
+            bit = f"({expr} ? uint256(1) : uint256(0))"
+            coord_ident[pname] = bit
+            coord_ident_abs[pname] = bit
+            coord_ident_return[pname] = expr
+        elif kind == "bytes":
+            coord_ident_abs[pname] = expr
+        else:
+            coord_ident[pname] = expr
+            coord_ident_abs[pname] = expr
     for sname, sty in (state_types or {}).items():
         layout_name = layout_scalar_key(sname, layout, state_store_names)
         if layout_name is None:
@@ -8787,6 +10815,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                     if var == RETURN_VAR or var.startswith(RETURN_VAR + ".")]
     ret_asserts, ret_skipped, ret_pre_reads = [], [], []
     oracle_details = []
+    revert_frame_asserts = []
+    revert_frame_details = []
     if ret_rows_all:
         live = [v for var, t, v in ret_rows_all
                 if var == RETURN_VAR and t.startswith(RETLIVE_PREFIX)]
@@ -8964,15 +10994,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
                                 f"for its declared type)")
                             continue
                         planned_ret_asserts += a
-                        oracle_details.append({
-                            "layer": "return",
-                            "var": label_var,
-                            "text": t,
-                            "classes": oracle_classes_for_rung(t),
-                            "verdict": "HOLDS",
-                            "emitted_in_test": True,
-                            "guarded": False,
-                        })
+                        oracle_details.append(oracle_detail(
+                            "return", label_var, t, r2_terms=r2_terms))
                 ret_asserts += planned_ret_asserts
                 if planned_ret_asserts:
                     ret_pre_reads += planned_ret_pre_reads
@@ -9070,30 +11093,36 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         return ok
 
     def materialize_path_guard_state_terms():
+        source_terms = source_return_scalar_terms_for_path_guards(
+            path_decisions, flat_source)
+        extra_terms = list(source_terms.values())
         for dec in path_decisions or []:
             claim = dec.get("branch_claim") if isinstance(dec, dict) else None
-            rels = path_conditions_from_branch_claim(claim)
-            if rels is None:
+            terms = list(extra_terms) if extra_terms else []
+            claim_terms = path_condition_terms_from_branch_claim(
+                claim, dec.get("arm") if isinstance(dec, dict) else None)
+            if claim_terms is not None:
+                terms.extend(claim_terms)
+            if not terms:
                 continue
-            for lhs, _op, rhs in rels:
-                for term in (lhs, rhs):
-                    term = (term or "").strip()
-                    if (not term or term in coord_ident_abs
-                            or "state." + term in coord_ident_abs
-                            or _KEY_LIT_RE.match(term)
-                            or any(tok in term for tok in (" ", "&&", "||", "?"))
-                            or term.startswith("return_value$")
-                            or term.startswith("_ESBMC_aux")):
-                        continue
-                    cname = term if term.startswith("state.") else "state." + term
-                    svar = cname[len("state."):] if cname.startswith("state.") else cname
-                    mname, _slot_keys, _slot_tail = parse_slot_name(svar)
-                    if mname is not None:
-                        materialize_r2_state_coord(cname)
-                    elif (svar in point_texts
-                          or layout_scalar_key(svar, layout,
-                                               state_store_names) is not None):
-                        materialize_r2_state_coord(cname)
+            for term in terms:
+                term = strip_balanced_outer_parens((term or "").strip())
+                if (not term or term in coord_ident_abs
+                        or "state." + term in coord_ident_abs
+                        or _KEY_LIT_RE.match(term)
+                        or any(tok in term for tok in (" ", "&&", "||", "?"))
+                        or term.startswith("return_value$")
+                        or term.startswith("_ESBMC_aux")):
+                    continue
+                cname = term if term.startswith("state.") else "state." + term
+                svar = cname[len("state."):] if cname.startswith("state.") else cname
+                mname, _slot_keys, _slot_tail = parse_slot_name(svar)
+                if mname is not None:
+                    materialize_r2_state_coord(cname)
+                elif (svar in point_texts
+                      or layout_scalar_key(svar, layout,
+                                           state_store_names) is not None):
+                    materialize_r2_state_coord(cname)
 
     # ---- THE ANTICHAIN. Only the rungs nothing else entails are rendered ----
     #
@@ -9103,8 +11132,26 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     # words means oracle was lost and wants fixing, the other means it is still
     # there in a sharper form, and swapping them makes a healthy pipeline read
     # as broken or a broken one as healthy.
+    raw_ladder_rows = list(ladder_rows)
     ladder_rows, implied_rows = antichain(
-        ladder_rows, call_is_revert_tolerant, point_texts)
+        raw_ladder_rows, call_is_revert_tolerant, point_texts)
+    # A reverting transaction has an observable post-transaction frame, but
+    # not an observable pre-rollback mutation. Keep only frame rows that the
+    # same verifier ladder already marked HOLDS; never manufacture one from
+    # the exit kind or revive a strict/change/return row.
+    ladder_rows = preserve_reverting_frame_rows(
+        raw_ladder_rows, ladder_rows,
+        bool(rollback_exit or exit_kind == "revert"))
+    retained_frame_keys = {
+        (var, canonical_oracle_rung_text(text))
+        for var, text, verdict in ladder_rows
+        if verdict == "HOLDS" and rung_is_revert_observable_frame(text)
+    }
+    implied_rows = [
+        row for row in implied_rows
+        if (row[0], canonical_oracle_rung_text(row[1]))
+        not in retained_frame_keys
+    ]
     oracle_implied = [f"{v}: {t} (entailed by a stronger rung that also HOLDS "
                       f"on {v}, so asserting it detects nothing the stronger "
                       f"one misses)" for v, t, _d in implied_rows]
@@ -9179,7 +11226,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             if not materialize_r2_state_terms(text):
                 continue
             # GUARDED, not dropped. See the block comment at `okvar`.
-            _chg = call_is_revert_tolerant and rung_asserts_a_change(text)
+            _chg = ((call_is_revert_tolerant or rollback_exit)
+                    and rung_asserts_a_change(text))
             a = rung_assertions(text, f"_pre_{ident}", f"_post_{ident}",
                                 oracle_label_prefix + f"{var}: {text}",
                                 coord_ident,
@@ -9187,20 +11235,16 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             if a is None:
                 oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
                 continue
-            detail = {
-                "layer": "state",
-                "var": var,
-                "text": text,
-                "classes": oracle_classes_for_rung(text),
-                "verdict": "HOLDS",
-                "emitted_in_test": True,
-                "guarded": bool(_chg),
-            }
+            detail = oracle_detail(
+                "state", var, text, guarded=bool(_chg), r2_terms=r2_terms)
             if _chg:
                 guarded += a
                 guard_notes.append(f"{var}: {text}")
             else:
                 asserts += a
+                if rung_is_revert_observable_frame(text):
+                    revert_frame_asserts += a
+                    revert_frame_details.append(detail)
             oracle_details.append(detail)
             continue
         if var not in layout:
@@ -9214,41 +11258,51 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         if var not in seen_vars:
             seen_vars.append(var)
             rd = slot_read_expr(target_addr, slot, off, nb)
-            pre_reads.append(f"    uint256 _pre_{var.lstrip('_')} = {rd};")
-            post_reads.append(f"    uint256 _post_{var.lstrip('_')} = {rd};")
+            ident = _slot_ident(var)
+            pre_reads.append(f"    uint256 _pre_{ident} = {rd};")
+            post_reads.append(f"    uint256 _post_{ident} = {rd};")
         coord_ident["state." + var] = "_pre_" + _slot_ident(var)
         coord_ident_abs["state." + var] = "_pre_" + _slot_ident(var)
         if not materialize_r2_state_terms(text):
             continue
         # GUARDED, not dropped. See the block comment at `okvar`.
-        _chg = call_is_revert_tolerant and rung_asserts_a_change(text)
-        a = rung_assertions(text, f"_pre_{var.lstrip('_')}",
-                            f"_post_{var.lstrip('_')}",
+        _chg = ((call_is_revert_tolerant or rollback_exit)
+                and rung_asserts_a_change(text))
+        ident = _slot_ident(var)
+        a = rung_assertions(text, f"_pre_{ident}", f"_post_{ident}",
                             oracle_label_prefix + f"{var}: {text}",
                             coord_ident, coord_ident_abs, r2_terms)
         if a is None:
             oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
             continue
-        detail = {
-            "layer": "state",
-            "var": var,
-            "text": text,
-            "classes": oracle_classes_for_rung(text),
-            "verdict": "HOLDS",
-            "emitted_in_test": True,
-            "guarded": bool(_chg),
-        }
+        detail = oracle_detail(
+            "state", var, text, guarded=bool(_chg), r2_terms=r2_terms)
         if _chg:
             guarded += a
             guard_notes.append(f"{var}: {text}")
         else:
             asserts += a
+            if rung_is_revert_observable_frame(text):
+                revert_frame_asserts += a
+                revert_frame_details.append(detail)
         oracle_details.append(detail)
     materialize_path_guard_state_terms()
+    path_guard_coord_ident_abs = dict(coord_ident_abs)
+    for name, text in point_texts.items():
+        path_guard_coord_ident_abs.setdefault(name, text)
     path_guard_coord_ident_abs = expand_path_guard_coord_idents(
-        coord_ident_abs, maps, state_store_names)
+        path_guard_coord_ident_abs, maps, state_store_names)
+    path_guard_coord_ident_abs.update(source_path_guard_aliases(
+        path_decisions, path_guard_coord_ident_abs, maps, state_store_names,
+        flat_source))
+    assigned_path_guard_terms = assigned_source_locals(
+        flat_source or "", contract, unit)
     path_guard_lines, path_guard_skipped = path_decision_assumes(
-        path_decisions, path_guard_coord_ident_abs)
+        path_decisions, path_guard_coord_ident_abs, assigned_path_guard_terms)
+    early_path_guard_lines = [
+        item for item in path_guard_lines if ".balance" not in item[1]]
+    late_path_guard_lines = [
+        item for item in path_guard_lines if ".balance" in item[1]]
     # ---- THE CALL HAS TO CARRY THE FLAG, OR THE GUARD IS NOT A GUARD -------
     #
     # Only a call ending in `catch {}` is rewritten. Anything else -- a catch
@@ -9275,14 +11329,38 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     insert_expect_revert = (
         revert_layer1 and not catch_assert_revert and
         not existing_expect_revert and not low_level_exit_asserted)
-    if revert_layer1:
-        n_dropped = len(asserts) + len(guarded) + len(ret_asserts)
+    if rollback_exit:
+        n_dropped = (len(asserts) - len(revert_frame_asserts) + len(guarded)
+                     + len(ret_asserts))
         if n_dropped:
-            why_drop = ROLLBACK_UNOBSERVABLE if rollback_exit else REVERT_UNOBSERVABLE
             oracle_skipped.append(
-                f"{n_dropped} layer-2/3 rung(s) DROPPED ({why_drop})")
-        asserts, guarded, guard_notes, ret_asserts = [], [], [], []
-        oracle_details = []
+                f"{n_dropped} rollback-hidden rung(s) DROPPED "
+                f"({ROLLBACK_UNOBSERVABLE})")
+            frame_ids = {id(d) for d in revert_frame_details}
+            for d in oracle_details:
+                if id(d) not in frame_ids:
+                    oracle_skipped.append(
+                        f"{d.get('var')}: {d.get('text')} DROPPED "
+                        f"({ROLLBACK_UNOBSERVABLE})")
+        asserts = list(revert_frame_asserts)
+        guarded, guard_notes, ret_asserts = [], [], []
+        oracle_details = list(revert_frame_details)
+    elif exit_kind == "revert":
+        n_dropped = (len(asserts) - len(revert_frame_asserts) + len(guarded)
+                     + len(ret_asserts))
+        if n_dropped:
+            oracle_skipped.append(
+                f"{n_dropped} layer-2/3 rung(s) DROPPED "
+                f"({REVERT_UNOBSERVABLE})")
+            frame_ids = {id(d) for d in revert_frame_details}
+            for d in oracle_details:
+                if id(d) not in frame_ids:
+                    oracle_skipped.append(
+                        f"{d.get('var')}: {d.get('text')} DROPPED "
+                        f"({REVERT_UNOBSERVABLE})")
+        asserts = list(revert_frame_asserts)
+        guarded, guard_notes, ret_asserts = [], [], []
+        oracle_details = list(revert_frame_details)
     if guarded or catch_assert_revert:
         if new_call.rstrip().endswith("catch {}"):
             new_call = (new_call.rstrip()[:-len("catch {}")]
@@ -9413,26 +11491,35 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         out.append(f"  // unliftable type, so this PUT is a single "
                    f"deterministic point of the")
         out.append(f"  // region rather than a fuzz test over it.")
-    if revert_layer1:
-        out.append(f"  // ORACLE: the FIRST LAYER ONLY, and that is the rule "
-                   f"rather than a shortfall.")
-        if rollback_exit:
-            out.append(f"  // This path exits through a ROLLBACK revert. A "
-                       f"revert restores storage, so")
-            out.append(f"  // every before/after comparison is `post == pre` "
-                       f"on the chain whatever the")
-            out.append(f"  // contract does, and the ladder's own verdicts "
-                       f"were read at the moment")
-            out.append(f"  // BETWEEN the write and the rollback -- which no "
-                       f"test can observe. They")
+    if rollback_exit and asserts:
+        out.append(f"  // ORACLE: rollback exit plus {len(asserts)} restored "
+                   f"post-state frame assertion(s).")
+        out.append(f"  // This path exits through a ROLLBACK revert. The call "
+                   f"MUST fail, and")
+        out.append(f"  // after the revert the chain observes restored "
+                   f"storage, so frame rungs")
+        out.append(f"  // such as `post == pre` remain executable oracles. "
+                   f"Change and return")
+        out.append(f"  // rungs are still dropped because they refer to a "
+                   f"pre-rollback moment.")
+    elif revert_layer1:
+        if asserts:
+            out.append(f"  // ORACLE: revert exit plus {len(asserts)} restored "
+                       f"post-state frame assertion(s).")
         else:
-            out.append(f"  // Stage 1 reports this complete path exits through "
-                       f"a revert. Post-state")
-            out.append(f"  // and return-value rungs are not observable on the "
-                       f"chain for this path. They")
-        out.append(f"  // are dropped and counted below. What is asserted "
-                   f"instead is the exit")
-        out.append(f"  // itself: the call MUST fail. That is a real oracle -- "
+            out.append(f"  // ORACLE: the FIRST LAYER ONLY, and that is the "
+                       f"rule rather than a shortfall.")
+        out.append(f"  // Stage 1 reports this complete path exits through "
+                   f"a revert. Post-state")
+        out.append(f"  // change and return-value rungs are not observable on "
+                   f"the chain for this path.")
+        out.append(f"  // They are dropped and counted below. Frame rungs such "
+                   f"as `post == pre`")
+        out.append(f"  // remain executable after the revert because the chain "
+                   f"observes restored")
+        out.append(f"  // storage. The exit itself is also asserted: the call "
+                   f"MUST fail.")
+        out.append(f"  // That is a real oracle -- "
                    f"it goes RED on a")
         out.append(f"  // contract that stops reverting -- and it replaces a "
                    f"`try {{}} catch {{}}`")
@@ -9474,7 +11561,8 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         # reading exactly like one that can.
         headline, why = no_oracle_reason(ladder_rows)
         if insert_expect_revert or exit_kind_asserted(
-                list(body[:call_i]) + [new_call] + list(body[call_i + 1:])):
+                list(body[:call_i]) + [new_call] + list(body[call_i + 1:]),
+                unit):
             out.append(f"  // ORACLE: none emitted -- {headline}:")
             out.append(f"  // {why}.")
             out.append(f"  // The exit-kind expectation below is still an "
@@ -9569,10 +11657,34 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
     if pre_reads:
         out.append("    // pre-state for the oracle, at this path's own entry")
         out += pre_reads
-    if path_guard_lines:
+    if early_path_guard_lines:
         out.append("    // complete-path guard recovered from the emit report")
-        out += [line for _claim, line in path_guard_lines]
-    for ln in body[head_end:call_i]:
+        out += [line for _claim, line in early_path_guard_lines]
+    tail = list(body[head_end:call_i])
+    late_insert = len(tail)
+    while late_insert > 0:
+        prev = tail[late_insert - 1].strip()
+        if (prev.startswith("//") or prev.startswith("vm.prank(")
+                or prev.startswith("vm.expectRevert(")):
+            late_insert -= 1
+            continue
+        break
+    for ln in tail[:late_insert]:
+        if insert_expect_revert and "[asserted] path exits normally" in ln:
+            out.append("    // [asserted] path exits through revert; "
+                       "vm.expectRevert arms the call")
+            continue
+        if (normal_exit_unwrapped
+                and "[revert-tolerant] outcome not asserted" in ln):
+            out.append("    // [asserted] path exits normally; a revert fails "
+                       "the test")
+            continue
+        out.append(ln)
+    if late_path_guard_lines:
+        out.append("    // complete-path balance guard recovered from the "
+                   "emit report")
+        out += [line for _claim, line in late_path_guard_lines]
+    for ln in tail[late_insert:]:
         if insert_expect_revert and "[asserted] path exits normally" in ln:
             out.append("    // [asserted] path exits through revert; "
                        "vm.expectRevert arms the call")
@@ -9617,22 +11729,19 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         body[call_i + 1:])
     normal_exit_asserted = (
         exit_kind == "normal" and
-        (normal_exit_unwrapped or exit_kind_asserted(original_call_body)))
+        (normal_exit_unwrapped or exit_kind_asserted(original_call_body, unit)))
     exit_kind_asserts = 1 if (
         catch_assert_revert or insert_expect_revert or
         (revert_layer1 and existing_expect_revert) or normal_exit_asserted
         or low_level_exit_asserted) else 0
     if exit_kind_asserts:
-        oracle_details.append({
-            "layer": "exit",
-            "var": "exit",
-            "text": ("path exits through revert"
-                     if revert_layer1 else "path exits normally"),
-            "classes": ["R0"],
-            "verdict": "HOLDS",
-            "emitted_in_test": True,
-            "guarded": False,
-        })
+        oracle_details.append(oracle_detail(
+            "exit", "exit",
+            ("path exits through revert"
+             if revert_layer1 else "path exits normally"),
+            classes=["R0"]))
+    verifier_asserts = len(asserts) + len(ret_asserts) + len(guarded)
+    oracle_summary = oracle_stats_summary(oracle_details)
     stats = {"fuzz_params": len(sig), "lifted": lifted,
              "rendered_width": dict(sorted(rendered_width.items())),
              "wide_fuzz_coords": sorted(
@@ -9651,6 +11760,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              # have sent the next reader looking for a bug that is not there.
              "asserts": (len(asserts) + len(ret_asserts) + len(guarded)
                          + exit_kind_asserts),
+             "verifier_asserts": verifier_asserts,
              "state_asserts": len(asserts) + len(guarded),
              "guarded_asserts": len(guarded),
              "exit_kind_asserts": exit_kind_asserts,
@@ -9660,7 +11770,7 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              "rollback_exit": bool(rollback_exit),
              "exit_kind": exit_kind,
              "return_asserts": len(ret_asserts),
-             "oracle_classes": oracle_class_summary(oracle_details),
+             **oracle_summary,
              "assertion_oracles": oracle_details,
              "oracle_skipped": oracle_skipped,
              # SEPARATE KEY, not folded into `oracle_skipped`. An implied rung
@@ -9670,14 +11780,16 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
              "oracle_implied": oracle_implied,
              "state_stored": stored, "state_skipped": state_skipped,
              "established_relations": established_relations,
+             "param_interface_mock_calls": param_interface_mock_calls,
              "env_unchecked": env_unchecked,
              "path_guard_assumes": len(path_guard_lines),
              "path_guard_skipped": path_guard_skipped}
-    if not any(w > 1 for w in rendered_width.values()) and stats["asserts"] <= 0:
+    if stats["asserts"] <= 0:
         reason = not_parameterized_reason(rendered_width)
         reason += (" The assertion ladder was run, but no verifier-backed "
-                   "oracle could be rendered; without either a fuzz dimension "
-                   "or an assertion this remains the concrete replay.")
+                   "oracle could be rendered; fuzz only refutes candidate "
+                   "assertions and cannot by itself make an assertion-free "
+                   "reachability witness into a PUT.")
         notes.append(reason)
         raise ConcreteFallback(reason)
     return out, stats
@@ -9740,7 +11852,7 @@ def no_oracle_reason(ladder_rows):
             "to render")
 
 
-def exit_kind_asserted(body_lines):
+def exit_kind_asserted(body_lines, unit=None):
     """Does this PUT body actually assert anything about how the call exits?
 
     The emitter marks its own decision in the text it writes, and there are
@@ -9748,6 +11860,9 @@ def exit_kind_asserted(body_lines):
 
       * `// [asserted] path exits normally; a revert fails the test` -- the call
         is BARE, and its bareness IS the assertion;
+      * a source-synthesized replay may have the same bare target call without
+        the ESBMC marker.  When the caller passes `unit`, locating that bare
+        target call is also enough: Foundry fails the test if it reverts;
       * `// [asserted] value sent to a NON-PAYABLE entry: the call must fail`,
         which is followed by an `assertFalse`;
       * `vm.expectRevert();` armed before the call.
@@ -9765,7 +11880,14 @@ def exit_kind_asserted(body_lines):
     produce.
     """
     txt = "\n".join(body_lines)
-    return "[asserted]" in txt or "vm.expectRevert()" in txt
+    if "[asserted]" in txt or "vm.expectRevert()" in txt:
+        return True
+    if unit is None:
+        return False
+    call_i = find_unit_call(body_lines, unit)
+    if call_i is None:
+        return False
+    return not body_lines[call_i].lstrip().startswith("try ")
 
 
 def normalize_exit_kind(kind):
@@ -9791,6 +11913,130 @@ def effective_exit_kind(cli_kind, claim):
     if isinstance(claim, dict):
         return normalize_exit_kind(claim.get("exit_kind"))
     return None
+
+
+def getter_only_path_function(contract, unit):
+    return f"sol:{contract}.{unit}#0"
+
+
+def can_synthesize_missing_emitter_output(path_function, ast_path,
+                                          stage4_kind=None):
+    """Whether Stage 4 has enough source identity to build a preamble itself."""
+    return bool(ast_path and (path_function or stage4_kind == "getter-only"))
+
+
+def stage4_kind_from_stage2_source(source, *, concrete_only=False):
+    """Stable Stage-4 kind label for raw/result JSON accounting."""
+    if source in ("structural_deploy_only", "structural-deploy-only"):
+        return "deploy-only"
+    if source in ("structural_getter_only", "structural-getter-only"):
+        return "getter-only"
+    if source in ("certified-region-concrete-fallback",
+                  "certified_region_concrete_fallback"):
+        return "certified-region-concrete-fallback"
+    if source in ("no-coordinate-concrete-fallback",
+                  "no_coordinate_concrete_fallback"):
+        return "no-coordinate-concrete-fallback"
+    if source in ("cleared_not_certified_fallback",
+                  "cleared-concrete-fallback"):
+        return "cleared-concrete-fallback"
+    if source in ("timeout_concrete_fallback", "timeout-concrete-fallback"):
+        return "timeout-concrete-fallback"
+    if source in ("partial_journal_concrete_fallback",
+                  "partial-journal-concrete-fallback"):
+        return "partial-journal-concrete-fallback"
+    return "concrete-only" if concrete_only else "certified-region"
+
+
+def stage4_timing_record(start_monotonic, timeout_s):
+    return {
+        "generation_timeout_s": timeout_s,
+        "generation_wall_s": round(time.monotonic() - start_monotonic, 3),
+    }
+
+
+def concrete_stage2_source_record(source, witness_check=None, reason=None):
+    """Common metadata for concrete-only Stage-2 fallback records."""
+    record = {
+        "stage2_source": source,
+        "stage4_kind": stage4_kind_from_stage2_source(
+            source, concrete_only=True),
+    }
+    if witness_check:
+        record["stage2_witness_check"] = str(witness_check)
+    if source == "certified-region-concrete-fallback":
+        fallback_reason = reason
+        if fallback_reason is None and witness_check:
+            text = str(witness_check)
+            prefix = "CERTIFIED-REGION-PUT-REFUSED:"
+            fallback_reason = (
+                text[len(prefix):] if text.startswith(prefix) else text)
+        if fallback_reason:
+            record["certified_region_fallback_reason"] = str(fallback_reason)
+    return record
+
+
+def write_put_refusal_record(workdir, refused, contract, unit, enc, depth,
+                             path_function=None, region=None, holes=None,
+                             pins=None, establish=None, ladder_rows=None,
+                             ladder_summary=None, ladder_refusal=None,
+                             piece=None, artifact_identity="", notes=None,
+                             extra=None, timing_start=None, timeout_s=None):
+    """Write a measured Stage-4 refusal instead of leaving a missing put.json."""
+    os.makedirs(workdir, exist_ok=True)
+    notes = list(notes or [])
+    stats = {
+        "fuzz_params": 0,
+        "lifted": [],
+        "rendered_width": {},
+        "wide_fuzz_coords": [],
+        "dynamic_fuzz_coords": [],
+        "asserts": 0,
+        "state_asserts": 0,
+        "return_asserts": 0,
+        "exit_kind_asserts": 0,
+        "guarded_asserts": 0,
+        **empty_oracle_stats(),
+    }
+    record = {
+        "kind": "refusal",
+        "stage4_kind": "refusal",
+        "contract": contract,
+        "unit": unit,
+        "enc": enc,
+        "depth": depth,
+        "path_function": path_function,
+        "artifact_identity": artifact_identity,
+        "piece": piece,
+        "file": None,
+        "test": None,
+        "refused": refused,
+        "refusal_reason": "; ".join(notes) if notes else refused,
+        "region": {
+            k: [str(v[0]), str(v[1])] for k, v in (region or {}).items()
+        },
+        "holes": {
+            k: [str(x) for x in v] for k, v in (holes or {}).items()
+        },
+        "pins": {k: str(v) for k, v in (pins or {}).items()},
+        "establish": list(establish or []),
+        "ladder": [
+            {"var": v, "text": t, "verdict": d}
+            for v, t, d in (ladder_rows or [])
+        ],
+        "ladder_summary": ladder_summary,
+        "ladder_refusal": ladder_refusal,
+        "materialization": stage4_materialization_metadata(
+            "refusal", stats, reason=refused),
+        "stats": stats,
+        "notes": notes,
+    }
+    if timing_start is not None:
+        record["timing"] = stage4_timing_record(timing_start, timeout_s)
+    if extra:
+        record.update(extra)
+    with open(os.path.join(workdir, "put.json"), "w") as stream:
+        json.dump(record, stream, indent=2)
 
 
 def fixture_from_esbmc_args(extra):
@@ -9849,6 +12095,45 @@ def _replace_constructor_args(lines, start, args):
     return [prefix + ", ".join(args) + suffix]
 
 
+def repair_constructor_arg_count(lines, contract, constructor_params):
+    if not contract or constructor_params is None:
+        return lines, 0
+    expected = len(constructor_params)
+    rx = re.compile(r"\bnew\s+" + re.escape(contract) + r"\s*\(")
+    out, i, changed = [], 0, 0
+    while i < len(lines):
+        if not rx.search(lines[i]):
+            out.append(lines[i])
+            i += 1
+            continue
+        end = _statement_end(lines, i)
+        stmt = "\n".join(lines[i:end + 1])
+        m = rx.search(stmt)
+        if m is None:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        open_i = stmt.find("(", m.start())
+        close_i = stmt.rfind(")")
+        if open_i < 0 or close_i < open_i:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        args_text = stmt[open_i + 1:close_i].strip()
+        actual = 0 if not args_text else len(split_top_level(args_text))
+        if actual == expected:
+            out.extend(lines[i:end + 1])
+            i = end + 1
+            continue
+        indent = re.match(r"^\s*", lines[i]).group(0)
+        out.append(f"{indent}// constructor args repaired: generated "
+                   f"{actual}, but {contract} declares {expected}")
+        out.append(stmt[:open_i + 1] + stmt[close_i:])
+        changed += 1
+        i = end + 1
+    return out, changed
+
+
 def _fixture_foundry_args(fixture):
     foundry = fixture.get("foundry") or {}
     args = foundry.get("constructor_args")
@@ -9864,7 +12149,14 @@ def _fixture_foundry_skip(fixture):
     return bool(foundry.get("skip_constructor"))
 
 
-def apply_foundry_fixture(lines, emitted, case, unit, contract, fixture, layout):
+def apply_foundry_fixture(lines,
+                          emitted,
+                          case,
+                          unit,
+                          contract,
+                          fixture,
+                          layout,
+                          constructor_params=None):
     """Mirror a path-cov fixture in the Foundry preamble.
 
     ESBMC's `--path-cov-fixture` may skip a constructor and install scalar
@@ -9889,10 +12181,18 @@ def apply_foundry_fixture(lines, emitted, case, unit, contract, fixture, layout)
             indent = m.group(1)
             end = _statement_end(lines, i)
             replay_args = _fixture_foundry_args(fixture)
-            if replay_args is not None:
+            if replay_args is not None and (
+                    constructor_params is None
+                    or len(replay_args) == len(constructor_params)):
                 out.append(f"{indent}// path-cov fixture: ESBMC skipped the "
                            "constructor; Foundry replays a legal deployment")
                 out += _replace_constructor_args(lines, i, replay_args)
+            elif replay_args is not None:
+                out.append(
+                    f"{indent}// path-cov fixture constructor args ignored: "
+                    f"fixture has {len(replay_args)} arg(s), but {contract} "
+                    f"declares {len(constructor_params or [])}")
+                out.extend(lines[i:end + 1])
             elif _fixture_foundry_skip(fixture):
                 out.append(f"{indent}// path-cov fixture: constructor skipped "
                            "by ESBMC")
@@ -10110,12 +12410,16 @@ def _source_interface_function_stubs(source, iface):
             ret_txt = ""
             body_txt = "{}"
             if returns:
-                if len(returns) != 1:
-                    continue
-                ret_ty, ret_decl = returns[0]
-                default = _abi_mock_expr_for_type(source, ret_ty, "", {})
-                ret_txt = f" returns ({ret_decl})"
-                body_txt = f"{{ return {default}; }}"
+                ret_txt = " returns (" + ", ".join(
+                    ret_decl for _ret_ty, ret_decl in returns) + ")"
+                defaults = [
+                    _abi_mock_expr_for_type(source, ret_ty, "", {})
+                    for ret_ty, _ret_decl in returns
+                ]
+                if len(defaults) == 1:
+                    body_txt = f"{{ return {defaults[0]}; }}"
+                else:
+                    body_txt = f"{{ return ({', '.join(defaults)}); }}"
             params_txt = ", ".join(params_decl)
             out[signature] = (
                 f"  function {m.group(1)}({params_txt}) external {mut} "
@@ -10152,7 +12456,9 @@ def complete_esbmc_interface_mocks(source, flat_source):
             body.append(lines[i])
             i += 1
         body_text = "\n".join(body)
+        stubs = _source_interface_function_stubs(flat_source, iface)
         existing = set()
+        repaired_body = []
         for fm in re.finditer(r"\bfunction\s+([A-Za-z_]\w*)\s*\((.*?)\)",
                               body_text, re.S):
             params = []
@@ -10167,8 +12473,30 @@ def complete_esbmc_interface_mocks(source, flat_source):
                 params.append(ty)
             if ok:
                 existing.add(f"{fm.group(1)}({','.join(params)})")
-        out.extend(body)
-        stubs = _source_interface_function_stubs(flat_source, iface)
+        for line in body:
+            fm = re.search(r"\bfunction\s+([A-Za-z_]\w*)\s*\((.*?)\)",
+                           line)
+            replacement = None
+            if fm:
+                params = []
+                ok = True
+                for item in split_top_level(fm.group(2)):
+                    if not item:
+                        continue
+                    ty = _function_sig_type(item)
+                    if not ty:
+                        ok = False
+                        break
+                    params.append(ty)
+                sig = f"{fm.group(1)}({','.join(params)})"
+                stub = stubs.get(sig) if ok else None
+                if (
+                    stub and " returns " in stub and
+                    " returns " not in line and
+                    re.search(r"\boverride\s*\{\s*\}", line)):
+                    replacement = stub
+            repaired_body.append(replacement or line)
+        out.extend(repaired_body)
         missing = [stub for sig, stub in sorted(stubs.items())
                    if sig not in existing]
         if missing:
@@ -10332,6 +12660,41 @@ def constructor_external_interface_mock_lines(forge_project, indent):
         mock_zero_chained_casts=True)
 
 
+def unit_param_interface_mock_specs(source, contract, unit):
+    """Interface calls made through address-like target-unit parameters."""
+    chunk = _source_contract_chunk(source, contract)
+    if not source or not chunk or not unit:
+        return []
+    functions = _source_function_abis(source)
+    specs, seen = [], set()
+    for params, body in _source_function_decls(chunk, unit):
+        by_name = {name: typ for name, typ in params}
+        for iface, pname, fname in re.findall(
+                r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
+                r"\s*\)?\s*\.\s*([A-Za-z_]\w*)\s*(?:\{[^}]*\})?\s*\(",
+                body or ""):
+            ptype = by_name.get(pname)
+            if ptype is None:
+                continue
+            if lift_kind(ptype) != ("address", 160):
+                continue
+            choice = _unique_function_choice(functions.get(fname) or [])
+            if choice is None:
+                continue
+            signature, returns = choice
+            key = (pname, iface, signature)
+            if key in seen:
+                continue
+            seen.add(key)
+            specs.append({
+                "param_name": pname,
+                "interface": iface,
+                "signature": signature,
+                "returns": returns,
+            })
+    return specs
+
+
 def constructor_param_interface_mock_specs(forge_project, contract):
     """Interface calls made through address constructor parameters."""
     source = _flat_source_for_project(forge_project)
@@ -10341,15 +12704,14 @@ def constructor_param_interface_mock_specs(forge_project, contract):
     params = source_constructor_params(forge_project, contract)
     by_name = {name: (idx, typ) for idx, (name, typ) in enumerate(params)}
     body = _constructor_body_text(chunk)
-    if not body:
-        return []
     functions = _source_function_abis(source)
     specs, seen = [], set()
 
     def add_cast_calls(scan_body, ctor_pname, spec_pname, idx):
         for iface, cast_name, fname in re.findall(
                 r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
-                r"\s*\)?\s*\.\s*([A-Za-z_]\w*)\s*\(", scan_body):
+                r"\s*\)?\s*\.\s*([A-Za-z_]\w*)\s*(?:\{[^}]*\})?\s*\(",
+                scan_body):
             if cast_name != spec_pname:
                 continue
             choice = _unique_function_choice(functions.get(fname) or [])
@@ -10377,6 +12739,53 @@ def constructor_param_interface_mock_specs(forge_project, contract):
             continue
         add_cast_calls(body, pname, pname, idx)
 
+    getter_cast_rx = re.compile(
+        r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\(\s*\)"
+        r"\s*\)\s*\)*\s*\.\s*([A-Za-z_]\w*)\s*\(")
+    for m in getter_cast_rx.finditer(body):
+        iface, getter, fname = m.groups()
+        prefix = body[:m.start()]
+        stored = []
+        for cm in re.finditer(r"\b([A-Za-z_]\w*)\s*\((.*?)\)\s*;?",
+                              prefix, re.S):
+            callee = cm.group(1)
+            if callee in ("require", "assert", "revert", "emit"):
+                continue
+            for arg in split_top_level(cm.group(2)):
+                found = by_name.get(arg.strip())
+                if found is None:
+                    continue
+                idx, ptype = found
+                if _norm_ty(ptype) in ("address", "address payable"):
+                    stored.append((idx, arg.strip()))
+        unique = []
+        for item in stored:
+            if item not in unique:
+                unique.append(item)
+        if len(unique) != 1:
+            continue
+        idx, ctor_pname = unique[0]
+        choice = _unique_function_choice(functions.get(fname) or [])
+        if choice is None:
+            continue
+        signature, returns = choice
+        key = (idx, iface, signature, getter)
+        if key in seen:
+            continue
+        seen.add(key)
+        specs.append({
+            "param_index": idx,
+            "param_name": ctor_pname,
+            "interface": iface,
+            "signature": signature,
+            "returns": returns,
+            "via_getter": getter,
+            "nonzero_address_returns":
+                returns == ["address"] and
+                _interface_call_result_has_nonzero_guard(
+                    body, iface, getter + r"\s*\(\s*\)", fname),
+        })
+
     call_rx = re.compile(r"\b([A-Za-z_]\w*)\s*\((.*?)\)\s*;?", re.S)
     for m in call_rx.finditer(body):
         args = [a.strip() for a in split_top_level(m.group(2))]
@@ -10395,9 +12804,44 @@ def constructor_param_interface_mock_specs(forge_project, contract):
                     continue
                 add_cast_calls(body2, arg, callee_name, idx)
 
+    # Solidity base constructor initializers execute as part of the target
+    # deployment, but the external call may live in the base constructor body:
+    #
+    #   contract C is P {
+    #     constructor(address feeReceiver) P(feeReceiver) {}
+    #   }
+    #   contract P {
+    #     constructor(address receiver) { IFee(receiver).pay(); }
+    #   }
+    #
+    # Foundry replays must mock the original target constructor argument, not a
+    # local name from the base constructor, so keep the target parameter index
+    # and substitute the base parameter name only while scanning the base body.
+    for base_name, init_args in _constructor_initializer_calls(chunk):
+        base_params = _source_constructor_params_from_source(source, base_name)
+        if not base_params:
+            continue
+        base_chunk = _source_contract_chunk(source, base_name)
+        base_body = _constructor_body_text(base_chunk or "")
+        if not base_body:
+            continue
+        for arg_idx, arg in enumerate(init_args):
+            if arg_idx >= len(base_params):
+                continue
+            found = by_name.get(arg.strip())
+            if found is None:
+                continue
+            idx, ptype = found
+            if _norm_ty(ptype) not in ("address", "address payable"):
+                continue
+            base_pname, base_ptype = base_params[arg_idx]
+            if _norm_ty(base_ptype) not in ("address", "address payable"):
+                continue
+            add_cast_calls(base_body, arg.strip(), base_pname, idx)
+
     for iface, pname, fname in re.findall(
             r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
-            r"\s*\)?\s*\.\s*([A-Za-z_]\w*)\s*\(", body):
+            r"\s*\)?\s*\.\s*([A-Za-z_]\w*)\s*(?:\{[^}]*\})?\s*\(", body):
         found = by_name.get(pname)
         if found is None:
             continue
@@ -10422,6 +12866,56 @@ def constructor_param_interface_mock_specs(forge_project, contract):
                 returns == ["address"] and
                 _interface_call_result_has_nonzero_guard(
                     body, iface, pname, fname),
+        })
+    return specs
+
+
+def constructor_param_runtime_interface_mock_specs(forge_project, contract):
+    """Runtime interface calls through state copied from constructor params."""
+    source = _flat_source_for_project(forge_project)
+    chunk = _source_contract_chunk(source, contract)
+    if not source or not chunk:
+        return []
+    params = source_constructor_params(forge_project, contract)
+    by_name = {name: (idx, typ) for idx, (name, typ) in enumerate(params)}
+    body = _constructor_body_text(chunk)
+    assigned = {}
+    for lhs, rhs in re.findall(r"\b([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;",
+                               body):
+        found = by_name.get(rhs)
+        if found is None:
+            continue
+        idx, ptype = found
+        if _norm_ty(ptype) in ("address", "address payable"):
+            assigned[lhs] = (idx, rhs)
+    if not assigned:
+        return []
+
+    functions = _source_function_abis(source)
+    specs, seen = [], set()
+    for iface, state_var, fname in re.findall(
+            r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
+            r"\s*\)?\s*\.\s*([A-Za-z_]\w*)\s*(?:\{[^}]*\})?\s*\(",
+            chunk):
+        found = assigned.get(state_var)
+        if found is None:
+            continue
+        choice = _unique_function_choice(functions.get(fname) or [])
+        if choice is None:
+            continue
+        idx, pname = found
+        signature, returns = choice
+        key = (idx, state_var, iface, signature)
+        if key in seen:
+            continue
+        seen.add(key)
+        specs.append({
+            "param_index": idx,
+            "param_name": pname,
+            "state_var": state_var,
+            "interface": iface,
+            "signature": signature,
+            "returns": returns,
         })
     return specs
 
@@ -10500,6 +12994,33 @@ def apply_constructor_param_hascode_mocks(lines, contract, specs, indent="    ")
     return out, changed
 
 
+def _constructor_interface_mock_return_expr(source, contract, args, spec, typ):
+    """Return a replay mock value tied to the same constructor invocation.
+
+    Some constructors call `IFace(addr).decimals()` and compare it with a
+    separate `decimals_` constructor parameter before computing `10 ** delta`.
+    Returning the generic `uint8(1)` while deploying with `decimals_=254` makes
+    Foundry overflow in setUp even though ESBMC's witness describes a coherent
+    constructor slice.  When the relationship is explicit in the constructor
+    signature, replay the interface decimals as that same argument.
+    """
+    if spec.get("signature") != "decimals()" or _norm_ty(typ) != "uint8":
+        return None
+    params = _source_constructor_params_from_source(source, contract)
+    for idx, (pname, ptype) in enumerate(params):
+        if idx >= len(args) or idx == spec.get("param_index"):
+            continue
+        if "decimals" not in pname.lower():
+            continue
+        if _norm_ty(ptype) != "uint8":
+            continue
+        expr = args[idx].strip()
+        if not expr:
+            continue
+        return f"{typ}({expr})"
+    return None
+
+
 def apply_constructor_param_interface_mocks(lines, contract, specs, source,
                                             indent="    "):
     """Mock constructor-time interface calls on replay constructor args."""
@@ -10537,8 +13058,12 @@ def apply_constructor_param_interface_mocks(lines, contract, specs, source,
             if returns:
                 exprs = []
                 for ret_idx, typ in enumerate(returns):
-                    if (spec.get("nonzero_address_returns") and
-                            _norm_ty(typ) == "address"):
+                    tied = _constructor_interface_mock_return_expr(
+                        source, contract, args, spec, typ)
+                    if tied is not None:
+                        exprs.append(tied)
+                    elif (spec.get("nonzero_address_returns") and
+                          _norm_ty(typ) == "address"):
                         exprs.append(f"address(uint160({3000 + ret_idx}))")
                     else:
                         exprs.append(_abi_mock_expr_for_type(
@@ -10562,6 +13087,70 @@ def apply_constructor_param_interface_mocks(lines, contract, specs, source,
             changed += 1
         out.extend(lines[i:end + 1])
         i = end + 1
+    return out, changed
+
+
+def apply_constructor_param_runtime_interface_mocks(lines, contract, specs,
+                                                    source, indent="    "):
+    """Mock runtime interface calls on constructor-sourced state addresses."""
+    if not contract or not specs:
+        return list(lines), 0
+    out, changed, i = [], 0, 0
+    rx = re.compile(r"\bnew\s+" + re.escape(contract) + r"\s*\(")
+    while i < len(lines):
+        if not rx.search(lines[i]):
+            out.append(lines[i])
+            i += 1
+            continue
+        end = _statement_end(lines, i)
+        stmt = "\n".join(lines[i:end + 1])
+        span = _constructor_arg_span(stmt, contract)
+        out.extend(lines[i:end + 1])
+        if span is None:
+            i = end + 1
+            continue
+        _start, _close, args = span
+        next_i = end + 1
+        while (next_i < len(lines)
+               and lines[next_i].strip() == "vm.clearMockedCalls();"):
+            out.append(lines[next_i])
+            next_i += 1
+        local = []
+        seen = set()
+        for spec in specs:
+            idx = spec["param_index"]
+            if idx >= len(args):
+                continue
+            addr_expr = args[idx].strip()
+            signature = spec["signature"]
+            key = (addr_expr, signature)
+            if key in seen:
+                continue
+            seen.add(key)
+            mock_name = f"_esbmc_ctor_state_mock_{changed}_{len(local)}"
+            returns = spec.get("returns") or []
+            if returns:
+                exprs = ", ".join(
+                    _abi_mock_expr_for_type(
+                        source, typ, "", {}, prefer_zero_numeric=True)
+                    for typ in returns)
+                ret = f"abi.encode({exprs})"
+            else:
+                ret = "bytes(\"\")"
+            local += [
+                f"{indent}// ESBMC runtime fixture: constructor argument "
+                f"`{spec['param_name']}` is stored in `{spec['state_var']}`.",
+                f"{indent}address {mock_name} = {addr_expr};",
+            ]
+            if not _is_precompile_address_expr(addr_expr):
+                local.append(f"{indent}vm.etch({mock_name}, hex\"00\");")
+            local.append(
+                f"{indent}vm.mockCall({mock_name}, "
+                f"abi.encodeWithSignature(\"{signature}\"), {ret});")
+        if local:
+            out.extend(local)
+            changed += 1
+        i = next_i
     return out, changed
 
 
@@ -10636,7 +13225,9 @@ def _derive_sz_decimals(entry_storage):
     return None
 
 
-def _abi_mock_expr_for_type(source, typ, field_name, entry_storage):
+def _abi_mock_expr_for_type(source, typ, field_name, entry_storage,
+                            prefer_true_bool=False,
+                            prefer_zero_numeric=False):
     typ = typ.strip()
     if typ.endswith("[]"):
         return f"new {typ[:-2].strip()}[](0)"
@@ -10645,7 +13236,7 @@ def _abi_mock_expr_for_type(source, typ, field_name, entry_storage):
     if typ == "bytes":
         return "bytes(\"\")"
     if typ == "bool":
-        return "false"
+        return "true" if prefer_true_bool else "false"
     if typ == "address":
         return "address(0)"
     if re.fullmatch(r"bytes[0-9]+", typ):
@@ -10653,6 +13244,8 @@ def _abi_mock_expr_for_type(source, typ, field_name, entry_storage):
     if re.fullmatch(r"uint[0-9]*", typ):
         if field_name == "szDecimals":
             return f"{typ}({_derive_sz_decimals(entry_storage) or 8})"
+        if prefer_zero_numeric:
+            return f"{typ}(0)"
         return f"{typ}(1)"
     if re.fullmatch(r"int[0-9]*", typ):
         return f"{typ}(0)"
@@ -10661,13 +13254,13 @@ def _abi_mock_expr_for_type(source, typ, field_name, entry_storage):
         qtyp = f"{owner}.{typ}" if owner else typ
         items = ", ".join(
             f"{fname}: "
-            f"{_abi_mock_expr_for_type(source, ftype, fname, entry_storage)}"
+            f"{_abi_mock_expr_for_type(source, ftype, fname, entry_storage, prefer_true_bool, prefer_zero_numeric)}"
             for ftype, fname in fields)
         return f"{qtyp}({{{items}}})"
     return "uint256(1)"
 
 
-def constructor_staticcall_mock_lines(forge_project, claim, indent):
+def _staticcall_mock_lines(forge_project, claim, indent, phase):
     source = _flat_source_for_project(forge_project)
     if not source or ".staticcall" not in source:
         return []
@@ -10676,12 +13269,20 @@ def constructor_staticcall_mock_lines(forge_project, claim, indent):
     for addr, typ in sorted(_staticcall_return_types(source).items()):
         expr = _abi_mock_expr_for_type(source, typ, "", entry_storage)
         lines += [
-            f"{indent}// ESBMC constructor fixture: local Foundry has no "
+            f"{indent}// ESBMC {phase} fixture: local Foundry has no "
             f"precompile at {addr}.",
             f"{indent}vm.mockCall(address({addr}), bytes(\"\"), "
             f"abi.encode({expr}));",
         ]
     return lines
+
+
+def constructor_staticcall_mock_lines(forge_project, claim, indent):
+    return _staticcall_mock_lines(forge_project, claim, indent, "constructor")
+
+
+def runtime_staticcall_mock_lines(forge_project, claim, indent):
+    return _staticcall_mock_lines(forge_project, claim, indent, "runtime")
 
 
 def apply_constructor_staticcall_mocks(lines, emitted, case, unit, contract,
@@ -10781,7 +13382,8 @@ def repair_zero_sender_constructor_pranks(lines, contract, needs_nonzero):
     if not contract or not needs_nonzero:
         return list(lines), 0
     out, changed = [], 0
-    zero = r"address\s*\(\s*uint160\s*\(\s*0\s*\)\s*\)"
+    zero = (r"(?:address\s*\(\s*uint160\s*\(\s*0\s*\)\s*\)|"
+            r"address\s*\(\s*0\s*\))")
     two_arg = re.compile(
         r"^(\s*)vm\.(startPrank|prank)\s*\(\s*" + zero + r"\s*,\s*" +
         zero + r"\s*\)\s*;\s*$")
@@ -10844,6 +13446,7 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
                         constructor_mocks=None, runtime_mocks=None,
                         constructor_params=None,
                         constructor_param_mocks=None,
+                        constructor_param_runtime_mocks=None,
                         constructor_param_hascode_mocks=None,
                         flat_source=None):
     """Insert PUT functions into the emitter's contract and rename safely."""
@@ -10868,7 +13471,9 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
     lines[insert_at:insert_at] = inserted
     if fixture is not None and contract is not None and unit is not None:
         lines = apply_foundry_fixture(lines, emitted, case, unit, contract,
-                                      fixture, layout)
+                                      fixture, layout, constructor_params)
+    lines, _constructor_arg_count_repairs = repair_constructor_arg_count(
+        lines, contract, constructor_params)
     if contract is not None and unit is not None:
         constructor_param_nonzero_mocks = constructor_param_nonzero_specs(
             flat_source or "", contract)
@@ -10877,8 +13482,12 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
                 lines, contract, constructor_param_nonzero_mocks)
         lines, _constructor_sender_repairs = \
             repair_zero_sender_constructor_pranks(
-                lines, contract,
-                constructor_sender_needs_nonzero(flat_source or "", contract))
+                lines, contract, True)
+        constructor_param_nonempty_mocks = constructor_param_nonempty_specs(
+            flat_source or "", contract)
+        lines, _constructor_param_nonempty_repairs = \
+            apply_constructor_param_nonempty_args(
+                lines, contract, constructor_param_nonempty_mocks)
         constructor_param_dynarray_mocks = \
             constructor_param_dynarray_min_lengths(flat_source or "", contract)
         lines, _constructor_param_dynarray_repairs = \
@@ -10892,6 +13501,10 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
             apply_constructor_param_interface_mocks(
                 lines, contract, constructor_param_mocks or [],
                 flat_source or "")
+        lines, _constructor_param_runtime_repairs = \
+            apply_constructor_param_runtime_interface_mocks(
+                lines, contract, constructor_param_runtime_mocks or [],
+                flat_source or "")
         lines, _constructor_param_hascode_repairs = \
             apply_constructor_param_hascode_mocks(
                 lines, contract, constructor_param_hascode_mocks or [])
@@ -10900,6 +13513,8 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
             lines, contract, constructor_params or [])
         lines, _unused_setup_deployments = tolerate_unused_setup_deployments(
             lines, target_contract=contract)
+        lines, _abstract_helper_unsupported = \
+            drop_abstract_helper_unsupported_markers(lines)
     source = "\n".join(lines) + "\n"
     source = complete_esbmc_interface_mocks(source, flat_source or "")
     source = source.replace(
@@ -10919,6 +13534,7 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
                              constructor_mocks=None, runtime_mocks=None,
                              constructor_params=None, params=None,
                              constructor_param_mocks=None,
+                             constructor_param_runtime_mocks=None,
                              constructor_param_hascode_mocks=None,
                              flat_source=None):
     """Keep exactly one concrete replay case and rename its test contract.
@@ -10947,7 +13563,9 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
         del lines[fs:fe + 1]
     if fixture is not None and contract is not None and unit is not None:
         lines = apply_foundry_fixture(lines, emitted, case, unit, contract,
-                                      fixture, layout)
+                                      fixture, layout, constructor_params)
+    lines, _constructor_arg_count_repairs = repair_constructor_arg_count(
+        lines, contract, constructor_params)
     if contract is not None and unit is not None:
         constructor_param_nonzero_mocks = constructor_param_nonzero_specs(
             flat_source or "", contract)
@@ -10956,8 +13574,12 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
                 lines, contract, constructor_param_nonzero_mocks)
         lines, _constructor_sender_repairs = \
             repair_zero_sender_constructor_pranks(
-                lines, contract,
-                constructor_sender_needs_nonzero(flat_source or "", contract))
+                lines, contract, True)
+        constructor_param_nonempty_mocks = constructor_param_nonempty_specs(
+            flat_source or "", contract)
+        lines, _constructor_param_nonempty_repairs = \
+            apply_constructor_param_nonempty_args(
+                lines, contract, constructor_param_nonempty_mocks)
         constructor_param_dynarray_mocks = \
             constructor_param_dynarray_min_lengths(flat_source or "", contract)
         lines, _constructor_param_dynarray_repairs = \
@@ -10971,6 +13593,10 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
             apply_constructor_param_interface_mocks(
                 lines, contract, constructor_param_mocks or [],
                 flat_source or "")
+        lines, _constructor_param_runtime_repairs = \
+            apply_constructor_param_runtime_interface_mocks(
+                lines, contract, constructor_param_runtime_mocks or [],
+                flat_source or "")
         lines, _constructor_param_hascode_repairs = \
             apply_constructor_param_hascode_mocks(
                 lines, contract, constructor_param_hascode_mocks or [])
@@ -10982,6 +13608,8 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
             lines, contract, constructor_params or [])
         lines, _unused_setup_deployments = tolerate_unused_setup_deployments(
             lines, target_contract=contract)
+        lines, _abstract_helper_unsupported = \
+            drop_abstract_helper_unsupported_markers(lines)
     source = "\n".join(lines) + "\n"
     source = complete_esbmc_interface_mocks(source, flat_source or "")
     source = source.replace(
@@ -11020,19 +13648,23 @@ def function_body_lines(source, name):
 
 def concrete_replay_refusal_reason(source, test_name, unit):
     """Why a concrete replay is not an executable reference test, if any."""
-    if "UNSUPPORTED:" in source:
-        return ("concrete replay contains UNSUPPORTED placeholder(s), so a "
-                "green Foundry run would be a no-op rather than a reference "
-                "test")
     if unit is None:
         return None
     body = function_body_lines(source, test_name)
     if body is None:
         return f"concrete replay test {test_name} is absent"
+    if any("UNSUPPORTED:" in line for line in body):
+        return ("concrete replay contains UNSUPPORTED placeholder(s), so a "
+                "green Foundry run would be a no-op rather than a reference "
+                "test")
     if find_unit_call(body, unit) is None:
         return (f"concrete replay test {test_name} contains no renderable "
                 f"call to {unit}")
     return None
+
+
+def r2_probe_has_rendered_assertion(stats):
+    return bool(stats) and int(stats.get("asserts") or 0) > 0
 
 
 def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
@@ -11042,7 +13674,7 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
                            fixture=None, constructor_mocks=None,
                            runtime_mocks=None, establish=None,
                            unit_payable=False, state_store_names=None,
-                           log=print):
+                           flat_source=None, log=print):
     """Refute R2 candidates with one Forge run; never produce proof verdicts."""
     candidates = r2_candidates(specs)
     verdicts = {candidate["key"]: "NOT-RUN" for candidate in candidates}
@@ -11078,12 +13710,13 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
                 cell=cell, rettypes=None, maps=maps, piece_label=piece,
                 derived_by=derived_by, rollback_exit=False, r2_terms=r2_terms,
                 oracle_label_prefix=marker + " ", establish=establish,
-                unit_payable=unit_payable, state_store_names=state_store_names)
+                unit_payable=unit_payable, state_store_names=state_store_names,
+                flat_source=flat_source)
         except ConcreteFallback as exc:
             evidence[candidate["key"]]["reason"] = (
                 "candidate probe was not parameterized: " + exc.reason)
             continue
-        if probe is None or not stats or stats.get("state_asserts", 0) == 0:
+        if probe is None or not r2_probe_has_rendered_assertion(stats):
             continue
         if marker not in "\n".join(probe):
             continue
@@ -11180,6 +13813,9 @@ def run_forge_r2_prefilter(project, workdir, emitted, case, contract, unit,
         f"{len(labels)} rendered, {refuted} REFUTED by a labeled concrete "
         f"failure, {not_run} NOT-RUN; passes prove nothing")
     return verdicts, {
+        "refutation_only": True,
+        "proves_candidates": False,
+        "proof_consumer": "ESBMC",
         "requested": len(candidates), "selected": len(selected),
         "candidate_budget": candidate_budget, "rendered": len(labels),
         "ran": executed,
@@ -11300,10 +13936,21 @@ def main():
     ap.add_argument("--concrete-stage2-source",
                     default="cleared_not_certified_fallback",
                     choices=("cleared_not_certified_fallback",
-                             "timeout_concrete_fallback"),
+                             "timeout_concrete_fallback",
+                             "partial_journal_concrete_fallback",
+                             "no-coordinate-concrete-fallback",
+                             "certified-region-concrete-fallback",
+                             "structural_deploy_only",
+                             "structural-deploy-only",
+                             "structural_getter_only",
+                             "structural-getter-only"),
                     help="Stage-2 source for --concrete-only accounting. "
                          "Recorded only; it does not turn a replay into a "
                          "proof.")
+    ap.add_argument("--stage4-kind", default=None,
+                    choices=("certified-region", "getter-only", "deploy-only"),
+                    help="structural Stage-2 kind for certified rows that need "
+                         "source-synthesized emission")
     ap.add_argument("--piece", default=None, metavar="K",
                     help="which PIECE of a split certified region this is. "
                          "stage 2 may certify one path as a UNION of boxes "
@@ -11450,7 +14097,8 @@ def main():
     assert_dir = os.path.join(a.workdir, "assert")
     os.makedirs(emit_dir, exist_ok=True)
     os.makedirs(assert_dir, exist_ok=True)
-    put_deadline = time.monotonic() + float(a.timeout)
+    put_start = time.monotonic()
+    put_deadline = put_start + float(a.timeout)
     postprocess_reserve_s = min(60.0, max(5.0, float(a.timeout) * 0.10))
 
     def esbmc_budget(label):
@@ -11504,51 +14152,239 @@ def main():
     # output is per-candidate verdicts. The emission run and the assertion run
     # answer different questions and carry different flags; that asymmetry is
     # the point, not an oversight.
-    out1, rc1, w1 = run_esbmc(
-        a.esbmc, a.sol, a.ast, a.contract, a.unit,
-        ["--generate-foundry-testcase", "--cov-report-json",
-         "--overflow-check", "--div-by-zero-check",
-         "--path-cov-arith-resolve"] + a.esbmc_arg,
-        emit_dir, a.max_tx, esbmc_budget("emit"), a.memlimit, a.scope)
+    stage4_kind = (
+        a.stage4_kind or stage4_kind_from_stage2_source(
+            a.concrete_stage2_source, concrete_only=a.concrete_only))
+    deploy_only = stage4_kind == "deploy-only"
+    getter_only = stage4_kind == "getter-only"
+    if a.concrete_only and deploy_only:
+        constructor_params = source_constructor_param_types(
+            a.forge_project, a.contract)
+        try:
+            txt, newc = assemble_deploy_only_source(
+                a.contract, a.unit, a.enc, constructor_params)
+        except ValueError as exc:
+            reason = str(exc)
+            print(f"[put] REFUSED: {reason}")
+            with open(os.path.join(a.workdir, "put.json"), "w") as f:
+                json.dump({"kind": "concrete",
+                           **concrete_stage2_source_record(
+                               a.concrete_stage2_source,
+                               a.concrete_stage2_witness_check),
+                           "contract": a.contract, "unit": a.unit,
+                           "enc": a.enc, "depth": a.depth,
+                           "path_function": a.path_function,
+                           "piece": a.piece,
+                           "refused": "deploy-only-unrenderable",
+                           "refusal_reason": reason,
+                           "concrete_reason": reason,
+                           "timing": stage4_timing_record(
+                               put_start, a.timeout),
+                           "binary": binary_identity(a.esbmc),
+                           "notes": notes + [reason]}, f, indent=2)
+            return 1
+        os.makedirs(os.path.join(a.forge_project, "test"), exist_ok=True)
+        dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
+        with open(dest, "w") as f:
+            f.write(txt)
+        print(f"[put] WROTE deploy-only concrete replay {dest}")
+        with open(os.path.join(a.workdir, "put.json"), "w") as f:
+            json.dump({"kind": "concrete",
+                       **concrete_stage2_source_record(
+                           a.concrete_stage2_source,
+                           a.concrete_stage2_witness_check),
+                       "contract": a.contract, "unit": a.unit,
+                       "enc": a.enc, "depth": a.depth,
+                       "path_function": a.path_function, "file": dest,
+                       "test": f"test_deploy_only_{a.enc}",
+                       "piece": a.piece,
+                       "region": {k: [str(v[0]), str(v[1])]
+                                  for k, v in region.items()},
+                       "holes": {k: [str(x) for x in v]
+                                 for k, v in holes.items()},
+                       "establish": json.loads(a.establish or "[]"),
+                       "pins": {k: str(v) for k, v in pins.items()},
+                       "stats": {"fuzz_params": 0, "asserts": 0,
+                                 "guarded_asserts": 0,
+                                 "rendered_width": {},
+                                 **empty_oracle_stats()},
+                       "materialization": stage4_materialization_metadata(
+                           "concrete", empty_oracle_stats(),
+                           reason="deploy-only subject has no target unit call"),
+                       "timing": stage4_timing_record(put_start, a.timeout),
+                       "binary": binary_identity(a.esbmc),
+                       "notes": notes + [
+                           "deploy-only concrete replay; no target unit "
+                           "call exists for this subject"]}, f, indent=2)
+        return 0
+    synthetic_possible = can_synthesize_missing_emitter_output(
+        a.path_function, a.ast, stage4_kind)
+    emit_budget = esbmc_budget("emit")
+    capped_emit_budget = synthetic_emitter_probe_budget(
+        emit_budget, a.timeout, synthetic_possible)
+    if capped_emit_budget < emit_budget:
+        print("[put]   ESBMC emit probe capped at "
+              f"{capped_emit_budget}s because a synthetic preamble can replace "
+              "missing emitter output; the remaining budget is reserved for "
+              "verifier-backed assertion/R2 queries")
+    for stale in os.listdir(emit_dir):
+        if stale.endswith(".cov.t.sol") or stale in (
+            "cov-report.json", "cov-ce-journal.json"):
+            try:
+                os.remove(os.path.join(emit_dir, stale))
+            except OSError:
+                pass
+    if getter_only:
+        out1, rc1, w1 = "", 0, 0.0
+        notes.append("getter-only Stage-2 row: skipped ESBMC concrete emitter "
+                     "and synthesized a source-level getter call")
+    else:
+        out1, rc1, w1 = run_esbmc(
+            a.esbmc, a.sol, a.ast, a.contract, a.unit,
+            ["--generate-foundry-testcase", "--cov-report-json",
+             "--overflow-check", "--div-by-zero-check",
+             "--path-cov-arith-resolve"] + a.esbmc_arg,
+            emit_dir, a.max_tx, capped_emit_budget, a.memlimit, a.scope)
     produced = sorted(f for f in os.listdir(emit_dir)
                       if f.endswith(".cov.t.sol"))
     print(f"[put]   exit={rc1} {w1:.1f}s  emitted={produced}")
+    synthetic_claim = None
     if not produced:
-        print("[put] REFUSED: the emitter produced no .cov.t.sol, so there is "
-              "no preamble to reuse and no concrete case to lift. This is an "
-              "EMISSION outcome, not a property of the region")
-        return 1
-    emitted = EmittedFile(os.path.join(emit_dir, produced[0]))
+        if synthetic_possible:
+            pf = a.path_function or getter_only_path_function(
+                a.contract, a.unit)
+            declaration_id = path_function_declaration_id(pf)
+            if declaration_id is None:
+                notes.append("synthetic emitter fallback unavailable: "
+                             f"malformed path_function {pf!r}")
+            else:
+                synthetic_decl_id = None if getter_only else declaration_id
+                synthetic_params = function_params(
+                    a.ast, a.contract, a.unit, None, synthetic_decl_id)
+                synthetic_constructor_params = source_constructor_params(
+                    a.forge_project, a.contract)
+                synthetic_flat_source = _flat_source_for_project(
+                    a.forge_project)
+                emitted, case = synthesize_minimal_emitted_case(
+                    emit_dir, a.contract, a.unit, pf, a.enc, synthetic_params,
+                    synthetic_constructor_params, notes, region=region,
+                    pins=pins, flat_source=synthetic_flat_source)
+                if emitted is not None and case is not None:
+                    produced = [os.path.basename(emitted.path)]
+                    synthetic_claim = {
+                        "path_function": pf,
+                        "path_depth": a.depth,
+                        "exit_kind": normalize_exit_kind(a.exit_kind),
+                        "decisions": [],
+                        "veriput_synthetic_emitter": True,
+                    }
+                    print("[put]   synthetic preamble: "
+                          f"{os.path.basename(emitted.path)}")
+        else:
+            notes.append("synthetic emitter fallback unavailable: needs "
+                         "--path-function and --ast")
+    if not produced:
+        reason = ("the emitter produced no .cov.t.sol, so there is no "
+                  "preamble to reuse and no concrete case to lift. This is an "
+                  "EMISSION outcome, not a property of the region")
+        print(f"[put] REFUSED: {reason}")
+        write_put_refusal_record(
+            a.workdir, "emitter-no-output", a.contract, a.unit, a.enc,
+            a.depth, path_function=a.path_function, region=region,
+            holes=holes, pins=pins, notes=notes + [reason],
+            extra={"emit_rc": rc1, "emit_wall_s": w1},
+            timing_start=put_start, timeout_s=a.timeout)
+        return 2
+    if synthetic_claim is None:
+        emitted = EmittedFile(os.path.join(emit_dir, produced[0]))
 
     # The path identity the claim comment carries is the MANGLED id; read it
     # from this run's own report so the match cannot be against another run's
     # numbering.
-    rep = json.load(open(os.path.join(emit_dir, "cov-report.json")))
-    claim, claim_error = select_path_claim(
-        rep, a.unit, a.enc, path_function=a.path_function)
-    if claim is None:
-        print(f"[put] REFUSED: {claim_error}, so the concrete case cannot be "
-              "identified. Nothing was lifted")
-        return 1
+    force_concrete_reason = None
+    force_concrete_fallback_reason = None
+    if synthetic_claim is not None:
+        claim = synthetic_claim
+    else:
+        rep = json.load(open(os.path.join(emit_dir, "cov-report.json")))
+        claim, claim_error = select_path_claim(
+            rep, a.unit, a.enc, path_function=a.path_function)
+        if claim is None:
+            fallback_case = (emitted.case_for(a.path_function, a.enc)
+                             if a.path_function else None)
+            if fallback_case is None:
+                reason = (f"{claim_error}, so the concrete case cannot be "
+                          "identified. Nothing was lifted")
+                print(f"[put] REFUSED: {reason}")
+                write_put_refusal_record(
+                    a.workdir, "claim-selection-failed", a.contract, a.unit,
+                    a.enc, a.depth, path_function=a.path_function,
+                    region=region, holes=holes, pins=pins,
+                    notes=notes + [reason],
+                    extra={"emit_rc": rc1, "emit_wall_s": w1},
+                    timing_start=put_start, timeout_s=a.timeout)
+                return 1
+            force_concrete_reason = (
+                f"{claim_error}; the emitted Foundry file still contains an "
+                "exact claim comment for this path, so this row is emitted "
+                "only as an authenticated concrete replay")
+            notes.append(force_concrete_reason)
+            print(f"[put]   concrete fallback: {force_concrete_reason}")
+            force_concrete_fallback_reason = "emitted-claim-match"
+            claim = {
+                "path_function": a.path_function,
+                "path_depth": a.depth,
+                "exit_kind": normalize_exit_kind(a.exit_kind),
+                "decisions": [],
+                "veriput_claim_from_emitted_case": True,
+            }
     pf = claim.get("path_function")
+    getter_only = getter_only or (
+        stage4_kind == "getter-only" and pf == getter_only_path_function(
+            a.contract, a.unit))
     rd = claim.get("path_depth")
     if a.depth is None:
-        a.depth = int(rd)
-        print(f"[put]   depth read from this run's own report: {a.depth}")
-    elif str(rd) != str(a.depth):
+        if rd is None:
+            force_concrete_reason = (
+                "path depth is unavailable after the concrete preamble was "
+                "selected; the assertion ladder cannot be run with a "
+                "path-depth antecedent, so this row is emitted only as an "
+                "authenticated concrete replay")
+            notes.append(force_concrete_reason)
+            print(f"[put]   concrete fallback: {force_concrete_reason}")
+            force_concrete_fallback_reason = "path-depth-unavailable"
+        else:
+            a.depth = int(rd)
+            print(f"[put]   depth read from this run's own report: {a.depth}")
+    elif rd is not None and str(rd) != str(a.depth):
         notes.append(f"depth mismatch: report says {rd}, spec says {a.depth}")
     declaration_id = path_function_declaration_id(pf)
-    if declaration_id is None:
-        print(f"[put] REFUSED: malformed path_function {pf!r}; expected a "
-              "trailing #<solc-node-id>. Declaration facts cannot be selected "
-              "without guessing")
+    if declaration_id is None and not getter_only:
+        reason = (f"malformed path_function {pf!r}; expected a trailing "
+                  "#<solc-node-id>. Declaration facts cannot be selected "
+                  "without guessing")
+        print(f"[put] REFUSED: {reason}")
+        write_put_refusal_record(
+            a.workdir, "malformed-path-function", a.contract, a.unit, a.enc,
+            a.depth, path_function=pf, region=region, holes=holes, pins=pins,
+            notes=notes + [reason],
+            extra={"emit_rc": rc1, "emit_wall_s": w1},
+            timing_start=put_start, timeout_s=a.timeout)
         return 1
+    ast_declaration_id = None if getter_only else declaration_id
     case = emitted.case_for(pf, a.enc)
     if case is None:
-        print(f"[put] REFUSED: no emitted case names {pf}:path:{a.enc}. The "
-              f"path was witnessed but its counterexample produced no test "
-              f"(refused as an obstacle, an empty body, or an unrenderable "
-              f"argument) -- so there is no concrete case to generalise")
+        reason = (f"no emitted case names {pf}:path:{a.enc}. The path was "
+                  "witnessed but its counterexample produced no test (refused "
+                  "as an obstacle, an empty body, or an unrenderable argument) "
+                  "-- so there is no concrete case to generalise")
+        print(f"[put] REFUSED: {reason}")
+        write_put_refusal_record(
+            a.workdir, "emitted-case-missing", a.contract, a.unit, a.enc,
+            a.depth, path_function=pf, region=region, holes=holes, pins=pins,
+            notes=notes + [reason],
+            extra={"emit_rc": rc1, "emit_wall_s": w1},
+            timing_start=put_start, timeout_s=a.timeout)
         return 1
     print(f"[put]   concrete case: {case[1]} in contract {emitted.blocks[case[0]][0]}")
     path_exit_kind = effective_exit_kind(a.exit_kind, claim)
@@ -11564,6 +14400,9 @@ def main():
     flat_source = _flat_source_for_project(a.forge_project) or ""
     constructor_param_mocks = constructor_param_interface_mock_specs(
         a.forge_project, a.contract)
+    constructor_param_runtime_mocks = \
+        constructor_param_runtime_interface_mock_specs(
+            a.forge_project, a.contract)
     constructor_param_hascode_mocks = constructor_param_hascode_specs(
         a.forge_project, a.contract)
     if constructor_mocks:
@@ -11576,19 +14415,32 @@ def main():
     if constructor_param_mocks:
         notes.append("constructor parameter interface mocks inserted before "
                      f"deployment ({len(constructor_param_mocks)} call(s))")
+    if constructor_param_runtime_mocks:
+        notes.append("constructor parameter runtime interface mocks inserted "
+                     f"after deployment ({len(constructor_param_runtime_mocks)} "
+                     "call(s))")
     if constructor_param_hascode_mocks:
         notes.append("constructor parameter code fixtures inserted before "
                      f"deployment ({len(constructor_param_hascode_mocks)} "
                      "address arg(s))")
-    runtime_mocks = runtime_interface_mock_lines(a.forge_project, "    ")
-    runtime_mock_addresses = sum(1 for line in runtime_mocks
+    runtime_interface_mocks = runtime_interface_mock_lines(
+        a.forge_project, "    ")
+    runtime_staticcall_mocks = runtime_staticcall_mock_lines(
+        a.forge_project, claim, "    ")
+    runtime_mocks = runtime_interface_mocks + runtime_staticcall_mocks
+    runtime_mock_addresses = sum(1 for line in runtime_interface_mocks
                                  if "vm.etch(" in line)
-    runtime_mock_calls = sum(1 for line in runtime_mocks
+    runtime_mock_calls = sum(1 for line in runtime_interface_mocks
                              if "vm.mockCall(" in line)
-    if runtime_mocks:
+    runtime_staticcall_mock_calls = sum(
+        1 for line in runtime_staticcall_mocks if "vm.mockCall(" in line)
+    if runtime_interface_mocks:
         notes.append("runtime interface mocks inserted after deployment "
                      f"({runtime_mock_addresses} address(es), "
                      f"{runtime_mock_calls} call(s))")
+    if runtime_staticcall_mocks:
+        notes.append("runtime staticcall mocks inserted after deployment "
+                     f"({runtime_staticcall_mock_calls} call(s))")
     constructor_params = source_constructor_param_types(
         a.forge_project, a.contract)
     if any(_is_address_payable_type(ty) for ty in constructor_params):
@@ -11603,16 +14455,108 @@ def main():
             _n, args0 = rewrite_call_args(case_body[case_call_i], a.unit, {})
             concrete_arity = len(args0) if args0 is not None else None
         concrete_params = function_params(
-            a.ast, a.contract, a.unit, concrete_arity, declaration_id)
+            a.ast, a.contract, a.unit, concrete_arity, ast_declaration_id)
+    getter_signature = (
+        public_state_getter_signature(a.ast, a.contract, a.unit)
+        if getter_only and a.ast else None)
+    if getter_signature is not None:
+        notes.append("getter-only public state getter ABI: "
+                     f"{len(getter_signature[0])} parameter(s), "
+                     f"{len(getter_signature[1])} return value(s)")
 
     if a.concrete_only:
+        if a.concrete_stage2_source in ("structural_deploy_only",
+                                        "structural-deploy-only"):
+            try:
+                txt, newc = assemble_deploy_only_source(
+                    a.contract, a.unit, a.enc, constructor_params)
+            except ValueError as exc:
+                reason = str(exc)
+                print(f"[put] REFUSED: {reason}")
+                with open(os.path.join(a.workdir, "put.json"), "w") as f:
+                    json.dump({"kind": "concrete",
+                               **concrete_stage2_source_record(
+                                   a.concrete_stage2_source,
+                                   a.concrete_stage2_witness_check),
+                               "contract": a.contract, "unit": a.unit,
+                               "enc": a.enc, "depth": a.depth,
+                               "path_function": pf,
+                               "piece": a.piece,
+                               "refused": "deploy-only-unrenderable",
+                               "refusal_reason": reason,
+                               "concrete_reason": reason,
+                               "timing": stage4_timing_record(
+                                   put_start, a.timeout),
+                               "binary": binary_identity(a.esbmc),
+                               "notes": notes + [reason]}, f, indent=2)
+                return 1
+            dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
+            with open(dest, "w") as f:
+                f.write(txt)
+            print(f"[put] WROTE deploy-only concrete replay {dest}")
+            with open(os.path.join(a.workdir, "put.json"), "w") as f:
+                json.dump({"kind": "concrete",
+                           **concrete_stage2_source_record(
+                               a.concrete_stage2_source,
+                               a.concrete_stage2_witness_check),
+                           "contract": a.contract, "unit": a.unit,
+                           "enc": a.enc, "depth": a.depth,
+                           "path_function": pf, "file": dest,
+                           "test": f"test_deploy_only_{a.enc}",
+                           "piece": a.piece,
+                           "region": {k: [str(v[0]), str(v[1])]
+                                      for k, v in region.items()},
+                           "holes": {k: [str(x) for x in v]
+                                     for k, v in holes.items()},
+                           "establish": json.loads(a.establish or "[]"),
+                           "pins": {k: str(v) for k, v in pins.items()},
+                           "timing": stage4_timing_record(
+                               put_start, a.timeout),
+                           "stats": {"fuzz_params": 0, "asserts": 0,
+                                     "guarded_asserts": 0,
+                                     "rendered_width": {},
+                                     **empty_oracle_stats()},
+                           "materialization": stage4_materialization_metadata(
+                               "concrete", empty_oracle_stats(),
+                               reason=("deploy-only subject has no target "
+                                       "unit call")),
+                           "binary": binary_identity(a.esbmc),
+                           "notes": notes + [
+                               "deploy-only concrete replay; no target unit "
+                               "call exists for this subject"]}, f, indent=2)
+            return 0
+        emitted, case, repaired_unsupported_skeleton = (
+            synthesize_unsupported_case_replay(
+                emitted, case, a.contract, a.unit, concrete_params,
+                constructor_params, notes))
+        if repaired_unsupported_skeleton:
+            case_body, case_call_i = emitted_case_body_and_call(
+                emitted, case, a.unit)
+            print("[put]   repaired unsupported concrete-only skeleton with a "
+                  "source-synthesized deployment and target call")
         layout = None
         if foundry_fixture and foundry_fixture.get("skip_constructor"):
             layout, _maps, err = storage_layout(a.forge_project, a.contract)
             if layout is None:
-                print(f"[put] REFUSED: {err}. The concrete-only replay needs "
-                      "the fixture's storage writes to mirror ESBMC's skipped "
-                      "constructor state.")
+                reason = (f"{err}. The concrete-only replay needs the "
+                          "fixture's storage writes to mirror ESBMC's skipped "
+                          "constructor state.")
+                print(f"[put] REFUSED: {reason}")
+                with open(os.path.join(a.workdir, "put.json"), "w") as f:
+                    json.dump({"kind": "concrete",
+                               **concrete_stage2_source_record(
+                                   a.concrete_stage2_source,
+                                   a.concrete_stage2_witness_check),
+                               "contract": a.contract, "unit": a.unit,
+                               "enc": a.enc, "depth": a.depth,
+                               "path_function": pf,
+                               "refused": "storage-layout-unavailable-for-fixture",
+                               "refusal_reason": reason,
+                               "concrete_reason": reason,
+                               "timing": stage4_timing_record(
+                                   put_start, a.timeout),
+                               "binary": binary_identity(a.esbmc),
+                               "notes": notes + [reason]}, f, indent=2)
                 return 1
         overload_label = overload_artifact_label(
             a.ast, a.contract, a.unit, declaration_id)
@@ -11625,19 +14569,26 @@ def main():
                 emitted, case, newc, foundry_fixture, layout, a.contract,
                 a.unit, constructor_mocks, runtime_mocks, constructor_params,
                 concrete_params, constructor_param_mocks,
-                constructor_param_hascode_mocks, flat_source)
+                constructor_param_runtime_mocks, constructor_param_hascode_mocks,
+                flat_source)
         except ValueError as exc:
             reason = str(exc)
             print(f"[put] REFUSED: {reason}")
             with open(os.path.join(a.workdir, "put.json"), "w") as f:
                 json.dump({"kind": "concrete",
+                           **concrete_stage2_source_record(
+                               a.concrete_stage2_source,
+                               a.concrete_stage2_witness_check),
                            "contract": a.contract, "unit": a.unit,
                            "enc": a.enc, "depth": a.depth,
                            "path_function": pf,
                            "artifact_identity": overload_label,
                            "piece": a.piece,
                            "refused": "concrete-assembly-unrenderable",
+                           "refusal_reason": reason,
                            "concrete_reason": reason,
+                           "timing": stage4_timing_record(
+                               put_start, a.timeout),
                            "binary": binary_identity(a.esbmc),
                            "notes": notes + [reason]}, f, indent=2)
             return 1
@@ -11652,7 +14603,9 @@ def main():
               "run here")
         with open(os.path.join(a.workdir, "put.json"), "w") as f:
             json.dump({"kind": "concrete",
-                       "stage2_source": a.concrete_stage2_source,
+                       **concrete_stage2_source_record(
+                           a.concrete_stage2_source,
+                           a.concrete_stage2_witness_check),
                        "contract": a.contract, "unit": a.unit, "enc": a.enc,
                        "depth": a.depth, "path_function": pf,
                        "artifact_identity": overload_label,
@@ -11682,19 +14635,25 @@ def main():
                        "unwind_attempts": [],
                        "cell": {"name": cell_name, "scope": a.scope,
                                 "max_tx": a.max_tx, "rule": cell_rule},
+                       "timing": stage4_timing_record(
+                           put_start, a.timeout),
                        "binary": binary_identity(a.esbmc),
                        "concrete_reason": (
                            "Stage-2 " + str(a.concrete_stage2_source)
                            + " with witness_check="
                            + str(a.concrete_stage2_witness_check)),
-                           "constructor_staticcall_mocks": len(
-                               constructor_mocks) // 2,
-                           "constructor_param_interface_mocks": len(
-                               constructor_param_mocks),
-                           "constructor_param_hascode_mocks": len(
-                               constructor_param_hascode_mocks),
-                           "runtime_interface_mocks": runtime_mock_addresses,
+                       "constructor_staticcall_mocks": len(
+                           constructor_staticcall_mocks) // 2,
+                       "constructor_param_interface_mocks": len(
+                           constructor_param_mocks),
+                       "constructor_param_runtime_interface_mocks": len(
+                           constructor_param_runtime_mocks),
+                       "constructor_param_hascode_mocks": len(
+                           constructor_param_hascode_mocks),
+                       "runtime_interface_mocks": runtime_mock_addresses,
                        "runtime_interface_mock_calls": runtime_mock_calls,
+                       "runtime_staticcall_mocks":
+                           runtime_staticcall_mock_calls,
                        "stats": {
                            "fuzz_params": 0,
                            "lifted": [],
@@ -11702,13 +14661,17 @@ def main():
                            "wide_fuzz_coords": [],
                            "dynamic_fuzz_coords": [],
                            "asserts": 0,
+                           "verifier_asserts": 0,
                            "state_asserts": 0,
                            "return_asserts": 0,
                            "exit_kind_asserts": 0,
                            "guarded_asserts": 0,
-                           "oracle_classes": [],
-                           "assertion_oracles": [],
+                           **empty_oracle_stats(),
                        },
+                       "materialization": stage4_materialization_metadata(
+                           "concrete", empty_oracle_stats(),
+                           reason=("Stage-2 concrete-only fallback; no "
+                                   "assertion ladder or PUT proof was run")),
                        "notes": [
                            "concrete-only fallback; no assertion ladder or "
                            "PUT proof was run in Stage 4"]}, f, indent=2)
@@ -11723,12 +14686,33 @@ def main():
     # nobody chose -- and the two facts needed to name a slot are exactly these:
     # which mappings solc reports, and what this unit's parameters are called.
     # Neither depends on the ladder, so the move changes nothing else.
+    layout_unavailable_reason = None
     layout, maps, err = storage_layout(a.forge_project, a.contract)
     if layout is None:
-        print(f"[put] REFUSED: {err}. Without solc's storage layout a state "
-              f"read would be a GUESSED slot, and a green assertion about the "
-              f"wrong slot is worse than no assertion")
-        return 1
+        layout_unavailable_reason = (err or "storage layout unavailable")
+        if _fixture_foundry_skip(foundry_fixture or {}):
+            reason = (
+                f"{layout_unavailable_reason}. The Foundry fixture skips the "
+                "constructor, so Stage 4 must mirror ESBMC's fixture state "
+                "with exact storage writes; without solc's layout those writes "
+                "would be guessed")
+            print(f"[put] REFUSED: {reason}")
+            write_put_refusal_record(
+                a.workdir, "storage-layout-unavailable-for-fixture",
+                a.contract, a.unit, a.enc, a.depth, path_function=pf,
+                region=region, holes=holes, pins=pins,
+                notes=notes + [reason],
+                extra={"storage_layout_error": layout_unavailable_reason},
+                timing_start=put_start, timeout_s=a.timeout)
+            return 1
+        print(f"[put] WARNING: {layout_unavailable_reason}. State and mapping "
+              "oracles are disabled for this PUT attempt, but return-value, "
+              "exit-kind and calldata-region oracles remain sound because no "
+              "storage slot is guessed")
+        notes.append("storage layout unavailable; state/mapping oracle "
+                     "candidates disabled: "
+                     + layout_unavailable_reason[-1200:])
+        layout, maps = {}, {}
     state_store_names, state_store_evidence = ({}, [])
     if a.ast:
         state_store_names, state_store_evidence = \
@@ -11747,15 +14731,24 @@ def main():
     certifiable_maps = esbmc_certifiable_maps(maps)
     query_maps = prefer_esbmc_mapping_aliases(certifiable_maps)
     skipped_maps = sorted(set(maps or {}) - set(certifiable_maps))
-    print(f"[put] step 2a: storage layout — {len(layout)} readable scalar "
-          f"slot(s): {', '.join(sorted(layout)) or 'none'}; "
-          f"{len(query_maps)} ESBMC-queryable mapping(s) with a value-type "
-          f"key: {', '.join(sorted(query_maps)) or 'none'}")
+    if layout_unavailable_reason:
+        print("[put] step 2a: storage layout unavailable; 0 readable scalar "
+              "slot(s), 0 ESBMC-queryable mapping(s). Continuing with "
+              "non-storage oracles only")
+    else:
+        print(f"[put] step 2a: storage layout — {len(layout)} readable scalar "
+              f"slot(s): {', '.join(sorted(layout)) or 'none'}; "
+              f"{len(query_maps)} ESBMC-queryable mapping(s) with a "
+              f"value-type key: {', '.join(sorted(query_maps)) or 'none'}")
     if skipped_maps:
         print("[put]   mapping(s) present in solc layout but not sent to "
               "--path-cov-assert yet: " + ", ".join(skipped_maps) +
               " (struct-contained mapping_t fields need internal verifier "
               "support before they are safe ladder variables)")
+    storage_layout_status = {
+        "storage_layout_available": layout_unavailable_reason is None,
+        "storage_layout_error": layout_unavailable_reason,
+    }
 
     # Both come from _select_def with the SAME arity, so an overload cannot be
     # resolved one way for the arguments and another way for the return value.
@@ -11766,11 +14759,11 @@ def main():
             _n, args0 = rewrite_call_args(case_body[case_call_i], a.unit, {})
             arity = len(args0) if args0 is not None else None
         params = function_params(a.ast, a.contract, a.unit, arity,
-                                 declaration_id)
+                                 ast_declaration_id)
         rettypes = function_returns(a.ast, a.contract, a.unit, arity,
-                                    declaration_id)
+                                    ast_declaration_id)
         unit_mutability = function_state_mutability(
-            a.ast, a.contract, a.unit, arity, declaration_id)
+            a.ast, a.contract, a.unit, arity, ast_declaration_id)
         try:
             state_types = contract_state_types(a.ast, a.contract)
         except (OSError, ValueError):
@@ -11795,6 +14788,122 @@ def main():
             emitted, case, a.unit)
         print("[put]   repaired unsupported concrete skeleton with a "
               "source-synthesized deployment and target call")
+    if force_concrete_reason is not None:
+        certified_region_fallback_reason = (
+            force_concrete_fallback_reason or force_concrete_reason)
+        certified_region_stage2_record = concrete_stage2_source_record(
+            "certified-region-concrete-fallback",
+            reason=certified_region_fallback_reason)
+        overload_label = overload_artifact_label(
+            a.ast, a.contract, a.unit, ast_declaration_id)
+        plabel = overload_label + (f"p{a.piece}" if a.piece else "")
+        cname, _cstart, _cend = emitted.blocks[case[0]]
+        newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
+                f"{plabel}{a.test_suffix}")
+        try:
+            txt = assemble_concrete_source(
+                emitted, case, newc, foundry_fixture, layout, a.contract,
+                a.unit, constructor_mocks, runtime_mocks, constructor_params,
+                params, constructor_param_mocks,
+                constructor_param_runtime_mocks,
+                constructor_param_hascode_mocks, flat_source)
+        except ValueError as exc:
+            reason = str(exc)
+            print(f"[put] REFUSED: {reason}")
+            with open(os.path.join(a.workdir, "put.json"), "w") as f:
+                json.dump({"kind": "concrete",
+                           **certified_region_stage2_record,
+                           "contract": a.contract, "unit": a.unit,
+                           "enc": a.enc, "depth": a.depth,
+                           "path_function": pf,
+                           "artifact_identity": overload_label,
+                           "piece": a.piece,
+                           "refused": "concrete-assembly-unrenderable",
+                           "refusal_reason": reason,
+                           "concrete_reason": reason,
+                           "timing": stage4_timing_record(
+                               put_start, a.timeout),
+                           "binary": binary_identity(a.esbmc),
+                           "notes": notes + [reason]}, f, indent=2)
+            return 1
+        dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
+        with open(dest, "w") as f:
+            f.write(txt)
+        print(f"[put] WROTE concrete replay {dest}")
+        print("[put]   concrete replay : " + case[1])
+        print(f"[put]   note: {force_concrete_reason}")
+        with open(os.path.join(a.workdir, "put.json"), "w") as f:
+            json.dump({"kind": "concrete",
+                       **certified_region_stage2_record,
+                       "contract": a.contract, "unit": a.unit, "enc": a.enc,
+                       "depth": a.depth, "path_function": pf,
+                       "artifact_identity": overload_label,
+                       **storage_layout_status,
+                       "getter_signature": getter_signature,
+                       "file": dest, "test": case[1], "piece": a.piece,
+                       "region": {k: [str(v[0]), str(v[1])]
+                                  for k, v in region.items()},
+                       "holes": {k: [str(x) for x in v]
+                                 for k, v in holes.items()},
+                       "establish": establish_spec,
+                       "pins": {k: str(v) for k, v in pins.items()},
+                       "ladder": [],
+                       "ladder_summary": None,
+                       "ladder_refusal": "not run: path depth unavailable",
+                       "r2_requested": False,
+                       "r2_depth": None,
+                       "r2_term_budget": None,
+                       "r2_candidate_budget": None,
+                       "r2_fuzz_prefilter": {"enabled": False},
+                       "oracle_dependency_policy": SLOT_DEPENDENCY_POLICY,
+                       "oracle_dependency_state": [],
+                       "oracle_vars": [],
+                       "slot_candidates": {
+                           "asked": [],
+                           "unanswered": [],
+                           "rows_for_unasked_names": []},
+                       "esbmc_extra_args": a.esbmc_arg,
+                       "unwind_applied_to_ladder_only": [],
+                       "unwind_attempts": [],
+                       "cell": {"name": cell_name, "scope": a.scope,
+                                "max_tx": a.max_tx, "rule": cell_rule},
+                       "timing": stage4_timing_record(put_start, a.timeout),
+                       "binary": binary_identity(a.esbmc),
+                       "concrete_reason": force_concrete_reason,
+                       "constructor_staticcall_mocks": len(
+                           constructor_staticcall_mocks) // 2,
+                       "constructor_param_interface_mocks": len(
+                           constructor_param_mocks),
+                       "constructor_param_runtime_interface_mocks": len(
+                           constructor_param_runtime_mocks),
+                       "constructor_param_hascode_mocks": len(
+                           constructor_param_hascode_mocks),
+                       "runtime_interface_mocks": runtime_mock_addresses,
+                       "runtime_interface_mock_calls": runtime_mock_calls,
+                       "runtime_staticcall_mocks":
+                           runtime_staticcall_mock_calls,
+                       "stats": {
+                           "fuzz_params": 0,
+                           "lifted": [],
+                           "rendered_width": {},
+                           "wide_fuzz_coords": [],
+                           "dynamic_fuzz_coords": [],
+                           "asserts": 0,
+                           "verifier_asserts": 0,
+                           "state_asserts": 0,
+                           "return_asserts": 0,
+                           "exit_kind_asserts": 0,
+                           "guarded_asserts": 0,
+                           **empty_oracle_stats(),
+                       },
+                       "materialization": stage4_materialization_metadata(
+                           "concrete", empty_oracle_stats(),
+                           reason=force_concrete_reason,
+                           fallback_after_put_attempt=True,
+                           r2_requested=r2_requested,
+                           r2_fuzz_prefilter=r2_fuzz_prefilter),
+                       "notes": notes}, f, indent=2)
+        return 0
     if path_exit_kind == "normal":
         region, holes, retreat_notes = normal_exit_region_retreat(
             a.ast, a.contract, a.unit, claim.get("decisions") or [],
@@ -11821,10 +14930,10 @@ def main():
     slot_vars = []
     slot_dependencies, slot_dependency_evidence = unit_state_dependencies(
         a.ast, a.contract, a.unit, arity=arity,
-        declaration_id=declaration_id)
+        declaration_id=ast_declaration_id)
     slot_accesses, slot_access_evidence = unit_mapping_slot_accesses(
         a.ast, a.contract, a.unit, arity=arity,
-        declaration_id=declaration_id)
+        declaration_id=ast_declaration_id)
     if slot_dependencies is None:
         print("[put]   mapping dependency closure unavailable; failing closed "
               "with no proposed mapping slot: "
@@ -11874,9 +14983,21 @@ def main():
         slot_vars += propose_slot_vars(
             remaining_maps, params, dependencies=slot_dependencies,
             state_types=state_types, layout=layout)
-    scalar_vars = [name for name in (slot_dependencies or ())
-                   if name in (layout or {})]
-    oracle_vars = scalar_vars + slot_vars
+    scalar_vars = scalar_dependency_vars(slot_dependencies, layout)
+    r1_priority_vars, r1_priority_skipped = r1_priority_oracle_vars(
+        region, pins, layout, query_maps, state_store_names)
+    if r1_priority_vars:
+        print("[put]   R1-priority certified state coordinates sent to the "
+              "assertion ladder: " + ", ".join(r1_priority_vars))
+    for skipped in r1_priority_skipped:
+        print(f"[put]   R1-priority candidate skipped: {skipped}")
+    oracle_vars, seen_oracle_vars = [], set()
+    for name in list(r1_priority_vars) + scalar_vars + slot_vars:
+        query_name = assert_query_var_name(name, layout, state_store_names)
+        if query_name in seen_oracle_vars:
+            continue
+        seen_oracle_vars.add(query_name)
+        oracle_vars.append(name)
     if oracle_vars:
         print(f"[put]   dependency-selected assertion candidates: "
               f"{', '.join(oracle_vars)}")
@@ -11885,6 +15006,15 @@ def main():
               f"{', '.join(slot_vars)}")
 
     # ---- 2b. the assertion ladder -----------------------------------------
+    establish_spec = json.loads(a.establish or "[]")
+    region, holes, pins, establish_spec, promotion_note = (
+        promote_zero_sender_owner_slice(
+            region, holes, pins, establish_spec, state_types,
+            state_store_names, scalar_vars))
+    if promotion_note:
+        print(f"[put]   {promotion_note}")
+        notes.append(promotion_note)
+
     print("[put] step 2b: post-state assertion ladder over the certified region")
     query_pins, skipped_query_pins = assert_query_pins(pins, layout,
                                                        query_maps)
@@ -11898,7 +15028,6 @@ def main():
             "region": query_region
                       + [{"name": n, "lo": str(v), "hi": str(v)}
                          for n, v in query_pins.items()]}
-    establish_spec = json.loads(a.establish or "[]")
     if establish_spec:
         spec["establish"] = establish_spec
     # Exact means exact even when the closure is empty or names only mappings.
@@ -11910,13 +15039,26 @@ def main():
         {"name": assert_query_var_name(name, layout, state_store_names)}
         for name in oracle_vars
     ]
+    r1_oracle_ladder = {
+        "priority_vars": list(r1_priority_vars),
+        "skipped": list(r1_priority_skipped),
+        "source": "certified-region-state-coordinates",
+        "proof": "ESBMC path-cov-assert HOLDS rows only",
+    }
     with open(os.path.join(assert_dir, "spec.json"), "w") as f:
         json.dump(spec, f)
+    ladder_budget = esbmc_budget("ladder")
+    capped_ladder_budget = budget_with_followup_reserve(
+        ladder_budget, a.min_r2_esbmc_budget, a.propose_r2)
+    if capped_ladder_budget < ladder_budget:
+        print("[put]   ESBMC ladder probe capped at "
+              f"{capped_ladder_budget}s to reserve "
+              f"{a.min_r2_esbmc_budget}s for verifier-backed R2 proof")
     out2, rc2, w2 = run_esbmc(
         a.esbmc, a.sol, a.ast, a.contract, a.unit,
         ["--path-cov-assert", os.path.join(assert_dir, "spec.json"),
          "--cov-report-json"] + a.esbmc_arg,
-        assert_dir, a.max_tx, esbmc_budget("ladder"), a.memlimit, a.scope)
+        assert_dir, a.max_tx, capped_ladder_budget, a.memlimit, a.scope)
     rows, summary, refusal, blocker = parse_ladder(out2)
     rows = restore_ladder_row_names(rows, state_store_names)
     # The ladder run is asked about exactly ONE (unit, enc), so any rollback
@@ -12058,7 +15200,13 @@ def main():
     # `rows` already carries, so this cannot run before the first pass and
     # never guesses `delta_dir`.
     r2_term_lookup = {}
-    r2_fuzz_prefilter = {"enabled": bool(a.fuzz_r2_prefilter)}
+    r2_ladder = r2_ladder_accounting([], requested=bool(a.propose_r2))
+    r2_fuzz_prefilter = {
+        "enabled": bool(a.fuzz_r2_prefilter),
+        "refutation_only": True,
+        "proves_candidates": False,
+        "proof_consumer": "ESBMC",
+    }
     path_reverts = path_exit_kind == "revert"
     skip_r2_after_partial_oracle = False
     if a.propose_r2 and rows and summary is None:
@@ -12070,10 +15218,11 @@ def main():
                 unwind=unwind_applied,
                 derived_by=json.loads(a.derived_by or "{}"),
                 rollback_exit=rollback_here, r2_terms={},
-                establish=json.loads(a.establish or "[]"),
+                establish=establish_spec,
                 exit_kind=path_exit_kind,
                 unit_payable=(unit_mutability == "payable"),
-                state_store_names=state_store_names)
+                state_store_names=state_store_names,
+                flat_source=flat_source)
         except ConcreteFallback:
             _probe_stats = {}
         skip_r2_after_partial_oracle = partial_ladder_already_has_strict_oracle(
@@ -12109,25 +15258,32 @@ def main():
                     _var_bytes[_v] = query_maps[_mk][2]
             _source_literals, _source_evidence = source_r2_literals(
                 a.ast, a.contract, a.unit, arity=len(params or []),
-                declaration_id=declaration_id)
+                declaration_id=ast_declaration_id)
             for _evidence in _source_evidence:
                 print(f"[put]   {_evidence}")
+            _region_literals, _region_evidence = region_r2_literals(
+                region, pins, params, state_types=state_types)
+            for _evidence in _region_evidence:
+                print(f"[put]   {_evidence}")
+            _literal_seen = set()
+            _r2_literals = []
+            for _literal in list(_source_literals) + list(_region_literals):
+                if _literal in _literal_seen:
+                    continue
+                _literal_seen.add(_literal)
+                _r2_literals.append(_literal)
             _rendered_coords = []
             for _pn, _pt in params or []:
-                if _pn not in region:
+                if _pn not in region and _pn not in pins:
                     continue
-                _kind = lift_kind(_pt)
-                if _kind is None:
-                    continue
-                _coord_kind = {
-                    "address": "id",
-                    "bytes": "id",
-                    "bool": "bool",
-                }.get(_kind[0], "num")
-                _rendered_coords.append(
-                    (_pn, _coord_kind,
-                     (20 if _kind[0] == "address" else
-                      (_kind[1] // 8 if _kind[0] == "bytes" else None))))
+                if append_r2_coord_once(
+                        _rendered_coords,
+                        r2_coord_tuple_from_type(_pn, _pt)):
+                    src = "region" if _pn in region else "pin"
+                    print(f"[put]   R2 endpoint `{_pn}` is nameable from "
+                          f"{src}; pinned endpoints are constants in the "
+                          "assert spec but still useful source-assignment "
+                          "right-hand sides")
             _rendered_coords += rendered_env_coords_for_emitted_case(
                 emitted, case, a.unit, region)
             for _sn in sorted({n for n in list(region) + list(pins)
@@ -12138,38 +15294,34 @@ def main():
                 _layout_name = layout_scalar_key(_sv, layout, state_store_names)
                 if _layout_name is not None:
                     _nb = layout[_layout_name][2]
-                    _rendered_coords.append(
+                    append_r2_coord_once(
+                        _rendered_coords,
                         (_sn, "id" if _nb == 20 else "num",
                          _nb if _nb == 20 else None))
                     continue
                 _lk = lift_kind((state_types or {}).get(_sv))
                 if _lk is None:
                     continue
-                _kind, _width = _lk
-                _coord_kind = {
-                    "address": "id",
-                    "bytes": "id",
-                    "bool": "bool",
-                }.get(_kind, "num")
-                _rendered_coords.append(
-                    (_sn, _coord_kind,
-                     (20 if _kind == "address" else
-                      (_width // 8 if _kind == "bytes" else None))))
+                append_r2_coord_once(
+                    _rendered_coords,
+                    r2_coord_tuple_from_type(_sn, (state_types or {}).get(_sv)))
             _r2, _source_assignment_evidence = source_assignment_r2_specs(
                 a.ast, a.contract, a.unit, params, layout, _rendered_coords,
                 arity=len(params or []), declaration_id=declaration_id,
                 rettypes=rettypes, maps=query_maps, log=print)
             _typed_r2 = propose_r2_batch(
-                rows, params, source_literals=_source_literals,
+                rows, params, source_literals=_r2_literals,
                 depth=a.r2_depth, var_bytes=_var_bytes, rettypes=rettypes,
                 rendered_coords=_rendered_coords,
                 term_budget=a.r2_term_budget,
                 candidate_budget=a.r2_candidate_budget, log=print)
             _r2 = schedule_source_r2_specs(_r2, _typed_r2, log=print)
-            _r2, _ = dedup_r2_specs_by_normalized_text(
+            _r2, _r2_dedup_dropped = dedup_r2_specs_by_normalized_text(
                 _r2, point_value_texts(region, pins), log=print)
             r2_term_lookup = r2_terms_from_specs(_r2)
             r2_requested = True
+            _r2_before_fuzz = json.loads(json.dumps(_r2))
+            _r2_filtered = _r2
             if unwind_applied:
                 print("[put]   R2 ESBMC passes inherit ladder repair args: "
                       + " ".join(unwind_applied))
@@ -12183,6 +15335,11 @@ def main():
                         _r2, a.fuzz_r2_candidate_budget, reason,
                         a.fuzz_runs))
                     print(f"[put]   Forge R2 prefilter NOT RUN: {reason}")
+                _r2_filtered = []
+                r2_ladder = r2_ladder_accounting(
+                    _r2_before_fuzz, _r2_filtered, [],
+                    r2_fuzz_prefilter, requested=True,
+                    dedup_dropped=_r2_dedup_dropped, skip_reason=reason)
             elif a.fuzz_r2_prefilter:
                 remaining_for_r2 = (
                     put_deadline - time.monotonic() - postprocess_reserve_s
@@ -12195,6 +15352,7 @@ def main():
                         _r2, a.fuzz_r2_candidate_budget,
                         "skipped to reserve ESBMC R2 proof budget",
                         a.fuzz_runs))
+                    _r2_filtered = _r2
                     r2_fuzz_prefilter["enabled"] = True
                     r2_fuzz_prefilter["reserved_esbmc_budget_s"] = (
                         a.min_r2_esbmc_budget)
@@ -12217,17 +15375,46 @@ def main():
                         fuzz_timeout, a.fuzz_runs,
                         a.fuzz_r2_candidate_budget, foundry_fixture,
                         constructor_mocks, runtime_mocks,
-                        json.loads(a.establish or "[]"),
+                        establish_spec,
                         unit_payable=(unit_mutability == "payable"),
-                        state_store_names=state_store_names)
+                        state_store_names=state_store_names,
+                        flat_source=flat_source)
                     r2_fuzz_prefilter["enabled"] = True
                     r2_fuzz_prefilter["reserved_esbmc_budget_s"] = (
                         a.min_r2_esbmc_budget)
-                    _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
+                    observed_revert = stable_unlabeled_revert_from_forge_prefilter(
+                        r2_fuzz_prefilter)
+                    if observed_revert and path_exit_kind != "revert":
+                        path_exit_kind = "revert"
+                        path_reverts = True
+                        _r2 = []
+                        note = (
+                            "Forge R2 prefilter observed a stable unlabeled "
+                            "Solidity revert before any candidate oracle "
+                            f"({observed_revert}); treating this path as a "
+                            "revert exit and dropping post-state/return R1/R2 "
+                            "as unobservable. This is a fuzz refutation, not "
+                            "a proof")
+                        notes.append(note)
+                        print(f"[put]   {note}")
+                    else:
+                        _r2 = filter_r2_specs(_r2, _fuzz_verdicts)
+                    _r2_filtered = _r2
                     survivors = len(r2_candidates(_r2))
+                    r2_fuzz_prefilter["survivors_sent_to_esbmc"] = survivors
                     print(f"[put]   Forge R2 survivors sent to ESBMC: "
                           f"{survivors}; a Forge pass was NOT counted as "
                           "proof")
+            else:
+                _r2_filtered = _r2
+            if rollback_here or path_reverts:
+                reason = ("rollback path has no observable R2 post-state"
+                          if rollback_here else
+                          "revert path has no observable R2 post-state")
+                r2_ladder = r2_ladder_accounting(
+                    _r2_before_fuzz, _r2_filtered, [],
+                    r2_fuzz_prefilter, requested=True,
+                    dedup_dropped=_r2_dedup_dropped, skip_reason=reason)
 
             def _write_r2(suffix, spec_dict):
                 p = os.path.join(assert_dir, "spec" + suffix + ".json")
@@ -12266,10 +15453,21 @@ def main():
                           "keeping the default-solver result")
                 return o
 
-            rows += maybe_run_r2_passes(
+            _r2_rows = maybe_run_r2_passes(
                 _r2, spec, _write_r2, _run_r2, parse_ladder,
                 rollback_here=rollback_here, revert_here=path_reverts,
                 notes=notes)
+            rows += _r2_rows
+            if not (rollback_here or path_reverts):
+                r2_ladder = r2_ladder_accounting(
+                    _r2_before_fuzz, _r2_filtered, _r2_rows,
+                    r2_fuzz_prefilter, requested=True,
+                    dedup_dropped=_r2_dedup_dropped)
+            print("[put]   R2 accounting: "
+                  f"{r2_ladder['candidate_count']} candidate(s), "
+                  f"{r2_ladder['fuzz_refuted']} fuzz-refuted, "
+                  f"{r2_ladder['survivors_sent_to_esbmc']} sent to ESBMC, "
+                  f"{r2_ladder['esbmc_proved']} proved")
     else:
         # ---- AN R2 CLASS THAT WAS NEVER ASKED FOR MUST NOT READ AS ONE ------
         #
@@ -12352,17 +15550,27 @@ def main():
               "tool named, to get a verdict")
         print(f"[put]   tool line: {refusal}")
         with open(os.path.join(a.workdir, "put.json"), "w") as f:
-            json.dump({"contract": a.contract, "unit": a.unit, "enc": a.enc,
+            json.dump({"kind": "refusal",
+                       "stage4_kind": stage4_kind,
+                       "contract": a.contract, "unit": a.unit, "enc": a.enc,
                        "depth": a.depth, "refused": "ladder-undecided-truncated",
+                       "refusal_reason": refusal,
+                       "path_function": pf,
                        "ladder_refusal": refusal,
+                       "r2_ladder": r2_ladder,
+                       "r1_oracle_ladder": r1_oracle_ladder,
+                       "timing": stage4_timing_record(put_start, a.timeout),
+                       **storage_layout_status,
                        # What was TRIED, so "still truncated" is separable from
                        # "nobody widened anything". An empty list here with
                        # --auto-unwind 0 is the second case and says so.
                        "unwind_attempts": unwind_attempts,
                        "constructor_staticcall_mocks": len(
-                           constructor_mocks) // 2,
+                           constructor_staticcall_mocks) // 2,
                        "runtime_interface_mocks": runtime_mock_addresses,
                        "runtime_interface_mock_calls": runtime_mock_calls,
+                       "runtime_staticcall_mocks":
+                           runtime_staticcall_mock_calls,
                        "notes": notes}, f, indent=2)
         return 3
     if blocker == "vacuous":
@@ -12375,13 +15583,23 @@ def main():
               "path is never taken from. Refusing rather than shipping a test "
               "that could be green while standing for nothing")
         with open(os.path.join(a.workdir, "put.json"), "w") as f:
-            json.dump({"contract": a.contract, "unit": a.unit, "enc": a.enc,
+            json.dump({"kind": "refusal",
+                       "stage4_kind": stage4_kind,
+                       "contract": a.contract, "unit": a.unit, "enc": a.enc,
                        "depth": a.depth, "refused": "ladder-vacuous",
+                       "refusal_reason": refusal,
+                       "path_function": pf,
                        "ladder_refusal": refusal,
+                       "r2_ladder": r2_ladder,
+                       "r1_oracle_ladder": r1_oracle_ladder,
+                       "timing": stage4_timing_record(put_start, a.timeout),
+                       **storage_layout_status,
                        "constructor_staticcall_mocks": len(
-                           constructor_mocks) // 2,
+                           constructor_staticcall_mocks) // 2,
                        "runtime_interface_mocks": runtime_mock_addresses,
                        "runtime_interface_mock_calls": runtime_mock_calls,
+                       "runtime_staticcall_mocks":
+                           runtime_staticcall_mock_calls,
                        "notes": notes}, f, indent=2)
         return 2
 
@@ -12395,7 +15613,7 @@ def main():
     # is how the emitted function and the name the B gate looks up come to
     # disagree -- and a lookup that cannot match is a gate that never fires.
     overload_label = overload_artifact_label(
-        a.ast, a.contract, a.unit, declaration_id)
+        a.ast, a.contract, a.unit, ast_declaration_id)
     plabel = overload_label + (f"p{a.piece}" if a.piece else "")
     try:
         put, stats = build_put(a.contract, a.unit, a.enc, a.depth, pf,
@@ -12412,9 +15630,10 @@ def main():
                                lift_unconstrained_calldata=(
                                    a.lift_unconstrained_calldata),
                                path_decisions=claim.get("decisions") or [],
-                               establish=json.loads(a.establish or "[]"),
+                               establish=establish_spec,
                                unit_payable=(unit_mutability == "payable"),
-                               state_store_names=state_store_names)
+                               state_store_names=state_store_names,
+                               flat_source=flat_source)
     except ConcreteFallback as fallback:
         cname, _cstart, _cend = emitted.blocks[case[0]]
         newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
@@ -12424,7 +15643,8 @@ def main():
                 emitted, case, newc, foundry_fixture, layout, a.contract,
                 a.unit, constructor_mocks, runtime_mocks, constructor_params,
                 params, constructor_param_mocks,
-                constructor_param_hascode_mocks, flat_source)
+                constructor_param_runtime_mocks, constructor_param_hascode_mocks,
+                flat_source)
         except ValueError as exc:
             reason = str(exc)
             print(f"[put] REFUSED: {reason}")
@@ -12436,7 +15656,10 @@ def main():
                            "artifact_identity": overload_label,
                            "piece": a.piece,
                            "refused": "concrete-assembly-unrenderable",
+                           "refusal_reason": reason,
                            "concrete_reason": reason,
+                           "timing": stage4_timing_record(
+                               put_start, a.timeout),
                            "binary": binary_identity(a.esbmc),
                            "notes": notes + [reason]}, f, indent=2)
             return 1
@@ -12451,12 +15674,13 @@ def main():
                        "contract": a.contract, "unit": a.unit, "enc": a.enc,
                        "depth": a.depth, "path_function": pf,
                        "artifact_identity": overload_label,
+                       **storage_layout_status,
                        "file": dest, "test": case[1], "piece": a.piece,
                        "region": {k: [str(v[0]), str(v[1])]
                                   for k, v in region.items()},
                        "holes": {k: [str(x) for x in v]
                                  for k, v in holes.items()},
-                       "establish": json.loads(a.establish or "[]"),
+                       "establish": establish_spec,
                        "pins": {k: str(v) for k, v in pins.items()},
                        "ladder": [{"var": v, "text": t, "verdict": d}
                                   for v, t, d in rows],
@@ -12468,6 +15692,8 @@ def main():
                        "r2_candidate_budget": (a.r2_candidate_budget
                                                 if r2_requested else None),
                        "r2_fuzz_prefilter": r2_fuzz_prefilter,
+                       "r2_ladder": r2_ladder,
+                       "r1_oracle_ladder": r1_oracle_ladder,
                        "oracle_dependency_policy": SLOT_DEPENDENCY_POLICY,
                        "oracle_dependency_state": list(slot_dependencies or ()),
                        "oracle_vars": list(oracle_vars),
@@ -12480,16 +15706,20 @@ def main():
                        "unwind_attempts": unwind_attempts,
                        "cell": {"name": cell_name, "scope": a.scope,
                                 "max_tx": a.max_tx, "rule": cell_rule},
+                       "timing": stage4_timing_record(
+                           put_start, a.timeout),
                        "binary": binary_identity(a.esbmc),
                        "concrete_reason": fallback.reason,
                        "constructor_staticcall_mocks": len(
-                           constructor_mocks) // 2,
+                           constructor_staticcall_mocks) // 2,
                        "constructor_param_interface_mocks": len(
                            constructor_param_mocks),
                        "constructor_param_hascode_mocks": len(
                            constructor_param_hascode_mocks),
                        "runtime_interface_mocks": runtime_mock_addresses,
                        "runtime_interface_mock_calls": runtime_mock_calls,
+                       "runtime_staticcall_mocks":
+                           runtime_staticcall_mock_calls,
                        "stats": {
                            "fuzz_params": 0,
                            "lifted": [],
@@ -12497,19 +15727,78 @@ def main():
                            "wide_fuzz_coords": [],
                            "dynamic_fuzz_coords": [],
                            "asserts": 0,
+                           "verifier_asserts": 0,
                            "state_asserts": 0,
                            "return_asserts": 0,
                            "exit_kind_asserts": 0,
                            "guarded_asserts": 0,
-                           "oracle_classes": [],
-                           "assertion_oracles": [],
+                           **empty_oracle_stats(),
                        },
+                       "materialization": stage4_materialization_metadata(
+                           "concrete",
+                           {"r2_ladder": r2_ladder,
+                            **empty_oracle_stats()},
+                           reason=fallback.reason,
+                           fallback_after_put_attempt=True),
                        "notes": notes}, f, indent=2)
         return 0
     if put is None:
-        print("[put] REFUSED: " + "; ".join(notes))
-        return 1
+        reason = "; ".join(notes) or "build_put returned no PUT"
+        print("[put] REFUSED: " + reason)
+        write_put_refusal_record(
+            a.workdir, "build-put-refused", a.contract, a.unit, a.enc,
+            a.depth, path_function=pf, region=region, holes=holes, pins=pins,
+            establish=establish_spec, ladder_rows=rows,
+            ladder_summary=summary, ladder_refusal=refusal, piece=a.piece,
+            artifact_identity=overload_label, notes=notes,
+            extra={
+                **storage_layout_status,
+                "r2_requested": r2_requested,
+                "r2_depth": a.r2_depth if r2_requested else None,
+                "r2_term_budget": (
+                    a.r2_term_budget if r2_requested else None),
+                "r2_candidate_budget": (
+                    a.r2_candidate_budget if r2_requested else None),
+                "r2_fuzz_prefilter": r2_fuzz_prefilter,
+                "r2_ladder": r2_ladder,
+                "r1_oracle_ladder": r1_oracle_ladder,
+                "oracle_dependency_policy": SLOT_DEPENDENCY_POLICY,
+                "oracle_dependency_state": list(slot_dependencies or ()),
+                "oracle_vars": list(oracle_vars),
+                "getter_signature": getter_signature,
+                "slot_candidates": {
+                    "asked": list(slot_vars),
+                    "unanswered": unanswered,
+                    "rows_for_unasked_names": unasked,
+                },
+                "esbmc_extra_args": a.esbmc_arg,
+                "unwind_applied_to_ladder_only": unwind_applied,
+                "unwind_attempts": unwind_attempts,
+                "cell": {
+                    "name": cell_name,
+                    "scope": a.scope,
+                    "max_tx": a.max_tx,
+                    "rule": cell_rule,
+                },
+                "binary": binary_identity(a.esbmc),
+                **storage_layout_status,
+                "constructor_staticcall_mocks": len(
+                    constructor_staticcall_mocks) // 2,
+                "constructor_param_interface_mocks": len(
+                    constructor_param_mocks),
+                "constructor_param_runtime_interface_mocks": len(
+                    constructor_param_runtime_mocks),
+                "constructor_param_hascode_mocks": len(
+                    constructor_param_hascode_mocks),
+                "runtime_interface_mocks": runtime_mock_addresses,
+                "runtime_interface_mock_calls": runtime_mock_calls,
+                "runtime_staticcall_mocks": runtime_staticcall_mock_calls,
+            },
+            timing_start=put_start, timeout_s=a.timeout)
+        return 2
     stats["repaired_unsupported_skeleton"] = repaired_unsupported_skeleton
+    stats["r1_oracle_ladder"] = r1_oracle_ladder
+    stats["r2_ladder"] = r2_ladder
 
     # Insert into the SAME test contract, so the PUT shares the deploy the
     # concrete tests use rather than carrying a second copy of it.
@@ -12519,6 +15808,7 @@ def main():
                               layout, a.contract, a.unit, constructor_mocks,
                               runtime_mocks, constructor_params,
                               constructor_param_mocks,
+                              constructor_param_runtime_mocks,
                               constructor_param_hascode_mocks, flat_source)
     dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
     with open(dest, "w") as f:
@@ -12548,9 +15838,12 @@ def main():
         print(f"[put]   note: {n}")
 
     with open(os.path.join(a.workdir, "put.json"), "w") as f:
-        json.dump({"contract": a.contract, "unit": a.unit, "enc": a.enc,
+        json.dump({"kind": "put",
+                   "contract": a.contract, "unit": a.unit, "enc": a.enc,
                    "depth": a.depth, "path_function": pf,
                    "artifact_identity": overload_label,
+                   **storage_layout_status,
+                   "getter_signature": getter_signature,
                    "file": dest,
                    # The SAME `plabel` build_put used. A second derivation here
                    # is how put.json comes to name a function the file does not
@@ -12561,7 +15854,7 @@ def main():
                    "region": {k: [str(v[0]), str(v[1])]
                               for k, v in region.items()},
                    "holes": {k: [str(x) for x in v] for k, v in holes.items()},
-                   "establish": json.loads(a.establish or "[]"),
+                   "establish": establish_spec,
                    "pins": {k: str(v) for k, v in pins.items()},
                    "ladder": [{"var": v, "text": t, "verdict": d}
                               for v, t, d in rows],
@@ -12580,6 +15873,8 @@ def main():
                    "r2_candidate_budget": (a.r2_candidate_budget
                                             if r2_requested else None),
                    "r2_fuzz_prefilter": r2_fuzz_prefilter,
+                   "r2_ladder": r2_ladder,
+                   "r1_oracle_ladder": r1_oracle_ladder,
                    "oracle_dependency_policy": SLOT_DEPENDENCY_POLICY,
                    "oracle_dependency_state": list(slot_dependencies or ()),
                    "oracle_vars": list(oracle_vars),
@@ -12604,13 +15899,21 @@ def main():
                    "cell": {"name": cell_name, "scope": a.scope,
                             "max_tx": a.max_tx, "rule": cell_rule},
                    "constructor_staticcall_mocks": len(
-                       constructor_mocks) // 2,
+                       constructor_staticcall_mocks) // 2,
                    "constructor_param_interface_mocks": len(
                        constructor_param_mocks),
+                   "constructor_param_runtime_interface_mocks": len(
+                       constructor_param_runtime_mocks),
                    "constructor_param_hascode_mocks": len(
                        constructor_param_hascode_mocks),
                    "runtime_interface_mocks": runtime_mock_addresses,
                    "runtime_interface_mock_calls": runtime_mock_calls,
+                   "runtime_staticcall_mocks": runtime_staticcall_mock_calls,
+                   "stage4_kind": stage4_kind,
+                   "timing": stage4_timing_record(put_start, a.timeout),
+                   "materialization": stage4_materialization_metadata(
+                       "put", stats, r2_requested=r2_requested,
+                       r2_fuzz_prefilter=r2_fuzz_prefilter),
                    # WHICH EXECUTABLE PRODUCED THIS. Without it a reader
                    # that re-reads put.json (put_all --forge-only) cannot tell
                    # a row emitted by this tree from one left behind by a build

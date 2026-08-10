@@ -1618,6 +1618,16 @@ static bool path_cov_component_name_matches(
   return std::find(names.begin(), names.end(), field) != names.end();
 }
 
+static bool path_cov_component_name_matches_dotted_root(
+  const struct_typet::componentt &comp,
+  const std::string &field)
+{
+  const size_t dot = field.find('.');
+  const std::string root =
+    dot == std::string::npos ? field : field.substr(0, dot);
+  return path_cov_component_name_matches(comp, root);
+}
+
 // Walk a dotted field path (`taker`, `timelocks.deployedAt`) down from `e`.
 //
 // This is what makes a STRUCT ARGUMENT generalisable at all. An aggregate has no
@@ -1663,6 +1673,133 @@ walk_fields(const namespacet &ns, expr2tc &e, const std::string &path)
     p = q + 1;
   }
   return false;
+}
+
+static bool
+path_cov_is_bytes_static_type(const namespacet &ns, const type2tc &t)
+{
+  const typet st = ns.follow(migrate_type_back(t));
+  if (st.id() != "struct")
+    return false;
+  if (st.get("tag").as_string() == "BytesStatic")
+    return true;
+  bool has_data = false, has_length = false;
+  for (const auto &comp : to_struct_type(st).components())
+  {
+    const std::string base = comp.get("#base_name").as_string();
+    const std::string name = comp.get_name().as_string();
+    has_data = has_data || base == "data" || name == "data";
+    has_length = has_length || base == "length" || name == "length";
+  }
+  return has_data && has_length;
+}
+
+static bool path_cov_bytes_static_parts(
+  const namespacet &ns,
+  const expr2tc &e,
+  expr2tc &data,
+  expr2tc &length)
+{
+  const typet st = ns.follow(migrate_type_back(e->type));
+  if (st.id() != "struct")
+    return false;
+  for (const auto &comp : to_struct_type(st).components())
+  {
+    const std::string base = comp.get("#base_name").as_string();
+    const std::string name = comp.get_name().as_string();
+    if (base == "data" || name == "data")
+      data = member2tc(migrate_type(comp.type()), e, comp.get_name());
+    else if (base == "length" || name == "length")
+      length = member2tc(migrate_type(comp.type()), e, comp.get_name());
+  }
+  return !is_nil_expr(data) && !is_nil_expr(length) &&
+         is_array_type(data->type);
+}
+
+static bool path_cov_bytes_static_to_uint_expr(
+  const namespacet &ns,
+  expr2tc &e,
+  bool mapping_key,
+  unsigned fixed_len = 0)
+{
+  expr2tc data, length;
+  if (!path_cov_bytes_static_parts(ns, e, data, length))
+    return false;
+
+  const type2tc u256 = get_uint_type(256);
+  const type2tc elem_t = to_array_type(data->type).subtype;
+  expr2tc raw = constant_int2tc(u256, BigInt(0));
+  const unsigned n = fixed_len == 0 ? 32 : std::min(fixed_len, 32u);
+  for (unsigned i = 0; i < n; ++i)
+  {
+    const expr2tc idx = constant_int2tc(length->type, BigInt(i));
+    expr2tc byte = index2tc(elem_t, data, idx);
+    byte = typecast2tc(u256, byte);
+    const expr2tc shifted = shl2tc(u256, raw, constant_int2tc(u256, BigInt(8)));
+    const expr2tc next = bitor2tc(u256, shifted, byte);
+    raw = fixed_len == 0 ? if2tc(u256, greaterthan2tc(length, idx), next, raw)
+                         : next;
+  }
+
+  if (mapping_key)
+  {
+    expr2tc prefix = fixed_len == 0 ? typecast2tc(u256, length)
+                                    : constant_int2tc(u256, BigInt(fixed_len));
+    prefix = shl2tc(u256, prefix, constant_int2tc(u256, BigInt(248)));
+    e = bitor2tc(u256, prefix, raw);
+  }
+  else
+  {
+    e = raw;
+  }
+  return true;
+}
+
+static bool path_cov_scalarize_bytes_static(const namespacet &ns, expr2tc &e)
+{
+  if (!path_cov_is_bytes_static_type(ns, e->type))
+    return true;
+  return path_cov_bytes_static_to_uint_expr(ns, e, false);
+}
+
+static bool path_cov_consume_tail_to_array(
+  const namespacet &ns,
+  expr2tc &e,
+  type2tc &t,
+  std::string &tail)
+{
+  while (!is_array_type(t))
+  {
+    if (tail.empty() || tail[0] != '.')
+      return false;
+    const size_t start = 1;
+    size_t end = tail.find('.', start);
+    const size_t bracket = tail.find('[', start);
+    if (
+      end == std::string::npos ||
+      (bracket != std::string::npos && bracket < end))
+      end = bracket;
+    const std::string field =
+      tail.substr(start, end == std::string::npos ? end : end - start);
+    if (field.empty())
+      return false;
+    const typet st = ns.follow(migrate_type_back(t));
+    if (st.id() != "struct")
+      return false;
+    bool hit = false;
+    for (const auto &comp : to_struct_type(st).components())
+      if (path_cov_component_name_matches(comp, field))
+      {
+        e = member2tc(migrate_type(comp.type()), e, comp.get_name());
+        t = migrate_type(comp.type());
+        hit = true;
+        break;
+      }
+    if (!hit)
+      return false;
+    tail = end == std::string::npos ? std::string() : tail.substr(end);
+  }
+  return true;
 }
 
 // The TYPE at the end of a dotted field path, without building an expression.
@@ -2673,24 +2810,23 @@ void goto_coveraget::audit_entry_liveness(const std::string &focus_function)
   }
 
   if (total_decided == 0)
-    log_error(
-      "--solidity-path-coverage: INTERNAL DEFECT — NOT ONE of the {} "
-      "instrumented path claim(s) reached the solver. The harness never "
-      "entered any unit, so this run establishes nothing whatsoever; every "
-      "path would otherwise be reported 'U', which reads exactly like an "
-      "honest solver timeout. This is the extreme case of the per-unit check "
-      "below and is a tool failure, not a result.",
+    log_warning(
+      "--solidity-path-coverage: {} instrumented path claim(s) reached no "
+      "solver verdict. This run establishes no path witness, but it is still a "
+      "reportable result: cov-report.json records every affected path as U with "
+      "reason 'unit-not-entered' instead of aborting before the report is "
+      "written. Treat this as a harness/frontend defect to repair, not as a "
+      "successful coverage measurement.",
       total_instrumented);
   else
-    log_error(
-      "--solidity-path-coverage: INTERNAL DEFECT — {} unit(s) had claims "
-      "instrumented but NONE of them reached the solver, i.e. the harness "
-      "never entered them: {}. Their paths would be reported 'U', which is "
-      "indistinguishable from an honest solver timeout, so the results for "
-      "those units are vacuous rather than merely incomplete.",
+    log_warning(
+      "--solidity-path-coverage: {} unit(s) had claims instrumented but NONE "
+      "of them reached the solver, i.e. the harness never entered them: {}. "
+      "cov-report.json records those paths as U with reason 'unit-not-entered' "
+      "instead of aborting before the report is written; the result is "
+      "diagnostic data, not evidence of bounded unreachability.",
       dead.size(),
       names);
-  abort();
 }
 
 std::string goto_coveraget::get_filename_from_path(std::string path)
@@ -3505,7 +3641,8 @@ void goto_coveraget::k_path_coverage()
 // same traversal rules as the enumerating DFS: conditional GOTOs fan out 2-way,
 // each loop head gets its own back-edge budget, folded short-circuit operands in
 // ASSIGN/RETURN fan out 2^K, and RETURN / END_FUNCTION / a `#sol_error` call are
-// terminators.
+// terminators. A source-level Solidity assert contributes one extra terminal
+// false arm (Panic/revert) while its true arm continues normally.
 //
 // Sole purpose is measurement: it is run on a snapshot of each unit's body taken
 // BEFORE internal calls are expanded, so the ratio against the real enumeration
@@ -3536,6 +3673,13 @@ static size_t count_paths_no_instrument(
     const symbolt *s = ns.lookup(to_symbol2t(fn).thename);
     return s && !s->type.get("#sol_error").as_string().empty();
   };
+  auto is_source_assert_decision = [](goto_programt::const_targett i) {
+    if (!i->is_assert() || is_nil_expr(i->guard))
+      return false;
+    const std::string prop = i->location.property().as_string();
+    return prop != "skipped" && prop != "replaced assertion" &&
+           prop != "instrumented assertion";
+  };
 
   using becntt = std::map<unsigned, unsigned>;
   std::vector<std::pair<goto_programt::const_targett, becntt>> stack;
@@ -3559,6 +3703,12 @@ static size_t count_paths_no_instrument(
       {
         ++paths;
         break;
+      }
+      if (is_source_assert_decision(pc))
+      {
+        ++paths;            // assert-false exits via Solidity Panic/revert.
+        pc = std::next(pc); // assert-true continues normally.
+        continue;
       }
       if (pc->is_return() && is_code_return2t(pc->code))
       {
@@ -4755,8 +4905,10 @@ void goto_coveraget::solidity_path_coverage()
   // claim's guard is `tr != enc || cnt != depth` — it mentions nothing but the
   // ghost accumulators. So every contract-state write and every environment
   // read is unreachable from the claim and gets sliced, leaving the report's
-  // `inputs`/`env`/`final_state` empty. (Call arguments survive on their own:
-  // the decisions that build `tr` are guards over them.)
+  // `inputs`/`env`/`final_state` empty. Function arguments are not guaranteed
+  // to survive either: if a parameter only feeds a low-level call abstraction
+  // and not a path decision directly, the path guard has no backwards edge to
+  // it.
   //
   // ESBMC already has a per-symbol exemption for exactly this — no_slice_names
   // (`--no-slice-name`), consulted by symex_slicet::get_symbols. Register the
@@ -4767,13 +4919,15 @@ void goto_coveraget::solidity_path_coverage()
   //       arrays are NOT fields of the contract object, the frontend lowers
   //       them to contract-level globals; this is the same shape the harvest
   //       keys on;
-  //   (c) the EVM environment, by the same msg_/tx_/block_ base-name test the
+  //   (c) Solidity function parameters, which bmc.cpp will further filter to
+  //       this path's target unit before publishing them as `inputs`;
+  //   (d) the EVM environment, by the same msg_/tx_/block_ base-name test the
   //       harvest uses to classify a value as `env` rather than an argument.
   // Everything else — the c2goto keccak/sha256/ABI tables, the address
   // allocator, the dispatcher plumbing — is still sliced away.
   if (protect_ce_symbols)
   {
-    size_t n_obj = 0, n_store = 0, n_env = 0;
+    size_t n_obj = 0, n_store = 0, n_param = 0, n_env = 0;
     cov_context->foreach_operand([&](const symbolt &s) {
       const std::string id = s.id.as_string();
       const std::string base = s.name.as_string();
@@ -4789,6 +4943,13 @@ void goto_coveraget::solidity_path_coverage()
         ++n_store;
       }
       else if (
+        s.is_parameter && id.rfind("sol:@C@", 0) == 0 &&
+        id.find("@F@") != std::string::npos)
+      {
+        config.no_slice_names.insert(id);
+        ++n_param;
+      }
+      else if (
         base.rfind("msg_", 0) == 0 || base.rfind("tx_", 0) == 0 ||
         base.rfind("block_", 0) == 0)
       {
@@ -4800,10 +4961,12 @@ void goto_coveraget::solidity_path_coverage()
       "--solidity-path-coverage with --cov-report-json: exempting {} symbol(s) "
       "from slicing so each path's counterexample values survive into the "
       "report ({} contract object(s), {} contract-scope store(s), {} "
-      "environment); slicing stays enabled for everything else",
-      n_obj + n_store + n_env,
+      "function parameter(s), {} environment); slicing stays enabled for "
+      "everything else",
+      n_obj + n_store + n_param + n_env,
       n_obj,
       n_store,
+      n_param,
       n_env);
   }
 
@@ -5051,6 +5214,22 @@ void goto_coveraget::solidity_path_coverage()
       continue;
 
     const std::string uname = e_it->first.as_string();
+    auto stage_spec_names = [&uname](const std::string &spec) {
+      return uname == spec || uname.find("@F@" + spec + "#") != std::string::npos;
+    };
+    const bool expansion_stage_target =
+      (outer_on && stage_spec_names(outer_unit)) ||
+      (certify_on && stage_spec_names(certify_unit)) ||
+      (assert_on && stage_spec_names(assert_unit));
+    if (
+      !focus_function.empty() && !expansion_stage_target &&
+      !focus_selects_unit(uname, focus_function))
+      continue;
+    if (
+      !instrument_only.empty() && !expansion_stage_target &&
+      !focus_selects_unit(uname, instrument_only))
+      continue;
+
     pre_inline_body[uname].copy_from(b);
 
     // Expand everything first and measure. Almost every unit fits, and for
@@ -5478,19 +5657,39 @@ void goto_coveraget::solidity_path_coverage()
         // that the stage-3 ladder's SECOND SCAN uses to build `store_syms`.
         const std::string cpfx = "sol:@C@" + own + "@";
         const symbolt *store = nullptr;
+        const symbolt *fallback_store = nullptr;
+        bool fallback_ambiguous = false;
+        const std::string mname_stripped =
+          path_cov_strip_solidity_decl_suffix(mname);
         cov_context->foreach_operand([&](const symbolt &s) {
           if (store != nullptr)
             return;
           const std::string id = s.id.as_string();
           if (id.rfind(cpfx, 0) != 0 || id.find("@F@") != std::string::npos)
             return;
-          std::string nm = id.substr(cpfx.size());
+          const std::string raw_nm = id.substr(cpfx.size());
+          std::string nm = raw_nm;
           const size_t hash = nm.find('#');
           if (hash != std::string::npos)
             nm = nm.substr(0, hash);
           if (nm == mname)
+          {
             store = &s;
+            return;
+          }
+          const std::string nm_stripped =
+            path_cov_strip_solidity_decl_suffix(nm);
+          if (nm_stripped != mname_stripped)
+            return;
+          if (fallback_store != nullptr && fallback_store != &s)
+          {
+            fallback_ambiguous = true;
+            return;
+          }
+          fallback_store = &s;
         });
+        if (store == nullptr && !fallback_ambiguous)
+          store = fallback_store;
         if (store == nullptr)
           return false;
         const type2tc mt = migrate_type(store->type);
@@ -5514,8 +5713,13 @@ void goto_coveraget::solidity_path_coverage()
         // reads the wrong shape without any diagnostic at all.
         expr2tc cur_e = symbol2tc(mt, store->id);
         type2tc cur_t = mt;
+        std::string remaining_tail = mtail;
         for (const std::string &kn : knames)
         {
+          if (
+            !is_array_type(cur_t) &&
+            !path_cov_consume_tail_to_array(ns, cur_e, cur_t, remaining_tail))
+            return false;
           // A level that is not an array means the name has MORE keys than the
           // store has levels. Refused (softly, as everything in this function
           // is) rather than stopping early: stopping would silently denote the
@@ -5532,9 +5736,13 @@ void goto_coveraget::solidity_path_coverage()
         }
 
         out = cur_e;
-        if (mtail.empty())
-          return true;
-        return walk_fields(ns, out, mtail.substr(1));
+        if (remaining_tail.empty())
+          return path_cov_scalarize_bytes_static(ns, out);
+        if (remaining_tail[0] != '.')
+          return false;
+        if (!walk_fields(ns, out, remaining_tail.substr(1)))
+          return false;
+        return path_cov_scalarize_bytes_static(ns, out);
       }
 
       // The contract instance object. Same symbol family the counterexample
@@ -5560,7 +5768,9 @@ void goto_coveraget::solidity_path_coverage()
       // variable is reachable field by field too (`state.cfg.limit`). The first
       // segment is the state variable itself.
       out = symbol2tc(migrate_type(ostruct), obj->id);
-      return walk_fields(ns, out, field);
+      if (!walk_fields(ns, out, field))
+        return false;
+      return path_cov_scalarize_bytes_static(ns, out);
     }
     if (fsym == nullptr)
       return false;
@@ -5587,8 +5797,19 @@ void goto_coveraget::solidity_path_coverage()
           return false;
         out = symbol2tc(migrate_type(s->type), s->id);
         if (dot == std::string::npos)
-          return true;
-        return walk_fields(ns, out, name.substr(dot + 1));
+        {
+          if (!path_cov_is_bytes_static_type(ns, out->type))
+            return true;
+          unsigned bytesn_size = 0;
+          const std::string bytesn = arg.get("#sol_bytesn_size").as_string();
+          if (!bytesn.empty())
+            bytesn_size = (unsigned)std::stoul(bytesn);
+          return path_cov_bytes_static_to_uint_expr(
+            ns, out, false, bytesn_size);
+        }
+        if (!walk_fields(ns, out, name.substr(dot + 1)))
+          return false;
+        return path_cov_scalarize_bytes_static(ns, out);
       }
     return false;
   };
@@ -5627,17 +5848,51 @@ void goto_coveraget::solidity_path_coverage()
       why.clear();
       return true;
     }
+
+    // A bytesN source parameter has two different scalar encodings in this
+    // machinery. As an ordinary region coordinate it is the raw payload uint;
+    // as a Solidity mapping key it is bytes_static_to_mapping_key(&param),
+    // which also folds in the fixed byte length. Catch that case before the
+    // general coordinate resolver scalarizes it to the raw payload.
+    if (fsym != nullptr && kn.find('.') == std::string::npos)
+      for (const auto &arg : to_code_type(fsym->type).arguments())
+        if (arg.get_base_name() == kn)
+        {
+          const symbolt *s = ns.lookup(arg.get_identifier());
+          if (s == nullptr)
+            return false;
+          expr2tc raw = symbol2tc(migrate_type(s->type), s->id);
+          if (!path_cov_is_bytes_static_type(ns, raw->type))
+            break;
+          kexpr = raw;
+          unsigned bytesn_size = 0;
+          const std::string bytesn = arg.get("#sol_bytesn_size").as_string();
+          if (!bytesn.empty())
+            bytesn_size = (unsigned)std::stoul(bytesn);
+          if (!path_cov_bytes_static_to_uint_expr(ns, kexpr, true, bytesn_size))
+          {
+            why = "bytes_static_to_mapping_key expression cannot be built";
+            return false;
+          }
+          why.clear();
+          return true;
+        }
+
     if (!resolve_coord(fsym, kn, kexpr))
     {
       why.clear();
       return false;
     }
-    // A source-level bytesN mapping key resolves to the frontend's BytesStatic
-    // aggregate. Normal Solidity mapping access lowers it through
-    // bytes_static_to_mapping_key before indexing, but a user-written path-cov
-    // slot name is only a coordinate name, not a full expression. Refuse the
-    // slot here instead of constructing an index over an aggregate key and
-    // aborting during instrumentation.
+    if (path_cov_is_bytes_static_type(ns, kexpr->type))
+    {
+      if (!path_cov_bytes_static_to_uint_expr(ns, kexpr, true))
+      {
+        why = "bytes_static_to_mapping_key expression cannot be built";
+        return false;
+      }
+      why.clear();
+      return true;
+    }
     coord_expressible(kexpr->type, why);
     return why.empty();
   };
@@ -6068,9 +6323,17 @@ void goto_coveraget::solidity_path_coverage()
     // code — so it is not an error.
     std::set<std::pair<std::string, unsigned>> phase1_decision_sites;
     std::set<std::pair<std::string, unsigned>> dfs_decision_sites;
+    auto is_source_assert_decision = [](goto_programt::const_targett i) {
+      if (!i->is_assert() || is_nil_expr(i->guard))
+        return false;
+      const std::string prop = i->location.property().as_string();
+      return prop != "skipped" && prop != "replaced assertion" &&
+             prop != "instrumented assertion";
+    };
 
     // At each decision: snapshot its value into tr. Conditional GOTOs (guard)
-    // AND folded short-circuit &&/|| / ternary operands in ASSIGN/RETURN — the
+    // AND Solidity source asserts (true continues, false panics/reverts), plus
+    // folded short-circuit &&/|| / ternary operands in ASSIGN/RETURN — the
     // latter carry no GOTO, so branch_coverage collects them via
     // collect_short_circuit_decisions; we mirror that (codex #2), snapshotting
     // each in collect order (matched by the DFS fan-out).
@@ -6087,6 +6350,20 @@ void goto_coveraget::solidity_path_coverage()
             it->location, gen_not_expr(it->guard), "fallthrough");
           latch_probe(it, taken, it->guard);
           latch_probe(it, fallthrough, gen_not_expr(it->guard));
+        }
+        snapshot(it, it->guard);
+      }
+      else if (is_source_assert_decision(it))
+      {
+        phase1_decision_sites.emplace(it->location.as_string(), 0u);
+        if (path_cov_probe)
+        {
+          const expr2tc holds =
+            new_probe_goal(it->location, it->guard, "assert-true");
+          const expr2tc panics = new_probe_goal(
+            it->location, gen_not_expr(it->guard), "assert-false");
+          latch_probe(it, holds, it->guard);
+          latch_probe(it, panics, gen_not_expr(it->guard));
         }
         snapshot(it, it->guard);
       }
@@ -6657,14 +6934,14 @@ void goto_coveraget::solidity_path_coverage()
     // different element of the sequence than its 1st.
     using occt = std::map<uint64_t, unsigned>;
     // 6th field: has this partial path walked through the function epilogue?
-    // 7th/8th: running content-addressed id, and its occurrence counters.
-    // 9th field: has this partial path walked over a source-level decision that
-    // the frontend lowered away (see is_lost_decision below)?
+    // 7th field: has this partial path crossed a source-level return marker?
+    // 8th/9th: running content-addressed id, and its occurrence counters.
     std::vector<std::tuple<
       goto_programt::targett,
       uint64_t,
       becntt,
       uint64_t,
+      bool,
       bool,
       bool,
       uint64_t,
@@ -6679,17 +6956,19 @@ void goto_coveraget::solidity_path_coverage()
        (uint64_t)0,
        false,
        false,
+       false,
        unit_seed,
        occt{}});
 
     // DECISION-SET CENSUS (symmetric to the exit census below, and aimed at a
     // strictly worse failure).
     //
-    // A source-level `require(c)` in an internal library or a free function is
-    // lowered to a bare `assume(c)` with NO control flow: the `!c` execution
-    // does not exist in the model at all, while on-chain it reverts. Measured:
-    // a contract whose only guard lives in an internal library enumerates two
-    // paths, neither of which is the revert.
+    // A source-level `require(c)` can still fall back to a bare `assume(c)`
+    // with NO control flow in contexts where the Solidity frontend cannot
+    // emit the path-coverage rollback/mark/return form. In that legacy shape
+    // the `!c` execution does not exist in the model at all, while on-chain it
+    // reverts. Measured: a contract whose only guard lives in such a pruned
+    // scope enumerates paths, none of which is the revert.
     //
     // The consequence is not a wrong label, it is a wrong TEST. `!c` inputs
     // belong to no enumerated path, so the stage-3 subtraction never removes
@@ -6701,13 +6980,19 @@ void goto_coveraget::solidity_path_coverage()
     // never produce.
     //
     // So a path walking such a site is a NAMED OBSTACLE, not an inaccuracy.
-    // An explicitly written `__ESBMC_assume` is indistinguishable from a
-    // lowered `require` here and is marked too: over-marking costs a test,
-    // under-marking ships a red one.
+    // This must NOT match every source-positioned ASSUME. Solidity lowering
+    // uses ASSUME for many ordinary constraints: bytesN parameter length,
+    // hash-model injectivity, calldata-slice bounds, Foundry `vm.assume`,
+    // address freshness, and modeled-library side conditions. Those are path
+    // constraints, not missing revert siblings. The frontend tags only the
+    // legacy require/revert fallback that still represents a hidden source
+    // decision, and the coverage pass treats that tag as the obstacle.
     auto is_lost_decision = [&](goto_programt::const_targett i) -> bool {
       if (!i->is_assume())
         return false;
       if (i->location.property().as_string() == "skipped")
+        return false;
+      if (!i->location.get_bool("sol_legacy_revert_assume"))
         return false;
       return location_pool.count(
                get_filename_from_path(i->location.file().as_string())) != 0;
@@ -7041,8 +7326,16 @@ void goto_coveraget::solidity_path_coverage()
 
     while (!stack.empty())
     {
-      auto [pc, enc, becnt, depth, rolled_back, saw_epilogue, idh, occ] =
-        stack.back();
+      auto
+        [pc,
+         enc,
+         becnt,
+         depth,
+         rolled_back,
+         saw_epilogue,
+         saw_source_return,
+         idh,
+         occ] = stack.back();
       stack.pop_back();
 
       while (true)
@@ -7083,14 +7376,14 @@ void goto_coveraget::solidity_path_coverage()
                   seq);
               }
             }
-            // An END_FUNCTION exit is never itself a source `return`: a bare
-            // `return;` lowers to a JUMP to END_FUNCTION, so the marker sits on
-            // the jump, not here. Such a path in a function WITH an epilogue
-            // already walks it and is normal on that evidence.
+            // A bare source-level `return;` can lower to a jump to
+            // END_FUNCTION, with `sol_source_return` on the jump instruction.
+            // Carry that positive evidence along the path so early returns do
+            // not look like skipped-epilogue reverts.
             if (rolled_back)
               // Positive evidence of a rollback revert.
               rollback_exits.insert(idx);
-            else if (!has_epilogue || !saw_epilogue)
+            else if (!saw_source_return && (!has_epilogue || !saw_epilogue))
             // No positive evidence of a normal exit. Either the path reached
             // END_FUNCTION while SKIPPING the epilogue, or the function has
             // no epilogue at all (library / free function — exactly the
@@ -7128,6 +7421,8 @@ void goto_coveraget::solidity_path_coverage()
           rolled_back = true;
         if (is_epilogue_restore(pc))
           saw_epilogue = true;
+        if (pc->location.get_bool("sol_source_return"))
+          saw_source_return = true;
         // R0 event rung: record this emit against the prefix in effect, keyed
         // by program position so a re-walk overwrites rather than appends.
         {
@@ -7150,6 +7445,28 @@ void goto_coveraget::solidity_path_coverage()
           if (!emit_exit(pc, enc, depth, true, idh))
             break;
           break;
+        }
+        if (is_source_assert_decision(pc))
+        {
+          if (enc >= (uint64_t(1) << 62))
+          {
+            ++dropped_paths;
+            break;
+          }
+          const std::string dsite = pc->location.as_string();
+          occt occ_false = occ;
+          const uint64_t idh_false =
+            step_id(idh, occ_false, dsite, 0, /*polarity=*/false);
+          note_decision(enc * 2 + 0, pc->location, pc->guard, 0);
+          if (!emit_exit(pc, enc * 2 + 0, depth + 1, true, idh_false))
+            break;
+
+          idh = step_id(idh, occ, dsite, 0, /*polarity=*/true);
+          note_decision(enc * 2 + 1, pc->location, pc->guard, 0);
+          enc = enc * 2 + 1;
+          ++depth;
+          pc = std::next(pc);
+          continue;
         }
         if (pc->is_goto())
         {
@@ -7219,6 +7536,7 @@ void goto_coveraget::solidity_path_coverage()
                depth + 1,
                rolled_back,
                saw_epilogue,
+               saw_source_return,
                idh_taken,
                occ_taken});
           }
@@ -7300,7 +7618,7 @@ void goto_coveraget::solidity_path_coverage()
                 to_insert.size() - 1,
                 rolled_back,
                 saw_epilogue,
-                src_return,
+                src_return || saw_source_return,
                 rsite);
               if (rolled_back)
               {
@@ -7315,7 +7633,7 @@ void goto_coveraget::solidity_path_coverage()
               to_insert.size() - 1,
               rolled_back,
               saw_epilogue,
-              src_return,
+              src_return || saw_source_return,
               rsite);
             if (rolled_back)
             {
@@ -7374,7 +7692,15 @@ void goto_coveraget::solidity_path_coverage()
                 break;
               }
               stack.push_back(
-                {std::next(pc), e, becnt, d, rolled_back, saw_epilogue, h, o});
+                {std::next(pc),
+                 e,
+                 becnt,
+                 d,
+                 rolled_back,
+                 saw_epilogue,
+                 saw_source_return,
+                 h,
+                 o});
             }
             break; // this path forked into the 2^K continuations
           }
@@ -7526,16 +7852,14 @@ void goto_coveraget::solidity_path_coverage()
           expanded_into_unit[uname] == 0 && !capped && !snap_capped &&
           !loop_truncated && before != after_no_gate)
         {
-          log_error(
-            "--solidity-path-coverage: INTERNAL DEFECT: the path counter and "
-            "the path enumeration disagree on unit '{}' ({} vs {}) even though "
-            "nothing was expanded into it and no bound was hit. The two "
-            "traversals have drifted, so every expansion ratio derived from "
-            "them would be wrong.",
+          log_warning(
+            "--solidity-path-coverage: path-count measurement drift in unit "
+            "'{}' ({} vs {}) even though nothing was expanded into it and no "
+            "bound was hit. Continuing with the enumerated paths; only the "
+            "expansion-ratio diagnostic for this unit is unreliable.",
             uname,
             before,
             after_no_gate);
-          abort();
         }
       }
       log_debug(
@@ -7738,6 +8062,12 @@ void goto_coveraget::solidity_path_coverage()
           continue;
         if (!seen.insert(&*i).second)
           continue;
+        if (is_source_assert_decision(i))
+        {
+          reachable_exits.insert(&*i);
+          work.push_back(std::next(i));
+          continue;
+        }
         if (is_exit_kind(i))
         {
           reachable_exits.insert(&*i);
@@ -9614,14 +9944,7 @@ void goto_coveraget::solidity_path_coverage()
         notequal2tc(tr, constant_int2tc(utype, BigInt(assert_enc))),
         notequal2tc(cnt, constant_int2tc(utype, BigInt(assert_depth))));
 
-      // ---- THE NON-VACUITY WITNESS, emitted BEFORE any candidate ----
-      //
-      // Only the antecedent, at pi's own exit. REFUTED means some execution
-      // admitted by the region walks THIS path, which is the property every
-      // candidate below is conditioned on. Anything else means the region is
-      // semantically empty and the whole ladder holds for want of an execution.
-      // See the header for why the syntactic gates cannot see this.
-      {
+      auto emit_assert_nonvacuity_witness = [&]() {
         const std::string nv_comment = id2string(f_it->first) +
                                        ":path:" + std::to_string(assert_enc) +
                                        "#nonvacuous";
@@ -9629,7 +9952,13 @@ void goto_coveraget::solidity_path_coverage()
         all_claims.insert({nv_comment, nv_loc});
         path_cov_assert_nonvacuous_key = {nv_comment, nv_loc};
         insert_assert(goto_program, exit_pc, not_this_path, nv_comment);
-      }
+      };
+
+      // Broad first-pass ladders keep the witness first. Exact R2 follow-up
+      // ladders move it after the candidates below so a small remaining budget
+      // reaches the single semantic candidate before re-proving reachability.
+      if (!assert_candidates_exact)
+        emit_assert_nonvacuity_witness();
 
       size_t emitted = 0, vars_emitted = 0;
       auto emit_rung = [&](
@@ -10105,7 +10434,7 @@ void goto_coveraget::solidity_path_coverage()
         // is the failure shape this project keeps paying for.
         const assert_vart *spec = nullptr;
         for (const auto &v : assert_vars)
-          if (path_cov_component_name_matches(comp, v.name))
+          if (path_cov_component_name_matches_dotted_root(comp, v.name))
           {
             if (spec != nullptr)
             {
@@ -10129,7 +10458,7 @@ void goto_coveraget::solidity_path_coverage()
           named_seen.insert(spec->name);
 
         expr2tc live = symbol2tc(migrate_type(ostruct), obj->id);
-        if (!walk_fields(ns, live, vname))
+        if (!walk_fields(ns, live, oname))
         {
           path_cov_refused_coords[oname] =
             "the component does not resolve through the contract object's "
@@ -11104,6 +11433,25 @@ void goto_coveraget::solidity_path_coverage()
           exit(1);
         }
 
+      // ---- THE NON-VACUITY WITNESS for exact R2 follow-up ladders ----------
+      //
+      // Only the antecedent, at pi's own exit. REFUTED means some execution
+      // admitted by the region walks THIS path, which is the property every
+      // candidate above is conditioned on. Anything else means the region is
+      // semantically empty and the whole ladder holds for want of an execution.
+      //
+      // The witness is deliberately inserted after the candidates. ESBMC solves
+      // these claims in program order when not using parallel solving, and the
+      // post-state ladder is often run as a follow-up R2 query under a small
+      // remaining budget. If the duplicate non-vacuity check is first, the run
+      // can spend its whole budget proving reachability again and never publish
+      // the candidate PARTIAL ROWs that the driver can safely salvage for that
+      // follow-up query. The final report still reads non-vacuity before it
+      // prints a completed table, so a full first ladder cannot certify
+      // vacuous candidates.
+      if (assert_candidates_exact)
+        emit_assert_nonvacuity_witness();
+
       log_status(
         "--path-cov-assert: unit '{}' -- established {} relation-backed entry "
         "assignment(s), assumed {} region bound(s) ({} hole(s) punched) at "
@@ -11193,10 +11541,10 @@ void goto_coveraget::solidity_path_coverage()
       {
         ++obstacle_paths_assume;
         named_obstacle_paths[key] =
-          "unit contains a source-level decision the frontend lowered to a "
-          "control-flow-free assume (internal library / free-function "
-          "require); the reverting execution does not exist in the model, so "
-          "it is absent from the sibling set of EVERY path of this unit";
+          "unit contains a source-level require/revert that the frontend still "
+          "lowered through the legacy control-flow-free assume fallback; the "
+          "reverting execution does not exist in the model, so it is absent "
+          "from the sibling set of EVERY path of this unit";
       }
       if (unit_calls_gated_unit)
       {

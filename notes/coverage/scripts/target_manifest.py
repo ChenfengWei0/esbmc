@@ -12,14 +12,17 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import os
 import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
 
-DEFAULT_VERIPUT_ROOT = Path("/home/samson/workspace/VeriPUT")
+DEFAULT_VERIPUT_ROOT = Path(os.environ.get(
+    "VERIPUT_ROOT", "/home/samson/workspace/VeriPUT"))
 BENCHMARKS = ("peer182", "bugfix124", "stress243")
+PEER_REQUIRED_SOURCE_SEGMENT = "contracts_080/"
 
 
 class TargetManifestError(ValueError):
@@ -39,6 +42,12 @@ def _split_semis(text: str) -> list[str]:
 
 def _repo_slug(repo: str) -> str:
     return repo.replace("/", "__")
+
+
+def _is_peer_contract080(meta: dict) -> bool:
+    source_file = meta.get("source_file") or ""
+    return bool(meta.get("source_080")) and \
+        PEER_REQUIRED_SOURCE_SEGMENT in source_file
 
 
 def _read_csv(path: Path) -> list[dict]:
@@ -254,13 +263,16 @@ def peer_targets(root: Path) -> list[dict]:
         if meta.get("status") != "ok":
             continue
         source_file = meta.get("source_file") or ""
-        if not meta.get("source_080") or "contracts_080/" not in source_file:
+        if not _is_peer_contract080(meta):
             targets.append({
                 "schema": "veriput-eval-target/v1",
                 "benchmark": "peer182",
                 "subject_id": subject_id,
                 "status": "skipped",
-                "reason": "peer subject is not from contracts_080",
+                "reason": (
+                    "peer RQ1 only schedules contract080 sources; "
+                    f"expected source_file to contain {PEER_REQUIRED_SOURCE_SEGMENT!r} "
+                    "and source_080=true"),
                 "contract": meta.get("contract") or "",
                 "source_kind": "prepared-non-080-source",
                 "sources": [],

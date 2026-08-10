@@ -19,6 +19,21 @@
 #include <fstream>
 #include <functional>
 
+namespace
+{
+bool modifier_has_unresolved_symbol_subtype(
+  const typet &type,
+  const contextt &context)
+{
+  if (!type.is_pointer())
+    return false;
+
+  const typet &subtype = type.subtype();
+  return subtype.is_symbol() &&
+         context.find_symbol(subtype.identifier()) == nullptr;
+}
+} // namespace
+
 bool solidity_convertert::get_function_definition(
   const nlohmann::json &ast_node)
 {
@@ -200,9 +215,9 @@ bool solidity_convertert::get_function_definition(
   //     must prune, because the EVM aborts contract creation. Making it
   //     observable would let construction continue with a half-initialised
   //     contract.
-  const bool is_event_or_err =
-    ast_node.contains("nodeType") && (ast_node["nodeType"] == "EventDefinition" ||
-                                      ast_node["nodeType"] == "ErrorDefinition");
+  const bool is_event_or_err = ast_node.contains("nodeType") &&
+                               (ast_node["nodeType"] == "EventDefinition" ||
+                                ast_node["nodeType"] == "ErrorDefinition");
   current_function_revert_observable = !is_event_or_err && !is_ctor;
   if (!is_event_err_lib && !is_free_function)
     get_function_this_pointer_param(
@@ -992,8 +1007,13 @@ bool solidity_convertert::build_revert_rollback_block(
     !(uses_revert_observation && current_function_revert_observable))
     return true;
 
-  // return [nondet of return type]; — or bare `return;` when void.
+  locationt rollback_loc;
+  get_location_from_node(*current_functionDecl, rollback_loc);
+
+  // return [nondet of return type]; — or bare `return;` when void / tuple.
   code_returnt return_stmt;
+  return_stmt.location() = rollback_loc;
+  bool tuple_return = false;
   if (current_functionDecl->contains("returnParameters"))
   {
     typet ret_type;
@@ -1002,17 +1022,14 @@ bool solidity_convertert::build_revert_rollback_block(
       return true;
     if (ret_type.is_not_nil() && ret_type.id() != "empty")
     {
-      // Tuple-returning functions (`returns (T1 a, T2 b)`) used to bail
-      // out here, dropping back to legacy __ESBMC_assume(cond) — which
-      // loses the branch coverage decision because there is no GOTO IF
-      // for the require.  Instead, build a nondet of the (possibly
-      // tuple) return type so the if-then-else rollback shape is still
-      // emitted.  get_nondet_expr handles both scalar and tuple types
-      // (the tuple case yields a struct of nondet components, matching
-      // the tuple-return ABI used by the caller).
-      exprt nondet_val;
-      get_nondet_expr(ret_type, nondet_val);
-      return_stmt.return_value() = nondet_val;
+      tuple_return =
+        get_sol_type(ret_type) == SolidityGrammar::SolType::TUPLE_RETURNS;
+      if (!tuple_return)
+      {
+        exprt nondet_val;
+        get_nondet_expr(ret_type, nondet_val);
+        return_stmt.return_value() = nondet_val;
+      }
     }
   }
 
@@ -1040,11 +1057,12 @@ bool solidity_convertert::build_revert_rollback_block(
   // future `--bound` reader MUST likewise clear before reading.
   if (uses_revert_observation || is_bound)
   {
-    locationt mloc;
-    get_location_from_node(*current_functionDecl, mloc);
     exprt mark_stmt;
     build_revert_flag_call(
-      "_ESBMC_sol_mark_revert", "c:@F@_ESBMC_sol_mark_revert", mloc, mark_stmt);
+      "_ESBMC_sol_mark_revert",
+      "c:@F@_ESBMC_sol_mark_revert",
+      rollback_loc,
+      mark_stmt);
     block.copy_to_operands(mark_stmt);
   }
   if (have_snapshot && current_function_seen_mutation)
@@ -1102,6 +1120,34 @@ bool solidity_convertert::build_revert_rollback_block(
           symbol_expr(*store_sym), symbol_expr(*g_save_sym));
         block.copy_to_operands(g_restore);
       }
+    }
+  }
+  if (tuple_return)
+  {
+    // Tuple returns are represented by the current function's tuple_instance
+    // side object. Returning a struct value here creates an invalid code_return
+    // shape for migrate/symex; write each slot and use a bare return.
+    std::string tname, tid;
+    if (get_tuple_instance_name(*current_functionDecl, tname, tid))
+      return true;
+    const symbolt *tuple_sym = context.find_symbol(tid);
+    if (tuple_sym == nullptr)
+    {
+      log_error(
+        "cannot find tuple instance symbol for rollback return: {}", tid);
+      return true;
+    }
+    const struct_typet &tuple_type = to_struct_type(tuple_sym->type);
+    for (const auto &comp : tuple_type.components())
+    {
+      exprt lhs;
+      if (get_tuple_member_call(tid, comp, lhs))
+        return true;
+      exprt rhs;
+      get_nondet_expr(comp.type(), rhs);
+      code_assignt assign(lhs, rhs);
+      assign.location() = rollback_loc;
+      block.copy_to_operands(assign);
     }
   }
   block.copy_to_operands(return_stmt);
@@ -1333,8 +1379,20 @@ bool solidity_convertert::get_func_modifier(
     int modifier_id = (*it)["modifierName"]["referencedDeclaration"];
     // we cannot use reference here, as the src_ast_json got inserted/deleted later
     nlohmann::json mod_def = find_decl_ref(modifier_id);
-    assert(!mod_def.is_null());
-    assert(!mod_def.empty());
+    if (mod_def.is_null() || mod_def.empty())
+    {
+      std::string mod_name;
+      if (
+        it->contains("modifierName") && (*it)["modifierName"].is_object() &&
+        (*it)["modifierName"].contains("name") &&
+        (*it)["modifierName"]["name"].is_string())
+        mod_name = (*it)["modifierName"]["name"].get<std::string>();
+      log_warning(
+        "Modifier declaration{} could not be resolved; skipping modifier "
+        "wrapper",
+        mod_name.empty() ? "" : (" `" + mod_name + "`"));
+      continue;
+    }
 
     // `modifier mod virtual;` declares the modifier without a body — the
     // actual definition lives in a derived contract that overrides it.
@@ -1391,7 +1449,13 @@ bool solidity_convertert::get_func_modifier(
     nlohmann::json *modifier_func = nullptr;
     if (insert_modifier_json(ast_node, c_name, aux_func_name, modifier_func))
       return true;
-    assert(modifier_func != nullptr);
+    if (modifier_func == nullptr)
+    {
+      log_warning(
+        "modifier wrapper `{}` was not inserted; skipping this modifier",
+        aux_func_name);
+      continue;
+    }
     auto old_decl = current_functionDecl;
     auto old_name = current_functionName;
     current_functionDecl = modifier_func;
@@ -1713,22 +1777,185 @@ bool solidity_convertert::get_func_modifier(
     current_functionName = old_name;
     if (delete_modifier_json(c_name, aux_func_name, modifier_func))
       return true;
-    assert(modifier_func == nullptr);
+    if (modifier_func != nullptr)
+    {
+      log_warning(
+        "modifier wrapper `{}` was not deleted cleanly; continuing with "
+        "remaining conversion",
+        aux_func_name);
+      modifier_func = nullptr;
+    }
 
     // construct the function call
     side_effect_expr_function_callt func_modifier;
     func_modifier.function() = symbol_expr(a_sym);
 
+    auto append_modifier_argument =
+      [&](const nlohmann::json &arg_json) -> bool {
+      exprt arg_expr;
+      const size_t formal_idx = func_modifier.arguments().size();
+      bool have_formal = false;
+      typet formal_t;
+      if (formal_idx < aux_type.arguments().size())
+      {
+        have_formal = true;
+        formal_t = aux_type.arguments().at(formal_idx).type();
+        const std::string formal_bytesn = aux_type.arguments()
+                                            .at(formal_idx)
+                                            .get("#sol_bytesn_size")
+                                            .as_string();
+        if (!formal_bytesn.empty() && formal_t.get("#sol_bytesn_size").empty())
+          formal_t.set("#sol_bytesn_size", formal_bytesn);
+      }
+      locationt arg_loc;
+      if (arg_json.is_object())
+        get_location_from_node(arg_json, arg_loc);
+      if (!arg_json.is_object() || !arg_json.contains("typeDescriptions"))
+      {
+        if (!have_formal)
+        {
+          log_warning(
+            "modifier wrapper argument for `{}` has no typeDescriptions",
+            f_name);
+          return true;
+        }
+        get_solidity_nondet_value(formal_t, arg_loc, arg_expr);
+        func_modifier.arguments().push_back(arg_expr);
+        return false;
+      }
+      if (get_expr(arg_json, arg_json["typeDescriptions"], arg_expr))
+      {
+        if (!have_formal)
+          return true;
+        log_warning(
+          "modifier wrapper argument for `{}` could not be converted; using "
+          "typed nondet",
+          f_name);
+        get_solidity_nondet_value(formal_t, arg_loc, arg_expr);
+        func_modifier.arguments().push_back(arg_expr);
+        return false;
+      }
+
+      if (have_formal)
+      {
+        if (
+          arg_expr.type() != formal_t &&
+          !modifier_has_unresolved_symbol_subtype(arg_expr.type(), context) &&
+          !modifier_has_unresolved_symbol_subtype(formal_t, context))
+        {
+          convert_type_expr(ns, arg_expr, formal_t, arg_json);
+          if (arg_expr.type() != formal_t)
+          {
+            log_warning(
+              "modifier wrapper argument for `{}` did not convert to formal "
+              "type; using typed nondet",
+              f_name);
+            get_solidity_nondet_value(formal_t, arg_expr.location(), arg_expr);
+          }
+        }
+
+        // A function-call argument must have the formal type exactly. In
+        // particular, `.selector` can still arrive as an unresolved uint32
+        // after builtin lowering; allowing that scalar through causes the
+        // inline wrapper call to fail before coverage generation.
+        if (arg_expr.type() != formal_t)
+        {
+          log_warning(
+            "modifier wrapper argument for `{}` still has the wrong type; "
+            "using typed nondet",
+            f_name);
+          get_solidity_nondet_value(formal_t, arg_expr.location(), arg_expr);
+        }
+      }
+
+      func_modifier.arguments().push_back(arg_expr);
+      return false;
+    };
+    auto append_symbol_argument =
+      [&](const symbolt &sym, const nlohmann::json &arg_json) -> bool {
+      exprt arg_expr = symbol_expr(sym);
+      const size_t formal_idx = func_modifier.arguments().size();
+      if (formal_idx < aux_type.arguments().size())
+      {
+        typet formal_t = aux_type.arguments().at(formal_idx).type();
+        const std::string formal_bytesn = aux_type.arguments()
+                                            .at(formal_idx)
+                                            .get("#sol_bytesn_size")
+                                            .as_string();
+        if (!formal_bytesn.empty() && formal_t.get("#sol_bytesn_size").empty())
+          formal_t.set("#sol_bytesn_size", formal_bytesn);
+        if (
+          arg_expr.type() != formal_t &&
+          !modifier_has_unresolved_symbol_subtype(arg_expr.type(), context) &&
+          !modifier_has_unresolved_symbol_subtype(formal_t, context))
+        {
+          convert_type_expr(ns, arg_expr, formal_t, arg_json);
+          if (arg_expr.type() != formal_t)
+          {
+            log_warning(
+              "modifier wrapper symbol argument `{}` for `{}` did not convert "
+              "to formal type; using typed nondet",
+              sym.name.as_string(),
+              f_name);
+            get_solidity_nondet_value(formal_t, arg_expr.location(), arg_expr);
+          }
+        }
+        if (arg_expr.type() != formal_t)
+        {
+          log_warning(
+            "modifier wrapper symbol argument `{}` for `{}` still has the "
+            "wrong type; using typed nondet",
+            sym.name.as_string(),
+            f_name);
+          get_solidity_nondet_value(formal_t, arg_expr.location(), arg_expr);
+        }
+      }
+      func_modifier.arguments().push_back(arg_expr);
+      return false;
+    };
+
     exprt this_ptr;
     auto next_it = std::next(it);
+    std::string next_aux_func_name, next_aux_func_id;
+    if (next_it != modifiers.rend())
+    {
+      if (
+        !next_it->contains("modifierName") ||
+        !(*next_it)["modifierName"].is_object() ||
+        !(*next_it)["modifierName"].contains("referencedDeclaration"))
+      {
+        log_warning(
+          "modifier wrapper chain for `{}` has an unresolved next modifier; "
+          "calling wrapped function directly",
+          f_name);
+        next_it = modifiers.rend();
+      }
+    }
+
     if (next_it != modifiers.rend())
     {
       int next_modifier_id =
         (*next_it)["modifierName"]["referencedDeclaration"];
-      const nlohmann::json &next_mod_def = find_decl_ref(next_modifier_id);
+      nlohmann::json next_mod_def = find_decl_ref(next_modifier_id);
+      if (
+        next_mod_def.is_null() || next_mod_def.empty() ||
+        !next_mod_def.contains("name"))
+      {
+        log_warning(
+          "modifier wrapper chain for `{}` cannot resolve next modifier id {}; "
+          "calling wrapped function directly",
+          f_name,
+          next_modifier_id);
+        next_it = modifiers.rend();
+      }
+    }
 
+    if (next_it != modifiers.rend())
+    {
+      int next_modifier_id =
+        (*next_it)["modifierName"]["referencedDeclaration"];
+      nlohmann::json next_mod_def = find_decl_ref(next_modifier_id);
       std::string next_mod_name = next_mod_def["name"];
-      std::string next_aux_func_name, next_aux_func_id;
       get_modifier_function_name(
         c_name, next_mod_name, f_name, next_aux_func_name, next_aux_func_id);
 
@@ -1765,14 +1992,27 @@ bool solidity_convertert::get_func_modifier(
               f_name);
             return true;
           }
-          func_modifier.arguments().push_back(symbol_expr(*psym));
+          if (append_symbol_argument(*psym, param))
+            return true;
         }
       }
 
       if (insert_modifier_json(
             ast_node, c_name, next_aux_func_name, modifier_func))
         return true;
-      assert(modifier_func != nullptr);
+      if (modifier_func == nullptr)
+      {
+        log_warning(
+          "modifier wrapper `{}` was not inserted for chained modifier; "
+          "calling wrapped function directly",
+          next_aux_func_name);
+        func_modifier.arguments().clear();
+        next_it = modifiers.rend();
+      }
+    }
+
+    if (next_it != modifiers.rend())
+    {
       auto old_decl = current_functionDecl;
       auto old_name = current_functionName;
       current_functionDecl = modifier_func;
@@ -1794,7 +2034,7 @@ bool solidity_convertert::get_func_modifier(
       current_functionDecl = old_decl;
       current_functionName = old_name;
     }
-    else
+    if (next_it == modifiers.rend())
     {
       // original
       if (get_func_decl_this_ref(c_name, f_id, this_ptr))
@@ -1825,17 +2065,17 @@ bool solidity_convertert::get_func_modifier(
               f_name);
             return true;
           }
-          func_modifier.arguments().push_back(symbol_expr(*psym));
+          if (append_symbol_argument(*psym, param))
+            return true;
         }
       }
 
-      for (const auto &arg_json : (*it)["arguments"])
-      {
-        exprt arg_expr;
-        if (get_expr(arg_json, arg_json["typeDescriptions"], arg_expr))
-          return true;
-        func_modifier.arguments().push_back(arg_expr);
-      }
+      if (it->contains("arguments") && (*it)["arguments"].is_array())
+        for (const auto &arg_json : (*it)["arguments"])
+        {
+          if (append_modifier_argument(arg_json))
+            return true;
+        }
     }
 
     code_blockt _block;

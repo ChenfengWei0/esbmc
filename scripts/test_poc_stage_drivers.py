@@ -33,7 +33,20 @@ def write_index(tmp, **overrides):
     return p
 
 
-def compact_ast():
+def compact_ast(include_receive=False):
+    nodes = [{
+        "nodeType": "FunctionDefinition",
+        "kind": "function",
+        "name": "set",
+        "visibility": "external",
+    }]
+    if include_receive:
+        nodes.append({
+            "nodeType": "FunctionDefinition",
+            "kind": "receive",
+            "name": "",
+            "visibility": "external",
+        })
     return {
         "nodeType": "SourceUnit",
         "nodes": [{
@@ -42,12 +55,7 @@ def compact_ast():
             "name": "C",
             "contractKind": "contract",
             "linearizedBaseContracts": [1],
-            "nodes": [{
-                "nodeType": "FunctionDefinition",
-                "kind": "function",
-                "name": "set",
-                "visibility": "external",
-            }],
+            "nodes": nodes,
         }],
     }
 
@@ -130,6 +138,43 @@ def test_certify_all_lists_subject_units_from_ast_cache():
     return bad
 
 
+def test_certify_all_preflights_bad_prepared_focus_without_esbmc():
+    with tempfile.TemporaryDirectory() as td:
+        subject = write_subject(td)
+        (subject / "flat.sol.solast").write_text(
+            json.dumps(compact_ast(include_receive=True)) + "\n")
+        out = Path(td) / "certify-results.jsonl"
+        cp = subprocess.run([
+            sys.executable,
+            str(ROOT / "notes" / "coverage" / "scripts" / "certify_all.py"),
+            "--subject-dir", str(subject),
+            "--subject-benchmark", "stress243",
+            "--unit", "receive",
+            "--out", str(out),
+            "--workdir", str(Path(td) / "work"),
+            "--memlimit-gib", "4",
+            "--timeout", "1",
+            "--run-timeout", "1",
+        ], capture_output=True, text=True)
+        rows = [json.loads(line) for line in out.read_text().splitlines()
+                if line.strip()] if out.exists() else []
+    row = rows[0] if rows else {}
+    diag = row.get("driver_diagnostic") or {}
+    bad = 0
+    bad += check(cp.returncode == 0,
+                 f"bad focus is recorded, not treated as a CLI error: {cp.stderr}")
+    bad += check(row.get("bucket") == "DRIVER-REFUSED",
+                 f"bad focus is a driver-refused row: {row}")
+    bad += check(diag.get("preflight") == "prepared-subject-ast"
+                 and diag.get("focus_function") == "receive",
+                 f"preflight diagnostic names the skipped unit: {diag}")
+    bad += check(diag.get("available_units") == ["set"],
+                 f"diagnostic keeps available focus names: {diag}")
+    bad += check("DRIVER-REFUSED" in cp.stdout,
+                 f"stdout reports the cheap refusal: {cp.stdout}")
+    return bad
+
+
 def test_poc_one_materializes_declared_fixture():
     poc = {
         "id": "bench__C__set",
@@ -185,6 +230,7 @@ def main():
         test_poc_enumeration_index_supplies_one_unit,
         test_poc_enumeration_index_is_fail_closed,
         test_certify_all_lists_subject_units_from_ast_cache,
+        test_certify_all_preflights_bad_prepared_focus_without_esbmc,
         test_poc_one_materializes_declared_fixture,
         test_poc_one_can_disable_stage1_probe_witnesses_for_a_cell,
     ]

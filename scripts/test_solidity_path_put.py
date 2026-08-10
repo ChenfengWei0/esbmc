@@ -66,8 +66,10 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                complete_missing_call_args,
                                constructor_param_hascode_specs,
                                constructor_param_interface_mock_specs,
+                               constructor_param_runtime_interface_mock_specs,
                                constructor_external_interface_mock_lines,
                                constructor_staticcall_mock_lines,
+                               dynamic_default_call_arg,
                                add_esbmc_mapping_aliases,
                                canonical_state_coord_name,
                                effective_exit_kind,
@@ -75,24 +77,44 @@ from solidity_path_put import (ConcreteFallback, EmittedFile,  # noqa: E402
                                fixture_from_esbmc_args, load_fixture_json,
                                assert_query_var_name,
                                expand_path_guard_coord_idents,
+                               assigned_source_locals,
+                               budget_with_followup_reserve,
                                layout_scalar_key,
                                mapping_source_coord_alias,
                                prefer_esbmc_mapping_aliases,
                                no_oracle_reason, observed_env,
                                constructor_sender_needs_nonzero,
+                               dedup_esbmc_singleton_args,
                                normal_exit_region_retreat,
                                oracle_class_summary,
+                               oracle_detail,
+                               oracle_stats_summary,
                                oracle_classes_for_rung,
                                partial_ladder_already_has_strict_oracle,
                                path_condition_from_branch_claim,
                                path_conditions_from_branch_claim,
+                               path_condition_terms_from_branch_claim,
                                path_decision_assumes,
+                               promote_zero_sender_owner_slice,
+                               stable_unlabeled_revert_from_forge_prefilter,
                                potential_rendered_widths_for_put,
                                rendered_env_coords_for_emitted_case,
                                parse_ladder, region_slot_vars, statement_start,
                                restore_ladder_row_names,
                                runtime_interface_mock_lines,
+                               runtime_staticcall_mock_lines,
+                               source_return_scalar_terms_for_path_guards,
+                               source_path_guard_aliases,
+                               scalar_dependency_vars,
+                               _source_type_default_expr,
+                               can_synthesize_missing_emitter_output,
+                               concrete_stage2_source_record,
+                               synthetic_emitter_probe_budget,
+                               synthesize_minimal_emitted_case,
                                synthesize_unsupported_case_replay,
+                               write_put_refusal_record,
+                               default_call_arg, signature_type,
+                               unit_param_interface_mock_specs,
                                target_instance_for_call, rewrite_call_args,
                                truncated_loops, unwrap_normal_try_call,
                                unwindset_args)
@@ -361,6 +383,38 @@ def test_relation_establishes_state_from_fuzzed_sender():
     return bad
 
 
+def test_zero_sender_owner_pin_is_promoted_to_executable_relation():
+    region = {"notbot": (0, (1 << 160) - 1)}
+    holes = {}
+    pins = {"msg.sender": 0, "state._owner$49": 0,
+            "state.paused$155": 0}
+    state_types = {"_owner": "address", "paused": "bool"}
+    state_store_names = {"_owner": "_owner$49",
+                         "paused": "paused$155"}
+    out_region, out_holes, out_pins, establish, note = (
+        promote_zero_sender_owner_slice(
+            region, holes, pins, [], state_types, state_store_names,
+            ["_owner"]))
+    bad = 0
+    bad += check(out_region["msg.sender"] == (1, (1 << 160) - 1),
+                 "zero sender is replaced by a non-zero executable slice")
+    bad += check("msg.sender" not in out_pins,
+                 "the old zero sender pin is removed")
+    bad += check("state._owner$49" not in out_pins,
+                 "the old zero owner pin is replaced by a relation")
+    bad += check(out_pins.get("state.paused$155") == 0,
+                 "unrelated zero state pins are left intact")
+    bad += check(establish == [{"target": "state._owner$49",
+                                "source": "msg.sender"}],
+                 f"owner is established from the pranked sender: {establish}")
+    bad += check(note and "re-run over the non-zero sender slice" in note,
+                 f"the promotion is auditable: {note}")
+    bad += check(region == {"notbot": (0, (1 << 160) - 1)}
+                 and pins["msg.sender"] == 0 and out_holes == {},
+                 "the helper returns copies instead of mutating callers")
+    return bad
+
+
 def test_precheck_only_identifies_rendered_width_not_oracle_strength():
     """A point-shaped rendered region may still carry a verifier oracle."""
     em, case = make_case()
@@ -401,6 +455,68 @@ def test_no_wide_rendered_coordinate_without_oracle_stays_concrete():
     except ConcreteFallback as exc:
         return check("no verifier-backed oracle" in exc.reason,
                      f"the fallback explains the missing oracle: {exc.reason}")
+    return check(False, "expected ConcreteFallback")
+
+
+def test_no_wide_rendered_coordinate_with_only_R0_still_emits_put():
+    """R0-only is still a PUT layer; stats keep it separate from R1/R2."""
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"u": (0, 0), "bps": (250, 250)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=[], notes=notes, exit_kind="normal")
+    bad = 0
+    bad += check(put is not None, f"R0-only PUT is emitted: {notes}")
+    bad += check(stats["oracle_classes"] == ["R0"],
+                 f"R0 is recorded as its own oracle layer: {stats}")
+    bad += check(stats["exit_kind_asserts"] == 1
+                 and stats["verifier_asserts"] == 0,
+                 f"exit-kind and verifier-backed asserts are separate: {stats}")
+    return bad
+
+
+def test_synthesized_bare_normal_call_counts_as_R0_exit_oracle():
+    """A source-synthesized bare call asserts normal exit even without marker."""
+    em, case = make_case()
+    body = em.lines
+    for i, line in enumerate(body):
+        if "[asserted] path exits normally" in line:
+            body[i] = "    // synthesized replay: normal exit comes from the bare call"
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"u": (0, 0), "bps": (250, 250)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT, ladder_rows=[], notes=notes, exit_kind="normal")
+    bad = 0
+    bad += check(put is not None, f"synthesized bare normal call emits: {notes}")
+    bad += check(stats["oracle_classes"] == ["R0"],
+                 f"bare normal call is an R0-only PUT: {stats}")
+    bad += check(stats["exit_kind_asserts"] == 1
+                 and stats["verifier_asserts"] == 0,
+                 f"only the exit-kind oracle is counted: {stats}")
+    return bad
+
+
+def test_wide_rendered_coordinate_without_oracle_stays_concrete():
+    """Fuzz width alone is not a PUT; fuzz can refute but cannot prove."""
+    em, case = make_case()
+    notes = []
+    try:
+        build_put(
+            "FeeVault", "setDiscount", 7, 2,
+            "sol:@C@FeeVault@F@setDiscount#61",
+            region={"u": (0, 0), "bps": (250, 250),
+                    "msg.sender": (1, 99)},
+            holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+            layout=LAYOUT, ladder_rows=[], notes=notes)
+    except ConcreteFallback as exc:
+        return check("assertion-free reachability witness" in exc.reason,
+                     f"wide no-oracle row falls back to concrete: {exc.reason}")
     return check(False, "expected ConcreteFallback")
 
 
@@ -456,7 +572,8 @@ def test_path_cov_fixture_replays_constructor_then_pins_state():
         region={"flag_": (0, 1), "msg.sender": (1, 1)},
         holes={}, pins={}, params=[("flag_", "bool")], emitted=em,
         case=case, layout={"flag": (2, 0, 1), "owner": (3, 0, 20)},
-        ladder_rows=[("flag", "post == flag_", "HOLDS")], notes=notes)
+        ladder_rows=[("flag", "post == flag_", "HOLDS")], notes=notes,
+        exit_kind="normal")
     text = assemble_put_source(
         em, case, [put], "TargetCovTest_Target_setFlag_put7",
         {"contract": "Target", "skip_constructor": True,
@@ -487,20 +604,30 @@ def test_constructor_staticcall_mock_is_scoped_to_deployment():
             {"entry_storage": {
                 "_spotPriceMultiplier": "1000000000000000000"
             }}, "    ")
+        runtime_mocks = runtime_staticcall_mock_lines(
+            project,
+            {"entry_storage": {
+                "_spotPriceMultiplier": "1000000000000000000"
+            }}, "    ")
     text = assemble_concrete_source(
         em, case,
         "HyperEVMRateProviderCovTest_HyperEVMRateProvider_getSpot"
         "PriceMultiplier_concrete3_fb",
-        None, None, "HyperEVMRateProvider", "getSpotPriceMultiplier", mocks)
+        None, None, "HyperEVMRateProvider", "getSpotPriceMultiplier", mocks,
+        runtime_mocks)
     bad = 0
     mock_at = text.find("vm.mockCall(address(0x000000000000000000000000000000000000080C)")
     new_at = text.find("c0 = new HyperEVMRateProvider(0, 0);")
     clear_at = text.find("vm.clearMockedCalls();")
+    runtime_at = text.rfind(
+        "vm.mockCall(address(0x000000000000000000000000000000000000080C)")
     bad += check(mock_at >= 0, "the constructor precompile is mocked")
     bad += check("uint8(8)" in text,
                  "szDecimals is reconstructed from the witness state")
     bad += check(mock_at < new_at < clear_at,
                  "the mock is active only for deployment")
+    bad += check(clear_at < runtime_at,
+                 "runtime precompile mocks are reinstalled after deployment")
     bad += check("function test_cov_0() public" in text,
                  "the concrete replay remains a concrete replay")
     return bad
@@ -585,6 +712,270 @@ contract CCovTest_1 is Test {
                  "precompile constructor arguments are not etched")
     bad += check(text.count('abi.encodeWithSignature("decimals()")') == 2,
                  "each test contract setUp gets its own constructor mocks")
+    return bad
+
+
+def test_constructor_param_decimals_mock_tracks_constructor_arg():
+    flat = """\
+pragma solidity >=0.8.0;
+interface AggregatorV3Interface { function decimals() external view returns (uint8); }
+contract C {
+  address public underlying;
+  uint8 public immutable decimals;
+  int256 public immutable rescaleFactor;
+  constructor(address underlying_, uint8 decimals_) {
+    underlying = underlying_;
+    decimals = decimals_;
+    uint8 underlyingDecimals = AggregatorV3Interface(underlying_).decimals();
+    rescaleFactor = underlyingDecimals < decimals_
+      ? int256(10 ** (decimals_ - underlyingDecimals))
+      : int256(10 ** (underlyingDecimals - decimals_));
+  }
+  function f() external {}
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C(address(uint160(0)), 254);
+  }
+  // claim: sol:@C@C@F@f#9:path:1
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 1)
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "src"))
+        with open(os.path.join(project, "src", "flat.sol"), "w") as f:
+            f.write(flat)
+        specs = constructor_param_interface_mock_specs(project, "C")
+    text = assemble_put_source(
+        em, case, [["", "  function test_put_C_f_path1() public {",
+                   "    c0.f();", "  }"]],
+        "CCovTest_put", contract="C", unit="f",
+        constructor_param_mocks=specs, flat_source=flat)
+    bad = 0
+    bad += check(len(specs) == 1, f"constructor decimals mock found: {specs}")
+    bad += check('abi.encodeWithSignature("decimals()"), abi.encode(uint8(254))'
+                 in text,
+                 "constructor interface decimals mock tracks decimals_ arg")
+    bad += check("abi.encode(uint8(1))" not in text,
+                 "constructor interface decimals mock no longer uses generic 1")
+    return bad
+
+
+def test_constructor_param_state_interface_runtime_call_is_mocked():
+    flat = """\
+pragma solidity >=0.8.0;
+interface AggregatorV3Interface {
+  function decimals() external view returns (uint8);
+  function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80);
+}
+contract C {
+  address public immutable underlying;
+  uint8 public immutable decimals;
+  constructor(address underlying_, uint8 decimals_) {
+    underlying = underlying_;
+    decimals = decimals_;
+    AggregatorV3Interface(underlying_).decimals();
+  }
+  function f() external view returns (uint80, int256, uint256, uint256, uint80) {
+    return AggregatorV3Interface(underlying).latestRoundData();
+  }
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C(address(uint160(17)), 254);
+  }
+  // claim: sol:@C@C@F@f#9:path:1
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 1)
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "src"))
+        with open(os.path.join(project, "src", "flat.sol"), "w") as f:
+            f.write(flat)
+        ctor_specs = constructor_param_interface_mock_specs(project, "C")
+        runtime_specs = constructor_param_runtime_interface_mock_specs(
+            project, "C")
+    text = assemble_put_source(
+        em, case, [["", "  function test_put_C_f_path1() public {",
+                   "    c0.f();", "  }"]],
+        "CCovTest_put", contract="C", unit="f",
+        constructor_param_mocks=ctor_specs,
+        constructor_param_runtime_mocks=runtime_specs, flat_source=flat)
+    bad = 0
+    bad += check(len(runtime_specs) == 1,
+                 f"constructor-sourced runtime interface mock found: "
+                 f"{runtime_specs}")
+    new_at = text.find("c0 = new C(address(uint160(17)), 254);")
+    latest_at = text.find('abi.encodeWithSignature("latestRoundData()")')
+    bad += check(0 <= new_at < latest_at,
+                 "runtime interface mock is inserted after deployment")
+    bad += check("address _esbmc_ctor_state_mock" in text
+                 and "address(uint160(17))" in text,
+                 "runtime interface mock uses the constructor address argument")
+    bad += check("abi.encode(uint80(0), int256(0), uint256(0), uint256(0), "
+                 "uint80(0))" in text,
+                 "tuple return for latestRoundData is ABI-mocked")
+    return bad
+
+
+def test_constructor_param_interface_call_via_stored_getter_is_mocked():
+    flat = """\
+pragma solidity >=0.8.0;
+interface IAuthority { function getImpl() external view returns (address); }
+contract C {
+  address internal authority;
+  constructor(address implementationAuthority) {
+    _storeImplementationAuthority(implementationAuthority);
+    address logic = IAuthority(getImplementationAuthority()).getImpl();
+    logic.delegatecall(abi.encodeWithSignature("init()"));
+  }
+  function _storeImplementationAuthority(address a) internal {
+    authority = a;
+  }
+  function getImplementationAuthority() public view returns (address) {
+    return authority;
+  }
+  function f() external {}
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C(address(uint160(9)));
+  }
+  // claim: sol:@C@C@F@f#9:path:1
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 1)
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "src"))
+        with open(os.path.join(project, "src", "flat.sol"), "w") as f:
+            f.write(flat)
+        specs = constructor_param_interface_mock_specs(project, "C")
+    text = assemble_concrete_source(
+        em, case, "CCovTest_concrete", contract="C", unit="f",
+        constructor_param_mocks=specs, flat_source=flat)
+    bad = 0
+    bad += check(len(specs) == 1 and specs[0].get("via_getter")
+                 == "getImplementationAuthority",
+                 f"stored constructor parameter getter mock is detected: "
+                 f"{specs}")
+    mock_at = text.find('abi.encodeWithSignature("getImpl()")')
+    new_at = text.find("c0 = new C(address(uint160(9)));")
+    bad += check(0 <= mock_at < new_at,
+                 "getter-mediated constructor interface call is mocked before "
+                 "deployment")
+    return bad
+
+
+def test_base_constructor_param_interface_call_is_mocked():
+    flat = """\
+pragma solidity >=0.8.0;
+interface IPayable { function pay(string memory serviceName) external payable; }
+abstract contract ServicePayer {
+  constructor(address payable receiver, string memory serviceName) payable {
+    IPayable(receiver).pay{value: msg.value}(serviceName);
+  }
+}
+contract C is ServicePayer {
+  constructor(address payable feeReceiver_) ServicePayer(feeReceiver_, "C") {}
+  function f() external {}
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C(payable(address(uint160(7))));
+  }
+  // claim: sol:@C@C@F@f#9:path:1
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 1)
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "src"))
+        with open(os.path.join(project, "src", "flat.sol"), "w") as f:
+            f.write(flat)
+        specs = constructor_param_interface_mock_specs(project, "C")
+    text = assemble_put_source(
+        em, case, [["", "  function test_put_C_f_path1() public {",
+                   "    c0.f();", "  }"]],
+        "CCovTest_put", contract="C", unit="f",
+        constructor_param_mocks=specs, constructor_params=["address payable"],
+        flat_source=flat)
+    bad = 0
+    bad += check(len(specs) == 1 and specs[0]["param_name"] == "feeReceiver_",
+                 f"base constructor interface call is detected: {specs}")
+    mock_at = text.find('abi.encodeWithSignature("pay(string)")')
+    new_at = text.find("c0 = new C(payable(address(uint160(7))));")
+    bad += check(0 <= mock_at < new_at,
+                 "base-constructor interface call is mocked before deployment")
+    bad += check("address _esbmc_ctor_arg_mock_0_0 = "
+                 "payable(address(uint160(7)));" in text,
+                 "the original target constructor argument is materialized")
     return bad
 
 
@@ -695,6 +1086,107 @@ contract CCovTest is Test {
     return bad
 
 
+def test_constructor_revert_zero_address_guard_repairs_zero_defaults():
+    flat = """\
+pragma solidity >=0.8.0;
+contract C {
+  error E_BadAddress();
+  constructor(address admin) {
+    if (admin == address(0)) revert E_BadAddress();
+  }
+  function ping() external {}
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C(address(uint160(0)));
+  }
+  // claim: sol:@C@C@F@ping#9:path:1
+  function test_cov_0() public {
+    c0.ping();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@ping#9", 1)
+    put = [
+        "",
+        "  function test_put_C_ping_path1() public {",
+        "    c0.ping();",
+        "  }",
+    ]
+    text = assemble_put_source(
+        em, case, [put], "CCovTest_put", contract="C",
+        unit="ping", flat_source=flat)
+    bad = 0
+    bad += check("new C(address(uint160(1000)))" in text,
+                 "if-param-zero-revert constructor guard is repaired")
+    bad += check("new C(address(uint160(0)))" not in text,
+                 "the reverting zero constructor arg is gone")
+    return bad
+
+
+def test_constructor_nonempty_dynamic_guards_repair_empty_defaults():
+    flat = """\
+pragma solidity >=0.8.0;
+contract C {
+  constructor(string memory _name, string memory _symbol) {
+    require(
+      keccak256(abi.encode(_name)) != keccak256(abi.encode(""))
+      && keccak256(abi.encode(_symbol)) != keccak256(abi.encode(""))
+    , "invalid argument - empty string");
+  }
+  function f() external {}
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C("", "");
+  }
+  // claim: sol:@C@C@F@f#9:path:3
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 3)
+    text = assemble_concrete_source(
+        em, case, "CCovTest_concrete", contract="C", unit="f",
+        flat_source=flat)
+    bad = 0
+    bad += check('new C("VeriPUT1000", "VeriPUT1001")' in text,
+                 "empty constructor string args rejected by source guards "
+                 "are repaired")
+    bad += check('new C("", "")' not in text,
+                 "the stale empty constructor args are gone")
+    return bad
+
+
 def test_constructor_sender_nonzero_mint_repairs_zero_prank():
     flat = """\
 pragma solidity >=0.8.0;
@@ -753,6 +1245,56 @@ contract CCovTest is Test {
     bad += check(
         "vm.startPrank(address(uint160(0)), address(uint160(0)));" not in text,
         "the zero constructor prank is gone")
+    return bad
+
+
+def test_zero_constructor_prank_is_repaired_even_without_explicit_guard():
+    flat = """\
+pragma solidity >=0.8.0;
+contract C {
+  address private _owner;
+  constructor() {
+    _owner = msg.sender;
+  }
+  function f() external {}
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    vm.startPrank(address(0), address(0));
+    c0 = new C();
+    vm.stopPrank();
+  }
+  // claim: sol:@C@C@F@f#9:path:3
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 3)
+    put = ["", "  function test_put_C_f_path3() public {", "    c0.f();", "  }"]
+    text = assemble_put_source(
+        em, case, [put], "CCovTest_put", contract="C", unit="f",
+        flat_source=flat)
+    bad = 0
+    bad += check("vm.startPrank(address(uint160(1)), address(uint160(1)));"
+                 in text,
+                 "zero constructor prank is repaired as a Foundry fixture")
+    bad += check("vm.startPrank(address(0), address(0));" not in text,
+                 "the stale zero constructor prank is gone")
     return bad
 
 
@@ -926,7 +1468,7 @@ contract MarketUpdateProposerCovTest is Test {
         region={"newGovernor": (1, (1 << 160) - 1)},
         holes={}, pins={}, params=[("newGovernor", "address")],
         emitted=repaired, case=repaired_case, layout={}, ladder_rows=[],
-        notes=notes, lift_unconstrained_calldata=True, exit_kind="normal")
+        notes=notes, lift_unconstrained_calldata=True, exit_kind="revert")
     put_text = "\n".join(put or [])
     bad += check(put is not None, "build_put no longer refuses with no call")
     bad += check(stats["lifted"] == ["newGovernor"],
@@ -934,6 +1476,182 @@ contract MarketUpdateProposerCovTest is Test {
                  f"{stats['lifted']}")
     bad += check("c0.setGovernor(newGovernor);" in put_text,
                  "the PUT calls the target with the fuzz parameter")
+    return bad
+
+
+def test_unsupported_skeleton_is_synthesized_for_concrete_replay():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {PuttyV2} from "./flat.sol";
+contract PuttyV2CovTest is Test {
+  function setUp() public {
+    // UNSUPPORTED: constructor of PuttyV2 has an argument type ESBMC cannot yet render as a literal
+  }
+  // claim: sol:@C@PuttyV2@F@setBaseURI#2702:path:3
+  function test_cov_0() public {
+    // UNSUPPORTED: PuttyV2.setBaseURI has an argument type ESBMC cannot yet render as a literal
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+        case = em.case_for("sol:@C@PuttyV2@F@setBaseURI#2702", 3)
+        notes = []
+        repaired, repaired_case, changed = synthesize_unsupported_case_replay(
+            em, case, "PuttyV2", "setBaseURI",
+            [("_baseURI", "string memory")],
+            ["string memory", "uint256", "address"], notes)
+        text = assemble_concrete_source(
+            repaired, repaired_case,
+            "PuttyV2CovTest_PuttyV2_setBaseURI_concrete3",
+            contract="PuttyV2", unit="setBaseURI",
+            constructor_params=["string memory", "uint256", "address"],
+            params=[("_baseURI", "string memory")])
+    finally:
+        os.unlink(path)
+
+    bad = 0
+    bad += check(changed, "the unsupported concrete skeleton is repaired")
+    bad += check("PuttyV2 c0 = new PuttyV2(" in text,
+                 "the concrete replay deploys the target locally")
+    bad += check('c0.setBaseURI("VeriPUT2000");' in text,
+                 "the string argument is rendered as a concrete literal")
+    bad += check("function test_cov_0()" in text,
+                 "the replay remains concrete rather than becoming a PUT")
+    return bad
+
+
+def test_missing_emitter_output_is_synthesized_for_certified_put_lift():
+    with tempfile.TemporaryDirectory() as td:
+        notes = []
+        pf = "sol:@C@Token@F@transfer#123"
+        emitted, case = synthesize_minimal_emitted_case(
+            td, "Token", "transfer", pf, 7,
+            [("to", "address"), ("amount", "uint256")],
+            ["address", "IHook"], notes)
+        body = emitted.lines[case[3][0] + 1:case[3][1]]
+        full_text = "\n".join(emitted.lines)
+
+    bad = 0
+    bad += check(case is not None, "synthetic case is recoverable by claim")
+    bad += check(find_unit_call(body, "transfer") is not None,
+                 "synthetic case contains the target call")
+    bad += check("new Token(address(uint160(1000)), "
+                 "IHook(address(uint160(1001))))" in full_text,
+                 "constructor defaults are source-level and nonzero")
+    bad += check("import {Token, IHook} from" in full_text,
+                 "custom constructor types are imported")
+    bad += check(any("synthetic emitter fallback used" in n for n in notes),
+                 "the synthetic fallback is recorded in notes")
+    return bad
+
+
+def test_missing_emitter_synthesis_is_not_gated_by_depth():
+    bad = 0
+    bad += check(
+        can_synthesize_missing_emitter_output(
+            "sol:@C@Token@F@transfer#123", "/tmp/flat.sol.solast"),
+        "missing emitter fallback only needs path_function and AST identity")
+    bad += check(
+        not can_synthesize_missing_emitter_output(
+            None, "/tmp/flat.sol.solast"),
+        "missing path_function still refuses synthesis")
+    return bad
+
+
+def test_synthetic_emitter_probe_keeps_proof_budget():
+    bad = 0
+    bad += check(
+        synthetic_emitter_probe_budget(540, 600, True) == 60,
+        "synthetic-capable emission gets a short probe in large runs")
+    bad += check(
+        synthetic_emitter_probe_budget(107, 120, True) == 30,
+        "synthetic-capable emission leaves most of a 120s run for proof")
+    bad += check(
+        synthetic_emitter_probe_budget(18, 120, True) == 18,
+        "cap never increases a near-exhausted emit budget")
+    bad += check(
+        synthetic_emitter_probe_budget(540, 600, False) == 540,
+        "non-synthetic emission keeps the full budget")
+    return bad
+
+
+def test_ladder_budget_reserves_r2_followup_when_possible():
+    bad = 0
+    bad += check(
+        budget_with_followup_reserve(116, 30, True) == 86,
+        "roomy ladder budget reserves the configured R2 proof window")
+    bad += check(
+        budget_with_followup_reserve(34, 30, True) == 34,
+        "near-exhausted ladder budget is not collapsed to one second")
+    bad += check(
+        budget_with_followup_reserve(116, 30, False) == 116,
+        "reserve is disabled when R2 is not requested")
+    return bad
+
+
+def test_refused_put_record_preserves_build_put_reason():
+    with tempfile.TemporaryDirectory() as td:
+        notes = [
+            "msg.sender == 0 cannot be established with Foundry `vm.prank`"
+        ]
+        write_put_refusal_record(
+            td, "build-put-refused", "TOAD", "transferOwnership", 15, 3,
+            path_function="sol:@C@TOAD@F@transferOwnership#489",
+            region={"msg.sender": (0, 0), "newOwner": (1, 9)},
+            holes={}, pins={}, ladder_rows=[("_owner", "post == newOwner",
+                                             "HOLDS")],
+            ladder_summary=(1, 1, 0, 0, 0), notes=notes)
+        data = json.load(open(os.path.join(td, "put.json")))
+
+    bad = 0
+    bad += check(data["refused"] == "build-put-refused",
+                 "structured refusal kind is written")
+    bad += check(data["kind"] == "refusal",
+                 "a refused Stage-4 row is not classified as a PUT artifact")
+    bad += check("msg.sender == 0" in data["refusal_reason"],
+                 "the concrete refusal reason is retained")
+    bad += check(data["region"]["newOwner"] == ["1", "9"],
+                 "region bounds remain machine-readable strings")
+    bad += check(data["ladder"][0]["verdict"] == "HOLDS",
+                 "verified ladder rows are kept for diagnosis")
+    bad += check(data["stats"]["asserts"] == 0,
+                 "a refused row cannot be counted as an emitted oracle")
+    return bad
+
+
+def test_concrete_stage2_source_record_preserves_certified_region_reason():
+    bad = 0
+    certified = concrete_stage2_source_record(
+        "certified-region-concrete-fallback",
+        "CERTIFIED-REGION-PUT-REFUSED:build-put-refused")
+    bad += check(
+        certified == {
+            "stage2_source": "certified-region-concrete-fallback",
+            "certified_region_fallback_reason": "build-put-refused",
+        },
+        "certified-region concrete fallback records the real PUT refusal")
+    plain = concrete_stage2_source_record(
+        "cleared_not_certified_fallback", "SUCCESSFUL")
+    bad += check(
+        plain == {"stage2_source": "cleared_not_certified_fallback"},
+        "ordinary concrete fallback does not pretend to be certified-region")
+    partial = concrete_stage2_source_record(
+        "partial_journal_concrete_fallback", "PARTIAL-JOURNAL-WITNESSED")
+    bad += check(
+        partial == {"stage2_source": "partial_journal_concrete_fallback"},
+        "partial-journal concrete fallback keeps its own source")
+    depth = concrete_stage2_source_record(
+        "certified-region-concrete-fallback",
+        reason="path-depth-unavailable")
+    bad += check(
+        depth["certified_region_fallback_reason"] == "path-depth-unavailable",
+        "internal path-depth fallback keeps its specific reason")
     return bad
 
 
@@ -946,6 +1664,7 @@ interface IBase {
 interface IChild is IBase {
   function safeTransferFrom(address from, address to, uint256 tokenId, bytes calldata data) external;
   function ownerOf(uint256 tokenId) external view returns (address owner);
+  function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80);
 }
 contract C { function f() external {} }
 """
@@ -957,6 +1676,7 @@ import {C, IChild} from "./flat.sol";
 contract ESBMCMock_IChild is IChild {
   function safeTransferFrom(address, address, uint256, bytes memory) external pure override {}
   function ownerOf(uint256) external pure override returns (address) { return address(0); }
+  function latestRoundData() external pure override {}
 }
 contract CCovTest is Test {
   C c0;
@@ -988,6 +1708,11 @@ contract CCovTest is Test {
     bad += check("function safeTransferFrom(address, address, uint256, "
                  "bytes memory) external pure override {}" in text,
                  "the existing overload is preserved")
+    bad += check("function latestRoundData() external pure override returns "
+                 "(uint80, int256, uint256, uint256, uint80) "
+                 "{ return (uint80(1), int256(0), uint256(1), uint256(1), "
+                 "uint80(1)); }" in text,
+                 "the malformed tuple-return mock is repaired")
     return bad
 
 
@@ -1236,14 +1961,8 @@ def test_region_bound_still_wins_over_a_duplicate_pin():
     return bad
 
 
-def test_env_agreement_emits_when_the_preamble_matches():
-    """`msg.sender in [0, 0]` against a preamble that pranks 0: EMIT.
-
-    This is the FeeVault enc=7 case verbatim, and it is here as the control.
-    A gate that only ever refuses is indistinguishable from one that is broken,
-    and this fixture is what makes the refusal below a discriminator rather than
-    a constant.
-    """
+def test_zero_sender_slice_refuses_foundry_put():
+    """`msg.sender == 0` is certified but not executable by Foundry prank."""
     em, case = make_case()
     notes = []
     put, stats = build_put(
@@ -1254,10 +1973,13 @@ def test_env_agreement_emits_when_the_preamble_matches():
         params=PARAMS, emitted=em, case=case, layout=LAYOUT,
         ladder_rows=LADDER, notes=notes)
     bad = 0
-    bad += check(put is not None,
-                 f"agreement emits a PUT (notes: {notes})")
-    bad += check(stats and not stats.get("env_unchecked"),
-                 "nothing is reported unchecked when both are comparable")
+    bad += check(put is None,
+                 f"zero sender cannot be emitted as a Foundry PUT: {put}")
+    bad += check(any("cannot be established with Foundry `vm.prank`" in n
+                     for n in notes),
+                 f"the refusal names Foundry's sender-domain gap: {notes}")
+    bad += check(stats is None,
+                 f"refused PUT has no stats: {stats}")
     return bad
 
 
@@ -1352,12 +2074,13 @@ contract VaultCovTest is Test {
         region={"msg.sender": (0, (1 << 160) - 1),
                 "amount": (0, 10)},
         holes={}, pins={}, params=[("amount", "uint256")],
-        emitted=em, case=case, layout={}, ladder_rows=[], notes=notes)
+        emitted=em, case=case, layout={}, ladder_rows=[], notes=notes,
+        exit_kind="normal")
     text = "\n".join(put or [])
     old_prank = text.find("vm.prank(address(uint160(1)));")
     setup_call = text.find("try c1.pay(1) {} catch {}")
     target_prank = text.rfind("vm.prank(p_msg_sender);")
-    target_call = text.rfind("try c1.pay(amount) {} catch {}")
+    target_call = text.rfind("c1.pay(amount);")
     bad = 0
     bad += check(put is not None, f"a PUT is produced (notes: {notes})")
     bad += check(old_prank != -1 and setup_call != -1
@@ -1372,6 +2095,10 @@ contract VaultCovTest is Test {
                  f"the setup tolerance is reported: {notes}")
     bad += check(stats and "msg.sender" in stats.get("wide_fuzz_coords", []),
                  f"sender fuzz width is still counted: {stats}")
+    bad += check("vm.assume(uint256(uint160(p_msg_sender)) != 0);" in text,
+                 "zero sender is excluded from the Foundry-executable subregion")
+    bad += check(stats["rendered_width"]["msg.sender"] == (1 << 160) - 1,
+                 f"rendered sender width subtracts the Foundry zero hole: {stats}")
     return bad
 
 
@@ -1684,6 +2411,27 @@ def test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies():
         bad += check(r is not None and flag in r,
                      f"{flag} is refused even beside a legitimate flag")
     return bad
+
+
+def test_esbmc_singleton_args_are_deduplicated_without_breaking_unwindset():
+    got = dedup_esbmc_singleton_args([
+        "--overflow-check",
+        "--unwindset",
+        "1:8",
+        "--overflow-check",
+        "--unwindset",
+        "2:16",
+        "--div-by-zero-check",
+        "--div-by-zero-check",
+    ])
+    return check(got == [
+        "--overflow-check",
+        "--unwindset",
+        "1:8",
+        "--unwindset",
+        "2:16",
+        "--div-by-zero-check",
+    ], f"only singleton flags are deduplicated: {got}")
 
 
 def test_foundry_fixture_loading_keeps_esbmc_fixture_as_fallback():
@@ -2010,7 +2758,7 @@ def _ret_put(ladder_rows, rettypes, layout=None, maps=None, r2_terms=None,
         holes={}, pins=(pins or {}), params=PARAMS, emitted=em, case=case,
         layout=LAYOUT if layout is None else layout,
         ladder_rows=ladder_rows, notes=notes, rettypes=rettypes,
-        maps=maps, r2_terms=r2_terms)
+        maps=maps, r2_terms=r2_terms, exit_kind="normal")
     return "\n".join(put or []), stats, notes
 
 
@@ -2846,6 +3594,28 @@ def test_assert_query_keeps_state_pins_for_the_certified_slice():
     return bad
 
 
+def test_assert_query_skips_internal_semantic_state_pins():
+    keep, skipped = assert_query_pins(
+        {
+            "state._DOCKED": 255,
+            "state._SEQUENCER_STATUS_DOWN$144": 1,
+            "state.owner": 7,
+            "msg.value": 0,
+        },
+        layout={"owner": (0, 0, 20)},
+        maps={})
+    bad = 0
+    bad += check(
+        keep == {"msg.value": 0, "state._DOCKED": 255, "state.owner": 7},
+        f"source-level pins remain but internal semantic pins drop: {keep}")
+    bad += check(
+        len(skipped) == 1
+        and "state._SEQUENCER_STATUS_DOWN$144" in skipped[0]
+        and "ESBMC-internal state name" in skipped[0],
+        f"internal semantic pin skip is recorded: {skipped}")
+    return bad
+
+
 def test_assert_query_region_keeps_slots_but_drops_state_scalars():
     lit = "0x2000000000000000000000000000000000000000000000000000000000000000"
     region = {
@@ -3565,6 +4335,46 @@ def test_JSON_fuzz_filter_refutes_only_its_labeled_assertion():
     return bad
 
 
+def test_stable_unlabeled_revert_from_prefilter_is_path_exit_evidence():
+    base = {
+        "candidates": [
+            {
+                "test": "test_put_C_f_path7fz0",
+                "marker": "VERIPUT_CANDIDATE_a_0",
+                "verdict": "NOT-RUN",
+                "reason": "panic: assertion failed (0x01)",
+            },
+            {
+                "test": "test_put_C_f_path7fz1",
+                "marker": "VERIPUT_CANDIDATE_a_1",
+                "verdict": "NOT-RUN",
+                "reason": "panic: assertion failed (0x01)",
+            },
+        ]
+    }
+    bad = 0
+    bad += check(stable_unlabeled_revert_from_forge_prefilter(base)
+                 == "panic: assertion failed (0x01)",
+                 "every rendered probe dying before its marker is path-level "
+                 "revert evidence")
+    mixed = {"candidates": list(base["candidates"]) + [{
+        "test": "test_put_C_f_path7fz2",
+        "marker": "VERIPUT_CANDIDATE_a_2",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a_2 x: post == amount: 9 != 0",
+    }]}
+    bad += check(stable_unlabeled_revert_from_forge_prefilter(mixed) is None,
+                 "a labeled candidate CE keeps this as candidate filtering, "
+                 "not exit-kind inference")
+    missing = {"candidates": [{
+        "verdict": "NOT-RUN",
+        "reason": "expected Forge test was absent",
+    }]}
+    bad += check(stable_unlabeled_revert_from_forge_prefilter(missing) is None,
+                 "missing or unrendered probes are not exit-kind evidence")
+    return bad
+
+
 def test_R2_fuzz_filter_removes_only_concretely_refuted_candidates():
     from solidity_path_put import (filter_r2_specs,  # noqa: E402
                                    propose_r2_batch, r2_candidates)
@@ -3928,6 +4738,31 @@ def test_path_decision_guard_negates_plain_branch_claim():
     return bad
 
 
+def test_path_decision_guard_skips_assigned_calldata_name():
+    source = """
+contract Cwb7 {
+  function f(uint x) public pure {
+    x = 2;
+    while (x > 1) {
+      if (x > 10) x = 2;
+      else --x;
+    }
+  }
+}
+"""
+    assigned = assigned_source_locals(source, "Cwb7", "f")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "!(x > 1)"}, {"branch_claim": "x > 10"}],
+        {"x": "x"}, assigned)
+    bad = 0
+    bad += check(assigned == {"x"}, f"assigned source names found: {assigned}")
+    bad += check(lines == [], f"assigned calldata-looking guards skipped: {lines}")
+    bad += check(len(skipped) == 2 and all("`x` is assigned inside the unit" in s
+                                           for s in skipped),
+                 f"assigned calldata-looking guards are skipped: {skipped}")
+    return bad
+
+
 def test_path_decision_guard_handles_double_negated_branch_claim():
     bad = 0
     bad += check(path_condition_from_branch_claim("!(!(msg.sender == owner))") ==
@@ -3996,6 +4831,19 @@ def test_path_decision_guard_splits_safe_boolean_shapes():
          "    vm.assume((sender == _pre_owner || _pre_member == 1));")
     ] and skipped == [],
         f"true disjunction renders as one OR assume: {lines}, {skipped}")
+    bad += check(path_condition_terms_from_branch_claim(
+        "!(proposalId > proposalCount || proposalId == 0)") == [
+            "proposalId", "proposalCount", "proposalId", "0"
+        ], "grouped disjunction exposes every term for guard materialization")
+    lines, skipped = path_decision_assumes(
+        [{"branch_claim": "!(msg.sender == _owner || (_owners[msg.sender]) == 1)"}],
+        {"msg.sender": "sender", "state._owner": "_pre_owner",
+         "state._owners[msg.sender]": "_pre_owner_slot"})
+    bad += check(lines == [
+        ("!(msg.sender == _owner || (_owners[msg.sender]) == 1)",
+         "    vm.assume((sender == _pre_owner || _pre_owner_slot == 1));")
+    ] and skipped == [],
+        f"parenthesized mapping term in OR guard renders: {lines}, {skipped}")
     return bad
 
 
@@ -4012,6 +4860,205 @@ def test_path_decision_guard_renders_unary_bool_mapping_relation():
          "    vm.assume(_pre_blacklisted_account == 0);")
     ], f"unary bool mapping guard rendered: {lines}")
     bad += check(skipped == [], f"nothing skipped: {skipped}")
+    return bad
+
+
+def test_path_decision_guard_aliases_internal_helper_locals():
+    source = """
+contract C {
+  mapping(address => uint256) _balances;
+  address uniswapV2Pair;
+  function _msgSender() internal view returns (address) { return msg.sender; }
+  function transfer(address recipient, uint256 amount) public {
+    _transfer(_msgSender(), recipient, amount);
+  }
+  function _transfer(address sender, address recipient, uint256 amount) internal {
+    _beforeTokenTransfer(sender, recipient);
+    uint256 senderBalance = _balances[sender];
+    require(senderBalance >= amount);
+  }
+  function _beforeTokenTransfer(address from, address to) internal {
+    if (to == uniswapV2Pair) {}
+  }
+}
+"""
+    decisions = [
+        {"function": "transfer", "branch_claim": "!(msg.value == 0)"},
+        {"function": "_transfer", "branch_claim": "!(sender != 0)"},
+        {"function": "_beforeTokenTransfer",
+         "branch_claim": "to == uniswapV2Pair"},
+        {"function": "_transfer",
+         "branch_claim": "!(!(senderBalance >= amount))"},
+    ]
+    idents = {
+        "msg.sender": "uint256(uint160(p_msg_sender))",
+        "msg.value": "0",
+        "recipient": "uint256(uint160(recipient))",
+        "amount": "amount",
+        "state.uniswapV2Pair": "_pre_uniswapV2Pair",
+        "state._balances$1[msg.sender]": "_pre_balances_msg_sender",
+    }
+    maps = {"_balances$1": (0, "address", 256, 0, "_balances", "")}
+    base = expand_path_guard_coord_idents(idents, maps, {})
+    base.update(source_path_guard_aliases(
+        decisions, base, maps, {}, source))
+    lines, skipped = path_decision_assumes(decisions, base)
+    bad = 0
+    bad += check(skipped == [], f"helper-local guards all rendered: {skipped}")
+    rendered = [line for _claim, line in lines]
+    bad += check(
+        "    vm.assume(uint256(uint160(p_msg_sender)) != 0);" in rendered,
+        f"sender helper param aliases to msg.sender: {rendered}")
+    bad += check(
+        "    vm.assume(uint256(uint160(recipient)) != _pre_uniswapV2Pair);" in rendered,
+        f"to helper param aliases to recipient and state guard: {rendered}")
+    bad += check(
+        "    vm.assume(_pre_balances_msg_sender < amount);" in rendered,
+        f"senderBalance local aliases to mapping pre-read: {rendered}")
+    return bad
+
+
+def test_path_decision_guard_aliases_return_value_helpers():
+    source = """
+contract C {
+  address private _owner;
+  function owner() internal view returns (address) { return _owner; }
+  function onlyOwner() public {
+    require(owner() == msg.sender);
+  }
+}
+"""
+    decisions = [
+        {"function": "onlyOwner",
+         "branch_claim": "!(return_value$owner$1 == msg.sender)"},
+    ]
+    idents = {
+        "msg.sender": "uint256(uint160(p_msg_sender))",
+        "state._owner": "_pre_owner",
+    }
+    base = expand_path_guard_coord_idents(idents, {}, {})
+    base.update(source_path_guard_aliases(decisions, base, {}, {}, source))
+    lines, skipped = path_decision_assumes(decisions, base)
+    bad = 0
+    bad += check(skipped == [], f"return helper guard rendered: {skipped}")
+    bad += check(lines == [
+        ("!(return_value$owner$1 == msg.sender)",
+         "    vm.assume(_pre_owner == uint256(uint160(p_msg_sender)));")
+    ], f"return_value helper aliases to returned state: {lines}")
+    return bad
+
+
+def test_path_decision_guard_skips_mutating_return_value_helper():
+    source = """
+contract C {
+  uint x;
+  function f() internal returns (uint) {
+    x = x + 1;
+    return x;
+  }
+  function g() public returns (bool) {
+    x = 0;
+    bool b = (f() == 0) && (f() == 0);
+    return b;
+  }
+}
+"""
+    decisions = [
+        {"function": "g", "line": 9, "branch_claim": "return_value$f$1 == 0"},
+    ]
+    idents = {"state.x": "_pre_x"}
+    base = expand_path_guard_coord_idents(idents, {}, {})
+    aliases = source_path_guard_aliases(decisions, base, {}, {}, source)
+    lines, skipped = path_decision_assumes(decisions, {**base, **aliases})
+    bad = 0
+    bad += check("return_value$f$1" not in aliases,
+                 f"mutating helper return is not an entry-state alias: {aliases}")
+    bad += check(lines == [], f"mutating helper guard is not rendered: {lines}")
+    bad += check(any("return_value$f$1" in msg for msg in skipped),
+                 f"skipped reason names the unrenderable helper return: {skipped}")
+    return bad
+
+
+def test_path_decision_guard_aliases_balance_helpers():
+    source = """
+contract GuardCheck {
+  function donate(address addr) payable public {
+    require(addr != address(0));
+    require(msg.value != 0);
+    uint balanceBeforeTransfer = address(this).balance;
+    uint transferAmount;
+
+    if (addr.balance == 0) {
+      transferAmount = msg.value;
+    } else if (addr.balance < msg.sender.balance) {
+      transferAmount = msg.value / 2;
+    } else {
+      revert();
+    }
+  }
+}
+"""
+    decisions = [
+        {"function": "donate", "line": 9,
+         "branch_claim": "return_value$_get_balance$3 == 0"},
+        {"function": "donate", "line": 11,
+         "branch_claim":
+         "!(return_value$_get_balance$1 < return_value$_get_balance$2)"},
+    ]
+    idents = {
+        "addr": "uint256(uint160(addr))",
+        "msg.sender": "uint256(uint160(p_msg_sender))",
+    }
+    base = expand_path_guard_coord_idents(idents, {}, {})
+    base.update(source_path_guard_aliases(decisions, base, {}, {}, source))
+    lines, skipped = path_decision_assumes(decisions, base)
+    rendered = [line for _claim, line in lines]
+    bad = 0
+    bad += check(skipped == [], f"balance helper guards rendered: {skipped}")
+    bad += check(
+        "    vm.assume(addr.balance != 0);" in rendered,
+        f"addr.balance helper return aliases by source line: {rendered}")
+    bad += check(
+        "    vm.assume(addr.balance < p_msg_sender.balance);" in rendered,
+        f"msg.sender.balance helper return aliases by source line: {rendered}")
+    return bad
+
+
+def test_path_decision_guard_aliases_bool_helper_scalar_return():
+    source = """
+contract IdentityManager {
+  mapping(address => uint) _index;
+  function addressKnown(address account) public view returns (bool) {
+    return _index[account] > 0;
+  }
+  function addValidator(address newValidator) public {
+    require(addressKnown(msg.sender));
+    require(addressKnown(newValidator));
+  }
+}
+"""
+    decisions = [
+        {"function": "addValidator", "line": 8,
+         "branch_claim": "!(!return_value$_addressKnown$1)"},
+    ]
+    bad = 0
+    bad += check(source_return_scalar_terms_for_path_guards(
+        decisions, source) == {
+            "return_value$_addressKnown$1": "_index[msg.sender]"
+        }, "bool helper return exposes its scalar mapping coordinate")
+    idents = {
+        "msg.sender": "uint256(uint160(p_msg_sender))",
+        "state._index[msg.sender]": "_pre_index_msg_sender",
+    }
+    maps = {"_index": (0, "address", 256, 0, "_index", "")}
+    base = expand_path_guard_coord_idents(idents, maps, {})
+    base.update(source_path_guard_aliases(decisions, base, maps, {}, source))
+    lines, skipped = path_decision_assumes(decisions, base)
+    bad += check(lines == [
+        ("!(!return_value$_addressKnown$1)",
+         "    vm.assume(_pre_index_msg_sender == 0);")
+    ] and skipped == [],
+        f"bool helper return aliases to materialized scalar: {lines}, {skipped}")
     return bad
 
 
@@ -4038,7 +5085,8 @@ def test_path_guard_materializes_state_coord_without_oracle_rung():
         region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
         holes={}, pins={"msg.value": 0}, params=PARAMS, emitted=em,
         case=case, layout=LAYOUT, ladder_rows=[], notes=notes,
-        path_decisions=[{"branch_claim": "!(msg.sender == owner)"}])
+        path_decisions=[{"branch_claim": "!(msg.sender == owner)"}],
+        exit_kind="normal")
     text = "\n".join(put or [])
     bad = 0
     bad += check(put is not None, f"a PUT is produced: {notes}")
@@ -4049,6 +5097,118 @@ def test_path_guard_materializes_state_coord_without_oracle_rung():
     bad += check(stats["path_guard_assumes"] == 1
                  and stats["path_guard_skipped"] == [],
                  f"the guard is counted as established: {stats}")
+    return bad
+
+
+def test_grouped_path_guard_materializes_every_state_term():
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={"msg.value": 0}, params=PARAMS, emitted=em,
+        case=case, layout=LAYOUT, ladder_rows=[], notes=notes,
+        path_decisions=[{
+            "branch_claim": "!(msg.sender == owner || feeReceiver == 0)"
+        }],
+        exit_kind="normal")
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced: {notes}")
+    bad += check("uint256 _pre_owner = (uint256(vm.load(address(c0)" in text,
+                 "grouped guard materializes owner")
+    bad += check("uint256 _pre_feeReceiver = (uint256(vm.load(address(c0)" in text,
+                 "grouped guard materializes feeReceiver")
+    bad += check(
+        "vm.assume((uint256(uint160(0)) == _pre_owner || "
+        "_pre_feeReceiver == 0));" in text,
+        f"grouped OR guard is rendered from materialized state: {text}")
+    bad += check(stats["path_guard_assumes"] == 1
+                 and stats["path_guard_skipped"] == [],
+                 f"grouped guard is counted as established: {stats}")
+    return bad
+
+
+def test_balance_path_guard_is_after_environment_and_before_prank():
+    em, case = make_case()
+    notes = []
+    flat_source = (
+        "contract FeeVault {\n"
+        "  function setDiscount(address u, uint16 bps) public {\n"
+        "    if (u.balance < msg.sender.balance) {}\n"
+        "  }\n"
+        "}\n")
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"u": (1, (1 << 160) - 1),
+                "bps": (0, 250),
+                "msg.sender": (1, (1 << 160) - 1)},
+        holes={}, pins={"msg.value": 0}, params=PARAMS, emitted=em,
+        case=case, layout=LAYOUT, ladder_rows=[], notes=notes,
+        path_decisions=[{
+            "function": "setDiscount",
+            "line": 3,
+            "branch_claim":
+            "!(return_value$_get_balance$1 < return_value$_get_balance$2)",
+        }],
+        flat_source=flat_source,
+        exit_kind="normal")
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced: {notes}")
+    balance_guard = "vm.assume(u.balance < p_msg_sender.balance);"
+    bad += check(balance_guard in text,
+                 f"balance helper path guard is rendered: {text}")
+    bad += check(text.index(balance_guard) < text.index("vm.prank(p_msg_sender);"),
+                 "balance guard is before the call-binding prank")
+    bad += check("complete-path balance guard recovered from the emit report"
+                 in text, "balance guard is marked as a late guard")
+    bad += check(stats["path_guard_assumes"] == 1,
+                 f"balance guard is counted: {stats}")
+    return bad
+
+
+def test_bool_helper_path_guard_materializes_mapping_slot():
+    em, case = make_case()
+    notes = []
+    flat_source = (
+        "contract FeeVault {\n"
+        "  mapping(address => uint) _index;\n"
+        "  function addressKnown(address account) public view returns (bool) {\n"
+        "    return _index[account] > 0;\n"
+        "  }\n"
+        "  function setDiscount(address u, uint16 bps) public {\n"
+        "    require(addressKnown(msg.sender));\n"
+        "  }\n"
+        "}\n")
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"u": (0, (1 << 160) - 1),
+                "bps": (0, 250),
+                "msg.sender": (1, (1 << 160) - 1)},
+        holes={}, pins={"msg.value": 0}, params=PARAMS, emitted=em,
+        case=case, layout=LAYOUT, ladder_rows=[], notes=notes,
+        maps={"_index": (3, "address", 256, 0, "_index", "")},
+        path_decisions=[{
+            "function": "setDiscount",
+            "line": 7,
+            "branch_claim": "!(!return_value$_addressKnown$1)",
+        }],
+        flat_source=flat_source,
+        exit_kind="normal")
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced: {notes}")
+    bad += check("uint256 _pre_index_msg_sender =" in text,
+                 "mapping slot pre-read is materialized for helper guard")
+    bad += check("vm.assume(_pre_index_msg_sender == 0);" in text,
+                 f"helper return guard uses the materialized slot: {text}")
+    bad += check(stats["path_guard_assumes"] == 1
+                 and stats["path_guard_skipped"] == [],
+                 f"helper guard is counted as established: {stats}")
     return bad
 
 
@@ -4162,6 +5322,27 @@ def test_skipped_forge_R2_accounting_is_complete_and_conservative():
     return bad
 
 
+def test_forge_R2_probe_accepts_return_only_assertions():
+    from solidity_path_put import r2_probe_has_rendered_assertion  # noqa: E402
+    bad = 0
+    bad += check(r2_probe_has_rendered_assertion({
+        "asserts": 1,
+        "state_asserts": 0,
+        "return_asserts": 1,
+    }), "a return-only R2 probe is still a rendered assertion")
+    bad += check(r2_probe_has_rendered_assertion({
+        "asserts": 1,
+        "state_asserts": 1,
+        "return_asserts": 0,
+    }), "a state R2 probe remains rendered")
+    bad += check(not r2_probe_has_rendered_assertion({
+        "asserts": 0,
+        "state_asserts": 0,
+        "return_asserts": 0,
+    }), "an assertion-free probe is not rendered")
+    return bad
+
+
 def test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle():
     rows = [("bal", "post >= pre", "HOLDS")]
     good = {"fuzz_params": 1, "asserts": 1, "state_asserts": 1,
@@ -4182,6 +5363,8 @@ def test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle():
                  "a complete ladder still gets the normal R2 chance")
     bad += check(not partial_ladder_already_has_strict_oracle([], None, good),
                  "no salvaged row means no R1 basis for skipping R2")
+    bad += check(not partial_ladder_already_has_strict_oracle(rows, None, None),
+                 "a missing probe stats object cannot prove a strict PUT")
     bad += check(not partial_ladder_already_has_strict_oracle(rows, None,
                                                               no_fuzz),
                  "a non-fuzz point oracle is not a strict PUT")
@@ -4198,17 +5381,108 @@ def test_oracle_class_metadata_keeps_R0_R1_R2_apart():
     bad = 0
     bad += check(oracle_classes_for_rung("post >= pre") == ["R1"],
                  "plain pre/post ordering is R1")
+    bad += check(oracle_classes_for_rung("pre >= post") == ["R1"],
+                 "reverse-spelled pre/post ordering is still R1")
     bad += check(oracle_classes_for_rung("post == amount") == ["R2"],
                  "exact endpoint over an input is R2")
     bad += check(oracle_classes_for_rung(
         "post - pre in [amount, amount] with post >= pre") == ["R1", "R2"],
         "a delta bound with a direction records the R1/R2 combination")
+    bad += check(oracle_classes_for_rung(
+        "(post-pre) in[amount,amount] with (post>=pre)") == ["R1", "R2"],
+        "compact renderer spacing keeps the R1/R2 combination")
+    bad += check(oracle_classes_for_rung(
+        "pre - post in [amount, amount] with pre >= post") == ["R1", "R2"],
+        "a decreasing delta bound records the same R1/R2 combination")
+    bad += check(oracle_classes_for_rung("(post) in[lo, hi]") == ["R2"],
+                 "absolute interval R2 tolerates parentheses and compact spacing")
     bad += check(oracle_classes_for_rung("return == 1") == ["R2"],
                  "return endpoint assertions are R2")
     details = [{"classes": ["R2", "R1"]}, {"classes": ["R0"]},
                {"classes": ["R1"]}]
     bad += check(oracle_class_summary(details) == ["R0", "R1", "R2"],
                  "summary is stable, unique, and ordered")
+
+    r2_terms = {
+        "amount": {"kind": "coord", "name": "amount"},
+        "msg.sender": {"kind": "coord", "name": "msg.sender"},
+        "state.owner": {"kind": "coord", "name": "state.owner"},
+    }
+    rich = [
+        oracle_detail(
+            "state", "balance",
+            "(post-pre) in[amount,amount] with (post>=pre)",
+            r2_terms=r2_terms),
+        oracle_detail(
+            "return", "return", "(return) in[msg.sender,msg.sender]",
+            r2_terms=r2_terms),
+        oracle_detail(
+            "state", "owner", "post == state.owner", r2_terms=r2_terms),
+        oracle_detail(
+            "exit", "exit", "path exits normally", classes=["R0"]),
+    ]
+    bad += check(rich[0]["canonical_text"] ==
+                 "post - pre in [amount, amount] with post >= pre",
+                 f"detail records canonical compact R1/R2 text: {rich[0]}")
+    bad += check(rich[0]["classes"] == ["R1", "R2"]
+                 and rich[0]["class_combo"] == "R1+R2",
+                 f"detail records the combined oracle class: {rich[0]}")
+    bad += check(rich[0]["coordinates"] == [
+        {"name": "amount", "class": "calldata"}
+    ], f"calldata R2 endpoint is named once: {rich[0]}")
+    bad += check(rich[1]["layer"] == "return"
+                 and rich[1]["coordinate_classes"] == ["env"],
+                 f"return oracle records environment endpoint class: {rich[1]}")
+    bad += check(rich[2]["coordinate_classes"] == ["state"],
+                 f"state endpoint is classified separately: {rich[2]}")
+    summary = oracle_stats_summary(rich)
+    bad += check(summary["oracle_classes"] == ["R0", "R1", "R2"],
+                 f"aggregate classes include every emitted layer: {summary}")
+    bad += check(summary["oracle_class_counts"] ==
+                 {"R0": 1, "R1": 1, "R2": 3},
+                 f"aggregate class counts count combined rows in both "
+                 f"classes: {summary}")
+    bad += check(summary["oracle_class_combinations"] ==
+                 ["R0", "R1+R2", "R2"],
+                 f"aggregate combination labels are directly countable: "
+                 f"{summary}")
+    bad += check(summary["oracle_coordinate_classes"] ==
+                 ["calldata", "env", "state"],
+                 f"aggregate coordinate classes support return/state/env "
+                 f"statistics: {summary}")
+    return bad
+
+
+def test_oracle_rung_renderer_accepts_canonical_equivalents():
+    from solidity_path_put import (return_kind, return_rung_assertions,
+                                   rung_assertions)  # noqa: E402
+    bad = 0
+    dec = rung_assertions(
+        "(pre-post) in[amount,amount] with (pre>=post)",
+        "_pre_bal", "_post_bal", "bal: dec",
+        idents={"amount": "amount"},
+        idents_abs={"amount": "amount"})
+    bad += check(dec == [
+        '    assertGe(_pre_bal, _post_bal, "bal: dec");',
+        '    unchecked { assertGe(_pre_bal - _post_bal, amount, "bal: dec"); }',
+        '    unchecked { assertLe(_pre_bal - _post_bal, amount, "bal: dec"); }',
+    ], f"compact decreasing R2 renders as assertions: {dec}")
+    rev = rung_assertions(
+        "pre >= post", "_pre_bal", "_post_bal", "bal: frame")
+    bad += check(rev == [
+        '    assertGe(_pre_bal, _post_bal, "bal: frame");'
+    ], f"reverse-spelled R1 renders, not just labels: {rev}")
+    ret = return_rung_assertions(
+        "(return) in[lo,hi]", return_kind("uint256"), "_put_ret",
+        "ret: range", idents_abs={"lo": "lo", "hi": "hi"},
+        r2_terms={
+            "lo": {"kind": "coord", "name": "lo"},
+            "hi": {"kind": "coord", "name": "hi"},
+        })
+    bad += check(ret == [
+        '    assertGe(uint256(_put_ret), lo, "ret: range");',
+        '    assertLe(uint256(_put_ret), hi, "ret: range");',
+    ], f"compact return R2 interval renders: {ret}")
     return bad
 
 
@@ -4878,9 +6152,9 @@ def test_source_R2_mapping_slot_updates_prioritize_exact_slot_queries():
                      "post == (state.allowance[msg.sender][spender] - amount)"
                      for item in candidates),
                  f"mapping self-subtract equality is renderable: {candidates}")
-    bad += check("allowance$11[msg.sender][spender]" in alias_entries,
-                 f"source R2 mapping candidates use ESBMC alias names when "
-                 f"the query map has no source key: {alias_entries}")
+    bad += check("allowance[msg.sender][spender]" in alias_entries,
+                 f"source R2 mapping candidates keep source names even when "
+                 f"the query map uses an ESBMC alias: {alias_entries}")
     return bad
 
 
@@ -4971,11 +6245,11 @@ def test_source_R2_helper_mapping_increment_unwraps_tuple_argument():
         os.unlink(path)
     candidates = r2_candidates(specs)
     bad = 0
-    bad += check(any(item["var"] == "allowance$10[msg.sender][spender]"
+    bad += check(any(item["var"] == "allowance[msg.sender][spender]"
                      and item["text"] ==
                      "post - pre in [amount, amount] with post >= pre"
                      for item in candidates),
-                 f"helper-inlined mapping increment becomes an alias-named "
+                 f"helper-inlined mapping increment becomes a source-named "
                  f"delta R2 candidate: {candidates}; evidence={evidence}")
     return bad
 
@@ -8332,8 +9606,8 @@ def test_structured_R2_term_renders_with_the_lifted_coordinate():
         {"amount": "p_amount"}, {"amount": "p_amount"},
         {"(pre + amount)": term})
     return check(got == [
-        '    unchecked { assertEq(_post_bal, (_pre_bal + p_amount), '
-        '"bal: eq"); }'],
+        '    unchecked { assertEq(_post_bal, '
+        '(uint256(_pre_bal) + uint256(p_amount)), "bal: eq"); }'],
         f"structured term uses unchecked arithmetic over emitted identifiers: "
         f"{got}")
 
@@ -8350,7 +9624,8 @@ def test_structured_R2_interval_accepts_literal_endpoint_without_lookup():
     bad = 0
     bad += check(got == [
         '    assertGe(_post_bal, 0, "bal: abs");',
-        '    unchecked { assertLe(_post_bal, (_pre_bal + 0), "bal: abs"); }'],
+        '    unchecked { assertLe(_post_bal, '
+        '(uint256(_pre_bal) + uint256(0)), "bal: abs"); }'],
         f"literal low endpoint and structured high endpoint both render: {got}")
     refused = rung_assertions(
         "post in [floor, (pre + msg.value)]", "_pre_bal", "_post_bal",
@@ -8360,6 +9635,21 @@ def test_structured_R2_interval_accepts_literal_endpoint_without_lookup():
                  f"a non-literal endpoint still needs a certified term: "
                  f"{refused}")
     return bad
+
+
+def test_structured_R2_term_renders_underflow_as_typed_uint_arithmetic():
+    from solidity_path_put import rung_assertions  # noqa: E402
+    term = {"kind": "op", "op": "sub",
+            "lhs": {"kind": "literal", "value": "0"},
+            "rhs": {"kind": "literal", "value": "1"}}
+    got = rung_assertions(
+        "post == (0 - 1)", "_pre_x", "_post_x", "x: wrap",
+        {}, {}, {"(0 - 1)": term})
+    return check(got == [
+        '    unchecked { assertEq(_post_x, '
+        '(uint256(0) - uint256(1)), "x: wrap"); }'],
+        f"underflow-shaped R2 terms stay compilable in unchecked uint256 "
+        f"arithmetic: {got}")
 
 
 def test_structured_R2_term_renders_with_entry_mapping_coord():
@@ -8391,12 +9681,48 @@ def test_structured_R2_term_renders_with_entry_mapping_coord():
                  "the R2 endpoint mapping slot is read before the call")
     bad += check("keccak256(abi.encode(u, uint256(7)))" in text,
                  "the R2 endpoint uses the mapping slot hash")
-    bad += check("assertEq(_post_total, (_pre_allowance_u - bps)"
+    bad += check("assertEq(_post_total, "
+                 "(uint256(_pre_allowance_u) - uint256(bps))"
                  in text,
                  "the certified equality renders with the entry mapping value")
     bad += check(not stats["oracle_skipped"],
                  f"no certified R2 row is dropped: {stats['oracle_skipped']}")
     return bad
+
+
+def test_struct_member_state_oracle_uses_solidity_safe_temporaries():
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"u": (0, (1 << 160) - 1)}, holes={}, pins={},
+        params=PARAMS, emitted=em, case=case,
+        layout={"s.x": (0, 0, 32)},
+        ladder_rows=[("s.x", "post == pre", "HOLDS")],
+        notes=notes)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"struct-member PUT is emitted: {notes}")
+    bad += check("uint256 _pre_s_x" in text,
+                 "struct-member pre read uses a valid local identifier")
+    bad += check("uint256 _post_s_x" in text,
+                 "struct-member post read uses a valid local identifier")
+    bad += check("_pre_s.x" not in text and "_post_s.x" not in text,
+                 f"no dotted temporary appears in generated Solidity: {text}")
+    bad += check(stats["state_asserts"] == 1,
+                 f"the struct-member rung still renders: {stats}")
+    return bad
+
+
+def test_struct_dependency_selects_scalar_layout_members():
+    got = scalar_dependency_vars(["s", "total"],
+                                 {"s.x": (0, 0, 32),
+                                  "s.y": (1, 0, 32),
+                                  "total": (2, 0, 32),
+                                  "other.x": (3, 0, 32)})
+    return check(got == ["s.x", "s.y", "total"],
+                 f"struct dependency expands to its scalar members only: {got}")
 
 
 def test_structured_R2_requires_a_successful_revert_tolerant_call():
@@ -9277,6 +10603,86 @@ def test_source_access_slots_keep_safe_literal_keys():
     return bad
 
 
+def test_source_access_slots_render_mapping_dynarray_length():
+    from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
+    from solidity_path_put import (  # noqa: E402
+        _storage_layout_mapping_entries,
+        source_access_slot_vars,
+    )
+
+    def ident(ref, name, ty=None):
+        out = {"nodeType": "Identifier", "name": name,
+               "referencedDeclaration": ref}
+        if ty is not None:
+            out["typeDescriptions"] = {"typeString": ty}
+        return out
+
+    ast = {"nodeType": "SourceUnit", "nodes": [{
+        "nodeType": "ContractDefinition", "name": "C", "id": 1,
+        "linearizedBaseContracts": [1], "nodes": [
+            {"nodeType": "VariableDeclaration", "id": 10, "name": "choices",
+             "stateVariable": True,
+             "typeDescriptions": {
+                 "typeString": "mapping(uint256 => address[])"}},
+            {"nodeType": "FunctionDefinition", "id": 20, "name": "join",
+             "parameters": {"parameters": [
+                 {"id": 21, "name": "_chosenNumber",
+                  "typeDescriptions": {"typeString": "uint256"}}]},
+             "body": {"nodeType": "Block", "statements": [{
+                 "nodeType": "ExpressionStatement",
+                 "expression": {
+                     "nodeType": "FunctionCall", "kind": "functionCall",
+                     "src": "100:30:0",
+                     "expression": {
+                         "nodeType": "MemberAccess", "memberName": "push",
+                         "expression": {
+                             "nodeType": "IndexAccess",
+                             "baseExpression": ident(10, "choices"),
+                             "indexExpression": ident(
+                                 21, "_chosenNumber", "uint256"),
+                             "typeDescriptions": {
+                                 "typeString": "address[] storage ref"}}},
+                     "arguments": []}}]}}
+        ]}]}
+    fd, path = tempfile.mkstemp(suffix=".solast")
+    with os.fdopen(fd, "w") as out:
+        json.dump(ast, out)
+    try:
+        accesses, evidence = unit_mapping_slot_accesses(
+            path, "C", "join", declaration_id=20)
+    finally:
+        os.unlink(path)
+
+    types = {
+        "t_uint256": {"label": "uint256", "encoding": "inplace",
+                      "numberOfBytes": "32"},
+        "t_address": {"label": "address", "encoding": "inplace",
+                      "numberOfBytes": "20"},
+        "t_array_address_dyn_storage": {
+            "label": "address[]", "encoding": "dynamic_array",
+            "base": "t_address"},
+    }
+    maps = _storage_layout_mapping_entries(
+        "choices", "4", "uint256",
+        types["t_array_address_dyn_storage"], types)
+    slots, used, skipped = source_access_slot_vars(
+        accesses, maps, params=[("_chosenNumber", "uint256")])
+    bad = 0
+    bad += check(accesses == [("choices", ("_chosenNumber",))],
+                 f"dynamic-array mapping access is preserved: {accesses}, "
+                 f"{evidence}")
+    bad += check(maps == {
+        "choices.length": (4, "uint256", 32, 0, "choices", "length")
+    }, f"dynamic-array mapping contributes its length slot: {maps}")
+    bad += check(slots == ["choices[_chosenNumber].length"],
+                 f"source access asks the length slot, not the aggregate: "
+                 f"{slots}")
+    bad += check(used == {"choices.length"} and skipped == [],
+                 f"accepted dynarray length suppresses fallback: {used}, "
+                 f"{skipped}")
+    return bad
+
+
 def test_source_access_slots_fold_safe_constant_keys():
     from solidity_ast_dependencies import unit_mapping_slot_accesses  # noqa: E402
     from solidity_path_put import source_access_slot_vars  # noqa: E402
@@ -10104,7 +11510,8 @@ def test_an_OBSERVED_msg_value_renders_for_numeric_R2_endpoints():
     expr_body = "\n".join(expr or [])
     bad += check(expr is not None,
                  f"the structured value PUT is emitted (notes: {expr_notes})")
-    bad += check("assertEq(_post_totalFees, (_pre_totalFees + 0),"
+    bad += check("assertEq(_post_totalFees, "
+                 "(uint256(_pre_totalFees) + uint256(0)),"
                  in expr_body,
                  "the observed value feeds structured R2 expressions too")
     bad += check(expr_stats.get("asserts") == 1,
@@ -10383,7 +11790,8 @@ def _slot_pin_put(pins, ladder=None, state_types=None):
         region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
         holes={}, pins=pins, params=PARAMS, emitted=em, case=case,
         layout=LAYOUT, ladder_rows=ladder if ladder is not None else LADDER,
-        notes=notes, maps=SLOT_MAPS, state_types=state_types)
+        notes=notes, maps=SLOT_MAPS, state_types=state_types,
+        exit_kind="normal")
     return "\n".join(put or []), stats
 
 
@@ -10586,6 +11994,41 @@ def test_a_nested_slot_is_read_at_the_ITERATED_hash():
                  "and the innermost operand is the mapping's declared slot")
     bad += check(not stats["oracle_skipped"],
                  f"nothing was dropped: {stats['oracle_skipped']}")
+    return bad
+
+
+def test_a_mapping_dynarray_length_slot_is_read_as_scalar_oracle():
+    em, case = make_case()
+    notes = []
+    put, stats = build_put(
+        "FeeVault", "setDiscount", 7, 2,
+        "sol:@C@FeeVault@F@setDiscount#61",
+        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+        holes={}, pins={}, params=PARAMS, emitted=em, case=case,
+        layout=LAYOUT,
+        maps={"choices.length": (9, "address", 32, 0,
+                                 "choices", "length")},
+        ladder_rows=[("choices[u].length", "post > pre", "HOLDS")],
+        notes=notes, exit_kind="normal")
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced: {notes}")
+    bad += check("uint256 _pre_choices_u__length = uint256(vm.load("
+                 in text,
+                 "the dynamic-array length slot is pre-read as a scalar")
+    bad += check("uint256 _post_choices_u__length = uint256(vm.load("
+                 in text,
+                 "the dynamic-array length slot is post-read as a scalar")
+    bad += check("keccak256(abi.encode(u, uint256(9)))" in text,
+                 "the length lives at the mapped dynamic-array base slot")
+    bad += check("assertGt(_post_choices_u__length, _pre_choices_u__length"
+                 in text,
+                 "the verifier rung over the length slot renders")
+    bad += check("R1" in stats["oracle_classes"],
+                 f"the emitted oracle is counted as R1: {stats}")
+    bad += check(not stats["oracle_skipped"],
+                 f"nothing about the length slot is skipped: "
+                 f"{stats['oracle_skipped']}")
     return bad
 
 
@@ -10854,19 +12297,21 @@ def test_a_change_rung_is_GUARDED_on_a_revert_tolerant_call():
     return bad
 
 
-def _rollback_put(emitted_text, rollback, exit_kind=None):
+def _rollback_put(emitted_text, rollback, exit_kind=None, ladder=None):
     em, case = _make_case_from(emitted_text)
     notes = []
     put, stats = build_put(
         "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
         region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
         holes={}, pins={}, params=PARAMS, emitted=em, case=case,
-        layout=LAYOUT, ladder_rows=MIXED_LADDER, notes=notes,
+        layout=LAYOUT,
+        ladder_rows=ladder if ladder is not None else MIXED_LADDER,
+        notes=notes,
         rollback_exit=rollback, exit_kind=exit_kind)
     return put, stats, notes
 
 
-def test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT():
+def test_a_ROLLBACK_path_keeps_restored_frame_rungs_and_ASSERTS_THE_REVERT():
     """⛔ THE BRANCH THAT HAD NO RUN. The emitter grew a whole reverting-path
     arm and not one test entered it, which is this project's recurring failure
     -- a new defence that compiles, is called, and never fires looks exactly
@@ -10874,14 +12319,13 @@ def test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT():
 
     WHAT IT IS FOR. A path that exits through a rollback is emitted as
     `try c0.f() {} catch {}`: an oracle that cannot fail whatever the contract
-    does. Meanwhile the ladder's layer-2/3 verdicts on such a path compare the
-    value BETWEEN the write and the rollback -- a moment no test and no chain
-    can read -- so they are not merely weak, they are about nothing.
+    does. Change/return rungs on such a path still refer to a pre-rollback
+    moment no test can read, but frame rungs over the restored state are
+    observable after the call.
 
-    The trade is deliberate and it is a NET GAIN: 25 assertions about an
-    unobservable moment, none of which can ever be red, are replaced by ONE
-    that says the call must revert. A mutant that stops reverting goes from
-    invisible to RED.
+    The trade is deliberate: assertions about an unobservable change are
+    replaced by the R0 revert oracle, while `post == pre` survives as a real
+    R1 frame oracle over the restored storage.
     """
     put, stats, notes = _rollback_put(TOLERANT_EMITTED, True)
     bad = 0
@@ -10892,9 +12336,9 @@ def test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT():
     body = "\n".join(code)
     bad += check("assertTrue(_post_feeReceiver != _pre_feeReceiver" not in body,
                  "the change rung is GONE -- it compared a pre-rollback value")
-    bad += check("assertEq(_post_owner, _pre_owner" not in body,
-                 "and so is the unchanged rung: layer 2 goes as a whole, not "
-                 "selectively -- both were read at the same unreadable moment")
+    bad += check("assertEq(_post_owner, _pre_owner" in body,
+                 "the unchanged rung survives: restored storage is observable "
+                 "after the reverting call")
     bad += check(any("assertFalse(_put_ok," in ln for ln in code),
                  f"and the FIRST layer replaces them: the call must revert")
     bad += check(any("catch { _put_ok = false; }" in ln for ln in code),
@@ -10906,6 +12350,9 @@ def test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT():
                  and not any("if (_put_ok) {" in ln for ln in code),
                  f"no guarded block survives -- a guard with nothing in it is "
                  f"an oracle that reads as present and asserts nothing")
+    bad += check(stats.get("state_asserts") == 1
+                 and stats.get("oracle_classes") == ["R0", "R1"],
+                 f"R0 plus the restored frame R1 are counted: {stats}")
     bad += check(any("DROPPED" in s and "rollback" in s.lower()
                      for s in stats.get("oracle_skipped", [])),
                  f"and the drop is NAMED, not silent: "
@@ -11061,13 +12508,18 @@ def test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle():
     bad += check("assertFalse(_put_ok" not in body,
                  "the try/catch success-flag oracle is not used for a bare "
                  "high-level call")
+    bad += check("assertEq(_post_owner, _pre_owner" in body,
+                 "the restored frame rung is still asserted after "
+                 "expectRevert")
     bad += check(stats.get("exit_kind_asserts") == 1
-                 and stats.get("asserts") == 1,
-                 f"the expectRevert line counts as the path oracle: {stats}")
-    bad += check(stats.get("oracle_classes") == ["R0"]
+                 and stats.get("state_asserts") == 1
+                 and stats.get("asserts") == 2,
+                 f"the expectRevert line and frame rung both count: {stats}")
+    bad += check(stats.get("oracle_classes") == ["R0", "R1"]
                  and [d.get("layer") for d in
-                      stats.get("assertion_oracles", [])] == ["exit"],
-                 "oracle metadata records only the emitted layer-1 assertion")
+                      stats.get("assertion_oracles", [])] == ["state", "exit"],
+                 "oracle metadata records the frame assertion and layer-1 "
+                 "assertion")
     bad += check(stats.get("rollback_exit") is True
                  and stats.get("exit_kind") == "revert",
                  f"the accounting keeps both rollback and exit kind: {stats}")
@@ -11110,7 +12562,9 @@ def test_a_STAGE1_revert_path_ASSERTS_THE_REVERT_without_calling_it_rollback():
 
     That is still a layer-1 oracle. A `try c0.f() {} catch {}` with no
     assertFalse is green even if a mutant stops reverting, so it is weaker than
-    the Stage-1 report already allows.
+    the Stage-1 report already allows. The path is not called a rollback path,
+    but Solidity still restores storage after an ordinary revert, so a
+    `post == pre` frame rung remains observable and should survive beside R0.
     """
     put, stats, notes = _rollback_put(TOLERANT_EMITTED, False,
                                       exit_kind="revert")
@@ -11121,7 +12575,9 @@ def test_a_STAGE1_revert_path_ASSERTS_THE_REVERT_without_calling_it_rollback():
     code = [ln for ln in put if not ln.strip().startswith("//")]
     body = "\n".join(code)
     bad += check("assertTrue(_post_feeReceiver != _pre_feeReceiver" not in body,
-                 "post-state rungs are dropped on an ordinary revert path")
+                 "change rungs are dropped on an ordinary revert path")
+    bad += check("assertEq(_post_owner, _pre_owner" in body,
+                 "but a restored frame rung is still asserted")
     bad += check(any("catch { _put_ok = false; }" in ln for ln in code),
                  "the catch clears the success flag")
     bad += check(any("assertFalse(_put_ok," in ln for ln in code),
@@ -11132,9 +12588,49 @@ def test_a_STAGE1_revert_path_ASSERTS_THE_REVERT_without_calling_it_rollback():
                  and stats.get("exit_kind_asserts") == 1,
                  f"the ordinary revert is recorded as exit-kind oracle: "
                  f"{stats}")
+    bad += check(stats.get("state_asserts") == 1
+                 and stats.get("oracle_classes") == ["R0", "R1"],
+                 f"R0 plus the restored frame R1 are counted: {stats}")
     bad += check(any("Stage-1" in s or "revert" in s.lower()
                      for s in stats.get("oracle_skipped", [])),
                  f"the dropped rungs explain why: {stats.get('oracle_skipped')}")
+    return bad
+
+
+def test_a_STAGE1_revert_path_keeps_pre_post_frame_R1_spellings():
+    """Equivalent frame rungs must not be downgraded to R0-only on revert.
+
+    The renderer already accepts `pre == post`; the old revert accounting kept
+    only the exact string `post == pre`. That lost a verified, executable R1
+    frame assertion after storage restoration while still counting the exit
+    oracle. Strict pre/post rungs remain change claims and are still dropped.
+    """
+    put, stats, notes = _rollback_put(
+        TOLERANT_EMITTED, False, exit_kind="revert",
+        ladder=[("owner", "pre == post", "HOLDS"),
+                ("feeReceiver", "pre > post", "HOLDS")])
+    bad = 0
+    bad += check(put is not None, f"a PUT is still produced (notes: {notes})")
+    if put is None:
+        return bad + 5
+    code = [ln for ln in put if not ln.strip().startswith("//")]
+    body = "\n".join(code)
+    bad += check("assertEq(_pre_owner, _post_owner" in body,
+                 "the reversed equality frame rung is still asserted")
+    bad += check("assertGt(_pre_feeReceiver, _post_feeReceiver" not in body,
+                 "the strict reversed change rung is still unobservable")
+    bad += check(stats.get("state_asserts") == 1
+                 and stats.get("exit_kind_asserts") == 1
+                 and stats.get("oracle_classes") == ["R0", "R1"],
+                 f"the retained frame rung is counted as R1 beside R0: {stats}")
+    bad += check([d.get("text") for d in stats.get("assertion_oracles", [])]
+                 == ["pre == post", "path exits through revert"],
+                 f"metadata records the actual emitted frame rung: "
+                 f"{stats.get('assertion_oracles')}")
+    bad += check(any("feeReceiver" in s and "DROPPED" in s
+                     for s in stats.get("oracle_skipped", [])),
+                 f"the rejected strict rung is named: "
+                 f"{stats.get('oracle_skipped')}")
     return bad
 
 
@@ -11259,12 +12755,12 @@ def test_a_wide_env_coordinate_EXCLUDING_the_sender_is_also_fuzzed():
     return bad
 
 
-def test_a_width_one_env_coordinate_emits_at_the_certified_value():
-    """A width-one sender needs no fuzz parameter, and must still be the value
-    the region names rather than whatever the preamble happened to prank."""
-    put, stats, _n = _env_range_put({"msg.sender": (0, 0)})
+def test_a_nonzero_width_one_env_coordinate_emits_at_the_certified_value():
+    """A nonzero width-one sender still emits at the certified value."""
+    put, stats, _n = _env_range_put({"msg.sender": (1, 1)})
     bad = 0
-    bad += check(put is not None, "an agreeing width-one env coordinate emits")
+    bad += check(put is not None,
+                 "a nonzero width-one env coordinate emits")
     if put is None:
         return bad + 2
     txt = "\n".join(put)
@@ -11273,6 +12769,18 @@ def test_a_width_one_env_coordinate_emits_at_the_certified_value():
     bad += check("address p_msg_sender" not in txt,
                  "a single point buys no fuzz parameter -- bound(x, v, v) is a "
                  "constant wearing a fuzz parameter's type")
+    return bad
+
+
+def test_a_zero_width_one_env_coordinate_refuses_foundry_prank():
+    """The ESBMC address zero sender has no executable Foundry prank."""
+    put, stats, notes = _env_range_put({"msg.sender": (0, 0)})
+    bad = 0
+    bad += check(put is None, "a zero sender point refuses")
+    bad += check(stats is None, f"a refused zero-sender PUT has no stats: {stats}")
+    bad += check(any("cannot be established with Foundry `vm.prank`" in note
+                     for note in notes),
+                 f"the refusal explains the Foundry sender gap: {notes}")
     return bad
 
 
@@ -11360,12 +12868,13 @@ def test_dropped_rungs_are_not_reported_as_no_rung_holding():
         "FeeVault", "setDiscount", 7, 2, "sol:@C@FeeVault@F@setDiscount#61",
         region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
         holes={}, pins={}, params=PARAMS, emitted=em, case=case,
-        layout=LAYOUT, ladder_rows=dock_ladder, notes=notes)
+        layout=LAYOUT, ladder_rows=dock_ladder, notes=notes,
+        exit_kind="normal")
     text = "\n".join(put or [])
     bad = 0
-    bad += check(stats["asserts"] == 0,
-                 f"the fixture reproduces the zero-oracle case: "
-                 f"{stats['asserts']}")
+    bad += check(stats["state_asserts"] == 0,
+                 f"the fixture reproduces the zero-state-oracle case: "
+                 f"{stats['state_asserts']}")
     bad += check("EVERY RUNG THAT HOLDS WAS DROPPED" in text,
                  "the header says the rungs held and could not be rendered")
     bad += check("NOT ONE RUNG HOLDS" not in text,
@@ -11629,10 +13138,11 @@ def test_a_ladder_where_nothing_held_still_says_so():
         layout=LAYOUT,
         ladder_rows=[("owner", "post != pre", "REFUTED"),
                      ("owner", "post > pre", "REFUTED")],
-        notes=notes)
+        notes=notes, exit_kind="normal")
     text = "\n".join(put or [])
     bad = 0
-    bad += check(stats["asserts"] == 0, "no assertion is rendered")
+    bad += check(stats["state_asserts"] == 0,
+                 "no state assertion is rendered")
     bad += check("NOT ONE RUNG HOLDS" in text,
                  "an all-REFUTED ladder says nothing held")
     bad += check("EVERY RUNG THAT HOLDS WAS DROPPED" not in text,
@@ -12325,14 +13835,14 @@ contract VaultCovTest is Test {
         region={"to": (0, (1 << 160) - 1)}, holes={}, pins={},
         params=[("to", "address payable")], emitted=em, case=case,
         layout={}, ladder_rows=[], notes=notes,
-        lift_unconstrained_calldata=True)
+        lift_unconstrained_calldata=True, exit_kind="normal")
     text = "\n".join(put or [])
     bad = 0
     bad += check(put is not None, f"a PUT is produced (notes: {notes})")
     bad += check("try c1.pay(payable(address(uint160(1)))) {} catch {}"
                  in text,
                  "the replay prefix casts its payable literal")
-    bad += check("try c1.pay(payable(to)) {} catch {}" in text,
+    bad += check("c1.pay(payable(to));" in text,
                  "the lifted target call still casts the fuzz address")
     bad += check(any("repaired 2 replay call" in n for n in notes),
                  f"the repair is visible in notes: {notes}")
@@ -12621,6 +14131,192 @@ def test_missing_low_level_dynamic_args_update_abi_signature():
     return bad
 
 
+def test_missing_dynamic_array_args_are_fuzzable():
+    line = "    try c1.onERC1155BatchReceived() {} catch {}"
+    completed, args, implicit, err = complete_missing_call_args(
+        line, "onERC1155BatchReceived",
+        [("operator", "address"), ("ids", "uint256[] memory")], [])
+    low = ('    (bool ok, ) = address(c1).call('
+           'abi.encodeWithSignature("take()"));')
+    low_completed, low_args, low_implicit, low_err = complete_missing_call_args(
+        low, "take", [("ids", "uint256[] calldata")], [])
+    unsupported = complete_missing_call_args(
+        line, "onERC1155BatchReceived",
+        [("grid", "uint256[][] memory")], [])
+    bad = 0
+    bad += check(err is None, f"dynamic-array completion succeeds: {err}")
+    bad += check(implicit == [0, 1],
+                 f"scalar and dynamic-array params are implicit fuzz inputs: "
+                 f"{implicit}")
+    bad += check(args == ["address(uint160(0))", "new uint256[](0)"],
+                 f"dynamic-array default is ABI-compatible: {args}")
+    bad += check("c1.onERC1155BatchReceived(address(uint160(0)), "
+                 "new uint256[](0))" in (completed or ""),
+                 f"target call receives synthesized dynamic array: {completed}")
+    bad += check(low_err is None,
+                 f"dynamic-array low-level completion succeeds: {low_err}")
+    bad += check(low_args == ["new uint256[](0)"] and low_implicit == [0],
+                 f"low-level dynamic-array arg is implicit: "
+                 f"{low_args}, {low_implicit}")
+    bad += check('abi.encodeWithSignature("take(uint256[])", '
+                 'new uint256[](0))' in (low_completed or ""),
+                 f"low-level ABI signature includes dynamic array: "
+                 f"{low_completed}")
+    bad += check(unsupported[3] is not None,
+                 "multi-dimensional dynamic arrays remain refused")
+    return bad
+
+
+def test_source_level_dynamic_defaults_are_nonempty_for_constructors():
+    bad = 0
+    bad += check(dynamic_default_call_arg("string memory") == '""',
+                 "raw replay string placeholders stay empty")
+    bad += check(dynamic_default_call_arg("bytes calldata") == 'hex""',
+                 "raw replay bytes placeholders stay empty")
+    bad += check(_source_type_default_expr("string memory", 42) ==
+                 '"VeriPUT42"',
+                 "source-level constructor strings use a non-empty default")
+    bad += check(_source_type_default_expr("bytes memory", 42) == 'hex"2a"',
+                 "source-level constructor bytes use a non-empty default")
+    bad += check(_source_type_default_expr("int256", 42) == "int256(1)",
+                 "source-level constructor signed integers use a typed default")
+    bad += check(_source_type_default_expr("int8", 42) == "int8(1)",
+                 "narrow signed constructor integers stay in range")
+    return bad
+
+
+def test_source_identity_defaults_are_nonzero_and_typed():
+    bad = 0
+    bad += check(default_call_arg("interface IERC20") ==
+                 "IERC20(address(uint160(0)))",
+                 "raw replay interface placeholders are typed address casts")
+    bad += check(default_call_arg("contract Token") ==
+                 "Token(address(uint160(0)))",
+                 "raw replay contract placeholders are typed address casts")
+    bad += check(signature_type("interface IERC20") == "address",
+                 "low-level ABI signatures encode interfaces as addresses")
+    bad += check(_source_type_default_expr("interface IERC20", 42) ==
+                 "IERC20(address(uint160(42)))",
+                 "source-level interface constructor defaults are nonzero")
+    bad += check(_source_type_default_expr("contract Token", 43) ==
+                 "Token(address(uint160(43)))",
+                 "source-level contract constructor defaults are nonzero")
+    bad += check(_source_type_default_expr("ITimelock", 44) ==
+                 "ITimelock(address(uint160(44)))",
+                 "unsupported skeleton repair can still use bare identity names")
+    return bad
+
+
+def test_interface_parameter_can_be_lifted_as_address_fuzz_input():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C, IERC20} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C();
+  }
+  // claim: sol:@C@C@F@setToken#9:path:3
+  function test_cov_0() public {
+    c0.setToken(IERC20(address(uint160(0))));
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@setToken#9", 3)
+    notes = []
+    put, stats = build_put(
+        "C", "setToken", 3, 1, "sol:@C@C@F@setToken#9",
+        region={}, holes={}, pins={},
+        params=[("token", "interface IERC20")], emitted=em, case=case,
+        layout={}, ladder_rows=[], notes=notes, exit_kind="revert",
+        lift_unconstrained_calldata=True)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    bad += check("function test_put_C_setToken_path3(address token) public"
+                 in text,
+                 "an interface coordinate is fuzzed as an address")
+    bad += check("c0.setToken(IERC20(token));" in text,
+                 "the target call casts the fuzzed address back to interface")
+    bad += check(stats["fuzz_params"] == 1
+                 and stats["wide_fuzz_coords"] == ["token"],
+                 f"the interface coordinate is counted as fuzzed: {stats}")
+    return bad
+
+
+def test_fuzzed_interface_address_parameter_is_mocked_before_target_call():
+    flat = """\
+pragma solidity >=0.8.0;
+interface IERC20 {
+  function transfer(address to, uint256 amount) external returns (bool);
+}
+contract C {
+  function recover(address _token, address _to, uint256 _amount) external {
+    require(IERC20(_token).transfer(_to, _amount));
+  }
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C();
+  }
+  // claim: sol:@C@C@F@recover#9:path:3
+  function test_cov_0() public {
+    c0.recover(address(uint160(0)), address(uint160(1)), 2);
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@recover#9", 3)
+    specs = unit_param_interface_mock_specs(flat, "C", "recover")
+    notes = []
+    put, stats = build_put(
+        "C", "recover", 3, 1, "sol:@C@C@F@recover#9",
+        region={"_token": (0, (1 << 160) - 1)}, holes={}, pins={},
+        params=[("_token", "address"), ("_to", "address"),
+                ("_amount", "uint256")],
+        emitted=em, case=case, layout={}, ladder_rows=[], notes=notes,
+        exit_kind="revert", flat_source=flat)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(specs == [{
+        "param_name": "_token",
+        "interface": "IERC20",
+        "signature": "transfer(address,uint256)",
+        "returns": ["bool"],
+    }], f"interface calls through fuzzed address params are detected: {specs}")
+    bad += check(put is not None, f"a PUT is produced (notes: {notes})")
+    bad += check('vm.mockCall(_token, abi.encodeWithSignature('
+                 '"transfer(address,uint256)"), abi.encode(true));' in text,
+                 "the fuzzed token address is mocked with a successful return")
+    bad += check("c0.recover(_token, address(uint160(1)), 2);" in text,
+                 "the target call still receives the fuzzed token address")
+    bad += check(stats["param_interface_mock_calls"] == 1,
+                 f"the mock is counted in stats: {stats}")
+    return bad
+
+
 def test_missing_low_level_value_gate_args_update_abi_signature():
     """The same omitted-argument repair must update low-level ABI calls."""
     em, case = _st1inch_missing_case(2)
@@ -12722,6 +14418,43 @@ contract VaultCovTest_1 is Test {
                  "stale concrete replays are removed across all contracts")
     bad += check("address(uint160(2))" not in text,
                  "the later contract's stale body is not left behind")
+    return bad
+
+
+def test_assembled_put_source_drops_abstract_helper_unsupported_marker():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C, Ownable_1} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C();
+    // UNSUPPORTED: Ownable_1 is abstract / an interface / a library and cannot be instantiated with `new`
+  }
+  // claim: sol:@C@C@F@f#9:path:3
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 3)
+    put = ["", "  function test_put_C_f_path3() public {", "    c0.f();", "  }"]
+    text = assemble_put_source(
+        em, case, [put], "CCovTest_put", contract="C", unit="f")
+    bad = 0
+    bad += check("abstract / an interface / a library" not in text,
+                 "abstract helper deployment marker is dropped")
+    bad += check("function test_put_C_f_path3" in text,
+                 "the executable PUT remains")
     return bad
 
 
@@ -12902,17 +14635,29 @@ def main():
               test_the_cell_is_named_and_an_unsettled_one_says_so,
               test_the_emitted_test_carries_its_cell,
               test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies,
+              test_esbmc_singleton_args_are_deduplicated_without_breaking_unwindset,
               test_pin_with_a_slot_is_established,
+              test_zero_sender_owner_pin_is_promoted_to_executable_relation,
               test_precheck_only_identifies_rendered_width_not_oracle_strength,
               test_no_wide_rendered_coordinate_without_oracle_stays_concrete,
+              test_no_wide_rendered_coordinate_with_only_R0_still_emits_put,
+              test_synthesized_bare_normal_call_counts_as_R0_exit_oracle,
+              test_wide_rendered_coordinate_without_oracle_stays_concrete,
               test_precheck_keeps_possible_parameterized_candidate_on_wide_env,
               test_storage_oracles_read_the_actual_target_instance_not_c0,
               test_path_cov_fixture_replays_constructor_then_pins_state,
               test_constructor_staticcall_mock_is_scoped_to_deployment,
               test_constructor_param_interface_calls_are_mocked_before_deploy,
+              test_constructor_param_decimals_mock_tracks_constructor_arg,
+              test_constructor_param_state_interface_runtime_call_is_mocked,
+              test_constructor_param_interface_call_via_stored_getter_is_mocked,
+              test_base_constructor_param_interface_call_is_mocked,
               test_constructor_param_hascode_args_are_etched_before_deploy,
               test_constructor_nonzero_address_guards_repair_zero_defaults,
+              test_constructor_revert_zero_address_guard_repairs_zero_defaults,
+              test_constructor_nonempty_dynamic_guards_repair_empty_defaults,
               test_constructor_sender_nonzero_mint_repairs_zero_prank,
+              test_zero_constructor_prank_is_repaired_even_without_explicit_guard,
               test_constructor_sender_guarded_mint_repairs_matching_admin_arg,
               test_constructor_dynamic_array_defaults_cover_indexed_reads,
               test_unsupported_skeleton_is_synthesized_for_certified_put_lift,
@@ -12923,7 +14668,7 @@ def main():
               test_pranked_constructor_replay_sets_tx_origin_too,
               test_pin_without_a_slot_is_reported_not_dropped,
               test_region_bound_still_wins_over_a_duplicate_pin,
-              test_env_agreement_emits_when_the_preamble_matches,
+              test_zero_sender_slice_refuses_foundry_put,
               test_env_sender_disagreement_is_ESTABLISHED_not_refused,
               test_target_sender_prank_is_inserted_after_replay_setup,
               test_env_value_pin_disagreement_refuses,
@@ -12993,6 +14738,7 @@ def main():
               test_a_fuzz_REFUTATION_is_read_and_a_pass_is_NOT_a_proof,
               test_a_probe_THAT_NEVER_RAN_is_NOT_RUN_not_a_pass,
               test_JSON_fuzz_filter_refutes_only_its_labeled_assertion,
+              test_stable_unlabeled_revert_from_prefilter_is_path_exit_evidence,
               test_R2_fuzz_filter_removes_only_concretely_refuted_candidates,
               test_typed_R2_is_ONE_BATCH_and_contains_pre_plus_coordinate,
               test_typed_R2_proposes_return_equals_entry_state_coord_for_getters,
@@ -13004,13 +14750,22 @@ def main():
               test_typed_R2_candidate_budget_ignores_empty_bool_return_queue,
               test_path_decision_guard_renders_mapping_slot_relation,
               test_path_decision_guard_negates_plain_branch_claim,
+              test_path_decision_guard_skips_assigned_calldata_name,
               test_path_decision_guard_handles_double_negated_branch_claim,
               test_path_decision_guard_splits_safe_boolean_shapes,
               test_path_decision_guard_renders_unary_bool_mapping_relation,
+              test_path_decision_guard_aliases_internal_helper_locals,
+              test_path_decision_guard_aliases_return_value_helpers,
+              test_path_decision_guard_skips_mutating_return_value_helper,
+              test_path_decision_guard_aliases_balance_helpers,
+              test_path_decision_guard_aliases_bool_helper_scalar_return,
               test_path_decision_guard_negates_plain_unary_bool_claim,
               test_path_decision_guard_skips_true_constant_relation,
               test_path_decision_guard_decimalizes_address_sized_hex,
               test_path_guard_materializes_state_coord_without_oracle_rung,
+              test_grouped_path_guard_materializes_every_state_term,
+              test_balance_path_guard_is_after_environment_and_before_prank,
+              test_bool_helper_path_guard_materializes_mapping_slot,
               test_path_guard_coord_idents_expand_scalar_store_aliases,
               test_path_guard_coord_idents_expand_mapping_source_aliases,
               test_path_guard_coord_idents_expand_mapping_store_aliases,
@@ -13020,6 +14775,7 @@ def main():
               test_skipped_forge_R2_accounting_is_complete_and_conservative,
               test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle,
               test_oracle_class_metadata_keeps_R0_R1_R2_apart,
+              test_oracle_rung_renderer_accepts_canonical_equivalents,
               test_effective_exit_kind_falls_back_to_the_fresh_claim,
               test_a_STAGE1_normal_try_call_is_unwrapped_for_return_oracles,
               test_a_normal_try_call_with_trailing_semicolon_is_unwrapped,
@@ -13069,7 +14825,10 @@ def main():
               test_overload_persistence_keys_and_work_suffixes_are_distinct,
               test_structured_R2_term_renders_with_the_lifted_coordinate,
               test_structured_R2_interval_accepts_literal_endpoint_without_lookup,
+              test_structured_R2_term_renders_underflow_as_typed_uint_arithmetic,
               test_structured_R2_term_renders_with_entry_mapping_coord,
+              test_struct_member_state_oracle_uses_solidity_safe_temporaries,
+              test_struct_dependency_selects_scalar_layout_members,
               test_structured_R2_requires_a_successful_revert_tolerant_call,
               test_oracle_mapping_candidates_share_the_dependency_filter,
               test_an_R2_PASS_actually_runs_and_carries_the_proposed_vars,
@@ -13083,6 +14842,7 @@ def main():
               test_an_R2_PASS_THAT_RETURNS_NOTHING_is_REPORTED_not_absorbed,
               test_a_ROLLBACK_path_DOES_NOT_SPEND_an_R2_ESBMC_pass,
               test_a_REVERT_path_DOES_NOT_SPEND_an_R2_ESBMC_pass,
+              test_forge_R2_probe_accepts_return_only_assertions,
               test_an_R2_PASS_never_overwrites_a_row_the_FIRST_pass_decided,
               test_a_ONE_LEVEL_mapping_proposes_one_key,
               test_a_NESTED_mapping_proposes_ONE_KEY_PER_LEVEL,
@@ -13094,6 +14854,7 @@ def main():
               test_source_access_slots_keep_numeric_environment_keys,
               test_source_access_slots_unwrap_safe_type_conversion_keys,
               test_source_access_slots_keep_safe_literal_keys,
+              test_source_access_slots_render_mapping_dynarray_length,
               test_source_access_slots_fold_safe_constant_keys,
               test_source_access_slots_resolve_local_key_aliases_in_order,
               test_source_access_slots_substitute_helper_and_modifier_actuals,
@@ -13110,6 +14871,7 @@ def main():
               test_mapping_store_aliases_have_source_path_guard_coordinate,
               test_contract_state_store_aliases_read_solc_declaration_ids,
               test_assert_query_keeps_state_pins_for_the_certified_slice,
+              test_assert_query_skips_internal_semantic_state_pins,
               test_assert_query_region_keeps_slots_but_drops_state_scalars,
               test_an_ADDRESS_endpoint_renders_for_an_ABSOLUTE_bound,
               test_an_ADDRESS_endpoint_is_STILL_REFUSED_for_a_DELTA_bound,
@@ -13126,22 +14888,25 @@ def main():
               test_a_hole_OUTSIDE_the_interval_costs_no_width,
               test_a_REPEATED_hole_is_counted_once,
               test_a_nested_slot_is_read_at_the_ITERATED_hash,
+              test_a_mapping_dynarray_length_slot_is_read_as_scalar_oracle,
               test_a_slot_named_with_the_WRONG_DEPTH_is_refused,
               test_the_oracle_side_refuses_the_same_key,
               test_a_slot_keyed_by_an_ESTABLISHED_FUZZED_sender_is_READ,
               test_a_slot_keyed_by_an_ESTABLISHED_POINT_sender_is_WRITTEN,
               test_an_OBSERVED_msg_value_slot_key_is_nameable,
               test_a_change_rung_is_GUARDED_on_a_revert_tolerant_call,
-              test_a_ROLLBACK_path_drops_every_layer_2_3_rung_and_ASSERTS_THE_REVERT,
+        test_a_ROLLBACK_path_keeps_restored_frame_rungs_and_ASSERTS_THE_REVERT,
               test_a_STAGE1_normal_path_counts_the_bare_call_as_R0,
               test_a_ROLLBACK_bare_call_gets_expectRevert_layer_1_oracle,
               test_a_NON_rollback_path_is_BYTE_IDENTICAL_to_before,
               test_a_STAGE1_revert_path_ASSERTS_THE_REVERT_without_calling_it_rollback,
+              test_a_STAGE1_revert_path_keeps_pre_post_frame_R1_spellings,
               test_the_ROLLBACK_LINE_of_the_ladder_log_is_PARSED_in_both_directions,
               test_the_same_change_rung_IS_asserted_on_a_bare_call,
               test_a_wide_env_coordinate_is_FUZZED_not_disclosed_as_one_point,
               test_a_wide_env_coordinate_EXCLUDING_the_sender_is_also_fuzzed,
-              test_a_width_one_env_coordinate_emits_at_the_certified_value,
+              test_a_nonzero_width_one_env_coordinate_emits_at_the_certified_value,
+              test_a_zero_width_one_env_coordinate_refuses_foundry_prank,
               test_a_piece_label_distinguishes_two_boxes_of_one_path,
               test_the_value_gate_statement_is_read_as_ONE_statement,
               test_high_level_value_call_is_parsed_and_rewritten,
@@ -13162,9 +14927,22 @@ def main():
               test_missing_string_replay_arg_becomes_dynamic_fuzz_input,
               test_unconstrained_string_replay_arg_becomes_dynamic_fuzz_input,
               test_missing_low_level_dynamic_args_update_abi_signature,
+              test_missing_dynamic_array_args_are_fuzzable,
+              test_source_level_dynamic_defaults_are_nonempty_for_constructors,
+              test_source_identity_defaults_are_nonzero_and_typed,
+              test_unsupported_skeleton_is_synthesized_for_concrete_replay,
+              test_missing_emitter_output_is_synthesized_for_certified_put_lift,
+              test_missing_emitter_synthesis_is_not_gated_by_depth,
+              test_synthetic_emitter_probe_keeps_proof_budget,
+              test_ladder_budget_reserves_r2_followup_when_possible,
+              test_refused_put_record_preserves_build_put_reason,
+              test_concrete_stage2_source_record_preserves_certified_region_reason,
+              test_interface_parameter_can_be_lifted_as_address_fuzz_input,
+              test_fuzzed_interface_address_parameter_is_mocked_before_target_call,
               test_missing_low_level_value_gate_args_update_abi_signature,
               test_assembled_put_source_drops_stale_concrete_replays,
               test_assembled_put_source_drops_stale_replays_in_later_contracts,
+              test_assembled_put_source_drops_abstract_helper_unsupported_marker,
               test_assembled_concrete_source_keeps_only_the_selected_replay,
               test_assembled_concrete_source_refuses_unsupported_replay,
               test_assembled_concrete_source_completes_missing_call_args,

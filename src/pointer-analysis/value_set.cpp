@@ -923,12 +923,20 @@ void value_sett::get_reference_set_rec(const expr2tc &expr, object_mapt &dest)
 
     if (is_symbol2t(expr))
     {
-      const symbolt *sym = ns.lookup(to_symbol2t(expr).thename);
+      const irep_idt &sym_name = to_symbol2t(expr).thename;
+      const symbolt *sym = ns.lookup(sym_name);
+      if (
+        !sym &&
+        has_prefix(sym_name.as_string(), std::string("nondet$symex::")))
+      {
+        insert(dest, unknown2tc(expr->type), BigInt(0));
+        return;
+      }
       if (!sym)
       {
         log_error(
           "value_set: unknown symbol `{}`",
-          to_symbol2t(expr).thename.as_string());
+          sym_name.as_string());
       }
       assert(sym);
       const irept &a = sym->type.find("alignment");

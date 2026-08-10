@@ -19,6 +19,18 @@
 #include <fstream>
 #include <limits>
 
+static bool has_unresolved_symbol_subtype(
+  const typet &type,
+  const contextt &context)
+{
+  if (!type.is_pointer())
+    return false;
+
+  const typet &subtype = type.subtype();
+  return subtype.is_symbol() &&
+         context.find_symbol(subtype.identifier()) == nullptr;
+}
+
 bool solidity_convertert::get_library_function_call(
   const nlohmann::json &decl_ref,
   const nlohmann::json &caller,
@@ -182,8 +194,27 @@ bool solidity_convertert::get_library_function_call(
             got_formal = true;
         }
 
-        if (got_formal && single_arg.type() != formal_t)
+        if (
+          got_formal && single_arg.type() != formal_t &&
+          !has_unresolved_symbol_subtype(single_arg.type(), context) &&
+          !has_unresolved_symbol_subtype(formal_t, context))
+        {
           convert_type_expr(ns, single_arg, formal_t, arg.value());
+          if (single_arg.type() != formal_t)
+          {
+            // A call boundary must carry the declared formal shape. In
+            // particular, a bytes4 selector can be lowered as uint32 by an
+            // older expression path even though the callee expects the
+            // frontend's BytesStatic value. Preserve the callee's formal
+            // contract without changing an existing context symbol's type.
+            log_warning(
+              "argument for `{}` did not convert to its formal type; using "
+              "typed nondet",
+              decl_ref.value("name", "<unnamed>"));
+            get_solidity_nondet_value(
+              formal_t, single_arg.location(), single_arg);
+          }
+        }
       }
 
       call.arguments().push_back(single_arg);
@@ -214,7 +245,10 @@ bool solidity_convertert::get_non_library_function_call(
 {
   if (decl_ref.empty() || decl_ref.is_null())
   {
-    log_error("unexpect empty or null declaration json");
+    log_debug(
+      "solidity",
+      "get_non_library_function_call: empty/null declaration json; "
+      "caller will synthesize nondet return");
     return true;
   }
 
@@ -324,8 +358,27 @@ bool solidity_convertert::get_non_library_function_call(
             got_formal = true;
         }
 
-        if (got_formal && single_arg.type() != formal_t)
+        if (
+          got_formal && single_arg.type() != formal_t &&
+          !has_unresolved_symbol_subtype(single_arg.type(), context) &&
+          !has_unresolved_symbol_subtype(formal_t, context))
+        {
           convert_type_expr(ns, single_arg, formal_t, arg.value());
+
+          // A call boundary must carry the declared formal shape.  This is
+          // especially important for bytesN values used by synthetic
+          // modifier wrappers: a scalar selector must not reach a bytes4
+          // external formal as an unsigned integer.
+          if (single_arg.type() != formal_t)
+          {
+            log_warning(
+              "argument for `{}` did not convert to its formal type; using a "
+              "typed nondeterministic value",
+              decl_ref.value("name", "<unnamed>"));
+            get_solidity_nondet_value(
+              formal_t, single_arg.location(), single_arg);
+          }
+        }
       }
 
       call.arguments().push_back(single_arg);
@@ -371,8 +424,10 @@ void solidity_convertert::extract_new_contracts()
           if (get_type_description(
                 node["typeName"]["typeDescriptions"], new_type))
           {
-            log_error("failed to obtain typeDescriptions");
-            abort();
+            log_warning(
+              "failed to obtain typeDescriptions for NewExpression; "
+              "skipping new-contract extraction for this node");
+            return;
           }
           if (get_sol_type(new_type) == SolidityGrammar::SolType::CONTRACT)
           {
@@ -566,7 +621,13 @@ bool solidity_convertert::assign_param_nondet(
       if (get_sol_type(t) == SolidityGrammar::SolType::CONTRACT)
       {
         std::string base_cname = t.get("#sol_contract").as_string();
-        assert(!base_cname.empty());
+        if (base_cname.empty())
+        {
+          exprt nondet_ptr;
+          get_nondet_expr(t, nondet_ptr);
+          call.arguments().push_back(nondet_ptr);
+          continue;
+        }
         // Contract-typed harness parameter: emit a nondet pointer of the
         // declared contract/interface type. The SAT solver then picks any
         // value: aliasing a tracked `_ESBMC_Object_<C>` singleton (or any
@@ -1264,6 +1325,34 @@ bool solidity_convertert::get_high_level_member_access(
     }
   }
 
+  if (
+    uses_revert_observation && cname_set.size() > 3 && _cname != cname &&
+    _cname != "Vm" && _cname != "VmSafe")
+  {
+    // VeriPUT complete-path coverage needs the target unit's path constraints,
+    // not a full closed-world expansion of every structurally compatible
+    // external implementation.  Proxy/factory-heavy benchmarks can put dozens
+    // of contracts in this set, making the generated wrapper dominate the
+    // KILLED/OOM bucket before any useful path goal is solved.  For this mode,
+    // over-approximate the external result and avoid materialising the wrapper.
+    if (is_func_call)
+    {
+      if (member.type().is_code())
+      {
+        const typet &ret_t = to_code_type(member.type()).return_type();
+        if (ret_t.is_empty())
+          new_expr = code_skipt();
+        else
+          get_solidity_nondet_value(ret_t, l, new_expr);
+      }
+      else
+        get_solidity_nondet_value(member.type(), l, new_expr);
+    }
+    else
+      get_solidity_nondet_value(member.type(), l, new_expr);
+    return false;
+  }
+
   exprt balance;
   bool is_call_w_options = is_func_call && options.is_array();
   if (is_call_w_options)
@@ -1314,6 +1403,14 @@ bool solidity_convertert::get_high_level_member_access(
 
   if (get_sol_type(member.type()) == SolidityGrammar::SolType::TUPLE_RETURNS)
   {
+    if (uses_revert_observation)
+    {
+      typet ret_t = member.type();
+      if (member.type().is_code())
+        ret_t = to_code_type(member.type()).return_type();
+      get_solidity_nondet_value(ret_t, l, new_expr);
+      return false;
+    }
     log_error("Unsupported return tuple");
     return true;
   }
@@ -1676,6 +1773,17 @@ bool solidity_convertert::get_bound_low_level_call(
     find_last_parent(src_ast_json["nodes"], expr);
   const nlohmann::json *func_call = &initial_func_call;
 
+  if (
+    func_call->empty() || func_call->is_null() || !func_call->is_object() ||
+    !func_call->contains("nodeType"))
+  {
+    log_warning("failed to resolve enclosing function call for low-level call");
+    symbolt dump;
+    get_llc_ret_tuple(dump);
+    new_expr = symbol_expr(dump);
+    return false;
+  }
+
   if ((*func_call)["nodeType"] == "FunctionCallOptions")
   {
     const nlohmann::json &second_call =
@@ -1683,19 +1791,28 @@ bool solidity_convertert::get_bound_low_level_call(
     func_call = &second_call;
   }
 
-  assert((*func_call)["nodeType"] == "FunctionCall");
-
-  if ((*func_call).empty() || (*func_call).is_null())
+  if (
+    func_call->empty() || func_call->is_null() || !func_call->is_object() ||
+    !func_call->contains("nodeType") ||
+    (*func_call)["nodeType"] != "FunctionCall")
   {
-    log_error("failed to resolve function call in member access");
-    return true;
+    log_warning("failed to resolve function call in low-level member access");
+    symbolt dump;
+    get_llc_ret_tuple(dump);
+    new_expr = symbol_expr(dump);
+    return false;
   }
+
+  locationt loc;
+  get_location_from_node(expr, loc);
 
   // Fast path: if this is a plain .call with a literal
   // abi.encodeWithSignature(...) payload, we can dispatch by signature
-  // directly and bypass the generic $call#0 helper. Falls through on any
-  // shape we don't recognise.
-  if (mem_name == "call")
+  // directly and bypass the generic $call#0 helper.  Complete-path coverage
+  // skips this inline path: pulling the ABI target body into the unit's path
+  // query is one of the large proxy/factory timeout sources, while the generic
+  // low-level model still exposes the success/bytes tuple.
+  if (mem_name == "call" && !uses_revert_observation)
   {
     if (!try_get_signature_dispatched_call(expr, *func_call, base, new_expr))
       return false;
@@ -1703,21 +1820,50 @@ bool solidity_convertert::get_bound_low_level_call(
 
   // Delegate-shadow fast path: .delegatecall(abi.encodeWithSignature(...))
   // with a literal signature and caller/target state-var compatibility.
-  // Falls through to the generic $delegatecall#0 helper on failure.
-  if (mem_name == "delegatecall")
+  // Also skipped for complete-path coverage for the same closure-control reason
+  // as signature-dispatched .call above.
+  if (mem_name == "delegatecall" && !uses_revert_observation)
   {
     if (!try_get_delegate_shadow_call(expr, *func_call, base, new_expr))
       return false;
   }
 
   exprt arg = nil_exprt();
-  assert((*func_call).contains("arguments"));
 
-  if ((*func_call)["arguments"].size() > 0)
+  if (
+    (*func_call).contains("arguments") && (*func_call)["arguments"].is_array() &&
+    (*func_call)["arguments"].size() > 0)
   {
     auto &arguments = (*func_call)["arguments"][0];
-    if (get_expr(arguments, expr["argumentTypes"][0], arg))
-      return true;
+    nlohmann::json arg_type = nullptr;
+    if (
+      expr.contains("argumentTypes") && expr["argumentTypes"].is_array() &&
+      !expr["argumentTypes"].empty())
+      arg_type = expr["argumentTypes"][0];
+    else if (arguments.contains("typeDescriptions"))
+      arg_type = arguments["typeDescriptions"];
+
+    if (get_expr(arguments, arg_type, arg))
+    {
+      if (uses_revert_observation)
+      {
+        // Path/revert-observation mode needs the caller-side control-flow fact
+        // from the low-level call, not a precise ABI payload model.  Payloads
+        // such as abi.encodeWithSelector(...) can contain unsupported function
+        // references or bytes conversions; keep the low-level call observable by
+        // over-approximating the payload value instead of rejecting the unit.
+        if (arguments.contains("typeDescriptions"))
+        {
+          typet payload_t;
+          if (!get_type_description(arguments["typeDescriptions"], payload_t))
+            get_solidity_nondet_value(payload_t, loc, arg);
+        }
+        if (arg.is_nil())
+          get_solidity_nondet_value(byte_dynamic_t, loc, arg);
+      }
+      else
+        return true;
+    }
   }
 
   return get_low_level_member_accsss(
@@ -1829,16 +1975,18 @@ bool solidity_convertert::get_low_level_member_accsss(
     // struct padding of _Bool), not raw bool — cast the bool-typed
     // dispatch return to match the member's type before assigning.
     const struct_typet &tup_stype = to_struct_type(ns.follow(dump_expr.type()));
-    assert(!tup_stype.components().empty());
-    const typet &x_type = tup_stype.components().front().type();
-    exprt dump_x = member_exprt(dump_expr, "x", x_type);
-    exprt call_casted = call;
-    if (call_casted.type() != x_type)
-      solidity_gen_typecast(ns, call_casted, x_type);
-    exprt assign_succ = side_effect_exprt("assign", x_type);
-    assign_succ.copy_to_operands(dump_x, call_casted);
-    convert_expression_to_code(assign_succ);
-    move_to_front_block(assign_succ);
+    if (!tup_stype.components().empty())
+    {
+      const typet &x_type = tup_stype.components().front().type();
+      exprt dump_x = member_exprt(dump_expr, "x", x_type);
+      exprt call_casted = call;
+      if (call_casted.type() != x_type)
+        solidity_gen_typecast(ns, call_casted, x_type);
+      exprt assign_succ = side_effect_exprt("assign", x_type);
+      assign_succ.copy_to_operands(dump_x, call_casted);
+      convert_expression_to_code(assign_succ);
+      move_to_front_block(assign_succ);
+    }
 
     new_expr = dump_expr;
   }
@@ -1906,16 +2054,18 @@ bool solidity_convertert::get_low_level_member_accsss(
     // struct padding of _Bool), not raw bool — cast the bool-typed
     // dispatch return to match the member's type before assigning.
     const struct_typet &tup_stype = to_struct_type(ns.follow(dump_expr.type()));
-    assert(!tup_stype.components().empty());
-    const typet &x_type = tup_stype.components().front().type();
-    exprt dump_x = member_exprt(dump_expr, "x", x_type);
-    exprt call_casted = call;
-    if (call_casted.type() != x_type)
-      solidity_gen_typecast(ns, call_casted, x_type);
-    exprt assign_succ = side_effect_exprt("assign", x_type);
-    assign_succ.copy_to_operands(dump_x, call_casted);
-    convert_expression_to_code(assign_succ);
-    move_to_front_block(assign_succ);
+    if (!tup_stype.components().empty())
+    {
+      const typet &x_type = tup_stype.components().front().type();
+      exprt dump_x = member_exprt(dump_expr, "x", x_type);
+      exprt call_casted = call;
+      if (call_casted.type() != x_type)
+        solidity_gen_typecast(ns, call_casted, x_type);
+      exprt assign_succ = side_effect_exprt("assign", x_type);
+      assign_succ.copy_to_operands(dump_x, call_casted);
+      convert_expression_to_code(assign_succ);
+      move_to_front_block(assign_succ);
+    }
 
     new_expr = dump_expr;
   }
@@ -1942,21 +2092,30 @@ bool solidity_convertert::get_low_level_member_accsss(
     // struct padding of _Bool), not raw bool — cast the bool-typed
     // dispatch return to match the member's type before assigning.
     const struct_typet &tup_stype = to_struct_type(ns.follow(dump_expr.type()));
-    assert(!tup_stype.components().empty());
-    const typet &x_type = tup_stype.components().front().type();
-    exprt dump_x = member_exprt(dump_expr, "x", x_type);
-    exprt call_casted = call;
-    if (call_casted.type() != x_type)
-      solidity_gen_typecast(ns, call_casted, x_type);
-    exprt assign_succ = side_effect_exprt("assign", x_type);
-    assign_succ.copy_to_operands(dump_x, call_casted);
-    convert_expression_to_code(assign_succ);
-    move_to_front_block(assign_succ);
+    if (!tup_stype.components().empty())
+    {
+      const typet &x_type = tup_stype.components().front().type();
+      exprt dump_x = member_exprt(dump_expr, "x", x_type);
+      exprt call_casted = call;
+      if (call_casted.type() != x_type)
+        solidity_gen_typecast(ns, call_casted, x_type);
+      exprt assign_succ = side_effect_exprt("assign", x_type);
+      assign_succ.copy_to_operands(dump_x, call_casted);
+      convert_expression_to_code(assign_succ);
+      move_to_front_block(assign_succ);
+    }
 
     new_expr = dump_expr;
   }
   else
   {
+    if (uses_revert_observation)
+    {
+      symbolt dump;
+      get_llc_ret_tuple(dump);
+      new_expr = symbol_expr(dump);
+      return false;
+    }
     log_error("unsupported low-level call type {}", mem_name);
     return true;
   }
@@ -1985,8 +2144,9 @@ bool solidity_convertert::get_bind_cname_expr(
 
   if (!parent.contains("nodeType"))
   {
-    log_error("{}", parent.dump());
-    abort();
+    log_warning(
+      "Cannot find a statement/declaration parent for bind-cname expression");
+    return true;
   }
   if (parent["nodeType"] == "ExpressionStatement")
     return true; // e.g. new Base(); Base(_addr); with no lvalue

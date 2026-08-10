@@ -62,11 +62,15 @@ def main():
     bad += check(args.skip_bracket and args.env_coord_disagreed
                  and args.pin_agreed_state and args.state_struct_fields,
                  f"strong structural controls are applied: {args}")
-    bad += check(args.slot_coords == 8 and args.max_holes == 1,
+    bad += check(args.slot_coords == 8 and args.max_holes == 1
+                 and args.max_region_pieces == 2,
                  f"slot and hole controls are applied: {args}")
     bad += check(args.esbmc_arg.count("--overflow-check") == 1
                  and "--div-by-zero-check" in args.esbmc_arg
-                 and "--path-cov-arith-resolve" in args.esbmc_arg,
+                 and "--path-cov-arith-resolve" in args.esbmc_arg
+                 and "--unwindsetname" in args.esbmc_arg
+                 and "_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33"
+                 in args.esbmc_arg,
                  f"ESBMC args are applied without duplicates: {args.esbmc_arg}")
 
     plain = blank_args()
@@ -75,6 +79,25 @@ def main():
     got_plain = certify_all.apply_strong_certify_recipe(plain)
     bad += check(got_plain == "manual-label" and vars(plain) == before,
                  "plain recipe leaves arguments untouched")
+
+    matched_none = """
+[enumerate] ESBMC produced no cov-report.json. Its output was:
+ERROR: --solidity-path-coverage: --focus-function 'decimals' matched NONE of the 2 unit(s) in scope, so NOT ONE path was enumerated and this run measures nothing. The unit(s) that were available: sol:@C@ReverseMultiplicativePriceFeed@F@latestRoundData#205; sol:@C@ReverseMultiplicativePriceFeed@F@version#240
+[run] EXIT 1
+"""
+    diag = certify_all.result_driver_diagnostic(matched_none)
+    rec = {
+        "driver_diagnostic": diag,
+        "witnessed": None,
+        "certified": {},
+        "no_coordinate_reason": None,
+        "driver_refusal": None,
+        "empty_witness_verdict": None,
+    }
+    bad += check(diag["tag"] == "focus-function-matched-none",
+                 f"focus miss is diagnosed before generic no-report: {diag}")
+    bad += check(certify_all.bucket(rec, 1, matched_none) == "DRIVER-REFUSED",
+                 "focus miss is non-retryable driver refusal")
     return bad
 
 

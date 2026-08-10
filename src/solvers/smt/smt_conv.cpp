@@ -40,6 +40,47 @@ static std::string itos(int64_t i)
   return ss.str();
 }
 
+static bool is_integral_bv_relation_type(const expr2tc &expr)
+{
+  return is_signedbv_type(expr) || is_unsignedbv_type(expr);
+}
+
+static bool ordered_bv_common_type(
+  const expr2tc &side_1,
+  const expr2tc &side_2,
+  type2tc &common)
+{
+  if (
+    !is_integral_bv_relation_type(side_1) ||
+    !is_integral_bv_relation_type(side_2))
+    return false;
+
+  const bool s1 = is_signedbv_type(side_1);
+  const bool s2 = is_signedbv_type(side_2);
+  const unsigned int w1 = side_1->type->get_width();
+  const unsigned int w2 = side_2->type->get_width();
+
+  if (s1 == s2)
+  {
+    common = w1 >= w2 ? side_1->type : side_2->type;
+    return true;
+  }
+
+  if (!s1 && w1 >= w2)
+  {
+    common = side_1->type;
+    return true;
+  }
+  if (!s2 && w2 >= w1)
+  {
+    common = side_2->type;
+    return true;
+  }
+
+  common = s1 ? side_1->type : side_2->type;
+  return true;
+}
+
 unsigned int
 smt_convt::get_member_name_field(const type2tc &t, const irep_idt &name) const
 {
@@ -241,12 +282,13 @@ void smt_convt::pop_ctx()
 
   ctx_level--;
 
-  // Go through all the asts created since the last push and delete them.
-
-  for (unsigned int idx = live_asts_sizes.back(); idx < live_asts.size(); idx++)
-    delete live_asts[idx];
-
-  // And reset the storage back to that point.
+  // Reset the storage back to the point recorded by push_ctx().  Do not
+  // actively delete the AST wrappers from the popped frame here: several
+  // backends keep solver-owned subnodes reachable from those wrappers across a
+  // pop, and all-witness/path-coverage enumeration can create short-lived ASTs
+  // that are still referenced while the current claim is being finalised.  The
+  // process owns the remaining wrappers until solver teardown; leaking a small
+  // context frame is preferable to a use-after-free in pop_ctx().
   live_asts.resize(live_asts_sizes.back());
   live_asts_sizes.pop_back();
 
@@ -2439,8 +2481,9 @@ smt_astt smt_convt::convert_ast(const expr2tc &expr)
       // form mixes the sign bit into bitvector arithmetic and seems to
       // defeat term-graph sharing in this pattern.
       expr2tc ge = greaterthanequal2tc(abs.value, gen_zero(abs.value->type));
-      expr2tc neg = neg2tc(abs.value->type, abs.value);
-      expr2tc ite = if2tc(abs.type, ge, abs.value, neg);
+      expr2tc pos = typecast2tc(abs.type, abs.value);
+      expr2tc neg = typecast2tc(abs.type, neg2tc(abs.value->type, abs.value));
+      expr2tc ite = if2tc(abs.type, ge, pos, neg);
 
       a = convert_ast(ite);
     }
@@ -2485,14 +2528,28 @@ smt_astt smt_convt::convert_ast(const expr2tc &expr)
     {
       a = mk_bvslt(args[0], args[1]);
     }
-    else if (is_unsignedbv_type(lt.side_1) && is_unsignedbv_type(lt.side_2))
-    {
-      a = mk_bvult(args[0], args[1]);
-    }
     else
     {
-      assert(is_signedbv_type(lt.side_1) && is_signedbv_type(lt.side_2));
-      a = mk_bvslt(args[0], args[1]);
+      type2tc common;
+      bool common_ok = ordered_bv_common_type(lt.side_1, lt.side_2, common);
+      if (!common_ok)
+        log_error(
+          "unsupported ordered relation operand types: lhs id={} width={}, "
+          "rhs id={} width={}",
+          static_cast<unsigned>(lt.side_1->type->type_id),
+          lt.side_1->type->get_width(),
+          static_cast<unsigned>(lt.side_2->type->type_id),
+          lt.side_2->type->get_width());
+      assert(common_ok);
+      if (!common_ok)
+        abort();
+      smt_astt lhs = lt.side_1->type == common
+                       ? args[0]
+                       : convert_ast(typecast2tc(common, lt.side_1));
+      smt_astt rhs = lt.side_2->type == common
+                       ? args[1]
+                       : convert_ast(typecast2tc(common, lt.side_2));
+      a = is_signedbv_type(common) ? mk_bvslt(lhs, rhs) : mk_bvult(lhs, rhs);
     }
     break;
   }
@@ -2516,14 +2573,20 @@ smt_astt smt_convt::convert_ast(const expr2tc &expr)
     {
       a = mk_bvsle(args[0], args[1]);
     }
-    else if (is_unsignedbv_type(lte.side_1) && is_unsignedbv_type(lte.side_2))
-    {
-      a = mk_bvule(args[0], args[1]);
-    }
     else
     {
-      assert(is_signedbv_type(lte.side_1) && is_signedbv_type(lte.side_2));
-      a = mk_bvsle(args[0], args[1]);
+      type2tc common;
+      bool common_ok = ordered_bv_common_type(lte.side_1, lte.side_2, common);
+      assert(common_ok);
+      if (!common_ok)
+        abort();
+      smt_astt lhs = lte.side_1->type == common
+                       ? args[0]
+                       : convert_ast(typecast2tc(common, lte.side_1));
+      smt_astt rhs = lte.side_2->type == common
+                       ? args[1]
+                       : convert_ast(typecast2tc(common, lte.side_2));
+      a = is_signedbv_type(common) ? mk_bvsle(lhs, rhs) : mk_bvule(lhs, rhs);
     }
     break;
   }
@@ -2547,14 +2610,20 @@ smt_astt smt_convt::convert_ast(const expr2tc &expr)
     {
       a = mk_bvsgt(args[0], args[1]);
     }
-    else if (is_unsignedbv_type(gt.side_1) && is_unsignedbv_type(gt.side_2))
-    {
-      a = mk_bvugt(args[0], args[1]);
-    }
     else
     {
-      assert(is_signedbv_type(gt.side_1) && is_signedbv_type(gt.side_2));
-      a = mk_bvsgt(args[0], args[1]);
+      type2tc common;
+      bool common_ok = ordered_bv_common_type(gt.side_1, gt.side_2, common);
+      assert(common_ok);
+      if (!common_ok)
+        abort();
+      smt_astt lhs = gt.side_1->type == common
+                       ? args[0]
+                       : convert_ast(typecast2tc(common, gt.side_1));
+      smt_astt rhs = gt.side_2->type == common
+                       ? args[1]
+                       : convert_ast(typecast2tc(common, gt.side_2));
+      a = is_signedbv_type(common) ? mk_bvsgt(lhs, rhs) : mk_bvugt(lhs, rhs);
     }
     break;
   }
@@ -2578,14 +2647,20 @@ smt_astt smt_convt::convert_ast(const expr2tc &expr)
     {
       a = mk_bvsge(args[0], args[1]);
     }
-    else if (is_unsignedbv_type(gte.side_1) && is_unsignedbv_type(gte.side_2))
-    {
-      a = mk_bvuge(args[0], args[1]);
-    }
     else
     {
-      assert(is_signedbv_type(gte.side_1) && is_signedbv_type(gte.side_2));
-      a = mk_bvsge(args[0], args[1]);
+      type2tc common;
+      bool common_ok = ordered_bv_common_type(gte.side_1, gte.side_2, common);
+      assert(common_ok);
+      if (!common_ok)
+        abort();
+      smt_astt lhs = gte.side_1->type == common
+                       ? args[0]
+                       : convert_ast(typecast2tc(common, gte.side_1));
+      smt_astt rhs = gte.side_2->type == common
+                       ? args[1]
+                       : convert_ast(typecast2tc(common, gte.side_2));
+      a = is_signedbv_type(common) ? mk_bvsge(lhs, rhs) : mk_bvuge(lhs, rhs);
     }
     break;
   }
@@ -3474,10 +3549,18 @@ smt_astt smt_convt::convert_member(const expr2tc &expr)
         get_uint_type(type_byte_size_bits(type).to_uint64()), to_bv)));
   }
 
-  assert(
-    is_struct_type(member.source_value) ||
-    is_complex_type(member.source_value) ||
-    is_pointer_type(member.source_value));
+  if (
+    !is_struct_type(member.source_value) &&
+    !is_complex_type(member.source_value) &&
+    !is_pointer_type(member.source_value))
+  {
+    log_debug(
+      "smt",
+      "over-approximating member '{}' of non-aggregate source as nondet",
+      member.member.as_string());
+    return convert_ast(gen_nondet(expr->type));
+  }
+
   unsigned int idx =
     get_member_name_field(member.source_value->type, member.member);
 

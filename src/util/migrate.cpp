@@ -522,6 +522,62 @@ convert_operand_pair(const exprt &expr, expr2tc &arg1, expr2tc &arg2)
   migrate_expr(expr.op1(), arg2);
 }
 
+static void
+cast_bv_arithmetic_operands(const type2tc &type, expr2tc &side1, expr2tc &side2)
+{
+  if (!is_bv_type(type))
+    return;
+
+  if (
+    !is_pointer_type(side1) && !is_vector_type(side1->type) &&
+    side1->type != type)
+    side1 = typecast2tc(type, side1);
+  if (
+    !is_pointer_type(side2) && !is_vector_type(side2->type) &&
+    side2->type != type)
+    side2 = typecast2tc(type, side2);
+}
+
+static expr2tc build_overflow_arithmetic_expr(const exprt &expr)
+{
+  expr2tc op0, op1;
+  convert_operand_pair(expr, op0, op1);
+
+  type2tc op_type = migrate_type(decide_on_expr_type(expr.op0(), expr.op1()));
+  cast_bv_arithmetic_operands(op_type, op0, op1);
+
+  if (expr.id() == "overflow-+" || expr.id() == "overflow_result-+")
+    return add2tc(op_type, op0, op1);
+  if (expr.id() == "overflow--" || expr.id() == "overflow_result--")
+    return sub2tc(op_type, op0, op1);
+  if (expr.id() == "overflow-*" || expr.id() == "overflow_result-*")
+    return mul2tc(op_type, op0, op1);
+  if (expr.id() == "overflow-/")
+    return div2tc(op_type, op0, op1);
+  if (expr.id() == "overflow-mod")
+    return modulus2tc(op_type, op0, op1);
+
+  abort();
+}
+
+static bool is_integral_relation_type(const typet &type)
+{
+  return type.id() == typet::t_signedbv || type.id() == typet::t_unsignedbv;
+}
+
+static void
+cast_bv_relation_operands(const exprt &expr, expr2tc &side1, expr2tc &side2)
+{
+  if (
+    expr.operands().size() != 2 ||
+    !is_integral_relation_type(expr.op0().type()) ||
+    !is_integral_relation_type(expr.op1().type()))
+    return;
+
+  type2tc type = migrate_type(decide_on_expr_type(expr.op0(), expr.op1()));
+  cast_bv_arithmetic_operands(type, side1, side2);
+}
+
 static bool handle_introspection_expr(const exprt &expr, expr2tc &new_expr_ref)
 {
   if (expr.id() == "isinstance" || expr.id() == "hasattr")
@@ -922,6 +978,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     expr2tc side1, side2;
 
     convert_operand_pair(expr, side1, side2);
+    cast_bv_relation_operands(expr, side1, side2);
 
     new_expr_ref = lessthan2tc(side1, side2);
     return;
@@ -932,6 +989,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     expr2tc side1, side2;
     migrate_expr(expr.op0(), side1);
     migrate_expr(expr.op1(), side2);
+    cast_bv_relation_operands(expr, side1, side2);
 
     new_expr_ref = greaterthan2tc(side1, side2);
     return;
@@ -942,6 +1000,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     expr2tc side1, side2;
 
     convert_operand_pair(expr, side1, side2);
+    cast_bv_relation_operands(expr, side1, side2);
 
     new_expr_ref = lessthanequal2tc(side1, side2);
     return;
@@ -961,6 +1020,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     expr2tc side1, side2;
 
     convert_operand_pair(expr, side1, side2);
+    cast_bv_relation_operands(expr, side1, side2);
 
     new_expr_ref = greaterthanequal2tc(side1, side2);
     return;
@@ -1142,6 +1202,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     }
 
     convert_operand_pair(expr, side1, side2);
+    cast_bv_arithmetic_operands(type, side1, side2);
 
     new_expr_ref = lshr2tc(type, side1, side2);
     return;
@@ -1181,6 +1242,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     }
 
     convert_operand_pair(expr, side1, side2);
+    cast_bv_arithmetic_operands(type, side1, side2);
 
     new_expr_ref = add2tc(type, side1, side2);
     return;
@@ -1198,6 +1260,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
 
     expr2tc side1, side2;
     convert_operand_pair(expr, side1, side2);
+    cast_bv_arithmetic_operands(type, side1, side2);
 
     new_expr_ref = sub2tc(type, side1, side2);
     return;
@@ -1215,6 +1278,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
 
     expr2tc side1, side2;
     convert_operand_pair(expr, side1, side2);
+    cast_bv_arithmetic_operands(type, side1, side2);
 
     new_expr_ref = mul2tc(type, side1, side2);
     return;
@@ -1228,6 +1292,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
 
     expr2tc side1, side2;
     convert_operand_pair(expr, side1, side2);
+    cast_bv_arithmetic_operands(type, side1, side2);
 
     new_expr_ref = div2tc(type, side1, side2);
     return;
@@ -1377,6 +1442,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
 
     expr2tc side1, side2;
     convert_operand_pair(expr, side1, side2);
+    cast_bv_arithmetic_operands(type, side1, side2);
 
     new_expr_ref = modulus2tc(type, side1, side2);
     return;
@@ -1390,6 +1456,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
 
     expr2tc side1, side2;
     convert_operand_pair(expr, side1, side2);
+    cast_bv_arithmetic_operands(type, side1, side2);
 
     new_expr_ref = shl2tc(type, side1, side2);
     return;
@@ -1403,6 +1470,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
 
     expr2tc side1, side2;
     convert_operand_pair(expr, side1, side2);
+    cast_bv_arithmetic_operands(type, side1, side2);
 
     new_expr_ref = ashr2tc(type, side1, side2);
     return;
@@ -1514,6 +1582,18 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     expr2tc sourcedata;
     migrate_expr(expr.op0(), sourcedata);
 
+    if (
+      !is_struct_type(sourcedata) && !is_union_type(sourcedata) &&
+      !is_complex_type(sourcedata))
+    {
+      log_debug(
+        "migrate",
+        "over-approximating member '{}' of non-aggregate source as nondet",
+        expr.component_name().as_string());
+      new_expr_ref = gen_nondet(type);
+      return;
+    }
+
     new_expr_ref = member2tc(type, sourcedata, expr.component_name());
     return;
   }
@@ -1612,50 +1692,35 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
   if (expr.id() == "overflow-+")
   {
     assert(expr.type().id() == typet::t_bool);
-    expr2tc op0, op1;
-    convert_operand_pair(expr, op0, op1);
-    expr2tc add = add2tc(op0->type, op0, op1); // XXX type?
-    new_expr_ref = overflow2tc(add);
+    new_expr_ref = overflow2tc(build_overflow_arithmetic_expr(expr));
     return;
   }
 
   if (expr.id() == "overflow--")
   {
     assert(expr.type().id() == typet::t_bool);
-    expr2tc op0, op1;
-    convert_operand_pair(expr, op0, op1);
-    expr2tc sub = sub2tc(op0->type, op0, op1); // XXX type?
-    new_expr_ref = overflow2tc(sub);
+    new_expr_ref = overflow2tc(build_overflow_arithmetic_expr(expr));
     return;
   }
 
   if (expr.id() == "overflow-*")
   {
     assert(expr.type().id() == typet::t_bool);
-    expr2tc op0, op1;
-    convert_operand_pair(expr, op0, op1);
-    expr2tc mul = mul2tc(op0->type, op0, op1); // XXX type?
-    new_expr_ref = overflow2tc(mul);
+    new_expr_ref = overflow2tc(build_overflow_arithmetic_expr(expr));
     return;
   }
 
   if (expr.id() == "overflow-/")
   {
     assert(expr.type().id() == typet::t_bool);
-    expr2tc op0, op1;
-    convert_operand_pair(expr, op0, op1);
-    expr2tc div = div2tc(op0->type, op0, op1); // XXX type?
-    new_expr_ref = overflow2tc(div);
+    new_expr_ref = overflow2tc(build_overflow_arithmetic_expr(expr));
     return;
   }
 
   if (expr.id() == "overflow-mod")
   {
     assert(expr.type().id() == typet::t_bool);
-    expr2tc op0, op1;
-    convert_operand_pair(expr, op0, op1);
-    expr2tc mod = modulus2tc(op0->type, op0, op1); // XXX type?
-    new_expr_ref = overflow2tc(mod);
+    new_expr_ref = overflow2tc(build_overflow_arithmetic_expr(expr));
     return;
   }
 
@@ -1664,6 +1729,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     assert(expr.type().id() == typet::t_bool);
     expr2tc op0, op1;
     convert_operand_pair(expr, op0, op1);
+    cast_bv_arithmetic_operands(op0->type, op0, op1);
     expr2tc shl = shl2tc(op0->type, op0, op1); // XXX type?
     new_expr_ref = overflow2tc(shl);
     return;
@@ -1971,6 +2037,19 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     return;
   }
 
+  if (expr.id() == irept::id_code && expr.statement() == "block")
+  {
+    std::vector<expr2tc> ops;
+    for (const auto &op : expr.operands())
+    {
+      expr2tc migrated_op;
+      migrate_expr(op, migrated_op);
+      ops.push_back(migrated_op);
+    }
+    new_expr_ref = code_block2tc(ops);
+    return;
+  }
+
   if (expr.id() == irept::id_code && expr.statement() == "return")
   {
     expr2tc theop;
@@ -2227,13 +2306,11 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     // Overflow_result : {result = op0 + op1, overflowed = overflow(op0 + op1)}
     type = migrate_type(expr.type());
     assert(expr.operands().size() == 2);
-    expr2tc op0, op1;
-    convert_operand_pair(expr, op0, op1);
-    expr2tc add = add2tc(op0->type, op0, op1); // XXX type?
+    expr2tc add = build_overflow_arithmetic_expr(expr);
 
     std::vector<expr2tc> members;
-    members.push_back(add2tc(op0->type, op0, op1));
-    members.push_back(overflow2tc(add2tc(op0->type, op0, op1)));
+    members.push_back(add);
+    members.push_back(overflow2tc(add));
     new_expr_ref = constant_struct2tc(type, members);
     return;
   }
@@ -2243,13 +2320,11 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     // Overflow_result : {result = op0 + op1, overflowed = overflow(op0 + op1)}
     type = migrate_type(expr.type());
     assert(expr.operands().size() == 2);
-    expr2tc op0, op1;
-    convert_operand_pair(expr, op0, op1);
-    expr2tc add = sub2tc(op0->type, op0, op1); // XXX type?
+    expr2tc sub = build_overflow_arithmetic_expr(expr);
 
     std::vector<expr2tc> members;
-    members.push_back(sub2tc(op0->type, op0, op1));
-    members.push_back(overflow2tc(sub2tc(op0->type, op0, op1)));
+    members.push_back(sub);
+    members.push_back(overflow2tc(sub));
     new_expr_ref = constant_struct2tc(type, members);
     return;
   }
@@ -2261,6 +2336,7 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     assert(expr.operands().size() == 2);
     expr2tc op0, op1;
     convert_operand_pair(expr, op0, op1);
+    cast_bv_arithmetic_operands(op0->type, op0, op1);
     expr2tc add = ashr2tc(op0->type, op0, op1); // XXX type?
 
     std::vector<expr2tc> members;
@@ -2275,13 +2351,11 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     // Overflow_result : {result = op0 + op1, overflowed = overflow(op0 + op1)}
     type = migrate_type(expr.type());
     assert(expr.operands().size() == 2);
-    expr2tc op0, op1;
-    convert_operand_pair(expr, op0, op1);
-    expr2tc add = mul2tc(op0->type, op0, op1); // XXX type?
+    expr2tc mul = build_overflow_arithmetic_expr(expr);
 
     std::vector<expr2tc> members;
-    members.push_back(mul2tc(op0->type, op0, op1));
-    members.push_back(overflow2tc(mul2tc(op0->type, op0, op1)));
+    members.push_back(mul);
+    members.push_back(overflow2tc(mul));
     new_expr_ref = constant_struct2tc(type, members);
     return;
   }
@@ -2294,6 +2368,27 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     return;
   }
   // TRANSCODER END
+
+  if (expr.id() == irept::id_code)
+  {
+    log_warning(
+      "migrate",
+      "over-approximating unsupported code statement '{}' as skip",
+      expr.statement().as_string());
+    new_expr_ref = code_skip2tc(get_empty_type());
+    return;
+  }
+
+  if (expr.type().id() != "nil" && expr.type().id() != typet::t_empty)
+  {
+    log_warning(
+      "migrate",
+      "over-approximating unsupported expression '{}' as nondet",
+      expr.id_string());
+    type2tc fallback_type = migrate_type(expr.type());
+    new_expr_ref = gen_nondet(fallback_type);
+    return;
+  }
 
   log_error("{}\nmigrate expr failed", expr);
   abort();
@@ -3435,13 +3530,25 @@ exprt migrate_expr_back(const expr2tc &ref)
     codeexpr.copy_to_operands(op0);
     return codeexpr;
   }
+  case expr2t::code_block_id:
+  {
+    const code_block2t &ref2 = to_code_block2t(ref);
+    exprt codeexpr("code", code_typet());
+    codeexpr.statement(irep_idt("block"));
+    for (const auto &op : ref2.operands)
+      codeexpr.copy_to_operands(migrate_expr_back(op));
+    return codeexpr;
+  }
   case expr2t::code_return_id:
   {
     const code_return2t &ref2 = to_code_return2t(ref);
     exprt codeexpr("code", code_typet());
     codeexpr.statement(irep_idt("return"));
-    exprt op0 = migrate_expr_back(ref2.operand);
-    codeexpr.copy_to_operands(op0);
+    if (!is_nil_expr(ref2.operand))
+    {
+      exprt op0 = migrate_expr_back(ref2.operand);
+      codeexpr.copy_to_operands(op0);
+    }
     return codeexpr;
   }
   case expr2t::code_skip_id:

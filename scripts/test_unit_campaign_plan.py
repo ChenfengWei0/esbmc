@@ -174,6 +174,32 @@ def test_campaign_partitions_attempts_and_auto_selects_earliest():
     return bad
 
 
+def test_campaign_preserves_no_unit_audit_metadata_in_next_schedule():
+    with tempfile.TemporaryDirectory() as td:
+        sched_doc = schedule_doc()
+        sched_doc["skipped_units"] = [{
+            "row": 1,
+            "unit": "fallback",
+            "reason": "fallback/receive cannot be selected by --focus-function",
+        }]
+        sched_doc["no_unit_rows"] = [{
+            "row": 1,
+            "reason": (
+                "target contract exposes only fallback/receive entries; "
+                "use deploy-only concrete fallback"),
+            "skipped": sched_doc["skipped_units"],
+        }]
+        sched = write_json(Path(td) / "schedule.json", sched_doc)
+        doc = unit_campaign_plan.plan_campaign(str(sched))
+    next_schedule = doc["next_schedule"]
+    bad = 0
+    bad += check(next_schedule["skipped_units"] == sched_doc["skipped_units"],
+                 f"campaign schedule preserves skipped-unit audit rows: {next_schedule}")
+    bad += check(next_schedule["no_unit_rows"] == sched_doc["no_unit_rows"],
+                 f"campaign schedule preserves deploy fallback rows: {next_schedule}")
+    return bad
+
+
 def test_campaign_can_emit_attempt_three_schedule_and_runner_argv():
     with tempfile.TemporaryDirectory() as td:
         sched = write_json(Path(td) / "schedule.json", schedule_doc())
@@ -519,6 +545,13 @@ def test_campaign_names_partial_journal_only_as_weak_certification():
     bad += check(doc["summary"]["cert_weak"] == {
         "partial witness journal only": 1,
     }, f"partial-only reason is visible: {doc['summary']}")
+    next_job = doc["next_schedule"]["jobs"][0]
+    quality = next_job.get("certification_quality") or {}
+    bad += check(quality.get("retry_strategy") == "finish-partial-certification"
+                 and quality.get("retry_refine_rounds") == 1,
+                 f"partial-only retry has auditable strategy metadata: {quality}")
+    bad += check(argv_value(next_job["certify_argv"], "--refine-rounds") == "1",
+                 f"partial-only retry spends the attempt on certification: {next_job['certify_argv']}")
     return bad
 
 
@@ -652,6 +685,79 @@ def test_campaign_cheapens_probe_claim_explosion_retries():
     bad += check(quality.get("retry_observed_probe_claims") == 370
                  and quality.get("retry_observed_physical_exits") == 37,
                  f"observed probe product travels with retry metadata: {quality}")
+    return bad
+
+
+def test_campaign_cheapens_probe_goal_cap_retries():
+    with tempfile.TemporaryDirectory() as td:
+        sched_doc = {
+            "schema": "veriput-unit-schedule/v1",
+            "summary": {
+                "jobs": 1,
+            },
+            "jobs": [
+                job("stress243__probecap__withdraw",
+                    benchmark="stress243",
+                    unit="withdraw"),
+            ],
+        }
+        sched_doc["jobs"][0]["certify_argv"].extend([
+            "--probe-witnesses",
+            "8",
+            "--probe-ladder",
+            "--probe-ladder-budget",
+            "4",
+        ])
+        sched = write_json(Path(td) / "schedule.json", sched_doc)
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("stress243__probecap__withdraw",
+                    "ok",
+                    benchmark="stress243",
+                    campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "stress243",
+                    "unit": "withdraw",
+                    "bucket": "KILLED",
+                    "witnessed": None,
+                    "certified": {},
+                    "not_certified": {},
+                    "driver_diagnostic": {
+                        "tag": "path-coverage-probe-goal-cap",
+                        "probe_claims": 520,
+                        "branch_arms": 13,
+                        "physical_exits": 40,
+                        "path_cov_max_goals": 500,
+                    },
+                    "generalise_progress": {
+                        "stage": "started",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    next_job = doc["next_schedule"]["jobs"][0]
+    quality = next_job.get("certification_quality") or {}
+    argv = next_job["certify_argv"]
+    bad = 0
+    bad += check(doc["summary"]["pending_by_attempt"] == {"2": 1},
+                 f"probe goal cap remains retryable: {doc['summary']}")
+    bad += check(doc["summary"]["cert_weak"] == {
+        "path coverage probe goal cap": 1,
+    }, f"probe goal cap has a precise weak reason: {doc['summary']}")
+    bad += check(quality.get("retry_strategy") == "direct-enumeration-no-probe"
+                 and quality.get("retry_observed_path_cov_max_goals") == 500
+                 and quality.get("retry_observed_probe_claims") == 520,
+                 f"probe goal cap retry records observed cap data: {quality}")
+    bad += check(argv_value(argv, "--probe-witnesses") == "0"
+                 and "--probe-ladder" not in argv
+                 and "--probe-ladder-budget" not in argv,
+                 f"probe goal cap retry disables probe product: {argv}")
     return bad
 
 
@@ -1044,7 +1150,7 @@ def test_campaign_does_not_retry_named_obstacle_no_witness():
     return bad
 
 
-def test_campaign_does_not_retry_path_coverage_no_claims_defect():
+def test_campaign_retries_path_coverage_no_claims_solver_gap():
     with tempfile.TemporaryDirectory() as td:
         sched = write_json(
             Path(td) / "schedule.json", {
@@ -1083,14 +1189,92 @@ def test_campaign_does_not_retry_path_coverage_no_claims_defect():
                                                journal_paths=[str(j1)],
                                                cert_jsonl_paths=[str(cert)],
                                                min_certified_path_rate=0.70)
+    next_job = doc["next_schedule"]["jobs"][0]
+    quality = next_job.get("certification_quality") or {}
+    argv = next_job["certify_argv"]
     bad = 0
-    bad += check(doc["summary"]["completed_ok"] == 0 and doc["summary"]["non_retryable"] == 1,
-                 f"path coverage internal defect is separated from completed certification: {doc['summary']}")
-    bad += check(doc["summary"]["pending_by_attempt"] == {},
-                 f"path coverage internal defect does not consume a retry: {doc['summary']}")
-    bad += check(doc["summary"]["cert_non_retryable"] == {
+    bad += check(doc["summary"]["completed_ok"] == 0 and doc["summary"]["non_retryable"] == 0,
+                 f"path coverage solver gap is not completed or non-retryable: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {"2": 1},
+                 f"path coverage solver gap stays in the retry queue: {doc['summary']}")
+    bad += check(doc["summary"]["cert_weak"] == {
         "path coverage no claims reached solver": 1,
-    }, f"path coverage defect reason is counted: {doc['summary']}")
+    }, f"path coverage solver gap reason is counted as weak: {doc['summary']}")
+    bad += check(quality.get("retry_strategy") == "direct-enumeration-after-no-claims"
+                 and quality.get("retry_probe_witnesses") == 0
+                 and quality.get("retry_probe_ladder") is False,
+                 f"path coverage retry disables probe enumeration: {quality}")
+    bad += check(argv_value(argv, "--probe-witnesses") == "0"
+                 and "--probe-ladder" not in argv
+                 and "--probe-ladder-budget" not in argv,
+                 f"path coverage retry argv disables probes: {argv}")
+    return bad
+
+
+def test_campaign_retries_focus_function_matched_none_with_whole_scope():
+    with tempfile.TemporaryDirectory() as td:
+        sched = write_json(
+            Path(td) / "schedule.json", {
+                "schema": "veriput-unit-schedule/v1",
+                "summary": {
+                    "jobs": 1,
+                },
+                "jobs": [
+                    job("real203__focusnone__decimals", "real203", "decimals"),
+                ],
+            })
+        j1 = write_journal(
+            Path(td) / "a1.jsonl", [
+                row("real203__focusnone__decimals", "ok",
+                    benchmark="real203", campaign_attempt=1),
+            ])
+        cert = write_clean_jsonl(
+            Path(td) / "cert.jsonl", [
+                {
+                    "benchmark": "real203",
+                    "unit": "decimals",
+                    "bucket": "DRIVER-REFUSED",
+                    "witnessed": None,
+                    "certified": {},
+                    "not_certified": {},
+                    "driver_diagnostic": {
+                        "tag": "focus-function-matched-none",
+                        "reason": "ESBMC accepted the function name at frontend validation but path coverage enumerated no unit for it",
+                        "focus_function": "decimals",
+                        "available_units": [
+                            "constructor", "totalSupply", "balanceOf"
+                        ],
+                        "available_unit_count": 3,
+                    },
+                    "generalise_progress": {
+                        "stage": "started",
+                    },
+                },
+            ])
+        doc = unit_campaign_plan.plan_campaign(str(sched),
+                                               journal_paths=[str(j1)],
+                                               cert_jsonl_paths=[str(cert)],
+                                               min_certified_path_rate=0.70)
+    next_job = doc["next_schedule"]["jobs"][0]
+    quality = next_job.get("certification_quality") or {}
+    argv = next_job["certify_argv"]
+    bad = 0
+    bad += check(doc["summary"]["completed_ok"] == 0 and doc["summary"]["non_retryable"] == 0,
+                 f"matched-none driver refusal is not completed or non-retryable: {doc['summary']}")
+    bad += check(doc["summary"]["pending_by_attempt"] == {"2": 1},
+                 f"matched-none driver refusal stays in the retry queue: {doc['summary']}")
+    bad += check(doc["summary"]["cert_weak"] == {
+        "focus function matched no path-coverage unit": 1,
+    }, f"matched-none reason is counted as weak: {doc['summary']}")
+    bad += check(quality.get("retry_strategy") == "whole-scope-after-focus-miss"
+                 and quality.get("retry_scope") == "whole"
+                 and quality.get("retry_observed_focus_function") == "decimals"
+                 and quality.get("retry_observed_available_unit_count") == 3,
+                 f"matched-none retry records focus miss details: {quality}")
+    bad += check(argv_value(argv, "--scope") == "whole"
+                 and argv_value(argv, "--probe-witnesses") == "0"
+                 and "--probe-ladder" not in argv,
+                 f"matched-none retry switches to whole-scope no-probe enumeration: {argv}")
     return bad
 
 
@@ -1253,6 +1437,7 @@ def test_campaign_can_emit_limited_round_robin_next_schedule():
 
 TESTS = [
     test_campaign_partitions_attempts_and_auto_selects_earliest,
+    test_campaign_preserves_no_unit_audit_metadata_in_next_schedule,
     test_campaign_can_emit_attempt_three_schedule_and_runner_argv,
     test_campaign_cli_writes_plan_and_schedule,
     test_campaign_writes_empty_schedule_when_no_jobs_are_pending,
@@ -1263,6 +1448,7 @@ TESTS = [
     test_campaign_names_partial_journal_only_as_weak_certification,
     test_campaign_prefers_single_refine_for_refinement_timeouts,
     test_campaign_cheapens_probe_claim_explosion_retries,
+    test_campaign_cheapens_probe_goal_cap_retries,
     test_campaign_deepens_tx_for_bounded_holds_no_witness,
     test_campaign_deepens_unwind_for_gated_unit_depth_obstacle,
     test_campaign_restores_default_refine_rounds_after_strategy_attempt,
@@ -1270,7 +1456,8 @@ TESTS = [
     test_campaign_treats_method_unsupported_paths_as_non_retryable,
     test_campaign_does_not_retry_witness_preflight_refusals,
     test_campaign_does_not_retry_named_obstacle_no_witness,
-    test_campaign_does_not_retry_path_coverage_no_claims_defect,
+    test_campaign_retries_path_coverage_no_claims_solver_gap,
+    test_campaign_retries_focus_function_matched_none_with_whole_scope,
     test_campaign_does_not_retry_legacy_pre_enumeration_stop,
     test_campaign_accepts_strong_certification_without_runner_journal,
     test_campaign_can_plan_from_in_memory_schedule,

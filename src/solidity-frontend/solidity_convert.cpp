@@ -445,8 +445,10 @@ bool solidity_convertert::convert()
   // add static instance
   // note that we populate the static instance in the end
   // this is to ensure that we have populated other auxiliary static variables before them
-  // Base contracts of the --contract target are registered but NOT
-  // deployed.
+  // Single --contract target mode registers every contract singleton but deploys
+  // only the target. Its base constructors run through the target constructor
+  // chain; sibling/interface/library/abstract contracts must not run unrelated
+  // constructors before the target driver.
   //
   // In Solidity, deploying `Derived` runs `Base`'s constructor *as part of*
   // `Derived`'s construction; it does not create a second, independent
@@ -477,7 +479,8 @@ bool solidity_convertert::convert()
   // `--contract` target case; whole-file mode verifies every contract in
   // turn and keeps deploying all of them (byte-identical behaviour).
   for (const auto &c_name : contractNamesList)
-    add_static_contract_instance(c_name, !is_strict_base_of_target(c_name));
+    add_static_contract_instance(
+      c_name, should_deploy_static_contract_instance(c_name));
 
   // --reentry-balance-drain-check: emit one [approx] warning per
   // contract that the user opted into the check on but had no

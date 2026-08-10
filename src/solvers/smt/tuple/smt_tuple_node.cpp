@@ -182,13 +182,28 @@ smt_astt smt_tuple_node_flattener::tuple_array_create(
 
 expr2tc smt_tuple_node_flattener::tuple_get(const type2tc &, smt_astt sym)
 {
-  return tuple_get_rec(to_tuple_node_ast(sym));
+  tuple_node_smt_astt tuple = dynamic_cast<tuple_node_smt_astt>(sym);
+  if (tuple == nullptr)
+  {
+    log_debug("tuple-node", "skipping tuple extraction from non-tuple AST");
+    return expr2tc();
+  }
+
+  return tuple_get_rec(tuple);
 }
 
 expr2tc smt_tuple_node_flattener::tuple_get(const expr2tc &expr)
 {
   assert(is_symbol2t(expr) && "Non-symbol in smtlib expr get()");
-  tuple_node_smt_astt a = to_tuple_node_ast(ctx->convert_ast(expr));
+  tuple_node_smt_astt a =
+    dynamic_cast<tuple_node_smt_astt>(ctx->convert_ast(expr));
+  if (a == nullptr)
+  {
+    log_debug(
+      "tuple-node", "skipping symbolic tuple extraction from non-tuple AST");
+    return expr2tc();
+  }
+
   return tuple_get_rec(a);
 }
 
@@ -215,7 +230,17 @@ expr2tc smt_tuple_node_flattener::tuple_get_rec(tuple_node_smt_astt tuple)
     expr2tc res;
     if (is_tuple_ast_type(it))
     {
-      res = tuple_get_rec(to_tuple_node_ast(tuple->elements[i]));
+      tuple_node_smt_astt elem =
+        dynamic_cast<tuple_node_smt_astt>(tuple->elements[i]);
+      if (elem == nullptr)
+      {
+        log_debug(
+          "tuple-node",
+          "skipping non-tuple AST while extracting nested tuple field");
+        res = expr2tc();
+      }
+      else
+        res = tuple_get_rec(elem);
     }
     else if (is_tuple_array_ast_type(it))
     {

@@ -24,6 +24,8 @@ Every spawned subagent must follow these rules.
    - code-level root cause
    - fix target and changed paths
    - theoretical coverage contribution
+   - `covered_cases`: the exact `benchmark/subject` cases that this patch is
+     expected to improve, with the old result bucket and the code path changed
    - confirmation that no Datasets files were modified
 
 5. Write scopes are exclusive. Do not edit outside the assigned paths.
@@ -78,6 +80,10 @@ Every spawned subagent must follow these rules.
      code fixes that failure path, not merely that it looks plausible
    - reviews missing any of these fields are invalid and must leave
      `review_status` as `pending`
+   - `accepted` is allowed only when the report names `covered_cases` and a
+     positive, case-level `+N` no-valid/PUT/R1/R2 delta. A useful maintenance
+     patch with delta `0` is `needs-work` for worker dispatch: it may be kept
+     as code, but it must not enter the theory manifest or consume a worker.
 
 10. Worker feedback drives new repair work:
    - every completed worker case must be interpreted into one of valid PUT/R1R2,

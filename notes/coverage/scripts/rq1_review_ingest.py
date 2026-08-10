@@ -26,6 +26,7 @@ REQUIRED_FIELDS = (
     "correctness_argument",
     "verdict",
     "theory_delta",
+    "covered_cases",
     "commit decision",
     "next_action",
 )
@@ -72,6 +73,13 @@ def _verdict(text: str) -> str:
     if "accept" in value or "通过" in value:
         return "accepted"
     raise SystemExit("review 缺少可解析 verdict: accepted/needs-work/rejected")
+
+
+def _has_positive_case_delta(delta: str, covered_cases: str) -> bool:
+    """Only evidence-linked positive claims may schedule a worker."""
+    if not covered_cases.strip():
+        return False
+    return any(int(value) > 0 for value in re.findall(r"\+(\d+)", delta))
 
 
 def _changed_paths(text: str) -> list[str]:
@@ -221,8 +229,12 @@ def main() -> int:
         raise SystemExit("review 通知缺字段，禁止入账: " + ",".join(missing))
 
     verdict = _verdict(text)
-    if verdict == "accepted" and "0" not in values["theory_delta"]:
-        pass
+    if verdict == "accepted" and not _has_positive_case_delta(
+            values["theory_delta"], values["covered_cases"]):
+        verdict = "needs-work"
+        values["next_action"] = (
+            "accepted 被硬门禁降级：必须提供具体 covered_cases 和正的 "
+            "case-level +N theory_delta，才允许 worker dispatch")
 
     changed_paths = _changed_paths(values["changed_code"] + "\n" + text)
     commit_sha = ""

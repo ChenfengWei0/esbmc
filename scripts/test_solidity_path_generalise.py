@@ -60,6 +60,7 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       copy_holes,
                                       function_mutability,
                                       unexpressible_coords,
+                                      drop_unexpressible_query_names,
                                       unresolvable_coords,
                                       mapping_state_vars,
                                       mapping_slot_type_ranges,
@@ -70,7 +71,9 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       add_esbmc_mapping_aliases,
                                       prefer_esbmc_mapping_aliases,
                                       state_coord_type_ranges,
+                                      bytes_static_value_from_ce,
                                       bytes_static_mapping_key_from_ce,
+                                      bytes_static_mapping_key_from_value,
                                       agreed_bytes_mapping_key_literals,
                                       empty_enumeration_reason,
                                       brackets_for,
@@ -89,22 +92,29 @@ from solidity_path_generalise import (verdict, claim_unit, coord_values,  # noqa
                                       structural_decision_regions_with_retreat,
                                       structural_decision_regions_with_relations,
                                       relation_establishable_state_targets,
+                                      relation_establishable_env_sources,
                                       direct_recursive_helpers_in_unit_closure,
                                       enumeration_has_arith_conditions,
                                       witness_values,
                                       report_from_ce_journal,
                                       partial_journal_report,
+                                      live_witness_vectors,
                                       write_enumeration_salvage,
                                       read_enumeration_salvage,
                                       write_generalise_progress,
                                       generalise_progress_path,
                                       payload_extras,
                                       extcall_inseparable_failures,
+                                      path_cov_probe_goal_cap,
+                                      path_cov_probe_early_stop,
+                                      path_cov_probe_timeout,
+                                      path_cov_probe_enum_timeout,
                                       file_identity,
                                       save_failed_round,
                                       validate_enumeration_import,
                                       derive_env_coord_disagreed,
                                       derive_agreed_establishable_env_pins,
+                                      derive_agreed_unpinned_establishable_env_coords,
                                       tiny_safety_cut_retreat,
                                       uncontrolled_decision_splits,
                                       _decision_term,
@@ -253,6 +263,78 @@ ce2, refused2 = coord_values({"inputs": {"a": "0xFF"}, "entry_storage": {}})
 check("hex-param-kept", ce2.get("a"), 255)
 check("hex-not-refused", refused2, [])
 
+bytes_ce, bytes_refused = coord_values({
+    "inputs": {
+        "assertionId": "{ .data = { 0x12, 0x34 }, .length=32 }",
+    },
+}, param_types={"assertionId": "bytes32"})
+check("bytes32-aggregate-param-becomes-raw-coordinate",
+      bytes_ce.get("assertionId"),
+      0x1234000000000000000000000000000000000000000000000000000000000000)
+check("bytes32-aggregate-param-not-refused-when-typed",
+      bytes_refused, [])
+
+untyped_bytes_ce, untyped_bytes_refused = coord_values({
+    "inputs": {
+        "assertionId": "{ .data = { 0x12, 0x34 }, .length=32 }",
+    },
+})
+check("untyped-bytes-aggregate-does-not-invent-payload-coordinate",
+      "assertionId" in untyped_bytes_ce, False)
+check("untyped-bytes-aggregate-keeps-old-struct-field-behavior",
+      untyped_bytes_ce.get("assertionId.length"), 32)
+check("untyped-bytes-aggregate-still-refused-as-whole",
+      any(r.startswith("assertionId (aggregate;")
+          for r in untyped_bytes_refused), True)
+
+dynamic_bytes_ce, dynamic_bytes_refused = coord_values({
+    "inputs": {
+        "data": "{ .offset=0, .length=7, .capacity=7, .initialized=1, "
+                ".anon_pad$4=0 }",
+    },
+}, param_types={"data": "bytes memory"})
+check("dynamic-bytes-keeps-length-coordinate",
+      dynamic_bytes_ce.get("data.length"), 7)
+check("dynamic-bytes-does-not-expose-offset",
+      "data.offset" in dynamic_bytes_ce, False)
+check("dynamic-bytes-does-not-expose-capacity",
+      "data.capacity" in dynamic_bytes_ce, False)
+check("dynamic-bytes-does-not-expose-initialized",
+      "data.initialized" in dynamic_bytes_ce, False)
+check("dynamic-bytes-refusal-explains-internal-fields",
+      any("dynamic bytes aggregate; using length only" in r
+          for r in dynamic_bytes_refused), True)
+
+with tempfile.TemporaryDirectory() as _wit_dir:
+    with open(os.path.join(_wit_dir, "cov-report.json"), "w",
+              encoding="utf-8") as _wf:
+        json.dump({
+            "certify_safety_refutations": [{
+                "status": "F",
+                "condition": "take:path:7#exit0",
+                "inputs": {
+                    "data": "{ .offset=0, .length=9, .capacity=9, "
+                            ".initialized=1, .anon_pad$4=0 }",
+                },
+            }],
+        }, _wf)
+    _wit = witness_values(
+        _wit_dir, "take", param_types={"data": "bytes calldata"})
+    check("typed-witness-dynamic-bytes-keeps-length",
+          _wit.get("data.length"), 9)
+    check("typed-witness-dynamic-bytes-drops-offset",
+          "data.offset" in _wit, False)
+
+state_bytes_ce, state_bytes_refused = coord_values({
+    "entry_storage": {
+        "SAFE_TX_TYPEHASH$75": "{ .data = { 0xAB, 0xCD }, .length=32 }",
+    },
+}, state_types={"SAFE_TX_TYPEHASH": "bytes32"})
+check("bytes32-aggregate-state-uses-source-name-type",
+      state_bytes_ce.get("state.SAFE_TX_TYPEHASH$75"),
+      0xABCD000000000000000000000000000000000000000000000000000000000000)
+check("bytes32-aggregate-state-not-refused-when-typed",
+      state_bytes_refused, [])
 
 
 # --- an empty box certifies vacuously and must never be certified ---
@@ -1659,6 +1741,16 @@ check("slot-a-refusal-beside-a-box-is-not-measured-nothing",
 _r = round_failure_reason(_OUTER_REFUSED_NEW + "\n[run] EXIT 1\n")
 check("slot-a-refusal-with-no-box-at-all-still-reports-the-gap",
       _r is not None and "state.nosuch[k]" in _r, True)
+_pins = {"state.nosuch[k]": 7, "msg.value": 0}
+_regions = {3: {"state.nosuch[k]": (7, 7), "k": (0, 9)}}
+_holes = {3: {"state.nosuch[k]": [7], "k": [5]}}
+check("slot-outer-refusal-is-pre-dropped-before-certification",
+      sorted(drop_unexpressible_query_names(
+          ["state.nosuch[k]"], _pins, _regions, _holes)),
+      ["state.nosuch[k]"])
+check("slot-pre-drop-removes-pin-and-region-bound",
+      (_pins, _regions, _holes),
+      ({"msg.value": 0}, {3: {"k": (0, 9)}}, {3: {"k": [5]}}))
 
 # --- proposing a slot from solc's declaration ---
 #
@@ -1837,6 +1929,86 @@ check("d44-struct-valued-mapping-slot-ranges-are-not-uint256-defaults",
        "state.balStruct[k].tag": (0, 255)})
 check("d44-struct-valued-mapping-is-no-longer-refused",
       any("balStruct" in r for r in _d44ref), False)
+_nested_struct_map_ast = {
+    "nodeType": "SourceUnit",
+    "nodes": [{
+        "nodeType": "ContractDefinition",
+        "name": "C",
+        "id": 1,
+        "linearizedBaseContracts": [1],
+        "nodes": [
+            {
+                "nodeType": "StructDefinition",
+                "name": "Set",
+                "members": [{
+                    "nodeType": "VariableDeclaration",
+                    "name": "memberIndices",
+                    "typeName": {
+                        "nodeType": "Mapping",
+                        "keyType": {
+                            "nodeType": "ElementaryTypeName",
+                            "typeDescriptions": {"typeString": "bytes32"},
+                        },
+                        "valueType": {
+                            "nodeType": "ElementaryTypeName",
+                            "typeDescriptions": {"typeString": "uint256"},
+                        },
+                    },
+                }],
+            },
+            {
+                "nodeType": "StructDefinition",
+                "name": "Account",
+                "members": [{
+                    "nodeType": "VariableDeclaration",
+                    "name": "entries",
+                    "typeName": {
+                        "nodeType": "UserDefinedTypeName",
+                        "pathNode": {"name": "Set"},
+                    },
+                }],
+            },
+            {
+                "nodeType": "VariableDeclaration",
+                "stateVariable": True,
+                "name": "accounts",
+                "typeName": {
+                    "nodeType": "Mapping",
+                    "keyType": {
+                        "nodeType": "ElementaryTypeName",
+                        "typeDescriptions": {"typeString": "address"},
+                    },
+                    "valueType": {
+                        "nodeType": "UserDefinedTypeName",
+                        "pathNode": {"name": "Account"},
+                    },
+                },
+            },
+        ],
+    }],
+}
+_nested_struct_map_file = tempfile.NamedTemporaryFile(
+    "w", suffix=".solast", delete=False)
+try:
+    json.dump(_nested_struct_map_ast, _nested_struct_map_file)
+    _nested_struct_map_file.close()
+    _nsm_maps, _nsm_refused = mapping_state_vars(
+        _nested_struct_map_file.name, "C")
+finally:
+    try:
+        os.unlink(_nested_struct_map_file.name)
+    except OSError:
+        pass
+check("mapping-to-struct-to-mapping-leaf-is-enumerated",
+      _nsm_maps.get("accounts"),
+      (("address", "bytes32"), "nested mapping leaf",
+       [".entries.memberIndices"],
+       {".entries.memberIndices": "uint256"}))
+check("slot-proposer-keeps-bytesN-parameter-as-key",
+      propose_slot_coords(
+          _nsm_maps, [("dataHash", "bytes32")], 8,
+          dependencies=["accounts"])[0],
+      ["state.accounts[msg.sender][dataHash].entries.memberIndices"])
 # ...and on a NON-address key with no matching parameter there is nothing to
 # propose at all, with the reason named rather than an empty list.
 _c, _s = propose_slot_coords({"bal": ("uint256", "uint256")},
@@ -1995,6 +2167,87 @@ check("slot-access-walk-preserves-the-source-key-chain",
 check("slot-access-evidence-names-the-source-slot",
       "state._balances[maker][app][strategyHash][token]"
       in _slot_access_evidence[0], True)
+_LIB_METHOD_SLOT_ACCESS = {
+    "nodeType": "SourceUnit",
+    "nodes": [
+        {"nodeType": "ContractDefinition", "name": "Sets", "id": 1,
+         "linearizedBaseContracts": [1],
+         "nodes": [
+             {"nodeType": "FunctionDefinition", "id": 30, "name": "contains",
+              "parameters": {"parameters": [
+                  {"id": 31, "name": "self"},
+                  {"id": 32, "name": "other"},
+              ]},
+              "body": {"nodeType": "Block", "statements": [
+                  {"nodeType": "Return", "expression": {
+                      "nodeType": "BinaryOperation", "operator": ">",
+                      "leftExpression": {
+                          "nodeType": "IndexAccess", "src": "30:5:0",
+                          "baseExpression": {
+                              "nodeType": "MemberAccess",
+                              "memberName": "memberIndices",
+                              "expression": {
+                                  "nodeType": "Identifier",
+                                  "name": "self",
+                                  "referencedDeclaration": 31}},
+                          "indexExpression": {
+                              "nodeType": "Identifier",
+                              "name": "other",
+                              "referencedDeclaration": 32}},
+                      "rightExpression": {
+                          "nodeType": "Literal", "kind": "number",
+                          "value": "0"}}}]}}]},
+        {"nodeType": "ContractDefinition", "name": "Prover", "id": 2,
+         "linearizedBaseContracts": [2],
+         "nodes": [
+             {"nodeType": "VariableDeclaration", "id": 10,
+              "name": "accounts", "stateVariable": True},
+             {"nodeType": "FunctionDefinition", "id": 20,
+              "name": "deleteEntry",
+              "parameters": {"parameters": [
+                  {"id": 21, "name": "dataHash",
+                   "typeDescriptions": {"typeString": "bytes32"}},
+              ]},
+              "body": {"nodeType": "Block", "statements": [
+                  {"nodeType": "ExpressionStatement", "expression": {
+                      "nodeType": "FunctionCall",
+                      "expression": {
+                          "nodeType": "MemberAccess",
+                          "memberName": "contains",
+                          "referencedDeclaration": 30,
+                          "expression": {
+                              "nodeType": "MemberAccess",
+                              "memberName": "entries",
+                              "expression": {
+                                  "nodeType": "IndexAccess",
+                                  "baseExpression": {
+                                      "nodeType": "Identifier",
+                                      "name": "accounts",
+                                      "referencedDeclaration": 10},
+                                  "indexExpression": {
+                                      "nodeType": "MemberAccess",
+                                      "memberName": "sender",
+                                      "expression": {
+                                          "nodeType": "Identifier",
+                                          "name": "msg"}}}}},
+                      "arguments": [{
+                          "nodeType": "Identifier",
+                          "name": "dataHash",
+                          "referencedDeclaration": 21}]}}]}}]}],
+}
+_fd_lib, _p_lib = tempfile.mkstemp(suffix=".solast")
+with os.fdopen(_fd_lib, "w") as _f_lib:
+    json.dump(_LIB_METHOD_SLOT_ACCESS, _f_lib)
+_lib_slot_accesses, _lib_slot_evidence = unit_mapping_slot_accesses(
+    _p_lib, "Prover", "deleteEntry", declaration_id=20, access_mode="read")
+check("slot-access-method-call-threads-hidden-receiver",
+      _lib_slot_accesses,
+      [("accounts.entries.memberIndices", ("msg.sender", "dataHash"))])
+check("slot-access-method-call-evidence-names-inner-library-slot",
+      "state.accounts.entries.memberIndices[msg.sender][dataHash]"
+      in _lib_slot_evidence[0],
+      True)
+os.unlink(_p_lib)
 _RW_SLOT_ACCESS = {
     "nodeType": "SourceUnit",
     "nodes": [{
@@ -2160,8 +2413,16 @@ check("slot-oracle-mode-still-sees-the-written-struct-field",
       _struct_all_slots, ["state.rows[who].country"])
 os.unlink(_p_struct)
 _bytes32_zero_slot_key = "0x20" + ("00" * 31)
+check("bytes32-zero-ce-lowers-to-raw-coordinate",
+      bytes_static_value_from_ce("bytes32", "{ .data = { 0 } }"), 0)
+check("bytes2-ce-lowers-to-raw-coordinate",
+      bytes_static_value_from_ce("bytes2", "{ .data = { 0x12, 0x34 } }"),
+      0x1234)
 check("bytes32-zero-ce-lowers-to-solidity-mapping-key",
       bytes_static_mapping_key_from_ce("bytes32", "{ .data = { 0 } }"),
+      _bytes32_zero_slot_key)
+check("bytes32-typed-value-lowers-to-solidity-mapping-key",
+      bytes_static_mapping_key_from_value("bytes32", 0),
       _bytes32_zero_slot_key)
 check("bytes2-ce-lowers-to-solidity-mapping-key",
       bytes_static_mapping_key_from_ce(
@@ -2175,17 +2436,94 @@ check("bytes32-mapping-key-literal-agrees-across-witnesses",
       _literal_keys, {"strategyHash": _bytes32_zero_slot_key})
 check("bytes32-mapping-key-literal-has-no-refusal",
       _literal_skipped, [])
+_literal_from_list_raw, _literal_from_list_skipped = \
+    agreed_bytes_mapping_key_literals(
+        [[{"name": "strategyHash", "value": "{ .data = { 0 } }"}]],
+        [("strategyHash", "bytes32")])
+check("bytes32-mapping-key-literal-accepts-journal-list-inputs",
+      _literal_from_list_raw, {"strategyHash": _bytes32_zero_slot_key})
+check("bytes32-mapping-key-literal-journal-list-has-no-refusal",
+      _literal_from_list_skipped, [])
+_literal_from_typed, _literal_from_typed_skipped = \
+    agreed_bytes_mapping_key_literals(
+        [], [("strategyHash", "bytes32")],
+        typed_paths=[(2, 1, {"strategyHash": 0}),
+                     (3, 1, {"strategyHash": 0})])
+check("bytes32-mapping-key-literal-falls-back-to-typed-paths",
+      _literal_from_typed, {"strategyHash": _bytes32_zero_slot_key})
+check("bytes32-mapping-key-literal-typed-paths-have-no-refusal",
+      _literal_from_typed_skipped, [])
+_literal_disagree, _literal_disagree_skipped = \
+    agreed_bytes_mapping_key_literals(
+        [], [("strategyHash", "bytes32")],
+        typed_paths=[(2, 1, {"strategyHash": 0}),
+                     (3, 1, {"strategyHash": 1})])
+check("bytes32-mapping-key-literal-refuses-disagreeing-typed-paths",
+      _literal_disagree, {})
+check("bytes32-mapping-key-literal-names-disagreeing-typed-paths",
+      any("witnessed paths disagree" in s
+          for s in _literal_disagree_skipped), True)
+
+_live_vectors, _live_bad, _live_missing = live_witness_vectors(
+    [(7, 1, {"state.owner": 1, "msg.value": 0})],
+    {7: [{"state.owner": 1, "msg.value": 0},
+         {"state.owner": 2, "msg.value": 0},
+         {"state.owner": 3, "msg.value": 1},
+         {"state.owner": 4}]},
+    {"msg.value": 0})
+check("live-witness-vectors-keep-values-inside-pinned-slice",
+      _live_vectors, {7: [{"state.owner": 1, "msg.value": 0},
+                          {"state.owner": 2, "msg.value": 0}]})
+check("live-witness-vectors-count-pin-violations", _live_bad, 1)
+check("live-witness-vectors-count-missing-pins", _live_missing, 1)
+check("path-cov-probe-goal-cap-detected",
+      path_cov_probe_goal_cap(
+          "ERROR: --path-cov-probe: unit 'f' needs 23978 probe claims "
+          "(38 branch arms x 631 physical exits), exceeding "
+          "--path-cov-max-goals 10000"),
+      True)
+check("path-cov-probe-goal-cap-detected-normalized-diagnostic",
+      path_cov_probe_goal_cap(
+          "path coverage probe universe exceeded --path-cov-max-goals "
+          "before any cov-report.json could be emitted"),
+      True)
+check("path-cov-probe-goal-cap-not-a-generic-timeout",
+      path_cov_probe_goal_cap("ERROR: Terminated"), False)
+check("path-cov-probe-early-stop-detected",
+      path_cov_probe_early_stop(
+          "--path-cov-probe: unit 'f' added 216 exit-latched claim(s)\n"
+          "[run] EARLY STOP: --path-cov-probe added 216 exit-latched "
+          "claim(s) for f, over the fallback threshold 128"),
+      True)
+check("path-cov-probe-early-stop-not-a-generic-timeout",
+      path_cov_probe_early_stop("[run] TIMEOUT after 60s"), False)
+check("path-cov-probe-timeout-detected",
+      path_cov_probe_timeout(
+          "--path-cov-probe: unit 'f' added 3880 exit-latched claim(s)\n"
+          "[run] TIMEOUT after 120s: esbmc ... --path-cov-probe"),
+      True)
+check("path-cov-probe-timeout-not-basic-timeout",
+      path_cov_probe_timeout("[run] TIMEOUT after 120s: esbmc ..."),
+      False)
+check("path-cov-probe-enum-timeout-caps-600s-unit",
+      path_cov_probe_enum_timeout(600, 8), 90)
+check("path-cov-probe-enum-timeout-keeps-non-probe-budget",
+      path_cov_probe_enum_timeout(600, 0), 600)
+check("path-cov-probe-enum-timeout-preserves-small-unit-budget",
+      path_cov_probe_enum_timeout(45, 8), 45)
 _aqua_slots, _aqua_skipped = propose_slot_coords(
     {"_balances": (("address", "address", "bytes32", "address"),
                    "struct Balance", [".amount", ".tokensCount"])},
     [("maker", "address"), ("app", "address"),
      ("strategyHash", "bytes32"), ("token", "address")],
     4, ["_balances"], _slot_accesses)
-check("slot-source-access-refuses-bytes32-key-without-literal",
-      _aqua_slots, [])
-check("slot-source-access-explains-missing-bytes32-literal",
+check("slot-source-access-keeps-bytes32-key-as-parameter",
+      _aqua_slots,
+      ["state._balances[maker][app][strategyHash][token].amount",
+       "state._balances[maker][app][strategyHash][token].tokensCount"])
+check("slot-source-access-no-longer-needs-bytes32-literal",
       any("bytesN parameter strategyHash" in s for s in _aqua_skipped),
-      True)
+      False)
 _aqua_slots, _aqua_skipped = propose_slot_coords(
     {"_balances": (("address", "address", "bytes32", "address"),
                    "struct Balance", [".amount", ".tokensCount"])},
@@ -3168,6 +3506,27 @@ check("agreed-establishable-env-keeps-pinned-disagreed-and-unsupported",
        "msg.data (all paths agree, but the PUT emitter cannot establish this "
        "environment quantity)",
        "msg.value (already pinned at 0)"])
+_env_zero_sender_pins, _env_zero_sender_kept = \
+    derive_agreed_establishable_env_pins(
+        [(2, 1, {"msg.sender": 0}), (3, 1, {"msg.sender": 0})],
+        ["msg.sender"], {})
+check("agreed-env-does-not-pin-foundry-unprankable-zero-sender",
+      _env_zero_sender_pins, {})
+check("agreed-env-explains-zero-sender-is-left-quantified",
+      _env_zero_sender_kept,
+      ["msg.sender (all paths agree at 0, but Foundry cannot establish "
+       "address(0) with vm.prank; leave it quantified for ESBMC certification "
+       "instead)"])
+check("agreed-zero-sender-becomes-free-coordinate-not-env-bucket",
+      derive_agreed_unpinned_establishable_env_coords(
+          [(2, 1, {"msg.sender": 0}), (3, 1, {"msg.sender": 0})],
+          ["msg.sender"], {}),
+      {"msg.sender"})
+check("nonzero-agreed-sender-stays-pin-not-free-coordinate",
+      derive_agreed_unpinned_establishable_env_coords(
+          [(2, 1, {"msg.sender": 7}), (3, 1, {"msg.sender": 7})],
+          ["msg.sender"], {}),
+      set())
 check("address-like-environment-coordinates-use-address-domain",
       (_coord_range("msg.sender"), _coord_range("tx.origin"),
        _coord_range("block.coinbase")),
@@ -3343,6 +3702,45 @@ check("input-coordinate-split-is-not-static-inseparable",
           _input_split_decisions, ["amount"], {}),
       {})
 
+_plain_success_split_decisions = {
+    40: [{"index": 3, "function": "callAndDecode", "line": 19,
+          "arm": "taken", "branch_claim": "success"}],
+    41: [{"index": 3, "function": "callAndDecode", "line": 19,
+          "arm": "fall-through", "branch_claim": "!success"}],
+}
+check("bare-success-with-extcall-payload-is-static-inseparable",
+      sorted(uncontrolled_decision_splits(
+          [(40, 4, {"target": 0, "data.length": 0}),
+           (41, 4, {"target": 0, "data.length": 0})],
+          _plain_success_split_decisions, ["target", "data.length"], {},
+          path_extras={40: {"extcall.success": 1},
+                       41: {"extcall.success": 0}})),
+      [40, 41])
+check("bare-success-without-extcall-payload-is-not-guessed",
+      uncontrolled_decision_splits(
+          [(40, 4, {"target": 0}), (41, 4, {"target": 0})],
+          _plain_success_split_decisions, ["target"], {}),
+      {})
+_abi_gate_plus_success_decisions = {
+    42: [
+        {"index": 1, "function": "f", "line": 1, "arm": "fall-through",
+         "branch_claim": "msg.value == 0", "synthetic_abi_gate": True},
+    ],
+    43: [
+        {"index": 1, "function": "f", "line": 1, "arm": "taken",
+         "branch_claim": "!(msg.value == 0)", "synthetic_abi_gate": True},
+        {"index": 2, "function": "f", "line": 3, "arm": "taken",
+         "branch_claim": "success"},
+    ],
+}
+check("synthetic-abi-gate-is-not-uncontrolled-evidence",
+      uncontrolled_decision_splits(
+          [(42, 1, {"msg.value": 1, "target": 0}),
+           (43, 2, {"msg.value": 0, "target": 0})],
+          _abi_gate_plus_success_decisions, ["target"], {"msg.value": 0},
+          path_extras={43: {"extcall.success": 1}}),
+      {})
+
 _safety_dir = tempfile.mkdtemp(prefix="safety-witness-")
 try:
     with open(os.path.join(_safety_dir, "cov-report.json"), "w") as _f:
@@ -3428,8 +3826,17 @@ check("owner-sender-relation-state-target-is-pin-exempt",
           _owner_rel_paths, _owner_rel_decisions, {"msg.value": 0},
           ["msg.sender", "newOwner", "state._owner"]),
       {"state._owner"})
+check("owner-sender-relation-env-source-is-pin-exempt",
+      relation_establishable_env_sources(
+          _owner_rel_paths, _owner_rel_decisions, {"msg.value": 0},
+          ["msg.sender", "newOwner", "state._owner"], ["msg.sender"]),
+      {"msg.sender"})
 check("decision-term-public-getter-state-coord",
       _decision_term("return_value$admin$1", {"state.admin": 7}, {}),
+      ("coord", "state.admin"))
+check("decision-term-public-getter-state-coord-set",
+      _decision_term("return_value$admin$1", {}, {},
+                     coord_set={"state.admin"}),
       ("coord", "state.admin"))
 check("decision-term-public-getter-state-pin",
       _decision_term("return_value$admin$1", {}, {"state.admin": 7}),

@@ -293,16 +293,48 @@ __ESBMC_HIDE:;
     size_t len = nondet_uint();
     __ESBMC_assume(len < _ESBMC_NONDET_STRING_MAX);
 
-    /* Concrete upper bound in the loop header gives the unwinder a static
-     * stop; the extra i<len lets the loop exit early for smaller lengths.
-     * Writing the terminator at len is enough for strlen() to stop on this
-     * call, and avoids a pre-dispatch memset library loop that can be
-     * truncated before Solidity path-coverage claims reach the solver. */
-    for (size_t i = 0; i < _ESBMC_NONDET_STRING_MAX; ++i) {
-        if (i >= len) break;
-        _ESBMC_rand_str[i] = nondet_char();
-        __ESBMC_assume(_ESBMC_rand_str[i] != '\0');
-    }
+    /* No loop here: this helper runs before the target path claims, and a
+     * truncated helper loop can make the harness look unreachable. */
+#define _ESBMC_NONDET_STRING_STEP(i) \
+    do { \
+        if ((i) < len) { \
+            _ESBMC_rand_str[(i)] = nondet_char(); \
+            __ESBMC_assume(_ESBMC_rand_str[(i)] != '\0'); \
+        } \
+    } while (0)
+    _ESBMC_NONDET_STRING_STEP(0);
+    _ESBMC_NONDET_STRING_STEP(1);
+    _ESBMC_NONDET_STRING_STEP(2);
+    _ESBMC_NONDET_STRING_STEP(3);
+    _ESBMC_NONDET_STRING_STEP(4);
+    _ESBMC_NONDET_STRING_STEP(5);
+    _ESBMC_NONDET_STRING_STEP(6);
+    _ESBMC_NONDET_STRING_STEP(7);
+    _ESBMC_NONDET_STRING_STEP(8);
+    _ESBMC_NONDET_STRING_STEP(9);
+    _ESBMC_NONDET_STRING_STEP(10);
+    _ESBMC_NONDET_STRING_STEP(11);
+    _ESBMC_NONDET_STRING_STEP(12);
+    _ESBMC_NONDET_STRING_STEP(13);
+    _ESBMC_NONDET_STRING_STEP(14);
+    _ESBMC_NONDET_STRING_STEP(15);
+    _ESBMC_NONDET_STRING_STEP(16);
+    _ESBMC_NONDET_STRING_STEP(17);
+    _ESBMC_NONDET_STRING_STEP(18);
+    _ESBMC_NONDET_STRING_STEP(19);
+    _ESBMC_NONDET_STRING_STEP(20);
+    _ESBMC_NONDET_STRING_STEP(21);
+    _ESBMC_NONDET_STRING_STEP(22);
+    _ESBMC_NONDET_STRING_STEP(23);
+    _ESBMC_NONDET_STRING_STEP(24);
+    _ESBMC_NONDET_STRING_STEP(25);
+    _ESBMC_NONDET_STRING_STEP(26);
+    _ESBMC_NONDET_STRING_STEP(27);
+    _ESBMC_NONDET_STRING_STEP(28);
+    _ESBMC_NONDET_STRING_STEP(29);
+    _ESBMC_NONDET_STRING_STEP(30);
+    _ESBMC_NONDET_STRING_STEP(31);
+#undef _ESBMC_NONDET_STRING_STEP
     _ESBMC_rand_str[len] = '\0';
     return _ESBMC_rand_str;
 }

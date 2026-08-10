@@ -23,6 +23,7 @@ MANDATORY_REVIEW_FIELDS = (
     "correctness_argument",
     "verdict",
     "theory_delta",
+    "covered_cases",
     "commit decision",
     "next_action",
 )

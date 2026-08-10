@@ -3770,13 +3770,23 @@ smt_convt::resultt bmct::multi_property_check(
   }
 
   // Reorder so user-source claims solve before c2goto/library claims. Walk
-  // SSA_steps once, mapping each assertion's 1-based index to a bool flag
-  // "is in user source". Library paths contain "c2goto/library" or "/library/";
-  // anything else (the user's input source file) is user-side. Stable sort
-  // preserves intra-bucket order, keeping CE numbering deterministic.
+  // SSA_steps once, mapping each assertion's 1-based index to a priority.
+  // Library paths contain "c2goto/library" or "/library/"; anything else (the
+  // user's input source file) is user-side. Stable sort preserves intra-bucket
+  // order, keeping CE numbering deterministic.
+  //
+  // Solidity complete-path coverage adds two families of user-side goals:
+  //   * "<unit>:path:<enc>" complete path claims, which carry the CE payload
+  //     VeriPUT consumes.
+  //   * "<unit>:probe:branch:..." exit-latched branch probes, which are useful
+  //     refuters but do not identify a complete path.
+  //
+  // Keep complete path claims first. On large units the probe grid can be
+  // thousands of claims; solving it before any path claim turns a generation
+  // run into a probe census with no usable path witness.
   if (remaining_claims > 0)
   {
-    std::vector<bool> is_user(remaining_claims + 1, false);
+    std::vector<unsigned> priority(remaining_claims + 1, 3);
     size_t counter = 0;
     for (auto const &step : eq.SSA_steps)
     {
@@ -3789,10 +3799,20 @@ smt_convt::resultt bmct::multi_property_check(
       const bool is_library =
         file.find("c2goto/library") != std::string::npos ||
         file.find("/library/") != std::string::npos;
-      is_user[counter] = !is_library;
+      if (is_library)
+        priority[counter] = 3;
+      else if (
+        is_path_cov && step.comment.find(":path:") != std::string::npos &&
+        step.comment.find(":probe:") == std::string::npos)
+        priority[counter] = 0;
+      else if (
+        is_path_cov && step.comment.find(":probe:") != std::string::npos)
+        priority[counter] = 2;
+      else
+        priority[counter] = 1;
     }
-    std::stable_sort(jobs.begin(), jobs.end(), [&is_user](size_t a, size_t b) {
-      return is_user[a] && !is_user[b];
+    std::stable_sort(jobs.begin(), jobs.end(), [&priority](size_t a, size_t b) {
+      return priority[a] < priority[b];
     });
   }
 
@@ -3988,6 +4008,24 @@ smt_convt::resultt bmct::multi_property_check(
 
     // skip if we have already verified
     if (is_verified && !is_keep_verified)
+    {
+      ++summary.skipped_properties;
+      return;
+    }
+
+    // Solidity complete-path coverage consumes overflow/div-by-zero assertions
+    // as constraints for --path-cov-arith-resolve on a path claim. In
+    // result-only driver runs, solving those safety assertions as independent
+    // goals can spend the whole unit budget before any complete-path claim is
+    // witnessed, and their counterexamples do not carry path_id/path_function
+    // metadata the VeriPUT stage-2 salvage can use. Full reporting/testcase
+    // runs keep the historical behaviour because the safety claim itself may
+    // be user-visible there. Probe claims are still solved: they are the
+    // explicit --path-cov-probe witness source.
+    if (
+      is_path_cov && options.get_bool_option("result-only") &&
+      !is_probe_claim &&
+      claim.claim_property != "instrumented assertion")
     {
       ++summary.skipped_properties;
       return;

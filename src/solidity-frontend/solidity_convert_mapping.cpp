@@ -80,7 +80,11 @@ bool solidity_convertert::build_mapping_t_init_value(
   }
 
   typet map_t = context.find_symbol(lib_prefix + "mapping_t")->type;
-  assert(map_t.is_struct());
+  if (!map_t.is_struct())
+  {
+    log_warning("mapping_t model is not a struct; cannot build mapping init");
+    return true;
+  }
 
   exprt inits = gen_zero(map_t);
   exprt op0 = symbol_expr(*arr_sym);
@@ -123,8 +127,13 @@ bool solidity_convertert::build_mapping_t_init_value(
 */
 bool solidity_convertert::is_mapping_set_lvalue(const nlohmann::json &target)
 {
-  assert(target.value("nodeType", "") == "IndexAccess");
-  assert(target.contains("lValueRequested"));
+  if (target.value("nodeType", "") != "IndexAccess")
+    return false;
+  if (!target.contains("lValueRequested"))
+  {
+    log_warning("IndexAccess has no lValueRequested flag; treating as read");
+    return false;
+  }
   return target["lValueRequested"].get<bool>();
 }
 
@@ -135,7 +144,14 @@ bool solidity_convertert::get_mapping_key_value_type(
   SolidityGrammar::SolType &key_sol_type,
   SolidityGrammar::SolType &val_sol_type)
 {
-  assert(map_node.contains("typeName"));
+  if (
+    !map_node.contains("typeName") ||
+    !map_node["typeName"].contains("keyType") ||
+    !map_node["typeName"].contains("valueType"))
+  {
+    log_warning("Malformed mapping AST typeName");
+    return true;
+  }
   if (get_type_description(
         map_node["typeName"]["keyType"]["typeDescriptions"], key_t))
   {
@@ -617,8 +633,14 @@ void solidity_convertert::gen_mapping_key_typecast(
     key_sol_type == SolidityGrammar::SolType::STRING ||
     key_sol_type == SolidityGrammar::SolType::STRING_LITERAL)
   {
+    if (context.find_symbol("c:@F@str2uint") == nullptr)
+    {
+      log_warning(
+        "Cannot find str2uint for string mapping key; using nondet key");
+      get_nondet_expr(unsignedbv_typet(256), pos);
+      return;
+    }
     side_effect_expr_function_callt str2uint_call;
-    assert(context.find_symbol("c:@F@str2uint") != nullptr);
     get_library_function_call_no_args(
       "str2uint",
       "c:@F@str2uint",
@@ -633,6 +655,13 @@ void solidity_convertert::gen_mapping_key_typecast(
   // bytesN: use bytes_static_to_mapping_key
   else if (is_bytesN_type(key_type))
   {
+    if (context.find_symbol("c:@F@bytes_static_to_mapping_key") == nullptr)
+    {
+      log_warning(
+        "Cannot find bytes_static_to_mapping_key; using nondet key");
+      get_nondet_expr(unsignedbv_typet(256), pos);
+      return;
+    }
     // bytes_static_to_mapping_key(pos)
     side_effect_expr_function_callt call;
     get_library_function_call_no_args(
@@ -647,8 +676,14 @@ void solidity_convertert::gen_mapping_key_typecast(
   }
   else if (is_bytes_type(key_type))
   {
+    if (context.find_symbol("c:@F@bytes_dynamic_to_mapping_key") == nullptr)
+    {
+      log_warning(
+        "Cannot find bytes_dynamic_to_mapping_key; using nondet key");
+      get_nondet_expr(unsignedbv_typet(256), pos);
+      return;
+    }
     side_effect_expr_function_callt bytes_dynamic_call;
-    assert(context.find_symbol("c:@F@bytes_dynamic_to_mapping_key") != nullptr);
     get_library_function_call_no_args(
       "bytes_dynamic_to_mapping_key",
       "c:@F@bytes_dynamic_to_mapping_key",
@@ -661,7 +696,12 @@ void solidity_convertert::gen_mapping_key_typecast(
     // get this
     exprt dynamic_pool_member;
     if (get_dynamic_pool(c_name, dynamic_pool_member))
-      abort();
+    {
+      log_warning(
+        "Cannot resolve dynamic bytes pool for mapping key; using nondet key");
+      get_nondet_expr(unsignedbv_typet(256), pos);
+      return;
+    }
 
     bytes_dynamic_call.arguments().push_back(dynamic_pool_member);
 
@@ -820,11 +860,17 @@ bool solidity_convertert::get_new_mapping_index_access(
 
   if (context.find_symbol("c:@F@" + func_name) == nullptr)
   {
-    log_error(
-      "cannot find mapping ref {}. Got val_sol_type={}",
+    log_warning(
+      "cannot find mapping ref {}. Got val_sol_type={}; using fallback",
       func_name,
       SolidityGrammar::sol_type_to_str(val_sol_type));
-    return true;
+    if (is_mapping_set)
+    {
+      new_expr = code_skipt();
+      return false;
+    }
+    get_solidity_nondet_value(value_t, location, new_expr);
+    return false;
   }
   side_effect_expr_function_callt call;
   get_library_function_call_no_args(

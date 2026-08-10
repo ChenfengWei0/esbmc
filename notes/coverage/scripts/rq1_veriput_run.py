@@ -75,6 +75,7 @@ DEFAULT_CONCRETE_ONLY_STAGE4_TIMEOUT_CAP_S = 0
 DEFAULT_STAGE2_STAGE4_RESERVE_S = 120
 ADAPTIVE_STAGE2_MANY_UNIT_THRESHOLD = 4
 ADAPTIVE_STAGE2_EXPENSIVE_TIER_THRESHOLD = 65
+ADAPTIVE_STAGE2_FAIR_SHARE_SLOTS = 8
 DATASET_LABEL = {
     "peer182": "peer182",
     "bugfix124": "bugfix124",
@@ -301,7 +302,6 @@ def _merge_put_summary_into_row(row: dict, case_dir: Path) -> dict:
             "raw_tests",
             "valid_tests",
             "assertion_oracles",
-            "put_summary_paths",
             "raw_artifacts",
             "valid_artifacts",
             "artifact_counts",
@@ -313,6 +313,8 @@ def _merge_put_summary_into_row(row: dict, case_dir: Path) -> dict:
     for key in ("oracle_class_counts", "oracle_class_combo_counts"):
         if put_summary.get(key):
             row[key] = put_summary[key]
+    if put_summary.get("summary_paths"):
+        row["put_summary_paths"] = put_summary["summary_paths"]
     for key in (
             "raw_oracle_tag_counts",
             "valid_oracle_tag_counts",
@@ -701,6 +703,13 @@ def _write_normalized_case_result(case_dir: Path, row: dict, *,
         "schema": "veriput-rq1-case-result/v1",
     }
     doc["row"] = _annotate_result_accounting(row)
+    put_summary = summarize_put_artifacts(case_dir / "put")
+    if put_summary.get("raw", 0) > 0:
+        # Keep the human-facing top-level summary in lockstep with the
+        # canonical row.  Older adoption runs updated only ``row``, leaving
+        # stale put_valid/valid counters in result.json even though the
+        # journal and retained artifacts were correct.
+        doc["put"] = put_summary
     normalization = dict(doc.get("normalization") or {})
     normalization.update({
         "normalized_at": _utc_now(),
@@ -3039,7 +3048,6 @@ def _copy_ce_collection_artifacts(source: Path, destination: Path) -> list[str]:
     return copied
 
 
-def run_ce_collection_subject(subject: PreparedSubject, case_dir: Path,
 def _ce_artifact_workdir(result_path: Path, fallback: Path) -> Path:
     """Return this invocation's driver workdir, never a stale sibling run."""
     try:
@@ -3057,6 +3065,7 @@ def _ce_artifact_workdir(result_path: Path, fallback: Path) -> Path:
     return fallback
 
 
+def run_ce_collection_subject(subject: PreparedSubject, case_dir: Path,
                               jobs: list[dict], args) -> tuple[dict, dict]:
     """Collect one bounded CE for a subject without touching RQ1 test results."""
     collection_root = case_dir / "ce-collection"
@@ -3115,7 +3124,7 @@ def _ce_artifact_workdir(result_path: Path, fallback: Path) -> Path:
     }
     _write_json(collection_root / "summary.json", summary)
     row = {
-        "key": f"ce-collection:{subject.subject_id}",
+        "key": _run_key(subject.subject_id, ce_collection_only=True),
         "schema": "veriput-rq1-ce-collection-row/1",
         "stage": "ce_collection",
         "subject_id": subject.subject_id,
@@ -3199,23 +3208,110 @@ def _job_cost_tier(job: dict) -> int:
         return 50
 
 
+WEAK_STAGE2_BUCKETS = {
+    "KILLED",
+    "NO-COORDINATE",
+    "NO-PATH",
+    "NO-WITNESS-UNDECIDED",
+    "UNWIND-TRUNCATED",
+}
+WEAK_STAGE2_DIAGNOSTICS = {
+    "esbmc-no-cov-report",
+    "path-coverage-no-claims-reached-solver",
+    "path-coverage-partial-journal-only",
+    "path-coverage-partial-journal-no-report",
+}
+
+
+def _is_weak_stage2_result(cert_row: dict | None) -> bool:
+    if not isinstance(cert_row, dict):
+        return False
+    bucket = str(cert_row.get("bucket") or "").upper()
+    if bucket in WEAK_STAGE2_BUCKETS:
+        return True
+    diagnostic = cert_row.get("driver_diagnostic") or {}
+    if not isinstance(diagnostic, dict):
+        return False
+    if diagnostic.get("tag") in WEAK_STAGE2_DIAGNOSTICS:
+        return True
+    return diagnostic.get("category") == "no-cov-report"
+
+
+def _continuation_job_key(job: dict) -> tuple:
+    schedule_rank = job.get("schedule_rank") or {}
+    coordinate_rank = schedule_rank.get("coordinate_first") or [3]
+    put_rank = schedule_rank.get("put_potential_first") or [5]
+    try:
+        coordinate = int(coordinate_rank[0])
+    except (TypeError, ValueError, IndexError):
+        coordinate = 3
+    try:
+        put = int(put_rank[0])
+    except (TypeError, ValueError, IndexError):
+        put = 5
+    return (
+        0 if put <= 1 else 1,
+        0 if coordinate <= 1 else 1,
+        put,
+        coordinate,
+        _job_cost_tier(job),
+        int(job.get("ordinal") or 0),
+    )
+
+
+def _requeue_weak_stage2_suffix(jobs: list[dict], next_index: int,
+                                cert_row: dict | None) -> dict | None:
+    """Put unattempted coordinate/PUT candidates ahead of a weak unit."""
+    if not _is_weak_stage2_result(cert_row) or next_index >= len(jobs):
+        return None
+    pending = list(jobs[next_index:])
+    before = [job.get("job_id") for job in pending]
+    pending.sort(key=_continuation_job_key)
+    after = [job.get("job_id") for job in pending]
+    if before == after:
+        return None
+    jobs[next_index:] = pending
+    return {
+        "bucket": cert_row.get("bucket"),
+        "driver_diagnostic_tag": (
+            (cert_row.get("driver_diagnostic") or {}).get("tag")
+            if isinstance(cert_row.get("driver_diagnostic") or {}, dict)
+            else None),
+        "pending_jobs_before": before,
+        "pending_jobs_after": after,
+        "reason": (
+            "weak Stage-2 result requeued the unattempted suffix by "
+            "coordinate and PUT potential"),
+    }
+
+
 def _effective_stage2_unit_timeout_cap_s(job: dict,
                                          args,
                                          units_scheduled: int,
-                                         prior_no_candidate_units: int = 0) -> int:
+                                         prior_no_candidate_units: int = 0,
+                                         *,
+                                         remaining_s: float = 0.0,
+                                         stage4_reserve_s: int = 0) -> int:
     explicit = int(args.stage2_unit_timeout_cap_s or 0)
     if explicit > 0:
         return explicit
     adaptive = int(args.adaptive_stage2_unit_timeout_cap_s or 0)
     if adaptive <= 0:
         return 0
-    if units_scheduled > 1 and prior_no_candidate_units > 0:
+    needs_cap = (
+        units_scheduled > 1 and prior_no_candidate_units > 0
+        or units_scheduled >= ADAPTIVE_STAGE2_MANY_UNIT_THRESHOLD
+        or _job_cost_tier(job) >= ADAPTIVE_STAGE2_EXPENSIVE_TIER_THRESHOLD)
+    if not needs_cap:
+        return 0
+    if units_scheduled < ADAPTIVE_STAGE2_MANY_UNIT_THRESHOLD:
         return adaptive
-    if units_scheduled >= ADAPTIVE_STAGE2_MANY_UNIT_THRESHOLD:
+    if remaining_s <= 0:
         return adaptive
-    if _job_cost_tier(job) >= ADAPTIVE_STAGE2_EXPENSIVE_TIER_THRESHOLD:
-        return adaptive
-    return 0
+    stage2_window_s = max(1.0, remaining_s - float(stage4_reserve_s))
+    fair_slots = min(units_scheduled, ADAPTIVE_STAGE2_FAIR_SHARE_SLOTS)
+    fair_share_s = max(30, int(stage2_window_s / max(1, fair_slots)))
+    return min(adaptive, fair_share_s)
 
 
 def _stage2_unit_timeout_cap_reason(args, effective_cap_s: int) -> str:
@@ -3232,8 +3328,21 @@ def _stage2_wrapper_timeout_s(remaining_s: float,
                               stage4_reserve_s: int = 0) -> float:
     budget, _reserve_applied = _stage2_budget_before_stage4(
         remaining_s, stage4_reserve_s, effective_unit_cap_s)
-    budget = float(budget)
-    return budget + max(0, int(wrapper_grace_s))
+    timeout_s = float(budget) + max(0, int(wrapper_grace_s))
+    if stage4_reserve_s > 0:
+        # Cleanup grace must not consume the subject-generation window that
+        # Stage 4 is promised. The subprocess timeout is the hard boundary.
+        timeout_s = min(timeout_s,
+                        max(1.0, float(remaining_s) - stage4_reserve_s))
+    return timeout_s
+
+
+def _stage2_reserve_boundary_reached(remaining_s: float,
+                                     stage4_reserve_s: int) -> bool:
+    # _stage2_budget_before_stage4 guarantees a one-second minimum command
+    # budget; stop before that quantum could cross the protected boundary.
+    return (stage4_reserve_s > 0
+            and remaining_s <= float(stage4_reserve_s + 1))
 
 
 def _bounded_holds_retry_policy(args) -> dict:
@@ -3261,6 +3370,7 @@ def annotate_stage2_runtime_policy(schedule: dict, args) -> dict:
             "explicit stage2_stage4_reserve_s or "
             "max(min_remaining_s, min_timeout_only_stage4_s, "
             "min_concrete_only_stage4_s)",
+        "stage4_reserve_boundary_enforced": True,
         "adaptive_stage2_many_unit_threshold":
             ADAPTIVE_STAGE2_MANY_UNIT_THRESHOLD,
         "adaptive_stage2_expensive_tier_threshold":
@@ -3396,7 +3506,16 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             stages.append(fallback_stage)
 
     for idx, job in enumerate(jobs, 1):
-        if _remaining(deadline) < args.min_remaining_s:
+        remaining_before_stage2 = _remaining(deadline)
+        stage2_stage4_reserve_s = _stage4_reserve_s(args)
+        if _stage2_reserve_boundary_reached(
+                remaining_before_stage2, stage2_stage4_reserve_s):
+            result_status = "budget-exhausted"
+            failure_reason = (
+                "Stage-2 stopped at the hard Stage-4 reserve boundary before "
+                "remaining units")
+            break
+        if remaining_before_stage2 < args.min_remaining_s:
             result_status = "budget-exhausted"
             failure_reason = "case budget exhausted before remaining units"
             break
@@ -3422,11 +3541,22 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 f"{args.stage_mem_fraction:.0%}; have "
                 f"{mem_wait['mem_available_gib']}GiB")
             break
-        effective_stage2_cap_s = _effective_stage2_unit_timeout_cap_s(
-            job, args, len(jobs), consecutive_no_candidate_units)
         cert_shard_path = _stage2_cert_shard_path(cert_path, idx, unit)
         stage2_remaining_s = _remaining(deadline)
-        stage2_stage4_reserve_s = _stage4_reserve_s(args)
+        if _stage2_reserve_boundary_reached(
+                stage2_remaining_s, stage2_stage4_reserve_s):
+            result_status = "budget-exhausted"
+            failure_reason = (
+                "Stage-2 stopped at the hard Stage-4 reserve boundary before "
+                "remaining units")
+            break
+        effective_stage2_cap_s = _effective_stage2_unit_timeout_cap_s(
+            job,
+            args,
+            len(jobs),
+            consecutive_no_candidate_units,
+            remaining_s=stage2_remaining_s,
+            stage4_reserve_s=stage2_stage4_reserve_s)
         _stage2_budget_s, stage2_stage4_reserve_applied_s = (
             _stage2_budget_before_stage4(stage2_remaining_s,
                                          stage2_stage4_reserve_s,
@@ -3457,6 +3587,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             "subject_remaining_before_stage2_s":
                 round(stage2_remaining_s, 3),
             "stage2_stage4_reserve_s": stage2_stage4_reserve_applied_s,
+            "stage2_reserve_boundary_s": stage2_stage4_reserve_s,
+            "stage2_reserve_boundary_enforced": True,
             "stage2_unit_timeout_cap_s_effective": effective_stage2_cap_s,
             "stage2_unit_timeout_cap_reason": (
                 _stage2_unit_timeout_cap_reason(args, effective_stage2_cap_s)),
@@ -3514,6 +3646,15 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                     consecutive_no_candidate_units = 0
                     continue
                 counts_for_stop = _no_candidate_counts_against_stop(first_row)
+                weak_requeue = _requeue_weak_stage2_suffix(
+                    jobs, idx, first_row)
+                if weak_requeue:
+                    stages.append({
+                        "stage": "requeue-after-weak-certification",
+                        "unit": unit,
+                        "job_id": job.get("job_id"),
+                        **weak_requeue,
+                    })
                 if counts_for_stop:
                     stage2_no_candidate_evidence_units += 1
                     consecutive_no_candidate_units, max_consecutive_no_candidate_units = (
@@ -3570,6 +3711,15 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                     jobs, idx, n_stage4_candidates, cert_stage):
                 first_row = _latest_cert_row(
                     cert_path, subject.benchmark_key, unit, path_function)
+                weak_requeue = _requeue_weak_stage2_suffix(
+                    jobs, idx, first_row)
+                if weak_requeue:
+                    stages.append({
+                        "stage": "requeue-after-weak-certification",
+                        "unit": unit,
+                        "job_id": job.get("job_id"),
+                        **weak_requeue,
+                    })
                 stage2_no_output_continuations.append({
                     "unit": unit,
                     "path_function": path_function,
@@ -3602,6 +3752,15 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 first_row = _latest_cert_row(
                     cert_path, subject.benchmark_key, unit, path_function)
                 diagnostic = (first_row or {}).get("driver_diagnostic") or {}
+                weak_requeue = _requeue_weak_stage2_suffix(
+                    jobs, idx, first_row)
+                if weak_requeue:
+                    stages.append({
+                        "stage": "requeue-after-weak-certification",
+                        "unit": unit,
+                        "job_id": job.get("job_id"),
+                        **weak_requeue,
+                    })
                 stage2_no_output_continuations.append({
                     "unit": unit,
                     "path_function": path_function,
@@ -3744,6 +3903,15 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         if n_stage4_candidates <= 0:
             first_row = _latest_cert_row(
                 cert_path, subject.benchmark_key, unit, path_function)
+            weak_requeue = _requeue_weak_stage2_suffix(
+                jobs, idx, first_row)
+            if weak_requeue:
+                stages.append({
+                    "stage": "requeue-after-weak-certification",
+                    "unit": unit,
+                    "job_id": job.get("job_id"),
+                    **weak_requeue,
+                })
             overload_retry_jobs = _overload_path_function_retry_jobs(
                 job, first_row, jobs)
             if overload_retry_jobs:
@@ -4139,6 +4307,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "adaptive_stage2_unit_timeout_cap_s":
             args.adaptive_stage2_unit_timeout_cap_s,
         "stage2_stage4_reserve_s": _stage4_reserve_s(args),
+        "stage4_reserve_boundary_enforced": True,
         "adaptive_stage2_many_unit_threshold":
             ADAPTIVE_STAGE2_MANY_UNIT_THRESHOLD,
         "adaptive_stage2_expensive_tier_threshold":
@@ -4349,16 +4518,9 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
             except Exception as exc:  # Subject-level fail-soft.
                 now = round(time.time(), 3)
                 row = {
-                    "key": _run_key(
-                        target_row["subject_id"],
-                        ce_collection_only=args.ce_collection_only),
-                    "stage": (
-                        "ce_collection" if args.ce_collection_only
-                        else "gen_veriput"),
-                    "schema": (
-                        "veriput-rq1-ce-collection-row/v1"
-                        if args.ce_collection_only else
-                        "veriput-rq1-result-row/v1"),
+                    "key": f"gen:veriput:{target_row['subject_id']}",
+                    "stage": "gen_veriput",
+                    "schema": "veriput-rq1-result-row/v1",
                     "ts": now,
                     "generated_at": _utc_now(),
                     "host": socket.gethostname(),

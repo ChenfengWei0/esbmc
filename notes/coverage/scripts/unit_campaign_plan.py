@@ -23,8 +23,15 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 UNIT_SCHEDULE_RUN = SCRIPT_DIR / "unit_schedule_run.py"
+REPO_ROOT = SCRIPT_DIR.parents[2]
 sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import unit_schedule  # noqa: E402
+from solidity_ast_dependencies import (  # noqa: E402
+    path_function_declaration_id,
+    unit_env_dependencies,
+    unit_mapping_slot_accesses,
+)
 
 DEFAULT_POLICY = (
     {
@@ -48,8 +55,21 @@ RUNNER_TIMEOUT_GRACE_S = 5.0
 DEFAULT_RETRY_REFINE_ROUNDS = "2"
 BOUNDED_HOLDS_NO_WITNESS_REASON = "bounded-holds no witness"
 GATED_UNIT_DEPTH_NO_WITNESS_REASON = "gated unit depth no witness"
+PATH_COVERAGE_NO_CLAIMS_REASON = "path coverage no claims reached solver"
+FOCUS_FUNCTION_MATCHED_NONE_REASON = "focus function matched no path-coverage unit"
 PROBE_CLAIM_EXPLOSION_REASON = "probe enumeration claim explosion"
 PROBE_CLAIM_EXPLOSION_TAG = "path-coverage-probe-claim-explosion"
+PROBE_GOAL_CAP_REASON = "path coverage probe goal cap"
+PROBE_GOAL_CAP_TAG = "path-coverage-probe-goal-cap"
+AST_FOCUS_RETRY_REASONS = {
+    "certified path rate below threshold",
+    "no certified regions",
+    "no generalisable coordinate",
+    "focus function matched no path-coverage unit",
+    "bounded-holds no witness",
+}
+AST_RETRY_MAX_ENV_COORDS = 2
+AST_RETRY_MAX_SLOT_COORDS = 4
 
 
 class CampaignError(ValueError):
@@ -238,8 +258,13 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
         preflight_refused = False
         named_obstacle_no_witness = False
         path_cov_no_claims_reached = False
+        path_cov_no_claims_diagnostic = None
+        focus_function_matched_none = False
+        focus_function_matched_none_diagnostic = None
         probe_claim_explosion = False
         probe_claim_explosion_diagnostic = None
+        probe_goal_cap = False
+        probe_goal_cap_diagnostic = None
         pre_enumeration_stop = False
         bounded_holds_no_witness = False
         gated_unit_depth_no_witness = False
@@ -249,9 +274,17 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             progress_buckets[progress_bucket] += 1
             if _driver_diagnostic_tag(row) == "path-coverage-no-claims-reached-solver":
                 path_cov_no_claims_reached = True
+                path_cov_no_claims_diagnostic = row.get("driver_diagnostic")
+            if _driver_diagnostic_tag(row) == "focus-function-matched-none":
+                focus_function_matched_none = True
+                focus_function_matched_none_diagnostic = row.get(
+                    "driver_diagnostic")
             if _driver_diagnostic_tag(row) == PROBE_CLAIM_EXPLOSION_TAG:
                 probe_claim_explosion = True
                 probe_claim_explosion_diagnostic = row.get("driver_diagnostic")
+            if _driver_diagnostic_tag(row) == PROBE_GOAL_CAP_TAG:
+                probe_goal_cap = True
+                probe_goal_cap_diagnostic = row.get("driver_diagnostic")
             if _driver_stopped_before_enumeration(row):
                 pre_enumeration_stop = True
             if _is_bounded_holds_no_witness(row):
@@ -320,6 +353,12 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             reason = BOUNDED_HOLDS_NO_WITNESS_REASON
         elif not regions and gated_unit_depth_no_witness:
             reason = GATED_UNIT_DEPTH_NO_WITNESS_REASON
+        elif not regions and path_cov_no_claims_reached:
+            reason = PATH_COVERAGE_NO_CLAIMS_REASON
+        elif not regions and focus_function_matched_none:
+            reason = FOCUS_FUNCTION_MATCHED_NONE_REASON
+        elif not regions and probe_goal_cap:
+            reason = PROBE_GOAL_CAP_REASON
         elif not regions and probe_claim_explosion:
             reason = PROBE_CLAIM_EXPLOSION_REASON
         elif not regions:
@@ -334,9 +373,10 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             non_retryable_reason = "named obstacle no witness"
         elif not regions and preflight_refused:
             non_retryable_reason = "witness preflight refused"
-        elif not regions and path_cov_no_claims_reached:
-            non_retryable_reason = "path coverage no claims reached solver"
-        elif not regions and pre_enumeration_stop:
+        elif (not regions and pre_enumeration_stop
+              and not path_cov_no_claims_reached
+              and not focus_function_matched_none and not probe_goal_cap
+              and not probe_claim_explosion):
             non_retryable_reason = "driver stopped before enumeration"
         quality[key] = {
             "strong": strong,
@@ -364,8 +404,13 @@ def _cert_quality_by_unit(paths: list[str], min_certified_path_rate: float) -> t
             "partial_claims_total": partial_claims_total,
             "bucket_rows": dict(sorted(buckets.items())),
         }
-        if isinstance(probe_claim_explosion_diagnostic, dict):
-            quality[key]["driver_diagnostic"] = probe_claim_explosion_diagnostic
+        retry_diagnostic = (
+            path_cov_no_claims_diagnostic
+            or focus_function_matched_none_diagnostic
+            or probe_goal_cap_diagnostic
+            or probe_claim_explosion_diagnostic)
+        if isinstance(retry_diagnostic, dict):
+            quality[key]["driver_diagnostic"] = retry_diagnostic
     return quality, bad_lines
 
 
@@ -476,6 +521,104 @@ def _with_esbmc_arg(argv: list[str], value: str) -> list[str]:
     return list(argv) + [prefix + value]
 
 
+def _with_repeated_argv_value(argv: list[str], flag: str, value: str) -> list[str]:
+    rewritten = [str(arg) for arg in argv]
+    for idx, arg in enumerate(rewritten[:-1]):
+        if arg == flag and rewritten[idx + 1] == value:
+            return rewritten
+    return rewritten + [flag, value]
+
+
+def _extract_job_ast_path(job: dict) -> str:
+    subject = job.get("subject") or {}
+    if not isinstance(subject, dict):
+        subject = {}
+    target = job.get("target") or {}
+    if not isinstance(target, dict):
+        target = {}
+    for candidate in (
+            ((job.get("ast") or {}).get("path")
+             if isinstance(job.get("ast"), dict) else None),
+            ((target.get("ast") or {}).get("path")
+             if isinstance(target.get("ast"), dict) else None),
+            subject.get("solast"),
+            target.get("solast")):
+        if candidate:
+            return str(candidate)
+    argv = [str(arg) for arg in job.get("certify_argv") or []]
+    ast_cache_root = _argv_value(argv, "--ast-cache-root")
+    if ast_cache_root and job.get("benchmark") and job.get("subject_id"):
+        bench = str(job.get("benchmark"))
+        subject_id = str(job.get("subject_id"))
+        return str(Path(ast_cache_root) / bench /
+                   f"{bench}__{subject_id}" / "flat.sol.solast")
+    return ""
+
+
+def _append_ast_focus_retry_coords(item: dict, quality: dict) -> None:
+    ast_path = _extract_job_ast_path(item)
+    contract = str(item.get("contract") or "")
+    unit = str(item.get("unit") or "")
+    path_function = item.get("path_function")
+    declaration_id = path_function_declaration_id(path_function)
+    if not ast_path or not contract or not unit:
+        return
+
+    evidence = []
+    env_coords = []
+    slots = []
+    env, env_evidence = unit_env_dependencies(
+        ast_path, contract, unit, declaration_id=declaration_id)
+    if env:
+        env_coords = [
+            coord for coord in env
+            if coord in ("msg.sender", "msg.value", "tx.origin")
+        ][:AST_RETRY_MAX_ENV_COORDS]
+        evidence.extend(env_evidence or [])
+    slot_accesses, slot_evidence = unit_mapping_slot_accesses(
+        ast_path, contract, unit, declaration_id=declaration_id,
+        access_mode="read")
+    slot_access_mode = "read"
+    if not slot_accesses:
+        slot_accesses, slot_evidence = unit_mapping_slot_accesses(
+            ast_path, contract, unit, declaration_id=declaration_id,
+            access_mode="all")
+        slot_access_mode = "all"
+    if slot_accesses:
+        for name, keys in slot_accesses:
+            if not keys:
+                continue
+            slots.append("state." + str(name) +
+                         "".join(f"[{key}]" for key in keys))
+            if len(slots) >= AST_RETRY_MAX_SLOT_COORDS:
+                break
+        evidence.extend(slot_evidence or [])
+    if not env_coords and not slots:
+        return
+
+    def rewrite(argv: list[str]) -> list[str]:
+        for coord in env_coords:
+            argv = _with_repeated_argv_value(argv, "--env-coord", coord)
+        for slot in slots:
+            argv = _with_repeated_argv_value(argv, "--slot-coord", slot)
+        return argv
+
+    _apply_argv_rewrite(item, rewrite)
+    quality["retry_ast_focus"] = {
+        "policy": "a23-ast-dependency-path-focus",
+        "ast_path": ast_path,
+        "contract": contract,
+        "unit": unit,
+        "path_function": path_function,
+        "declaration_id": declaration_id,
+        "env_coords": env_coords,
+        "slot_coord": slots,
+        "slot_access_mode": slot_access_mode if slots else None,
+        "evidence": evidence[:12],
+    }
+    _mark_retry_quality(item, quality, "ast-coordinate-put-retry", 0)
+
+
 def _attempt_out_path(out_path: str, attempt: int) -> str:
     if not out_path or attempt <= 1:
         return out_path
@@ -498,36 +641,110 @@ def _apply_argv_rewrite(item: dict, rewrite) -> None:
             [str(arg) for arg in item.get("dry_run_argv") or []])
 
 
+def _mark_retry_quality(item: dict, quality: dict, policy: str,
+                        rank: int) -> None:
+    quality["retry_quality_policy"] = policy
+    quality["retry_quality_rank"] = rank
+    item["retry_quality_policy"] = policy
+    item["retry_quality_rank"] = rank
+
+
 def _set_retry_refine_rounds(item: dict, refine_rounds: str) -> None:
     _apply_argv_rewrite(
         item, lambda argv: _with_argv_value(argv, "--refine-rounds",
                                            refine_rounds))
 
 
-def _apply_probe_claim_explosion_retry(item: dict, quality: dict) -> None:
+def _disable_probe_rewrite(argv: list[str]) -> list[str]:
+    argv = _with_argv_value(argv, "--probe-witnesses", "0")
+    argv = _without_argv_flag(argv, "--probe-ladder", has_value=False)
+    return _without_argv_flag(argv, "--probe-ladder-budget", has_value=True)
+
+
+def _copy_retry_diagnostic_fields(quality: dict, keys: tuple[str, ...]) -> None:
+    diagnostic = quality.get("driver_diagnostic") or {}
+    if not isinstance(diagnostic, dict):
+        return
+    for key in keys:
+        if key in diagnostic:
+            quality[f"retry_observed_{key}"] = diagnostic[key]
+
+
+def _apply_path_coverage_no_claims_retry(item: dict, quality: dict) -> None:
     def rewrite(argv: list[str]) -> list[str]:
-        argv = _with_argv_value(argv, "--probe-witnesses", "0")
-        argv = _without_argv_flag(argv, "--probe-ladder", has_value=False)
-        argv = _without_argv_flag(argv, "--probe-ladder-budget", has_value=True)
+        argv = _disable_probe_rewrite(argv)
+        return _with_argv_value(argv, "--refine-rounds",
+                                DEFAULT_RETRY_REFINE_ROUNDS)
+
+    _apply_argv_rewrite(item, rewrite)
+    quality["retry_strategy"] = "direct-enumeration-after-no-claims"
+    _mark_retry_quality(item, quality, "claim-enumeration-retry", 1)
+    quality["retry_probe_witnesses"] = 0
+    quality["retry_probe_ladder"] = False
+    quality["retry_refine_rounds"] = int(DEFAULT_RETRY_REFINE_ROUNDS)
+    quality["retry_reason"] = (
+        "the previous coverage run emitted path claims but none reached the "
+        "solver, which is recoverable by avoiding the probe pre-pass and "
+        "letting the retry enumerate complete-path claims directly")
+
+
+def _apply_focus_function_matched_none_retry(item: dict, quality: dict) -> None:
+    def rewrite(argv: list[str]) -> list[str]:
+        argv = _disable_probe_rewrite(argv)
+        argv = _with_argv_value(argv, "--scope", "whole")
         return _with_argv_value(argv, "--refine-rounds",
                                 DEFAULT_RETRY_REFINE_ROUNDS)
 
     _apply_argv_rewrite(item, rewrite)
     diagnostic = quality.get("driver_diagnostic") or {}
-    quality["retry_strategy"] = "direct-enumeration-no-probe"
+    if isinstance(diagnostic, dict):
+        for key in ("focus_function", "available_units", "available_unit_count"):
+            if key in diagnostic:
+                quality[f"retry_observed_{key}"] = diagnostic[key]
+    quality["retry_strategy"] = "whole-scope-after-focus-miss"
+    _mark_retry_quality(item, quality, "whole-scope-coordinate-discovery", 1)
+    quality["retry_scope"] = "whole"
     quality["retry_probe_witnesses"] = 0
     quality["retry_probe_ladder"] = False
     quality["retry_refine_rounds"] = int(DEFAULT_RETRY_REFINE_ROUNDS)
-    if isinstance(diagnostic, dict):
-        for key in ("probe_claims", "branch_arms", "physical_exits",
-                    "complete_path_denominator"):
-            if key in diagnostic:
-                quality[f"retry_observed_{key}"] = diagnostic[key]
+    quality["retry_reason"] = (
+        "the previous path-coverage run accepted the requested focus function "
+        "but enumerated no matching path-coverage unit; retry with whole-scope "
+        "enumeration so the driver can discover the available path functions "
+        "instead of repeating the same empty focus")
+
+
+def _apply_probe_claim_explosion_retry(item: dict, quality: dict) -> None:
+    def rewrite(argv: list[str]) -> list[str]:
+        argv = _disable_probe_rewrite(argv)
+        return _with_argv_value(argv, "--refine-rounds",
+                                DEFAULT_RETRY_REFINE_ROUNDS)
+
+    _apply_argv_rewrite(item, rewrite)
+    quality["retry_strategy"] = "direct-enumeration-no-probe"
+    _mark_retry_quality(item, quality, "direct-enumeration-no-probe", 2)
+    quality["retry_probe_witnesses"] = 0
+    quality["retry_probe_ladder"] = False
+    quality["retry_refine_rounds"] = int(DEFAULT_RETRY_REFINE_ROUNDS)
+    _copy_retry_diagnostic_fields(
+        quality, ("probe_claims", "branch_arms", "physical_exits",
+                  "complete_path_denominator", "path_cov_max_goals"))
     quality["retry_reason"] = (
         "the previous enumeration timed out after ESBMC expanded path probes "
         "into an exit-by-branch claim product; disable path probes on the "
         "retry so ESBMC enumerates complete-path claims directly instead of "
         "rebuilding the same product")
+
+
+def _apply_partial_journal_retry(item: dict, quality: dict) -> None:
+    _set_retry_refine_rounds(item, "1")
+    quality["retry_strategy"] = "finish-partial-certification"
+    _mark_retry_quality(item, quality, "finish-partial-certification", 3)
+    quality["retry_refine_rounds"] = 1
+    quality["retry_reason"] = (
+        "the previous run left only a partial witness journal and no certified "
+        "regions; spend the retry on finishing certification from the same "
+        "bounded path space before opening additional refinement rounds")
 
 
 def _apply_gated_unit_depth_retry(item: dict, quality: dict) -> None:
@@ -542,6 +759,7 @@ def _apply_gated_unit_depth_retry(item: dict, quality: dict) -> None:
 
     _apply_argv_rewrite(item, rewrite)
     quality["retry_strategy"] = "deepen-internal-call-expansion"
+    _mark_retry_quality(item, quality, "deepen-internal-call-expansion", 2)
     quality["retry_unwind"] = 8
     quality["retry_max_tx"] = 2
     quality["retry_probe_witnesses"] = 0
@@ -575,13 +793,20 @@ def _apply_retry_strategy(item: dict) -> None:
             "linear refinement round before certification so the retry can "
             "produce fully bounded regions without spending the whole budget "
             "on refinement")
+    elif (reason == "partial witness journal only"
+          and not quality.get("witnessed_paths")
+          and not quality.get("not_certified_paths")):
+        _apply_partial_journal_retry(item, quality)
+        return
     elif reason == BOUNDED_HOLDS_NO_WITNESS_REASON:
         _apply_argv_rewrite(
             item, lambda argv: _with_argv_value(
                 _with_argv_value(argv, "--max-tx", "2"),
                 "--refine-rounds",
                 DEFAULT_RETRY_REFINE_ROUNDS))
+        _append_ast_focus_retry_coords(item, quality)
         quality["retry_strategy"] = "deepen-witness-search"
+        _mark_retry_quality(item, quality, "deepen-witness-search", 2)
         quality["retry_max_tx"] = 2
         quality["retry_refine_rounds"] = int(DEFAULT_RETRY_REFINE_ROUNDS)
         quality["retry_reason"] = (
@@ -593,18 +818,33 @@ def _apply_retry_strategy(item: dict) -> None:
     elif reason == GATED_UNIT_DEPTH_NO_WITNESS_REASON:
         _apply_gated_unit_depth_retry(item, quality)
         return
+    elif reason == PATH_COVERAGE_NO_CLAIMS_REASON:
+        _apply_path_coverage_no_claims_retry(item, quality)
+        return
+    elif reason == FOCUS_FUNCTION_MATCHED_NONE_REASON:
+        _apply_focus_function_matched_none_retry(item, quality)
+        _append_ast_focus_retry_coords(item, quality)
+        return
+    elif reason == PROBE_GOAL_CAP_REASON:
+        _apply_probe_claim_explosion_retry(item, quality)
+        return
     elif reason == PROBE_CLAIM_EXPLOSION_REASON:
         _apply_probe_claim_explosion_retry(item, quality)
         return
     else:
         _set_retry_refine_rounds(item, DEFAULT_RETRY_REFINE_ROUNDS)
+        if reason in AST_FOCUS_RETRY_REASONS:
+            _append_ast_focus_retry_coords(item, quality)
         return
 
     _set_retry_refine_rounds(item, refine_rounds)
 
     quality["retry_strategy"] = strategy
+    _mark_retry_quality(item, quality, strategy, 3)
     quality["retry_refine_rounds"] = int(refine_rounds)
     quality["retry_reason"] = retry_reason
+    if reason in AST_FOCUS_RETRY_REASONS:
+        _append_ast_focus_retry_coords(item, quality)
 
 
 def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[dict]:
@@ -703,6 +943,8 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
             "by_priority": dict(sorted(by_priority.items())),
         },
         "skipped_rows": base_schedule.get("skipped_rows") or [],
+        "skipped_units": base_schedule.get("skipped_units") or [],
+        "no_unit_rows": base_schedule.get("no_unit_rows") or [],
         "duplicate_jobs": base_schedule.get("duplicate_jobs") or [],
         "jobs": budgeted_jobs,
     }
@@ -715,7 +957,55 @@ def _ordered_selected_jobs(jobs: list[dict], selection_strategy: str,
                             ", ".join(unit_schedule.SELECTION_STRATEGIES))
     if limit < 0:
         raise CampaignError("--limit must be non-negative")
-    ordered = unit_schedule._select_jobs(list(jobs), selection_strategy)
+
+    def quality_key(job: dict) -> tuple:
+        quality = job.get("certification_quality") or {}
+        if not isinstance(quality, dict):
+            quality = {}
+        raw_retry_rank = (
+            job.get("retry_quality_rank")
+            if job.get("retry_quality_rank") is not None
+            else quality.get("retry_quality_rank"))
+        try:
+            retry_rank = int(raw_retry_rank)
+        except (TypeError, ValueError):
+            retry_rank = 9
+        schedule_rank = job.get("schedule_rank") or {}
+        coord = schedule_rank.get("coordinate_first") or [3]
+        cheap = schedule_rank.get("cheap_first") or [50, 0, 0]
+        put = schedule_rank.get("put_potential_first") or [5]
+        try:
+            coord_rank = int(coord[0])
+        except (TypeError, ValueError, IndexError):
+            coord_rank = 3
+        try:
+            cheap_rank = int(cheap[0])
+        except (TypeError, ValueError, IndexError):
+            cheap_rank = 50
+        try:
+            put_rank = int(put[0])
+        except (TypeError, ValueError, IndexError):
+            put_rank = 5
+        reason = str(quality.get("reason") or "")
+        no_coordinate_ast_retry = (
+            reason == "no generalisable coordinate"
+            and bool(quality.get("retry_ast_focus")))
+        concrete_only_risk = (
+            put_rank >= 5 and coord_rank >= 3
+            and not no_coordinate_ast_retry)
+        return (
+            0 if no_coordinate_ast_retry else 1,
+            retry_rank,
+            1 if concrete_only_risk else 0,
+            put_rank,
+            0 if coord_rank <= 1 else 1,
+            cheap_rank,
+            int(job.get("priority") or 0),
+            int(job.get("ordinal") or 0),
+        )
+
+    ordered = sorted(unit_schedule._select_jobs(list(jobs), selection_strategy),
+                     key=quality_key)
     before_limit = len(ordered)
     if limit:
         ordered = ordered[:limit]
@@ -789,6 +1079,28 @@ def plan_campaign_for_schedule(schedule: dict,
             state = "completed-ok" if latest_row else "completed-certified"
             completed.append(job)
             latest_status["ok" if latest_row else "certified-without-runner-journal"] += 1
+        elif (cert_jsonls and quality and quality.get("retryable") is False
+              and quality.get("non_retryable_reason") == "no generalisable coordinate"
+              and attempts < max_attempt):
+            state = f"pending-attempt-{attempts + 1}"
+            pending_job = copy.deepcopy(job)
+            pending_job["certification_quality"] = dict(quality)
+            pending_job["certification_quality"]["reason"] = (
+                pending_job["certification_quality"].get("reason")
+                or "no certified regions")
+            pending_job["certification_quality"]["retryable"] = True
+            pending_job["certification_quality"]["non_retryable_reason"] = ""
+            pending_job["certification_quality"]["retry_reason"] = (
+                "the previous row reported no generalisable coordinate, but "
+                "target-contract AST dependency analysis may promote env, "
+                "mapping-read, or assignment-key slot coordinates for a "
+                "stronger PUT/R1/R2 retry before concrete-only fallback")
+            pending_job["certification_quality"]["concrete_only_blocked_until"] = (
+                "ast-coordinate-retry-exhausted")
+            pending_by_attempt[attempts + 1].append(pending_job)
+            latest_status[(latest_row or {}).get("status")
+                          or "certified-without-runner-journal"] += 1
+            cert_weak["no generalisable coordinate: ast dependency retry"] += 1
         elif cert_jsonls and quality and quality.get("retryable") is False:
             state = "non-retryable"
             non_retryable.append(job)

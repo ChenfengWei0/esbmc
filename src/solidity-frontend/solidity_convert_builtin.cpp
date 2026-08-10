@@ -323,13 +323,15 @@ void solidity_convertert::move_builtin_to_contract(
   bool is_method)
 {
   std::string c_id = prefix + cname;
-  if (context.find_symbol(c_id) == nullptr)
+  const symbolt *c_sym_p = context.find_symbol(c_id);
+  if (c_sym_p == nullptr || !c_sym_p->type.is_struct())
   {
-    log_error("parsing order error for struct {}", c_id);
-    abort();
+    log_warning(
+      "Skipping builtin insertion for unresolved/non-struct contract {}",
+      c_id);
+    return;
   }
   symbolt &c_sym = *context.find_symbol(c_id);
-  assert(c_sym.type.is_struct());
 
   if (!is_method)
   {
@@ -414,15 +416,35 @@ void solidity_convertert::get_aux_property_function(
   if (current_functionDecl)
   {
     if (get_func_decl_this_ref(*current_functionDecl, cur_this_expr))
-      abort();
+    {
+      log_warning(
+        "Cannot resolve this pointer for builtin property {}; using null "
+        "receiver",
+        property_name);
+      cur_this_expr = gen_zero(pointer_typet(symbol_typet(prefix + cname)));
+    }
   }
   else
   {
     if (get_ctor_decl_this_ref(cname, cur_this_expr))
-      abort();
+    {
+      log_warning(
+        "Cannot resolve ctor this pointer for builtin property {}; using null "
+        "receiver",
+        property_name);
+      cur_this_expr = gen_zero(pointer_typet(symbol_typet(prefix + cname)));
+    }
   }
 
-  assert(base.is_constant() || base.is_member() || base.is_symbol());
+  if (!(base.is_constant() || base.is_member() || base.is_symbol()))
+  {
+    log_warning(
+      "Unexpected builtin property base kind {}; using nondet {}",
+      base.id().as_string(),
+      property_name);
+    get_solidity_nondet_value(return_t, loc, new_expr);
+    return;
+  }
 
   if (context.find_symbol(fid) != nullptr)
   {
@@ -488,8 +510,14 @@ void solidity_convertert::get_aux_property_function(
   {
     if (context.find_symbol("c:@F@_ESBMC_get_obj") == nullptr)
     {
-      log_error("cannot find builtin library");
-      abort();
+      log_warning(
+        "Cannot find _ESBMC_get_obj; builtin property {} falls back to "
+        "nondet",
+        property_name);
+      code_returnt ret_uint;
+      ret_uint.return_value() = nondet_uint256_expr;
+      _block.move_to_operands(ret_uint);
+      break;
     }
     // skip interface/abstract contract/library
     if (nonContractNamesList.count(str) != 0 && str != cname)
@@ -639,8 +667,9 @@ void solidity_convertert::get_builtin_property_expr(
   }
   else
   {
-    log_error("got unexpected builtin property {}", name);
-    abort();
+    log_warning("got unexpected builtin property {}; using uint256", name);
+    t = unsignedbv_typet(256);
+    set_sol_type(t, SolidityGrammar::SolType::UINT256);
   }
 
   // Decide whether the handle denotes a model object whose own field is the

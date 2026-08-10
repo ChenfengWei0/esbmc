@@ -84,7 +84,9 @@ bool solidity_convertert::get_type_description(
     // function reference such as `abi.encode` captured as a tuple
     // component): any `t_function_*` kind is lowered to the same opaque
     // fn-ptr shape as the FunctionTypeName case above.
-    if (typeIdentifier.compare(0, 11, "t_function_") == 0)
+    if (
+      typeIdentifier.compare(0, 11, "t_function_") == 0 ||
+      typeString.compare(0, 9, "function ") == 0)
     {
       new_type = gen_pointer_type(empty_typet());
       new_type.set("#sol_func_ptr", true);
@@ -94,9 +96,16 @@ bool solidity_convertert::get_type_description(
 
     // auxiliary type: pointer (FuncToPtr decay)
     // This part is for FunctionToPointer decay only
-    assert(
-      typeString.find("function") != std::string::npos ||
-      typeString.find("contract") != std::string::npos);
+    if (
+      typeString.find("function") == std::string::npos &&
+      typeString.find("contract") == std::string::npos)
+    {
+      log_warning(
+        "Unexpected pointer-like Solidity type '{}'; using opaque pointer",
+        typeString);
+      new_type = gen_pointer_type(empty_typet());
+      break;
+    }
 
     // Since Solidity does not have this, first make a pointee
     nlohmann::json pointee = make_pointee_type(type_name);
@@ -117,7 +126,14 @@ bool solidity_convertert::get_type_description(
   {
     // auxiliary type: pointer (FuncToPtr decay)
     // This part is for FunctionToPointer decay only
-    assert(typeIdentifier.find("ArrayToPtr") != std::string::npos);
+    if (typeIdentifier.find("ArrayToPtr") == std::string::npos)
+    {
+      log_warning(
+        "Unexpected array-to-pointer type '{}'; using opaque pointer",
+        typeIdentifier);
+      new_type = gen_pointer_type(empty_typet());
+      break;
+    }
 
     // Array type descriptor is like:
     //  "typeIdentifier": "ArrayToPtr",
@@ -213,8 +229,9 @@ bool solidity_convertert::get_type_description(
     }
 
     typet base_type;
-    if (!decl.empty() && decl.contains("typeName") &&
-        decl["typeName"].contains("baseType"))
+    if (
+      !decl.empty() && decl.contains("typeName") &&
+      decl["typeName"].contains("baseType"))
     {
       // From variable declaration: use AST baseType node directly
       nlohmann::json inner_decl;
@@ -348,8 +365,9 @@ bool solidity_convertert::get_type_description(
         for (const char *suf :
              {" storage ref", " storage", " memory", " calldata"})
         {
-          if (s.size() > strlen(suf) &&
-              s.compare(s.size() - strlen(suf), strlen(suf), suf) == 0)
+          if (
+            s.size() > strlen(suf) &&
+            s.compare(s.size() - strlen(suf), strlen(suf), suf) == 0)
           {
             s.erase(s.size() - strlen(suf));
             return;
@@ -418,13 +436,31 @@ bool solidity_convertert::get_type_description(
     exprt the_size;
     if (!decl.empty())
     {
-      // access from get_var_decl
-      assert(decl["typeName"].contains("baseType"));
+      // Access either from a variable declaration (`decl.typeName`) or from
+      // a nested type node itself (for example mapping valueType recursion).
+      const nlohmann::json *array_node = nullptr;
+      nlohmann::json array_decl;
+      if (decl.contains("typeName") && decl["typeName"].is_object())
+        array_node = &decl["typeName"];
+      else if (decl.contains("baseType"))
+      {
+        array_node = &decl;
+        array_decl["typeName"] = decl;
+      }
+
+      if (array_node == nullptr || !array_node->contains("baseType"))
+      {
+        log_error("Malformed Solidity array type: missing baseType");
+        return true;
+      }
+
+      const nlohmann::json &decl_for_array =
+        array_decl.empty() ? decl : array_decl;
       if (get_type_description(
-            decl["typeName"]["baseType"]["typeDescriptions"], the_type))
+            (*array_node)["baseType"]["typeDescriptions"], the_type))
         return true;
 
-      if (get_array_pointer_type(decl, the_type, new_type))
+      if (get_array_pointer_type(decl_for_array, the_type, new_type))
         return true;
     }
     else if (type == SolidityGrammar::TypeNameT::ArrayTypeName)
@@ -492,8 +528,9 @@ bool solidity_convertert::get_type_description(
         // scan backwards from end for "_$" followed by digits
         for (size_t i = rest.size(); i >= 2; --i)
         {
-          if (rest[i - 2] == '_' && rest[i - 1] == '$' && i < rest.size() &&
-              std::isdigit(rest[i]))
+          if (
+            rest[i - 2] == '_' && rest[i - 1] == '$' && i < rest.size() &&
+            std::isdigit(rest[i]))
             return rest.substr(0, i - 2);
         }
         return "";
@@ -512,8 +549,9 @@ bool solidity_convertert::get_type_description(
       //    pointer.  mapping(K=>V)[] is semantically equivalent to
       //    mapping(uint => mapping(K=>V)) + a length counter.  The pointer/
       //    malloc model cannot handle infinite-sized mapping elements.
-      if (get_sol_type(sub_type) == SolidityGrammar::SolType::MAPPING &&
-          sub_type.is_array())
+      if (
+        get_sol_type(sub_type) == SolidityGrammar::SolType::MAPPING &&
+        sub_type.is_array())
       {
         new_type = array_typet();
         new_type.size(exprt("infinity"));
@@ -546,6 +584,51 @@ bool solidity_convertert::get_type_description(
     new_type = pointer_typet(symbol_typet(id));
     set_sol_type(new_type, SolidityGrammar::SolType::CONTRACT);
     new_type.set("#sol_contract", cname);
+    break;
+  }
+  case SolidityGrammar::TypeNameT::TypeProperty:
+  {
+    // `type(T)` is a compile-time meta object.  Member lowering consumes the
+    // underlying T for `type(uint256).max/min`, and contract properties read
+    // their name from the original AST.  Preserve that underlying type when it
+    // is recoverable; otherwise use an opaque pointer instead of failing the
+    // frontend on a meta-only value.
+    if (
+      typeString.size() >= 6 && typeString.compare(0, 5, "type(") == 0 &&
+      typeString.back() == ')')
+    {
+      std::string inner_type_string =
+        typeString.substr(5, typeString.size() - 6);
+      if (
+        inner_type_string.compare(0, 9, "contract ") == 0 ||
+        inner_type_string.compare(0, 10, "interface ") == 0 ||
+        inner_type_string.compare(0, 8, "library ") == 0)
+      {
+        auto pos = inner_type_string.rfind(' ');
+        std::string cname = inner_type_string.substr(pos + 1);
+        new_type = pointer_typet(symbol_typet(prefix + cname));
+        set_sol_type(new_type, SolidityGrammar::SolType::CONTRACT);
+        new_type.set("#sol_contract", cname);
+        break;
+      }
+
+      nlohmann::json inner;
+      inner["typeString"] = inner_type_string;
+
+      std::size_t begin = typeIdentifier.find("$_");
+      std::size_t end = typeIdentifier.rfind("_$");
+      if (begin != std::string::npos && end != std::string::npos && end > begin)
+        inner["typeIdentifier"] =
+          typeIdentifier.substr(begin + 2, end - begin - 2);
+      else
+        inner["typeIdentifier"] = inner["typeString"];
+
+      if (!get_type_description(inner, new_type))
+        break;
+    }
+
+    new_type = gen_pointer_type(empty_typet());
+    new_type.set("#sol_type_property", true);
     break;
   }
   case SolidityGrammar::TypeNameT::TypeConversionName:
@@ -655,6 +738,39 @@ bool solidity_convertert::get_type_description(
       // to array_type2t::index_width and is consumed by smt_conv +
       // adjust_index. Closes ledger #22's path-1 256→64 fold gap.
       new_type.set("#esbmc_index_width", "256");
+
+      const nlohmann::json *map_node = nullptr;
+      if (type_name.contains("valueType"))
+        map_node = &type_name;
+      else if (
+        decl.contains("typeName") && decl["typeName"].is_object() &&
+        decl["typeName"].contains("valueType"))
+        map_node = &decl["typeName"];
+
+      if (map_node != nullptr)
+      {
+        typet *cur_type = &new_type;
+        const nlohmann::json *cur_node = map_node;
+        while (cur_node->contains("valueType"))
+        {
+          const auto &val_json = (*cur_node)["valueType"];
+          typet val_t;
+          if (get_type_description(
+                val_json, val_json["typeDescriptions"], val_t))
+            return true;
+          cur_type->subtype() = val_t;
+
+          if (
+            get_sol_type(val_t) == SolidityGrammar::SolType::MAPPING &&
+            val_t.is_array())
+          {
+            cur_type = &cur_type->subtype();
+            cur_node = &val_json;
+          }
+          else
+            break;
+        }
+      }
     }
     set_sol_type(new_type, SolidityGrammar::SolType::MAPPING);
     break;
@@ -671,6 +787,12 @@ bool solidity_convertert::get_type_description(
   {
     new_type = empty_typet();
     new_type.set("#cpp_type", "void");
+    break;
+  }
+  case SolidityGrammar::TypeNameT::BuiltinTypeName:
+  {
+    new_type = gen_pointer_type(empty_typet());
+    new_type.set("#sol_builtin_meta", true);
     break;
   }
   case SolidityGrammar::TypeNameT::UserDefinedTypeName:
@@ -811,8 +933,7 @@ bool solidity_convertert::get_array_to_pointer_type(
   // Recognise the common element-type prefixes in Solidity's
   // typeString (e.g. "uint8[]", "uint256[] calldata",
   // "int256[]", "address[]") and map to the matching scalar type.
-  const std::string ts =
-    type_descriptor["typeString"].get<std::string>();
+  const std::string ts = type_descriptor["typeString"].get<std::string>();
 
   // uintN / intN
   auto try_int_width = [&](const std::string &prefix, bool is_signed) -> bool {
@@ -828,8 +949,8 @@ bool solidity_convertert::get_array_to_pointer_type(
     unsigned bits = std::stoul(ts.substr(start, e - start));
     if (bits == 0 || bits > 256 || (bits % 8) != 0)
       return false;
-    new_type = is_signed ? (typet)signedbv_typet(bits)
-                         : (typet)unsignedbv_typet(bits);
+    new_type =
+      is_signed ? (typet)signedbv_typet(bits) : (typet)unsignedbv_typet(bits);
     new_type.set("#cpp_type", is_signed ? "signed_int" : "unsigned_int");
     return true;
   };
@@ -1145,7 +1266,15 @@ bool solidity_convertert::get_parameter_list(
   }
   case SolidityGrammar::ParameterListT::ONE_PARAM:
   {
-    assert(type_name["parameters"].size() == 1);
+    if (
+      !type_name.contains("parameters") || !type_name["parameters"].is_array() ||
+      type_name["parameters"].size() != 1)
+    {
+      log_warning("Malformed one-parameter list; using void");
+      new_type = empty_typet();
+      new_type.set("#cpp_type", "void");
+      break;
+    }
 
     const nlohmann::json &rtn_type = type_name["parameters"].at(0);
     if (rtn_type.contains("typeName"))
@@ -1166,7 +1295,12 @@ bool solidity_convertert::get_parameter_list(
   {
     // if contains multiple return types
     // We will return null because we create the symbols of the struct accordingly
-    assert(type_name["parameters"].size() > 1);
+    if (
+      !type_name.contains("parameters") || !type_name["parameters"].is_array() ||
+      type_name["parameters"].size() <= 1)
+    {
+      log_warning("Malformed tuple return parameter list; using void");
+    }
     new_type = empty_typet();
     new_type.set("#cpp_type", "void");
     set_sol_type(new_type, SolidityGrammar::SolType::TUPLE_RETURNS);
@@ -1296,17 +1430,19 @@ bool solidity_convertert::get_array_pointer_type(
         decl["typeName"].contains("typeDescriptions") &&
             decl["typeName"]["typeDescriptions"].contains("typeString") &&
             decl["typeName"]["typeDescriptions"]["typeString"].is_string()
-          ? decl["typeName"]["typeDescriptions"]["typeString"].get<std::string>()
+          ? decl["typeName"]["typeDescriptions"]["typeString"]
+              .get<std::string>()
           : std::string();
       auto lb = ts.rfind('[');
       auto rb = ts.rfind(']');
       if (lb != std::string::npos && rb != std::string::npos && rb > lb + 1)
       {
         const std::string inner = ts.substr(lb + 1, rb - lb - 1);
-        if (!inner.empty() &&
-            std::all_of(inner.begin(), inner.end(), [](unsigned char ch) {
-              return std::isdigit(ch);
-            }))
+        if (
+          !inner.empty() &&
+          std::all_of(inner.begin(), inner.end(), [](unsigned char ch) {
+            return std::isdigit(ch);
+          }))
           length = inner;
       }
     }
@@ -1374,6 +1510,12 @@ bool solidity_convertert::is_byte_type(const typet &t)
 {
   if (SolidityGrammar::is_bytes_type(get_sol_type(t)))
     return true;
+  if (t.is_symbol())
+  {
+    const irep_idt &id = t.identifier();
+    if (id == byte_static_t.identifier() || id == byte_dynamic_t.identifier())
+      return true;
+  }
   if (
     t.is_struct() &&
     (t.type().tag() == "BytesDynamic" || t.type().tag() == "BytesStatic"))
@@ -1386,6 +1528,8 @@ bool solidity_convertert::is_bytesN_type(const typet &t)
   SolidityGrammar::SolType solt = get_sol_type(t);
   if (solt == SolidityGrammar::SolType::BYTES_STATIC)
     return true;
+  if (t.is_symbol() && t.identifier() == byte_static_t.identifier())
+    return true;
   if (t.is_struct() && t.type().tag() == "BytesStatic")
     return true;
   return false;
@@ -1396,6 +1540,8 @@ bool solidity_convertert::is_bytes_type(const typet &t)
   // expects t like "bytes" (dynamic)
   SolidityGrammar::SolType solt = get_sol_type(t);
   if (solt == SolidityGrammar::SolType::BYTES_DYN)
+    return true;
+  if (t.is_symbol() && t.identifier() == byte_dynamic_t.identifier())
     return true;
   if (t.is_struct() && t.type().tag() == "BytesDynamic")
     return true;
@@ -1468,8 +1614,7 @@ void solidity_convertert::convert_type_expr(
         src_expr = make_aux_var(src_expr, src_expr.location());
 
       exprt pool_member;
-      if (get_dynamic_pool(expr, pool_member))
-        abort();
+      const bool has_pool = !get_dynamic_pool(expr, pool_member);
 
       // e.g. Bytes2 x; Bytes4(x); -> bytes_static_truncate(&x, 2)
       // Bytes2 y; Bytes4 x = Bytes4(y);
@@ -1496,9 +1641,24 @@ void solidity_convertert::convert_type_expr(
       // e.g. bytes2 x; bytes y = bytes(x);
       else if (is_bytesN_type(src_type) && is_bytes_type(dest_type))
       {
+        if (!has_pool)
+        {
+          log_warning(
+            "Cannot resolve dynamic bytes pool for bytesN->bytes "
+            "conversion; using nondet bytes");
+          get_solidity_nondet_value(dest_type, src_expr.location(), src_expr);
+          set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
+          return;
+        }
+        if (context.find_symbol("c:@F@bytes_dynamic_from_static") == nullptr)
+        {
+          log_warning(
+            "Cannot find bytes_dynamic_from_static; using nondet bytes");
+          get_solidity_nondet_value(dest_type, src_expr.location(), src_expr);
+          set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
+          return;
+        }
         side_effect_expr_function_callt from_static_call;
-        assert(
-          context.find_symbol("c:@F@bytes_dynamic_from_static") != nullptr);
         get_library_function_call_no_args(
           "bytes_dynamic_from_static",
           "c:@F@bytes_dynamic_from_static",
@@ -1516,6 +1676,15 @@ void solidity_convertert::convert_type_expr(
       // e.g. bytes x; bytes2 y = bytes2(x);
       else if (is_bytes_type(src_type) && is_bytesN_type(dest_type))
       {
+        if (!has_pool)
+        {
+          log_warning(
+            "Cannot resolve dynamic bytes pool for bytes->bytesN "
+            "conversion; using nondet bytesN");
+          get_solidity_nondet_value(dest_type, src_expr.location(), src_expr);
+          set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_STATIC);
+          return;
+        }
         side_effect_expr_function_callt resize_dyn_call;
         get_library_function_call_no_args(
           "bytes_static_resize_from_dynamic",
@@ -1538,8 +1707,25 @@ void solidity_convertert::convert_type_expr(
       // e.g. bytes x; bytes y = bytes(x);
       else
       {
+        if (!has_pool)
+        {
+          log_warning(
+            "Cannot resolve dynamic bytes pool for bytes copy; using "
+            "nondet bytes");
+          get_solidity_nondet_value(dest_type, src_expr.location(), src_expr);
+          set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
+          return;
+        }
         side_effect_expr_function_callt copy_call;
-        assert(context.find_symbol("c:@F@bytes_dynamic_copy") != nullptr);
+        if (context.find_symbol("c:@F@bytes_dynamic_copy") == nullptr)
+        {
+          log_warning(
+            "Cannot find bytes_dynamic_copy; using nondet bytes for "
+            "dynamic bytes conversion");
+          get_solidity_nondet_value(dest_type, src_expr.location(), src_expr);
+          set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
+          return;
+        }
         get_library_function_call_no_args(
           "bytes_dynamic_copy",
           "c:@F@bytes_dynamic_copy",
@@ -1589,8 +1775,7 @@ void solidity_convertert::convert_type_expr(
             loc,
             nondet_b);
           src_expr = make_aux_var(nondet_b, loc);
-          set_sol_type(
-            src_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
+          set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
           return;
         }
 
@@ -1608,7 +1793,14 @@ void solidity_convertert::convert_type_expr(
         // resolve pool_data: this.dynamic_pool
         exprt pool_member;
         if (get_dynamic_pool(expr, pool_member))
-          abort();
+        {
+          log_warning(
+            "Cannot resolve dynamic bytes pool for string/bytes "
+            "conversion; using nondet bytes");
+          get_solidity_nondet_value(dest_type, loc, src_expr);
+          set_sol_type(src_expr.type(), SolidityGrammar::SolType::BYTES_DYN);
+          return;
+        }
         call.arguments().push_back(pool_member);
 
         src_expr = make_aux_var(call, loc);
@@ -1622,6 +1814,9 @@ void solidity_convertert::convert_type_expr(
           dest_type,
           loc,
           call);
+
+        if (src_expr.type() != uint_type())
+          convert_type_expr(ns, src_expr, uint_type(), expr);
         call.arguments().push_back(src_expr);
 
         // e.g. bytes3(0x1234); "BYTES3" => 3
@@ -1632,8 +1827,37 @@ void solidity_convertert::convert_type_expr(
             size_type());
         else
         {
-          log_error("got unexpected bytes typecast");
-          abort();
+          unsigned long bytesn_size = 0;
+          if (expr.is_object())
+          {
+            nlohmann::json type_desc = nullptr;
+            if (expr.contains("typeDescriptions"))
+              type_desc = expr["typeDescriptions"];
+            else if (
+              expr.contains("expression") &&
+              expr["expression"].contains("typeDescriptions"))
+              type_desc = expr["expression"]["typeDescriptions"];
+
+            const std::string ts =
+              type_desc.is_object() && type_desc.contains("typeString") &&
+                  type_desc["typeString"].is_string()
+                ? type_desc["typeString"].get<std::string>()
+                : std::string();
+            if (ts.compare(0, 5, "bytes") == 0 && ts.size() > 5)
+            {
+              const std::string suffix = ts.substr(5);
+              if (
+                !suffix.empty() &&
+                std::all_of(
+                  suffix.begin(), suffix.end(), [](unsigned char ch) {
+                    return std::isdigit(ch);
+                  }))
+                bytesn_size = std::stoul(suffix);
+            }
+          }
+          if (bytesn_size == 0 || bytesn_size > 32)
+            bytesn_size = 32;
+          len_expr = from_integer(bytesn_size, size_type());
         }
         call.arguments().push_back(len_expr);
 
@@ -1642,10 +1866,11 @@ void solidity_convertert::convert_type_expr(
       }
       else
       {
-        log_error(
+        log_warning(
           "Unknown bytes destination type: {}",
           SolidityGrammar::sol_type_to_str(dest_sol_type));
-        abort();
+        get_solidity_nondet_value(dest_type, loc, src_expr);
+        return;
       }
     }
     else if (is_byte_type(src_type) && dest_type.is_unsignedbv())
@@ -1675,13 +1900,21 @@ void solidity_convertert::convert_type_expr(
 
         exprt pool_member;
         if (get_dynamic_pool(expr, pool_member))
-          abort();
+        {
+          log_warning(
+            "Cannot resolve dynamic bytes pool for bytes->uint "
+            "conversion; using nondet integer");
+          get_solidity_nondet_value(dest_type, loc, src_expr);
+          return;
+        }
         call.arguments().push_back(pool_member);
       }
       else
       {
-        log_error("Expected bytes or bytesN for to_uint conversion");
-        abort();
+        log_warning(
+          "Expected bytes or bytesN for to_uint conversion; using nondet");
+        get_solidity_nondet_value(dest_type, loc, src_expr);
+        return;
       }
 
       src_expr = call;
@@ -1721,15 +1954,23 @@ void solidity_convertert::convert_type_expr(
 
         exprt pool_member;
         if (get_dynamic_pool(expr, pool_member))
-          abort();
+        {
+          log_warning(
+            "Cannot resolve dynamic bytes pool for bytes->string "
+            "conversion; using nondet string");
+          get_solidity_nondet_value(dest_type, loc, src_expr);
+          return;
+        }
         fn_call.arguments().push_back(pool_member);
 
         call = fn_call;
       }
       else
       {
-        log_error("Expected bytes or bytesN for to_string conversion");
-        abort();
+        log_warning(
+          "Expected bytes or bytesN for to_string conversion; using nondet");
+        get_solidity_nondet_value(dest_type, loc, src_expr);
+        return;
       }
 
       src_expr = call;
@@ -1737,7 +1978,8 @@ void solidity_convertert::convert_type_expr(
     }
     else if (
       (SolidityGrammar::is_address_type(dest_sol_type)) &&
-      (src_sol_type == SolidityGrammar::SolType::CONTRACT || src_sol_type == SolidityGrammar::SolType::UNSET))
+      (src_sol_type == SolidityGrammar::SolType::CONTRACT ||
+       src_sol_type == SolidityGrammar::SolType::UNSET))
     {
       // CONTRACT: address(instance) ==> instance.address
       // EMPTY: address(this) ==> this.address
@@ -1799,7 +2041,8 @@ void solidity_convertert::convert_type_expr(
       set_sol_type(src_expr.type(), SolidityGrammar::SolType::CONTRACT);
     }
     else if (
-      (src_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL) && src_type.id() == typet::id_array)
+      (src_sol_type == SolidityGrammar::SolType::ARRAY_LITERAL) &&
+      src_type.id() == typet::id_array)
     {
       // this means we are handling a constant array
       // which should be assigned to an array pointer
@@ -1809,10 +2052,11 @@ void solidity_convertert::convert_type_expr(
 
       if (dest_type.id() != typet::id_pointer)
       {
-        log_error(
+        log_warning(
           "Expecting dest_type to be pointer type, got = {}",
           dest_type.id().as_string());
-        abort();
+        get_solidity_nondet_value(dest_type, src_expr.location(), src_expr);
+        return;
       }
 
       // dynamic: uint x[] = [1,2]
@@ -1837,8 +2081,11 @@ void solidity_convertert::convert_type_expr(
       {
         if (dest_sol_type == SolidityGrammar::SolType::ARRAY)
         {
-          log_error("Unexpected empty-length fixed array");
-          abort();
+          log_warning(
+            "Unexpected empty-length fixed array destination; using nondet "
+            "pointer");
+          get_solidity_nondet_value(dest_type, src_expr.location(), src_expr);
+          return;
         }
         // the dynamic array does not have a fixed length
         // therefore set it as the rhs length
@@ -1902,11 +2149,12 @@ void solidity_convertert::convert_type_expr(
         unsigned s_size = src_expr.operands().size();
         if (s_size != z_src_size)
         {
-          log_error(
+          log_warning(
             "Expecting equivalent array size, got {} and {}",
             std::to_string(s_size),
             std::to_string(z_src_size));
-          abort();
+          get_solidity_nondet_value(dest_type, src_expr.location(), src_expr);
+          return;
         }
         if (z_dest_size > s_size)
         {
@@ -1924,12 +2172,20 @@ void solidity_convertert::convert_type_expr(
             src_expr.operands().push_back(_zero);
 
           // reset size
-          assert(src_expr.type().is_array());
+          if (!src_expr.type().is_array())
+          {
+            log_warning(
+              "array literal resize saw non-array source {}; using nondet "
+              "destination array",
+              src_expr.type().id().as_string());
+            get_solidity_nondet_value(dest_type, src_expr.location(), src_expr);
+            return;
+          }
           to_array_type(src_expr.type()).size() = dest_array_size;
 
           // update "#sol_array_size"
-          assert(!dest_size.empty());
-          src_expr.type().set("#sol_array_size", dest_size);
+          if (!dest_size.empty())
+            src_expr.type().set("#sol_array_size", dest_size);
         }
       }
 
@@ -1948,4 +2204,3 @@ void solidity_convertert::convert_type_expr(
       solidity_gen_typecast(ns, src_expr, dest_type);
   }
 }
-

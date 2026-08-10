@@ -145,6 +145,7 @@ def compact_ast():
 
 def make_fake_solc(path, body):
     p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("#!/bin/sh\n" + body)
     p.chmod(0o755)
     return str(p)
@@ -180,6 +181,18 @@ def test_resolve_subject_requires_explicit_unit():
     return 1
 
 
+def test_resolve_subject_accepts_cleaned_result_dir_alias():
+    with tempfile.TemporaryDirectory() as td:
+        make_subject(td, "peer__C__1", subject_id="peer__C (1)")
+        subject = resolve_subject("peer__C (1)", root=td, unit="f")
+    bad = 0
+    bad += check(subject.subject_id == "peer__C (1)",
+                 f"recorded subject id is preserved: {subject.subject_id}")
+    bad += check(subject.root.endswith("/peer__C__1"),
+                 f"cleaned result dir alias resolves: {subject.root}")
+    return bad
+
+
 def test_subject_from_cert_record_round_trips():
     with tempfile.TemporaryDirectory() as td:
         make_subject(td)
@@ -193,21 +206,54 @@ def test_subject_from_cert_record_round_trips():
     return bad
 
 
+def test_subject_record_rehomes_veriput_root_paths():
+    old_root = veriput_subjects.VERIPUT_ROOT
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subject_root = root / "Results" / "Peer182" / "subjects"
+        d = make_subject(subject_root, "peer__C", benchmark="peer182")
+        veriput_subjects.VERIPUT_ROOT = root
+        try:
+            record = {
+                "schema": "veriput-subject/v1",
+                "benchmark": "peer182",
+                "subject_id": "peer__C",
+                "benchmark_key": "peer182__peer__C",
+                "root": "/home/samson/workspace/VeriPUT/Results/Peer182/subjects/peer__C",
+                "flat_sol": "/home/samson/workspace/VeriPUT/Results/Peer182/subjects/peer__C/flat.sol",
+                "solast": "/home/samson/workspace/VeriPUT/Results/Peer182/subjects/peer__C/flat.sol.solast",
+                "contract": "C",
+                "unit": "f",
+                "solc_bin": "/bin/false",
+                "solc_extra": [],
+                "meta_status": "ok",
+            }
+            restored = subject_from_record({"subject": record})
+        finally:
+            veriput_subjects.VERIPUT_ROOT = old_root
+    bad = 0
+    bad += check(restored.root == str(d.resolve()),
+                 f"record root is rehomed: {restored.root}")
+    bad += check(restored.flat_sol == str((d / "flat.sol").resolve()),
+                 f"record flat.sol is rehomed: {restored.flat_sol}")
+    return bad
+
+
 def test_subject_record_preserves_inferred_solc_bin():
     with tempfile.TemporaryDirectory() as td:
         solc = str(Path(td) / "toolchain" / "solc-0.8.17")
+        make_fake_solc(solc, "exit 0\n")
         make_subject(
             td,
             "repo__C",
             solc_bin=None,
-            solc="0.8.17",
             compile={"cmd": f"{solc} --bin flat.sol"})
         subject = resolve_subject("repo__C", root=td, unit="f")
         record = subject.to_record()
         restored = subject_from_record({"subject": record})
     bad = 0
-    bad += check(record["solc"] == "0.8.17",
-                 f"solc version is retained: {record}")
+    bad += check(record["solc"] is None,
+                 f"compile-only inference does not invent solc version: {record}")
     bad += check(record["solc_bin_source"] == "inferred",
                  f"solc source is retained: {record}")
     bad += check(record["inferred_solc_bin"] == solc,
@@ -221,6 +267,28 @@ def test_subject_record_preserves_inferred_solc_bin():
     bad += check(restored.to_record() == record,
                  "inferred solc survives manifest round-trip")
     return bad
+
+
+def test_resolve_subject_rehomes_missing_solc_select_binary():
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td) / "home"
+        local_solc = home / ".solc-select" / "artifacts" / "solc-0.8.29" / "solc-0.8.29"
+        make_fake_solc(local_solc, "exit 0\n")
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(home)
+        try:
+            make_subject(
+                td,
+                "repo__C",
+                solc_bin="/home/olduser/.solc-select/artifacts/solc-0.8.29/solc-0.8.29")
+            subject = resolve_subject("repo__C", root=td, unit="f")
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+    return check(subject.solc_bin == str(local_solc),
+                 f"missing solc-select path is rehomed: {subject.solc_bin}")
 
 
 def test_bad_status_is_not_usable():
@@ -257,6 +325,74 @@ def test_resolve_subject_uses_bugfix_fallback_root():
                  f"bugfix fallback root resolves subject: {subject.root}")
     bad += check([p.name for p in dirs] == ["bugfix__C"],
                  f"bugfix fallback root is scanned: {dirs}")
+    return bad
+
+
+def test_resolve_subject_uses_bugfix_dataset_fix_source():
+    old_primary = veriput_subjects.KNOWN_SUBJECT_ROOTS["bugfix124"]
+    old_fallback = veriput_subjects.FALLBACK_SUBJECT_ROOTS.get("bugfix124", ())
+    old_dataset = veriput_subjects.BUGFIX_DATASET_ROOT
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        primary = root / "Results" / "BugFix124" / "subjects"
+        dataset = root / "Datasets" / "Patch-Bug-Bench"
+        subject_dir = dataset / "class1_RealBug-RealRepair" / "pop_066_LRTDepositPool"
+        subject_dir.mkdir(parents=True)
+        (subject_dir / "fix.flat.sol").write_text(
+            "contract LRTDepositPool { function depositAsset() public {} }\n")
+        (subject_dir / "fix.flat.sol.solast").write_text("{}\n")
+        (subject_dir / "meta.json").write_text(json.dumps({
+            "id": "pop_066_LRTDepositPool",
+            "target_contract": "LRTDepositPool",
+            "solc_version": {"fix": "0.8.29"},
+            "changed_functions": ["depositAsset"],
+        }) + "\n")
+        veriput_subjects.KNOWN_SUBJECT_ROOTS["bugfix124"] = primary
+        veriput_subjects.FALLBACK_SUBJECT_ROOTS["bugfix124"] = ()
+        veriput_subjects.BUGFIX_DATASET_ROOT = dataset
+        try:
+            subject = resolve_subject(
+                "pop_066_LRTDepositPool", benchmark="bugfix124", unit="depositAsset")
+            dirs = veriput_subjects.subject_dirs("bugfix124")
+        finally:
+            veriput_subjects.KNOWN_SUBJECT_ROOTS["bugfix124"] = old_primary
+            veriput_subjects.FALLBACK_SUBJECT_ROOTS["bugfix124"] = old_fallback
+            veriput_subjects.BUGFIX_DATASET_ROOT = old_dataset
+    bad = 0
+    bad += check(subject.contract == "LRTDepositPool",
+                 f"dataset target_contract resolves: {subject.contract}")
+    bad += check(subject.flat_sol.endswith("/pop_066_LRTDepositPool/fix.flat.sol"),
+                 f"dataset fix source is used as reference: {subject.flat_sol}")
+    bad += check(subject.metadata.get("source_layout") ==
+                 "patch-bug-bench-dataset",
+                 f"dataset provenance is recorded: {subject.metadata}")
+    bad += check([p.name for p in dirs] == ["pop_066_LRTDepositPool"],
+                 f"bugfix dataset root is scanned: {dirs}")
+    return bad
+
+
+def test_resolve_subject_prefers_primary_when_benchmark_is_known():
+    old_primary = veriput_subjects.KNOWN_SUBJECT_ROOTS["peer182"]
+    old_fallback = veriput_subjects.FALLBACK_SUBJECT_ROOTS.get("peer182", ())
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        primary = root / "Results" / "Peer182" / "subjects"
+        fallback = root / "scripts" / "Results" / "workdirs" / "Peer182" / "subjects"
+        make_subject(primary, "peer__C", benchmark="peer182", contract="PrimaryC")
+        make_subject(fallback, "peer__C", benchmark="peer182", contract="FallbackC")
+        veriput_subjects.KNOWN_SUBJECT_ROOTS["peer182"] = primary
+        veriput_subjects.FALLBACK_SUBJECT_ROOTS["peer182"] = (fallback,)
+        try:
+            subject = resolve_subject(
+                "peer__C", benchmark="peer182", unit="f")
+        finally:
+            veriput_subjects.KNOWN_SUBJECT_ROOTS["peer182"] = old_primary
+            veriput_subjects.FALLBACK_SUBJECT_ROOTS["peer182"] = old_fallback
+    bad = 0
+    bad += check(subject.contract == "PrimaryC",
+                 f"benchmark-scoped lookup prefers primary root: {subject.root}")
+    bad += check(subject.root == str((primary / "peer__C").resolve()),
+                 f"primary root path selected: {subject.root}")
     return bad
 
 
@@ -323,6 +459,48 @@ def test_ast_unit_enumeration_is_target_contract_scoped():
     return bad
 
 
+def test_no_unit_enumeration_records_auditable_reasons():
+    ast = {
+        "nodeType": "SourceUnit",
+        "nodes": [{
+            "nodeType": "ContractDefinition",
+            "id": 1,
+            "name": "LibOnly",
+            "contractKind": "library",
+            "linearizedBaseContracts": [1],
+            "nodes": [{
+                "nodeType": "FunctionDefinition",
+                "kind": "function",
+                "name": "changed",
+                "visibility": "internal",
+                "implemented": True,
+                "stateMutability": "nonpayable",
+                "parameters": {"parameters": []},
+                "returnParameters": {"parameters": []},
+            }],
+        }],
+    }
+    with tempfile.TemporaryDirectory() as td:
+        d = make_subject(td, contract="LibOnly")
+        (d / "flat.sol.solast").write_text(json.dumps(ast) + "\n")
+        subject = resolve_subject("repo__C", root=td, require_unit=False)
+        enum = enumerate_subject_units(subject)
+        record = enum.to_record()
+    reasons = {row["kind"]: row["reason"] for row in enum.skipped}
+    bad = 0
+    bad += check(enum.units == (), f"library-only target has no units: {enum}")
+    bad += check(reasons.get("library-contract") ==
+                 "library target has no externally callable unit",
+                 f"library target reason is retained: {enum.skipped}")
+    bad += check(reasons.get("non-public-function") ==
+                 "function is not public/external",
+                 f"internal changed function is retained: {enum.skipped}")
+    bad += check(record["schedulable"] is False
+                 and "no public/external" in record["no_unit_reason"],
+                 f"serialized record carries no-unit status: {record}")
+    return bad
+
+
 def test_unit_manifest_records_missing_ast_without_solc():
     with tempfile.TemporaryDirectory() as td:
         d = make_subject(td, "repo__C")
@@ -338,6 +516,28 @@ def test_unit_manifest_records_missing_ast_without_solc():
                  f"missing AST is counted: {manifest['summary']}")
     bad += check(manifest["subjects"][0]["status"] == "missing-ast",
                  f"row records missing AST: {manifest['subjects'][0]}")
+    return bad
+
+
+def test_generate_solast_uses_inferred_solc_bin_directly():
+    with tempfile.TemporaryDirectory() as td:
+        script = make_fake_solc(
+            Path(td) / "solc-0.8.17",
+            "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
+        d = make_subject(
+            td,
+            "repo__C",
+            solc_bin=None,
+            compile={"cmd": f"{script} --bin flat.sol"})
+        (d / "flat.sol.solast").unlink()
+        subject = resolve_subject("repo__C", root=td, require_unit=False)
+        row = manifest_for_subject(subject, generate_ast=True)
+    bad = 0
+    bad += check(row["status"] == "ok",
+                 f"direct manifest generation uses inferred solc: {row}")
+    bad += check(row["subject"]["solc_bin_source"] == "inferred"
+                 and row["subject"]["solc_bin"] == script,
+                 f"inferred solc provenance is serialized: {row['subject']}")
     return bad
 
 
@@ -428,7 +628,6 @@ def test_unit_manifest_cli_generates_ast_with_inferred_solc():
             td,
             "repo__C",
             solc_bin=None,
-            solc="0.8.17",
             compile={"cmd": f"{script} --bin flat.sol"})
         (d / "flat.sol.solast").unlink()
         cp = subprocess.run([
@@ -876,13 +1075,20 @@ def main():
     tests = [
         test_resolve_subject_from_root_and_unit,
         test_resolve_subject_requires_explicit_unit,
+        test_resolve_subject_accepts_cleaned_result_dir_alias,
         test_subject_from_cert_record_round_trips,
+        test_subject_record_rehomes_veriput_root_paths,
         test_subject_record_preserves_inferred_solc_bin,
+        test_resolve_subject_rehomes_missing_solc_select_binary,
         test_bad_status_is_not_usable,
         test_resolve_subject_uses_bugfix_fallback_root,
+        test_resolve_subject_uses_bugfix_dataset_fix_source,
+        test_resolve_subject_prefers_primary_when_benchmark_is_known,
         test_resolve_subject_uses_peer_fallback_root,
         test_ast_unit_enumeration_is_target_contract_scoped,
+        test_no_unit_enumeration_records_auditable_reasons,
         test_unit_manifest_records_missing_ast_without_solc,
+        test_generate_solast_uses_inferred_solc_bin_directly,
         test_generate_ast_is_atomic_on_success,
         test_generate_ast_failure_leaves_no_partial_solast,
         test_generate_ast_start_failure_cleans_temp_file,

@@ -316,8 +316,10 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
       return ElementaryTypeName;
     }
     else if (
-      typeString.find("function") != std::string::npos &&
-      typeString.find("contract ") == std::string::npos)
+      typeIdentifier.compare(0, 11, "t_function_") == 0 ||
+      (typeString.find("function") != std::string::npos &&
+       (typeString.find("contract ") == std::string::npos ||
+        typeString.compare(0, 9, "function ") == 0)))
     {
       // FunctionToPointer decay in CallExpr when making a function call
       return Pointer;
@@ -339,6 +341,17 @@ TypeNameT get_type_name_t(const nlohmann::json &type_name)
     else if (solidity_convertert::UserDefinedVarMap.count(typeString) > 0)
     {
       return UserDefinedTypeName;
+    }
+    else if (
+      typeIdentifier.compare(0, 10, "t_function") == 0 ||
+      typeString.compare(0, 8, "function") == 0)
+    {
+      // Some solc versions describe function-typed variables through
+      // typeDescriptions rather than a FunctionTypeName node.  Treat them the
+      // same way as the nodeType branch below: an opaque pointer value.  The
+      // frontend does not execute indirect function calls through such values;
+      // call conversion over-approximates their result.
+      return Pointer;
     }
     else
     {

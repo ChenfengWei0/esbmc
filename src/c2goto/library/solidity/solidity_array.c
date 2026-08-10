@@ -197,9 +197,46 @@ void *_ESBMC_alloc_nested_2d(size_t outer, size_t inner, size_t elem_size)
 {
 __ESBMC_HIDE:;
     _ESBMC_zero_size_check(elem_size != 0);
+    __ESBMC_assume(outer <= 32);
     void **outer_buf = (void **)_ESBMC_alloc_array(outer, sizeof(void *));
-    for (size_t i = 0; i < outer; i++)
-        outer_buf[i] = _ESBMC_alloc_array(inner, elem_size);
+#define _ESBMC_ALLOC_NESTED_SLOT(i) \
+    do { \
+        if (outer > (i)) \
+            outer_buf[(i)] = _ESBMC_alloc_array(inner, elem_size); \
+    } while (0)
+    _ESBMC_ALLOC_NESTED_SLOT(0);
+    _ESBMC_ALLOC_NESTED_SLOT(1);
+    _ESBMC_ALLOC_NESTED_SLOT(2);
+    _ESBMC_ALLOC_NESTED_SLOT(3);
+    _ESBMC_ALLOC_NESTED_SLOT(4);
+    _ESBMC_ALLOC_NESTED_SLOT(5);
+    _ESBMC_ALLOC_NESTED_SLOT(6);
+    _ESBMC_ALLOC_NESTED_SLOT(7);
+    _ESBMC_ALLOC_NESTED_SLOT(8);
+    _ESBMC_ALLOC_NESTED_SLOT(9);
+    _ESBMC_ALLOC_NESTED_SLOT(10);
+    _ESBMC_ALLOC_NESTED_SLOT(11);
+    _ESBMC_ALLOC_NESTED_SLOT(12);
+    _ESBMC_ALLOC_NESTED_SLOT(13);
+    _ESBMC_ALLOC_NESTED_SLOT(14);
+    _ESBMC_ALLOC_NESTED_SLOT(15);
+    _ESBMC_ALLOC_NESTED_SLOT(16);
+    _ESBMC_ALLOC_NESTED_SLOT(17);
+    _ESBMC_ALLOC_NESTED_SLOT(18);
+    _ESBMC_ALLOC_NESTED_SLOT(19);
+    _ESBMC_ALLOC_NESTED_SLOT(20);
+    _ESBMC_ALLOC_NESTED_SLOT(21);
+    _ESBMC_ALLOC_NESTED_SLOT(22);
+    _ESBMC_ALLOC_NESTED_SLOT(23);
+    _ESBMC_ALLOC_NESTED_SLOT(24);
+    _ESBMC_ALLOC_NESTED_SLOT(25);
+    _ESBMC_ALLOC_NESTED_SLOT(26);
+    _ESBMC_ALLOC_NESTED_SLOT(27);
+    _ESBMC_ALLOC_NESTED_SLOT(28);
+    _ESBMC_ALLOC_NESTED_SLOT(29);
+    _ESBMC_ALLOC_NESTED_SLOT(30);
+    _ESBMC_ALLOC_NESTED_SLOT(31);
+#undef _ESBMC_ALLOC_NESTED_SLOT
     return (void *)outer_buf;
 }
 

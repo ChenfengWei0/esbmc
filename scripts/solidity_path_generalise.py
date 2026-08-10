@@ -51,8 +51,10 @@ import argparse
 import json
 import os
 import re
+import selectors
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -76,10 +78,50 @@ from solidity_ast_dependencies import (  # noqa: E402,F401
 
 UINT256_MAX = (1 << 256) - 1
 ADDRESS_MAX = (1 << 160) - 1
+PATH_PROBE_EARLY_STOP_CLAIMS = int(
+    os.environ.get("VERIPUT_PATH_PROBE_EARLY_STOP_CLAIMS", "128"))
+PATH_PROBE_ENUM_FRACTION = float(
+    os.environ.get("VERIPUT_PATH_PROBE_ENUM_FRACTION", "0.25"))
+PATH_PROBE_ENUM_CAP_S = int(
+    os.environ.get("VERIPUT_PATH_PROBE_ENUM_CAP_S", "90"))
+PATH_PROBE_ENUM_MIN_S = int(
+    os.environ.get("VERIPUT_PATH_PROBE_ENUM_MIN_S", "30"))
+RE_PATH_PROBE_ADDED = re.compile(
+    r"--path-cov-probe: unit '([^']+)' added ([0-9]+) "
+    r"exit-latched claim\(s\)")
+RE_PATH_COV_NO_CLAIMS_REACHED = re.compile(
+    r"INTERNAL DEFECT .*?instrumented path claim\(s\) reached the solver.*?"
+    r"The harness never entered any unit",
+    re.DOTALL)
+
+
+def _kill_process_group(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait(timeout=3)
+
+
+def _timeout_output(exc):
+    def _txt(value):
+        if value is None:
+            return ""
+        return value.decode(errors="replace") \
+            if isinstance(value, bytes) else value
+    return _txt(exc.stdout) + _txt(exc.stderr)
 
 
 def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
-        memlimit="8g", esbmc_args=(), result_only=True):
+        memlimit="8g", esbmc_args=(), result_only=True,
+        probe_claim_stop=None):
     """One ESBMC invocation. Returns its combined output.
 
     `ast` names a PREBUILT .solast, passed positionally with --sol still naming
@@ -156,40 +198,90 @@ def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, ast=None, focus=None,
     # is two measurements wearing one name.
     cmd += list(esbmc_args)
     cmd_line = " ".join(shlex.quote(part) for part in cmd)
+    if probe_claim_stop is None:
+        try:
+            p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
+                               timeout=timeout)
+        except subprocess.TimeoutExpired as e:
+            # A timeout is an OUTCOME of this pipeline, not a crash of it.
+            # Measured: one outer-box round on a real contract unit (5 paths,
+            # 2 coordinates, 4 probes) does not finish in 540s, so on real
+            # input this is the common case rather than the exceptional one --
+            # and it used to surface as a Python traceback in the middle of a
+            # benchmark. Return the partial output with an explicit marker;
+            # since it carries NEITHER verdict line, every caller reads it as
+            # UNKNOWN, which is what it is.
+            # `text=True` does NOT apply to the exception's captured output:
+            # both attributes come back as bytes. Decode each side BEFORE
+            # concatenating, or the handler itself raises -- which is what it
+            # did on its first real use, turning a handled timeout into a
+            # TypeError inside the handler.
+            out = _timeout_output(e)
+            return (out + f"\n[run] CMD {cmd_line}\n"
+                    f"[run] TIMEOUT after {timeout}s: {cmd_line}\n")
+        # RECORD THE EXIT CODE, and let callers judge on it rather than on
+        # message text. ESBMC uses 0 for SUCCESSFUL and 1 for FAILED; anything
+        # else means it did not finish -- 6 for a conversion error, 134 for an
+        # abort, and so on.
+        #
+        # This replaces a whitelist of two known failure messages, which was
+        # wrong in the way this file keeps being wrong: a THIRD cause (an abort
+        # on a string-typed state coordinate, `Projecting from non-tuple based
+        # AST`) matched neither pattern, so the round came back with no regions
+        # and was reported downstream as "no fully bounded region was measured"
+        # -- a property of the path, for what was a crash. A whitelist of
+        # failures is open at the bottom; an exit code is not.
+        return (p.stdout + p.stderr +
+                f"\n[run] CMD {cmd_line}\n[run] EXIT {p.returncode}\n")
+
+    output = []
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, bufsize=1, start_new_session=True)
+    sel = selectors.DefaultSelector()
+    sel.register(proc.stdout, selectors.EVENT_READ)
+    deadline = time.monotonic() + timeout
+    early_stop_reason = None
     try:
-        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                           timeout=timeout)
-    except subprocess.TimeoutExpired as e:
-        # A timeout is an OUTCOME of this pipeline, not a crash of it. Measured:
-        # one outer-box round on a real contract unit (5 paths, 2 coordinates,
-        # 4 probes) does not finish in 540s, so on real input this is the common
-        # case rather than the exceptional one -- and it used to surface as a
-        # Python traceback in the middle of a benchmark. Return the partial
-        # output with an explicit marker; since it carries NEITHER verdict line,
-        # every caller reads it as UNKNOWN, which is what it is.
-        # `text=True` does NOT apply to the exception's captured output: both
-        # attributes come back as bytes. Decode each side BEFORE concatenating,
-        # or the handler itself raises -- which is what it did on its first real
-        # use, turning a handled timeout into a TypeError inside the handler.
-        def _txt(b):
-            if b is None:
-                return ""
-            return b.decode(errors="replace") if isinstance(b, bytes) else b
-        out = _txt(e.stdout) + _txt(e.stderr)
-        return (out + f"\n[run] CMD {cmd_line}\n"
-                f"[run] TIMEOUT after {timeout}s: {cmd_line}\n")
-    # RECORD THE EXIT CODE, and let callers judge on it rather than on message
-    # text. ESBMC uses 0 for SUCCESSFUL and 1 for FAILED; anything else means it
-    # did not finish -- 6 for a conversion error, 134 for an abort, and so on.
-    #
-    # This replaces a whitelist of two known failure messages, which was wrong
-    # in the way this file keeps being wrong: a THIRD cause (an abort on a
-    # string-typed state coordinate, `Projecting from non-tuple based AST`)
-    # matched neither pattern, so the round came back with no regions and was
-    # reported downstream as "no fully bounded region was measured" -- a
-    # property of the path, for what was a crash. A whitelist of failures is
-    # open at the bottom; an exit code is not.
-    return p.stdout + p.stderr + f"\n[run] CMD {cmd_line}\n[run] EXIT {p.returncode}\n"
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                _kill_process_group(proc)
+                return (
+                    "".join(output) + f"\n[run] CMD {cmd_line}\n"
+                    f"[run] TIMEOUT after {timeout}s: {cmd_line}\n")
+            events = sel.select(timeout=min(0.2, remaining))
+            for key, _mask in events:
+                line = key.fileobj.readline()
+                if not line:
+                    continue
+                output.append(line)
+                m = RE_PATH_PROBE_ADDED.search(line)
+                if m and int(m.group(2)) > probe_claim_stop:
+                    early_stop_reason = (
+                        f"--path-cov-probe added {m.group(2)} "
+                        f"exit-latched claim(s) for {m.group(1)}, over "
+                        f"the fallback threshold {probe_claim_stop}")
+                    _kill_process_group(proc)
+                    return (
+                        "".join(output) + f"\n[run] CMD {cmd_line}\n"
+                        f"[run] EARLY STOP: {early_stop_reason}\n")
+            if proc.poll() is not None:
+                rest = proc.stdout.read()
+                if rest:
+                    output.append(rest)
+                break
+    finally:
+        try:
+            sel.unregister(proc.stdout)
+        except Exception:
+            pass
+        sel.close()
+        if proc.poll() is None and early_stop_reason is not None:
+            _kill_process_group(proc)
+
+    return ("".join(output) +
+            f"\n[run] CMD {cmd_line}\n[run] EXIT {proc.returncode}\n")
 
 
 def save_failed_round(cwd, kind, spec, log, failure, wall_seconds):
@@ -240,6 +332,16 @@ def claim_unit(c):
     """
     cond = c.get("condition") or ""
     return cond.split(":", 1)[0] if ":" in cond else ""
+
+
+def same_path_function(actual, expected):
+    if not expected:
+        return True
+    if actual == expected:
+        return True
+    actual_id = path_function_declaration_id(actual)
+    expected_id = path_function_declaration_id(expected)
+    return actual_id is not None and actual_id == expected_id
 
 
 def _journal_env_name(name):
@@ -317,8 +419,103 @@ def derive_agreed_establishable_env_pins(paths, env_names, pins):
             kept.append(f"{n} (all paths agree, but the PUT emitter cannot "
                         "establish this environment quantity)")
             continue
-        agreed[n] = vals.pop()
+        value = vals.pop()
+        if n == "msg.sender" and value == 0:
+            kept.append(
+                "msg.sender (all paths agree at 0, but Foundry cannot establish "
+                "address(0) with vm.prank; leave it quantified for ESBMC "
+                "certification instead)")
+            continue
+        agreed[n] = value
     return agreed, kept
+
+
+def decision_read_env_coords(paths, path_decisions, pins, env_names):
+    """Environment coordinates actually read by complete-path decisions."""
+
+    env_set = set(env_names or [])
+    if not env_set:
+        return set()
+    read = set()
+    coord_set = env_set | set(pins or {})
+    for enc, _depth, ce in paths:
+        for d in (path_decisions or {}).get(enc) or []:
+            rel = _decision_relation(d.get("branch_claim"), d.get("arm"))
+            if rel is None:
+                continue
+            lhs, _op, rhs = rel
+            for term in (lhs, rhs):
+                got = _decision_term(
+                    term, ce, pins, constants=None, coord_set=coord_set)
+                if got and got[0] == "coord" and got[1] in env_set:
+                    read.add(got[1])
+    return read
+
+
+def derive_agreed_unpinned_establishable_env_coords(
+        paths, env_names, pins, decision_env_names=None):
+    """Agreed environment coordinates that must stay quantified.
+
+    The main case is msg.sender == 0. Foundry cannot establish address(0) with
+    vm.prank, so pinning is impossible; keeping it in env_names is worse,
+    because then it is neither pinned nor a free coordinate. Leaving it free
+    lets ESBMC decide whether the path really holds for an executable sender
+    range. The PUT emitter already punches address(0) out of wide sender
+    intervals before replay.
+    """
+
+    decision_env_names = (set(decision_env_names)
+                          if decision_env_names is not None else None)
+    promoted = set()
+    for n in list(env_names):
+        if n in pins:
+            continue
+        vals = {ce.get(n) for _, _, ce in paths}
+        if len(vals) != 1 or None in vals:
+            continue
+        if decision_env_names is not None and n not in decision_env_names:
+            continue
+        if n == "msg.sender" and vals.pop() == 0:
+            promoted.add(n)
+    return promoted
+
+
+def live_witness_vectors(paths, members, pins):
+    """Witness vectors that are known members of the currently pinned slice."""
+    live_by_enc = {}
+    n_violate = n_missing = 0
+    for enc, _depth, ce in paths:
+        live = []
+        for v in (members or {}).get(enc) or [ce]:
+            bad = [n for n, pv in (pins or {}).items()
+                   if n in v and v[n] != pv]
+            gone = [n for n in (pins or {}) if n not in v]
+            if bad:
+                n_violate += 1
+                continue
+            if gone:
+                n_missing += 1
+                continue
+            live.append(v)
+        live_by_enc[enc] = live
+    return live_by_enc, n_violate, n_missing
+
+
+def pinned_slice_exclusions(paths, pins):
+    """Return witnessed paths whose own CE is outside the pinned slice."""
+    excluded = {}
+    for enc, _depth, ce in paths:
+        violations = []
+        for name, value in sorted((pins or {}).items()):
+            if name in ce and ce[name] != value:
+                violations.append(
+                    f"{name}: CE {ce[name]} outside [{value}, {value}]")
+        if violations:
+            excluded[enc] = (
+                "EXCLUDED FROM THE SLICE by the pins ("
+                + "; ".join(violations)
+                + "), so this path is not an input to region search")
+    return excluded
 
 
 def struct_fields(text, nested=False):
@@ -425,7 +622,7 @@ def struct_fields(text, nested=False):
     return out
 
 
-def coord_values(c, state_structs=False):
+def coord_values(c, state_structs=False, param_types=None, state_types=None):
     """This claim's counterexample as {coordinate: int}, plus what was refused.
 
     A coordinate must be a quantity a generated test can SET, and it can only be
@@ -444,6 +641,8 @@ def coord_values(c, state_structs=False):
     into one that reads as a statement about the whole input space.
     """
     ce, refused = {}, []
+    param_types = dict(param_types or {})
+    state_types = dict(state_types or {})
     for n, v in named_value_items(c.get("env"), env=True):
         # EVM environment (msg.*/tx.*/block.*). The tool resolves these names as
         # coordinates already -- what was missing is that the driver never read
@@ -469,6 +668,30 @@ def coord_values(c, state_structs=False):
         try:
             ce[n] = parse_int(v)
         except ValueError:
+            bty = param_types.get(n)
+            if bytes_static_len(bty) is not None:
+                bv = bytes_static_value_from_ce(bty, v)
+                if bv is not None:
+                    ce[n] = bv
+                    continue
+                refused.append(
+                    f"{n} ({bty}: counterexample value is not a concrete "
+                    "bytesN aggregate)")
+                continue
+            if bytes_dynamic_type(bty):
+                fields = struct_fields(v)
+                if "length" in fields:
+                    ce[f"{n}.length"] = fields["length"]
+                    refused.append(
+                        f"{n} ({bty}: dynamic bytes aggregate; using length "
+                        "only. offset/capacity/initialized/padding are "
+                        "verifier-internal representation fields, not PUT "
+                        "coordinates)")
+                else:
+                    refused.append(
+                        f"{n} ({bty}: dynamic bytes aggregate without a "
+                        "concrete length field)")
+                continue
             # A STRUCT is not unusable, it is unusable AS ONE COORDINATE. Its
             # scalar fields each are one, and the tool resolves `param.field`
             # now, so decompose rather than refuse the whole argument -- that
@@ -488,6 +711,17 @@ def coord_values(c, state_structs=False):
         try:
             ce["state." + n] = parse_int(v)
         except ValueError:
+            source_n = re.sub(r"\$\d+$", "", n)
+            sty = state_types.get(n) or state_types.get(source_n)
+            if bytes_static_len(sty) is not None:
+                bv = bytes_static_value_from_ce(sty, v)
+                if bv is not None:
+                    ce["state." + n] = bv
+                    continue
+                refused.append(
+                    f"state.{n} ({sty}: counterexample value is not a "
+                    "concrete bytesN aggregate)")
+                continue
             # ---- THE DECOMPOSITION ABOVE REACHED ONE OF THE TWO SOURCES ----
             #
             # `inputs` has had struct_fields since the EscrowSrc measurement
@@ -525,6 +759,14 @@ def bytes_static_len(type_string):
     return int(m.group(1)) if m else None
 
 
+def bytes_dynamic_type(type_string):
+    norm = (type_string or "").strip()
+    for suffix in (" memory", " calldata", " storage"):
+        if norm.endswith(suffix):
+            norm = norm[:-len(suffix)].strip()
+    return norm in ("bytes", "string")
+
+
 def elementary_type_range(type_string):
     """Closed unsigned scalar range for a Solidity elementary type, if known."""
     norm = (type_string or "").strip()
@@ -543,18 +785,8 @@ def elementary_type_range(type_string):
     return None
 
 
-def bytes_static_mapping_key_from_ce(type_string, raw_value):
-    """Return the uint256 mapping-key literal for a bytesN CE value.
-
-    The Solidity frontend does not index mappings by the raw BytesStatic
-    aggregate. It lowers bytesN keys through bytes_static_to_mapping_key:
-        (len << 248) | bytes_static_to_uint(data)
-
-    So a slot such as m[strategyHash] can only be named in a stage-2 query if
-    the aggregate parameter is first fixed to the concrete counterexample slice
-    and emitted as that numeric key. The aggregate itself remains unsupported as
-    a fuzz coordinate.
-    """
+def bytes_static_value_from_ce(type_string, raw_value):
+    """Return the raw uint value carried by a concrete bytesN CE aggregate."""
     n = bytes_static_len(type_string)
     if n is None:
         return None
@@ -585,6 +817,48 @@ def bytes_static_mapping_key_from_ce(type_string, raw_value):
             value = (value << 8) | b
     if value < 0 or value >= (1 << (8 * n)):
         return None
+    return value
+
+
+def bytes_static_mapping_key_from_ce(type_string, raw_value):
+    """Return the uint256 mapping-key literal for a bytesN CE value.
+
+    The Solidity frontend does not index mappings by the raw BytesStatic
+    aggregate. It lowers bytesN keys through bytes_static_to_mapping_key:
+        (len << 248) | bytes_static_to_uint(data)
+
+    So a slot such as m[strategyHash] can only be named in a stage-2 query if
+    the aggregate parameter is first fixed to the concrete counterexample slice
+    and emitted as that numeric key. The raw bytesN parameter itself is still a
+    fuzzable coordinate when the AST says the source type is bytes1..bytes32.
+    """
+    n = bytes_static_len(type_string)
+    if n is None:
+        return None
+    value = bytes_static_value_from_ce(type_string, raw_value)
+    if value is None:
+        return None
+    key = (n << 248) | value
+    return f"0x{key:064x}"
+
+
+def bytes_static_mapping_key_from_value(type_string, value):
+    """Return the uint256 mapping-key literal from a typed bytesN scalar.
+
+    `coord_values` already decodes a concrete bytesN aggregate into the raw
+    bytes integer when the AST type is available.  Salvaged or imported reports
+    can therefore have enough typed CE data to name the mapping slot even when
+    the original pretty-printed aggregate is unavailable.
+    """
+    n = bytes_static_len(type_string)
+    if n is None:
+        return None
+    try:
+        value = parse_int(value)
+    except (TypeError, ValueError):
+        return None
+    if value < 0 or value >= (1 << (8 * n)):
+        return None
     key = (n << 248) | value
     return f"0x{key:064x}"
 
@@ -601,18 +875,64 @@ def witnessed_raw_inputs(cwd, unit, paths, path_function=None):
     for c in rep.get("claims", []) or []:
         if c.get("status") != "F" or claim_unit(c) != unit:
             continue
-        if path_function and c.get("path_function") != path_function:
+        if not same_path_function(c.get("path_function"), path_function):
             continue
         try:
             key = (int(c["path_id"]), int(c["path_depth"]))
         except (KeyError, TypeError, ValueError):
             continue
         if key in wanted:
-            out.append(dict(c.get("inputs") or {}))
+            out.append(named_values_dict(c.get("inputs") or {}))
     return out
 
 
-def agreed_bytes_mapping_key_literals(raw_inputs, params):
+def path_cov_probe_goal_cap(log):
+    text = log or ""
+    return (
+        ("--path-cov-probe:" in text and
+         "exceeding --path-cov-max-goals" in text) or
+        "path coverage probe universe exceeded --path-cov-max-goals" in text)
+
+
+def path_cov_probe_early_stop(log):
+    return (
+        "--path-cov-probe:" in (log or "") and
+        "[run] EARLY STOP: --path-cov-probe added" in (log or ""))
+
+
+def path_cov_probe_timeout(log):
+    return (
+        "--path-cov-probe" in (log or "") and
+        "[run] TIMEOUT after" in (log or ""))
+
+
+def path_cov_no_claims_reached_solver(log):
+    return bool(RE_PATH_COV_NO_CLAIMS_REACHED.search(log or ""))
+
+
+def path_cov_basic_enum_fallback_reason(log):
+    if path_cov_probe_goal_cap(log):
+        return "path-cov-probe-goal-cap"
+    if path_cov_probe_early_stop(log):
+        return "path-cov-probe-early-stop"
+    if path_cov_probe_timeout(log):
+        return "path-cov-probe-timeout"
+    if path_cov_no_claims_reached_solver(log):
+        return "path-coverage-no-claims-reached-solver"
+    return None
+
+
+def path_cov_probe_enum_timeout(timeout, probe_witnesses):
+    if not probe_witnesses:
+        return timeout
+    if timeout <= PATH_PROBE_ENUM_MIN_S + 30:
+        return timeout
+    fractional = int(timeout * PATH_PROBE_ENUM_FRACTION)
+    capped = min(PATH_PROBE_ENUM_CAP_S, fractional)
+    return max(PATH_PROBE_ENUM_MIN_S, capped)
+
+
+def agreed_bytes_mapping_key_literals(raw_inputs, params, typed_paths=None):
     literals, skipped = {}, []
     for name, type_string in params:
         if bytes_static_len(type_string) is None:
@@ -620,6 +940,7 @@ def agreed_bytes_mapping_key_literals(raw_inputs, params):
         vals = set()
         seen = 0
         for raw in raw_inputs:
+            raw = named_values_dict(raw)
             if name not in raw:
                 continue
             seen += 1
@@ -631,6 +952,22 @@ def agreed_bytes_mapping_key_literals(raw_inputs, params):
                 vals = set()
                 break
             vals.add(key)
+        if not seen:
+            for item in typed_paths or []:
+                ce = item[2] if isinstance(item, tuple) and len(item) >= 3 \
+                    else item
+                if not isinstance(ce, dict) or name not in ce:
+                    continue
+                seen += 1
+                key = bytes_static_mapping_key_from_value(
+                    type_string, ce[name])
+                if key is None:
+                    skipped.append(
+                        f"{name} ({type_string}: typed path value is not a "
+                        "concrete bytesN scalar)")
+                    vals = set()
+                    break
+                vals.add(key)
         if len(vals) == 1:
             literals[name] = next(iter(vals))
         elif seen and len(vals) > 1:
@@ -1099,7 +1436,7 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
                     ast=None, focus=None, memlimit="8g", path_function=None,
                     esbmc_args=(), state_structs=False, probe_witnesses=0,
                     enumeration_index=None, enumeration_report=None,
-                    scope_label="whole"):
+                    scope_label="whole", param_types=None, state_types=None):
     """Step 1. Return paths, refusals, caveats, members, extras and decisions.
 
     `paths` = [(enc, depth, ce)]; `members` = {enc: {coord: [v, ...]}}, the
@@ -1181,9 +1518,49 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
             enum_args += ["--branch-function-coverage", "--path-cov-probe",
                           "--all-witnesses", "--max-witnesses",
                           str(probe_witnesses)]
-        log = run(esbmc, sol, contract, enum_args, max_tx, timeout, cwd,
+        enum_timeout = path_cov_probe_enum_timeout(timeout, probe_witnesses)
+        enum_started = time.monotonic()
+        if enum_timeout != timeout:
+            print(
+                f"[enumerate] limiting --path-cov-probe/all-witnesses to "
+                f"{enum_timeout}s of the {timeout}s unit budget; remaining "
+                "time is reserved for basic enumeration and certification")
+        log = run(esbmc, sol, contract, enum_args, max_tx, enum_timeout, cwd,
                   ast=ast, focus=focus, memlimit=memlimit,
-                  esbmc_args=esbmc_args)
+                  esbmc_args=esbmc_args,
+                  probe_claim_stop=(
+                      PATH_PROBE_EARLY_STOP_CLAIMS if probe_witnesses
+                      else None))
+        fallback_reason = (
+            path_cov_basic_enum_fallback_reason(log)
+            if not os.path.exists(report) else None)
+        if probe_witnesses and fallback_reason:
+            print(
+                "[enumerate] --path-cov-probe was too expensive for this "
+                "unit; retrying without probe/all-witnesses. The witness pool "
+                "will be smaller, but basic path enumeration can still feed "
+                "certification instead of timing out or classifying the unit "
+                f"as a driver refusal ({fallback_reason})")
+            if os.path.exists(report):
+                os.remove(report)
+            if os.path.exists(journal):
+                os.remove(journal)
+            fallback_timeout = max(
+                1, int(timeout - (time.monotonic() - enum_started)))
+            log = run(esbmc, sol, contract, ["--cov-report-json"], max_tx,
+                      fallback_timeout, cwd, ast=ast, focus=focus,
+                      memlimit=memlimit, esbmc_args=esbmc_args)
+            fallback_reason = (
+                path_cov_basic_enum_fallback_reason(log)
+                if not os.path.exists(report) else None)
+        if fallback_reason == "path-coverage-no-claims-reached-solver":
+            write_generalise_progress(
+                cwd, "enumeration-no-claims-reached-solver",
+                reason=fallback_reason,
+                probe_witnesses=probe_witnesses,
+                scope=scope_label,
+                path_function=path_function,
+            )
         if not os.path.exists(report):
             salvaged = partial_journal_report(cwd)
             if salvaged:
@@ -1215,7 +1592,7 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
               and "path_depth" in c]
     if path_function:
         claims = [c for c in claims
-                  if c.get("path_function") == path_function]
+                  if same_path_function(c.get("path_function"), path_function)]
 
     # OVERLOADS. Two functions sharing a name are two units with two independent
     # path-id spaces, and a stage-2 query identifies a path by (enc, depth)
@@ -1261,10 +1638,14 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
             key = (int(path["path_id"]), int(path["decision_depth"]))
             dst = probe_members.setdefault(key, [])
             for witness in path.get("witnesses") or []:
-                wce, _ = coord_values(witness, state_structs=state_structs)
+                wce, _ = coord_values(
+                    witness, state_structs=state_structs,
+                    param_types=param_types, state_types=state_types)
                 dst.append(wce)
     for c in witnessed:
-        ce, ref = coord_values(c, state_structs=state_structs)
+        ce, ref = coord_values(
+            c, state_structs=state_structs, param_types=param_types,
+            state_types=state_types)
         enc = int(c["path_id"])
         # The de-duplication below keeps the FIRST transaction instance of an
         # enc. Keep its metadata by the same rule; assignment here used to keep
@@ -1288,7 +1669,9 @@ def enumerate_paths(esbmc, sol, contract, unit, max_tx, timeout, cwd,
         # OTHER coordinate, as though a member of a slice it is not in.
         vecs = [ce]
         for w in (c.get("witnesses") or []):
-            wce, _ = coord_values(w, state_structs=state_structs)
+            wce, _ = coord_values(
+                w, state_structs=state_structs, param_types=param_types,
+                state_types=state_types)
             vecs.append(wce)
         vecs.extend(probe_members.get((enc, int(c["path_depth"])), ()))
         out.append((enc, int(c["path_depth"]), ce, vecs))
@@ -1314,6 +1697,27 @@ def abi_gate_class(decisions):
     # The synthetic GOTO jumps into the body when msg.value == 0. In the report
     # that jump is `taken`; fall-through is the immediate ABI rejection path.
     return "body" if gates[0].get("arm") == "taken" else "reject"
+
+
+def compiler_abi_gate_candidate_mapping(path_decisions, pins=None):
+    """Return named candidates for pinned, compiler-generated ABI gates."""
+    if "msg.value" not in (pins or {}):
+        return {}
+    candidates = {}
+    for enc, decisions in sorted((path_decisions or {}).items()):
+        for decision in decisions or []:
+            claim = str(decision.get("branch_claim") or "")
+            if not decision.get("synthetic_abi_gate") or \
+                    "msg.value" not in claim:
+                continue
+            candidates.setdefault(enc, []).append({
+                "coordinate": "msg.value",
+                "arm": ("body" if decision.get("arm") == "taken"
+                        else "reject"),
+                "branch_claim": claim,
+                "decision": decision.get("index"),
+            })
+    return candidates
 
 
 def structural_abi_gate_certificate(decisions, box, holes, ce):
@@ -1461,6 +1865,8 @@ def _decision_term(term, ce, pins, constants=None, coord_set=None):
     m = re.match(r"^return_value\$([A-Za-z_][A-Za-z0-9_]*)\$\d+$", term)
     if m:
         state_name = "state." + m.group(1)
+        if coord_set and state_name in coord_set:
+            return "coord", state_name
         if state_name in pins:
             return "const", pins[state_name]
         if state_name in ce:
@@ -1814,6 +2220,32 @@ def relation_establishable_state_targets(paths, path_decisions, pins, coords,
     return out
 
 
+def relation_establishable_env_sources(paths, path_decisions, pins, coords,
+                                       env_names, constants=None):
+    """Environment coordinates that must stay free to establish state relations."""
+    coord_set = set(coords or [])
+    env_set = set(env_names or [])
+    out = set()
+    for enc, _depth, ce in paths:
+        for d in path_decisions.get(enc) or []:
+            rel = _decision_relation(d.get("branch_claim"), d.get("arm"))
+            if rel is None:
+                continue
+            lhs, op, rhs = rel
+            if op != "==":
+                continue
+            lt = _decision_term(lhs, ce, pins, constants, coord_set=coord_set)
+            rt = _decision_term(rhs, ce, pins, constants, coord_set=coord_set)
+            if lt is None or rt is None:
+                continue
+            if lt[0] != "coord" or rt[0] != "coord":
+                continue
+            pair = _relation_establish_pair(lt[1], rt[1], coord_set)
+            if pair is not None and pair[1] in env_set:
+                out.add(pair[1])
+    return out
+
+
 def enumeration_has_arith_conditions(cwd):
     """Whether the enumeration saw checked-arithmetic conditions on any path."""
     report = os.path.join(cwd, "cov-report.json")
@@ -1838,25 +2270,27 @@ def enumeration_has_arith_conditions(cwd):
 _MISSING = object()
 
 
+EXTERNAL_SUCCESS_HELPERS = {
+    "safeTransfer",
+    "safeTransferFrom",
+    "safeApprove",
+    "safeIncreaseAllowance",
+    "safeDecreaseAllowance",
+    "functionCall",
+    "functionCallWithValue",
+    "verifyCallResult",
+}
+
+
+def is_external_success_decision(d, extcall_context=False):
+    claim = (d or {}).get("branch_claim") or ""
+    if claim not in ("!success", "!(!success)", "success", "!(success)"):
+        return False
+    fun = (d or {}).get("function") or ""
+    return extcall_context or fun in EXTERNAL_SUCCESS_HELPERS
+
+
 def _nondet_decision_splits(decisions_a, decisions_b):
-    external_success_helpers = {
-        "safeTransfer",
-        "safeTransferFrom",
-        "safeApprove",
-        "safeIncreaseAllowance",
-        "safeDecreaseAllowance",
-        "functionCall",
-        "functionCallWithValue",
-        "verifyCallResult",
-    }
-
-    def is_external_success_decision(d):
-        claim = (d or {}).get("branch_claim") or ""
-        fun = (d or {}).get("function") or ""
-        if fun not in external_success_helpers:
-            return False
-        return claim in ("!success", "!(!success)", "success", "!(success)")
-
     by_key = {}
     for d in decisions_a or []:
         key = (d.get("index"), d.get("function"), d.get("line"))
@@ -1888,10 +2322,11 @@ UNCONTROLLED_DECISION_TOKENS = (
 )
 
 
-def _decision_has_uncontrolled_source(decisions):
+def _decision_has_uncontrolled_source(decisions, extcall_context=False):
     for d in decisions or []:
         claim = d.get("branch_claim") or ""
-        if any(tok in claim for tok in UNCONTROLLED_DECISION_TOKENS):
+        if (any(tok in claim for tok in UNCONTROLLED_DECISION_TOKENS) or
+                is_external_success_decision(d, extcall_context)):
             return True
     return False
 
@@ -1910,8 +2345,26 @@ def _decision_reads_free_coord(decision, ce, pins, coords, constants=None):
     return False
 
 
+def _decision_is_pinned_msg_value_gate(*decisions, pins=None):
+    """A nonpayable msg.value split excluded by the current pinned slice.
+
+    Only the explicit synthetic marker identifies a compiler ABI gate. A
+    source-level msg.value guard remains part of the decision context even
+    when the caller pins msg.value.
+    """
+    if "msg.value" not in (pins or {}):
+        return False
+    for decision in decisions:
+        if not (decision or {}).get("synthetic_abi_gate"):
+            continue
+        claim = str((decision or {}).get("branch_claim") or "")
+        if "msg.value" in claim:
+            return True
+    return False
+
+
 def uncontrolled_decision_splits(paths, path_decisions, coords, pins,
-                                  constants=None):
+                                  constants=None, path_extras=None):
     """Sibling paths split only by a known untestable/nondet decision source.
 
     This is a refutation-only filter. It never proves a PUT region; it only
@@ -1921,19 +2374,40 @@ def uncontrolled_decision_splits(paths, path_decisions, coords, pins,
     differing decision itself must not read a free coordinate, so ordinary input
     guards such as `amount > 9000` still go through normal region search.
     """
+    # A pinned ABI/environment value defines the slice before path pairs are
+    # compared. An out-of-slice witness cannot make an in-slice path
+    # statically inseparable, and must not participate in this refutation-only
+    # filter.
+    excluded = pinned_slice_exclusions(paths, pins)
+    paths = [path for path in paths if path[0] not in excluded]
     failed = {}
     by_enc = {enc: (depth, ce) for enc, depth, ce in paths}
+    path_extras = path_extras or {}
     encs = sorted(by_enc)
     for i, enc_a in enumerate(encs):
         _depth_a, ce_a = by_enc[enc_a]
-        dec_a = path_decisions.get(enc_a) or []
+        # A pinned non-payable ABI gate is outside this slice. Remove it from
+        # the active decision context before looking for uncontrolled sources;
+        # otherwise incomplete/legacy gate metadata can make an out-of-slice
+        # msg.value arm contaminate the body-path pair attribution.
+        dec_a = [
+            d for d in (path_decisions.get(enc_a) or [])
+            if not _decision_is_pinned_msg_value_gate(d, pins=pins)
+        ]
         by_key = {(d.get("index"), d.get("function"), d.get("line")): d
                   for d in dec_a}
         for enc_b in encs[i + 1:]:
             _depth_b, ce_b = by_enc[enc_b]
-            dec_b = path_decisions.get(enc_b) or []
-            if not (_decision_has_uncontrolled_source(dec_a) or
-                    _decision_has_uncontrolled_source(dec_b)):
+            dec_b = [
+                d for d in (path_decisions.get(enc_b) or [])
+                if not _decision_is_pinned_msg_value_gate(d, pins=pins)
+            ]
+            extcall_context = any(
+                n.startswith("extcall.")
+                for n in set(path_extras.get(enc_a) or {}) |
+                set(path_extras.get(enc_b) or {}))
+            if not (_decision_has_uncontrolled_source(dec_a, extcall_context) or
+                    _decision_has_uncontrolled_source(dec_b, extcall_context)):
                 continue
             evidence = []
             for d in dec_b:
@@ -1941,12 +2415,21 @@ def uncontrolled_decision_splits(paths, path_decisions, coords, pins,
                 other = by_key.get(key)
                 if other is None or other.get("arm") == d.get("arm"):
                     continue
+                if d.get("synthetic_abi_gate") or other.get("synthetic_abi_gate"):
+                    continue
+                if _decision_is_pinned_msg_value_gate(d, other, pins=pins):
+                    continue
                 if (_decision_reads_free_coord(d, ce_b, pins, coords,
                                                constants) or
                         _decision_reads_free_coord(other, ce_a, pins, coords,
                                                    constants)):
                     continue
                 claim = d.get("branch_claim") or other.get("branch_claim") or ""
+                if (
+                    is_external_success_decision(d, extcall_context) or
+                    is_external_success_decision(other, extcall_context)
+                ):
+                    claim = "external-call success"
                 evidence.append(
                     f"decision#{d.get('index')} {claim}")
             if not evidence:
@@ -2102,20 +2585,13 @@ def empty_enumeration_reason(cwd, unit):
         return True, ("and the report holds NO claim for this unit at all, so "
                       "nothing was even attempted for it. That is a scope or "
                       "wiring question, not a property of the contract")
-    tally = {}
-    for c in mine:
-        tally[c.get("u_reason") or "(no u_reason field)"] = tally.get(
-            c.get("u_reason") or "(no u_reason field)", 0) + 1
+    tally = empty_enumeration_tally(mine)
     abandoned = sorted(r for r in tally if r in U_NEVER_FOUND_OUT)
     looked = sorted(r for r in tally if r in U_LOOKED_AND_FOUND_NONE)
     unknown = sorted(r for r in tally
                      if r not in U_NEVER_FOUND_OUT
                      and r not in U_LOOKED_AND_FOUND_NONE)
-    lines = [f"{len(mine)} claim(s) for this unit, none witnessed:"]
-    for r in sorted(tally):
-        why = (U_NEVER_FOUND_OUT.get(r) or U_LOOKED_AND_FOUND_NONE.get(r)
-               or "this driver does not know this reason token")
-        lines.append(f"    {tally[r]}x {r} -- {why}")
+    lines = empty_enumeration_tally_lines(tally, len(mine))
     if abandoned and all(r == "named-obstacle" for r in abandoned) and not unknown:
         n = tally["named-obstacle"]
         head = (f"⛔ and it is NOT a result: {n} of {len(mine)} claim(s) were "
@@ -2139,6 +2615,75 @@ def empty_enumeration_reason(cwd, unit):
     return False, head + "\n  " + "\n  ".join(lines) + (
         "\n  " + f"(reasons in the 'looked' family: {', '.join(looked)})"
         if looked else "")
+
+
+def empty_enumeration_tally(claims):
+    tally = {}
+    for c in claims:
+        reason = c.get("u_reason") or "(no u_reason field)"
+        tally[reason] = tally.get(reason, 0) + 1
+    return tally
+
+
+def empty_enumeration_tally_lines(tally, total):
+    lines = [f"{total} claim(s) for this unit, none witnessed:"]
+    for r in sorted(tally):
+        why = (U_NEVER_FOUND_OUT.get(r) or U_LOOKED_AND_FOUND_NONE.get(r)
+               or "this driver does not know this reason token")
+        lines.append(f"    {tally[r]}x {r} -- {why}")
+    return lines
+
+
+def empty_enumeration_diagnostic(cwd, unit):
+    report = os.path.join(cwd, "cov-report.json")
+    try:
+        with open(report) as f:
+            rep = json.load(f)
+    except (OSError, ValueError) as e:
+        return {
+            "class": "unreadable-report",
+            "report": report,
+            "error": str(e),
+        }
+    mine = [c for c in rep.get("claims", []) if claim_unit(c) == unit]
+    tally = empty_enumeration_tally(mine)
+    abandoned = sorted(r for r in tally if r in U_NEVER_FOUND_OUT)
+    looked = sorted(r for r in tally if r in U_LOOKED_AND_FOUND_NONE)
+    unknown = sorted(r for r in tally
+                     if r not in U_NEVER_FOUND_OUT
+                     and r not in U_LOOKED_AND_FOUND_NONE)
+    total = len(mine)
+    bounded = int(tally.get("bounded-holds") or 0)
+    if not mine:
+        cls = "no-claims-for-unit"
+    elif bounded == total and total > 0:
+        cls = "bounded-holds-only"
+    elif abandoned or unknown:
+        cls = "mixed-undecided"
+    else:
+        cls = "decided-no-witness"
+    diag = {
+        "class": cls,
+        "claims_total": total,
+        "bounded_holds": bounded,
+        "never_found_out": {
+            reason: int(tally[reason]) for reason in abandoned
+        },
+        "looked_and_found_none": {
+            reason: int(tally[reason]) for reason in looked
+        },
+        "unknown_reasons": {
+            reason: int(tally[reason]) for reason in unknown
+        },
+    }
+    if cls == "bounded-holds-only":
+        diag["retry_hint"] = {
+            "reason": "bounded-holds-only",
+            "max_tx": 2,
+            "unwind": 8,
+            "scope": "focus",
+        }
+    return diag
 
 
 def state_mutability(ast_path):
@@ -2726,6 +3271,72 @@ def mapping_state_vars(ast_path, contract=None):
     # refuse it as "unknown" for a reason that is about this walk, not about
     # the source.
     structs = _struct_scalar_fields(ast)
+    struct_nodes = {}
+
+    def collect_struct_nodes(n):
+        if isinstance(n, dict):
+            if n.get("nodeType") == "StructDefinition" and n.get("name"):
+                struct_nodes[n["name"]] = n
+            for v in n.values():
+                collect_struct_nodes(v)
+        elif isinstance(n, list):
+            for v in n:
+                collect_struct_nodes(v)
+
+    collect_struct_nodes(ast)
+
+    def mapping_leaf_specs(tn, prefix="", key_types=None, seen=None):
+        key_types = list(key_types or [])
+        seen = set(seen or set())
+        if not isinstance(tn, dict):
+            return [], []
+        if tn.get("nodeType") == "Mapping":
+            kt = tn.get("keyType") or {}
+            if kt.get("nodeType") != "ElementaryTypeName":
+                return [], [
+                    f"{prefix or '<root>'} (key at level {len(key_types)} is "
+                    f"{_type_string(kt) or 'non-scalar'}, not a value type)"
+                ]
+            return mapping_leaf_specs(
+                tn.get("valueType") or {}, prefix,
+                key_types + [_type_string(kt)], seen)
+        if tn.get("nodeType") == "ElementaryTypeName":
+            if not key_types:
+                return [], []
+            tail = prefix or ""
+            ty = _type_string(tn)
+            return [(tuple(key_types), ty, tail, ty)], []
+        sname = _user_type_name(tn)
+        if not sname:
+            return [], [
+                f"{prefix or '<root>'} (value is "
+                f"{_type_string(tn) or 'non-scalar'}; no scalar observable "
+                "can be named inside it)"
+            ]
+        if sname in seen:
+            return [], [f"{prefix or sname} (recursive struct type {sname})"]
+        snode = struct_nodes.get(sname)
+        if snode is None:
+            return [], [
+                f"{prefix or '<root>'} (struct {sname} was not found in the "
+                "AST, so no scalar observable can be named inside it)"
+            ]
+        leaves, refused_local = [], []
+        for member in snode.get("members", []) or []:
+            if not isinstance(member, dict) or not member.get("name"):
+                continue
+            mt = member.get("typeName") or {}
+            mprefix = prefix + "." + member["name"]
+            if mt.get("nodeType") == "ElementaryTypeName":
+                if key_types:
+                    ty = _type_string(mt)
+                    leaves.append((tuple(key_types), ty, mprefix, ty))
+                continue
+            sub_leaves, sub_refused = mapping_leaf_specs(
+                mt, mprefix, key_types, seen | {sname})
+            leaves.extend(sub_leaves)
+            refused_local.extend(sub_refused)
+        return leaves, refused_local
 
     def walk(n):
         if isinstance(n, dict):
@@ -2734,47 +3345,33 @@ def mapping_state_vars(ast_path, contract=None):
                 tn = n.get("typeName") or {}
                 if tn.get("nodeType") == "Mapping":
                     nm = n["name"]
-                    # ---- PEEL EVERY LEVEL, collecting the key types ----
-                    kts, cur, bad = [], tn, False
-                    while isinstance(cur, dict) and cur.get("nodeType") == "Mapping":
-                        kt = cur.get("keyType") or {}
-                        if kt.get("nodeType") != "ElementaryTypeName":
-                            refused.append(
-                                f"{nm} (key at level {len(kts)} is "
-                                f"{_type_string(kt) or 'non-scalar'}, not a "
-                                f"value type)")
-                            bad = True
-                            break
-                        kts.append(_type_string(kt))
-                        cur = cur.get("valueType") or {}
-                    if bad:
-                        pass
-                    elif cur.get("nodeType") == "ElementaryTypeName":
-                        vts = _type_string(cur)
-                        if len(kts) == 1:
-                            # Unchanged 2-tuple for the one-level scalar case,
-                            # so every existing caller and test is bit-identical.
-                            out.setdefault(nm, (kts[0], vts))
-                        else:
-                            out.setdefault(nm, (tuple(kts), vts, [""]))
-                    else:
-                        sname = _user_type_name(cur)
-                        fields = structs.get(sname) if sname else None
-                        if fields:
-                            out.setdefault(
-                                nm,
-                                (tuple(kts) if len(kts) > 1 else (kts[0],),
-                                 f"struct {sname}",
-                                 ["." + f for f, _t in fields],
-                                 {"." + f: t for f, t in fields}))
-                        else:
+                    leaves, leaf_refused = mapping_leaf_specs(tn)
+                    for r in leaf_refused:
+                        refused.append(
+                            nm + r[len("<root>"):] if r.startswith("<root>")
+                            else f"{nm}.{r}")
+                    if not leaves:
+                        if not leaf_refused:
                             refused.append(
                                 f"{nm} (value is "
-                                f"{_type_string(cur) or sname or 'non-scalar'}"
-                                f"; it is neither an elementary type nor a "
-                                f"struct with scalar fields this walk can "
-                                f"resolve, so no scalar observable can be "
-                                f"named inside it)")
+                                f"{_type_string(tn) or 'non-scalar'}; it has no "
+                                "scalar mapping leaf this walk can resolve)")
+                        pass
+                    elif len(leaves) == 1 and leaves[0][2] == "" \
+                            and len(leaves[0][0]) == 1:
+                        out.setdefault(nm, (leaves[0][0][0], leaves[0][1]))
+                    else:
+                        groups = {}
+                        for kts, _vts, tail, leaf_ty in leaves:
+                            groups.setdefault(tuple(kts), []).append(
+                                (tail, leaf_ty))
+                        for kts, items in groups.items():
+                            tails = [tail for tail, _ty in items]
+                            leaf_types = {tail: ty for tail, ty in items}
+                            out.setdefault(
+                                nm,
+                                (tuple(kts), "nested mapping leaf", tails,
+                                 leaf_types))
             for v in n.values():
                 walk(v)
         elif isinstance(n, list):
@@ -3063,8 +3660,6 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
             return key_type == "address"
         if param_types.get(coord) != key_type:
             return False
-        if bytes_static_len(key_type) is not None:
-            return coord in key_literals
         return True
 
     def key_name(coord):
@@ -3072,12 +3667,6 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
 
     def key_refusal(name, keys, lvl, key, kt):
         base = f"state.{name}" + "".join(f"[{k}]" for k in keys)
-        if param_types.get(key) == kt and bytes_static_len(kt) is not None:
-            return (
-                f"{base} (source slot not proposed: key level {lvl} uses "
-                f"bytesN parameter {key}, which the verifier models as an "
-                "aggregate rather than a scalar coordinate, and no agreed "
-                "counterexample mapping-key literal was available)")
         return (
             f"{base} (source slot not proposed: key level {lvl} uses {key}, "
             f"but the verifier can only express unit parameters of type "
@@ -3174,24 +3763,13 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
             if kt == "address":
                 keys.append("msg.sender")
             if not keys:
-                byte_params = [p for p, pt in params
-                               if pt == kt
-                               and bytes_static_len(kt) is not None]
-                if byte_params:
-                    skipped.append(
-                        f"state.{m}[...] (at key level {lvl} the only "
-                        f"matching parameter(s) are bytesN aggregate(s): "
-                        + ", ".join(byte_params) + ". No agreed "
-                        "counterexample mapping-key literal was available, so "
-                        "the verifier cannot name a scalar slot key)")
-                else:
-                    skipped.append(
-                        f"state.{m}[...] (at key level {lvl} this unit has no "
-                        f"parameter of the key type '{kt}', and the key type is "
-                        f"not address so msg.sender does not apply). A nested "
-                        f"store needs a key at EVERY level: one missing level "
-                        f"leaves no slot to name, and a name with fewer keys "
-                        f"would denote a whole sub-store instead")
+                skipped.append(
+                    f"state.{m}[...] (at key level {lvl} this unit has no "
+                    f"parameter of the key type '{kt}', and the key type is "
+                    f"not address so msg.sender does not apply). A nested "
+                    f"store needs a key at EVERY level: one missing level "
+                    f"leaves no slot to name, and a name with fewer keys "
+                    f"would denote a whole sub-store instead")
                 bad = True
                 break
             per_level.append(keys)
@@ -3284,6 +3862,31 @@ def certification_query_pins(pins):
     deployment can produce.
     """
     return {n: v for n, v in sorted((pins or {}).items())}
+
+
+def drop_unexpressible_query_names(names, pins=None, *region_maps):
+    """Remove coordinates a certification query cannot express.
+
+    Outer-box treats an unexpressible coordinate as "measure the remaining
+    coordinates"; certification refuses the whole query.  Once an outer round
+    has already named such coordinates, carrying them into certification can
+    only buy a predictable refusal.  Dropping them asks ESBMC to certify the
+    region for all values of those coordinates, which is stronger than the
+    bounded query that the tool cannot spell.
+    """
+    dropped = set()
+    for n in sorted(set(names or ())):
+        if pins is not None and n in pins:
+            pins.pop(n, None)
+            dropped.add(n)
+        for mapping in region_maps:
+            if not mapping:
+                continue
+            for box in mapping.values():
+                if isinstance(box, dict) and n in box:
+                    box.pop(n, None)
+                    dropped.add(n)
+    return dropped
 
 
 def geometric_values(limit, lo=0):
@@ -3614,24 +4217,10 @@ def known_inside(paths, members, coords, pins, type_ranges=None):
     this only removes QUESTIONS WHOSE ANSWER IS KNOWN and never widens a box.
     """
     notes, kept = [], {}
-    n_violate = n_missing = 0
+    live_by_enc, n_violate, n_missing = live_witness_vectors(
+        paths, members, pins)
     for enc, _, _ in paths:
-        live = []
-        for v in (members.get(enc) or []):
-            bad = [n for n, pv in pins.items() if n in v and v[n] != pv]
-            gone = [n for n in pins if n not in v]
-            if bad:
-                n_violate += 1
-                continue
-            if gone:
-                # NOT a member of the slice as far as anything here can tell.
-                # Discarded rather than assumed to satisfy the pin: a vector
-                # silently admitted on a pin nobody checked would put values
-                # into the pool from outside the slice being generalised, and
-                # every use below treats a pool value as a KNOWN MEMBER.
-                n_missing += 1
-                continue
-            live.append(v)
+        live = live_by_enc.get(enc) or []
         per = {}
         for c in coords:
             vals = sorted({v[c] for v in live if c in v})
@@ -4063,7 +4652,7 @@ def outer_round(esbmc, sol, contract, unit, paths, coords, pins, probes,
                   "pre-determined answer. The ladder is laid exactly as it "
                   "would have been without the probes — this is a statement "
                   "about the paths' overlap, NOT about the probes")
-    path = os.path.join(cwd, "outer.json")
+    path = os.path.abspath(os.path.join(cwd, "outer.json"))
     with open(path, "w") as f:
         json.dump(spec, f)
     n_probe = sum(len(c.get("values", [])) or (probes + 2) for c in spec_coords)
@@ -4775,7 +5364,8 @@ def coordinate_accounting(payload, buckets):
     return sorted(set(payload) - set(where)), where
 
 
-def witness_values(cwd, unit, state_structs=False):
+def witness_values(cwd, unit, state_structs=False, param_types=None,
+                   state_types=None):
     """The REFUTING input's payload, harvested from the certification run.
 
     ⛔ `state_structs` MUST BE THREADED IN FROM THE SAME FLAG THAT DECOMPOSED THE
@@ -4812,15 +5402,20 @@ def witness_values(cwd, unit, state_structs=False):
     except (OSError, ValueError):
         return {}
     def same_unit(c):
-        return claim_unit(c) == unit or c.get("path_function") == unit
+        return claim_unit(c) == unit or same_path_function(
+            c.get("path_function"), unit)
     for c in rep.get("certify_safety_refutations", []):
         if c.get("status") == "F" and same_unit(c):
-            ce, _ = coord_values(c, state_structs=state_structs)
+            ce, _ = coord_values(
+                c, state_structs=state_structs, param_types=param_types,
+                state_types=state_types)
             ce.update(payload_extras(c))
             return ce
     for c in rep.get("claims", []):
         if c.get("status") == "F" and same_unit(c):
-            ce, _ = coord_values(c, state_structs=state_structs)
+            ce, _ = coord_values(
+                c, state_structs=state_structs, param_types=param_types,
+                state_types=state_types)
             ce.update(payload_extras(c))
             return ce
     return {}
@@ -5163,6 +5758,85 @@ def tiny_safety_cut_retreat(box, coord, removed, ce, streak, threshold):
     return {coord: pv}
 
 
+def _coord_survival_rank(name):
+    """Which coordinate is most valuable to keep wide in a partial retreat."""
+    if is_env(name):
+        return 0
+    if name.startswith("state."):
+        return 1
+    return 2
+
+
+def _coord_retreat_rank(name):
+    """Which coordinates should be given up first when a relation refutes."""
+    if is_env(name):
+        return 0
+    if name.startswith("state."):
+        return 1
+    return 2
+
+
+def multi_difference_retreat(box, holes, ce, usable, pins):
+    """Pin all but the best wide coordinate for a multi-coordinate refutation.
+
+    A refutation that differs from x_pi on several rendered coordinates is often
+    not a rectangular boundary at all: checked arithmetic, ownership established
+    from caller state, and mapping-key/state relations are product-region hostile.
+    Repeating one side cut per query is then the slow path to the same result:
+    eventually the loop gives up most coordinates, but spends one ESBMC query per
+    boundary movement.
+
+    This is still only a refutation response. It proves nothing about the final
+    region. It merely chooses the narrower candidate region to ask ESBMC about
+    next: keep one useful coordinate wide (prefer an ordinary function input over
+    state, and state over environment), pin the other differing coordinates at
+    x_pi where that value is inside this piece, and let certification decide.
+    """
+    actionable = []
+    for name, pv, wv in usable:
+        if name in pins or name not in box:
+            continue
+        lo, hi = box[name]
+        hs = set(holes.get(name, ()))
+        if lo == hi or not (lo <= pv <= hi) or pv in hs:
+            continue
+        nb = cut_towards(lo, hi, wv, pv) if lo <= wv <= hi else None
+        before = coord_kept(lo, hi, hs)
+        after = None
+        removed = None
+        if nb is not None:
+            nlo, nhi = nb
+            after = coord_kept(nlo, nhi, hs)
+            if 0 < after < before:
+                removed = before - after
+        actionable.append({
+            "name": name,
+            "value": pv,
+            "width": before,
+            "after": after,
+            "removed": removed,
+            "survival": _coord_survival_rank(name),
+            "retreat": _coord_retreat_rank(name),
+        })
+    if len(actionable) < 2:
+        return {}
+    survivor = max(
+        actionable,
+        key=lambda item: (item["survival"], item["width"], -item["retreat"],
+                          item["name"]))
+    retreatable = [
+        item for item in actionable
+        if item["name"] != survivor["name"]
+    ]
+    if not retreatable:
+        return {}
+    # Pin lower-value coordinates first. If several ordinary inputs remain, this
+    # still keeps one fuzz-facing input wide instead of collapsing the whole path.
+    retreatable.sort(key=lambda item: (item["retreat"], item["width"],
+                                       item["name"]))
+    return {item["name"]: item["value"] for item in retreatable}
+
+
 def refutation_response(box, holes, ce, wit, pins, ranges=None,
                         assumed_hs=None):
     """What §Certification prescribes for THIS refutation. (kind, payload).
@@ -5206,7 +5880,10 @@ def refutation_response(box, holes, ce, wit, pins, ranges=None,
                     it and carries on with the others." Both triggers are
                     implemented; the second is the one that is easy to miss,
                     and a one-value interval reached by cutting is exactly the
-                    shape it exists to stop.
+                    shape it exists to stop. A third implementation detail is
+                    the multi-coordinate relation case: keep one useful
+                    fuzz-facing coordinate wide and pin the other differing
+                    coordinates before spending a query on a side cut.
       "no-retreat"  [coord, ...] -- they DIFFER, no cut is available, and the
                     retreat cannot be taken either, because x_pi's value on
                     every such coordinate lies OUTSIDE this piece. A piece from
@@ -5217,12 +5894,24 @@ def refutation_response(box, holes, ce, wit, pins, ranges=None,
                     ESBMC's harvest; this is a claim about S3's bookkeeping,
                     and merging them files one as the other.
     """
-    usable, untrusted, _only_path, _only_wit = divergence_pairs(
+    usable, untrusted, only_path, _only_wit = divergence_pairs(
         ce, wit, ranges, assumed_hs)
     if not wit:
         return "no-payload", None
     if not usable:
+        fallback = {
+            n: ce[n]
+            for n in only_path
+            if n in box and n not in pins and box[n][0] != box[n][1]
+            and box[n][0] <= ce[n] <= box[n][1]
+            and ce[n] not in set(holes.get(n, ()))
+        }
+        if fallback:
+            return "pin", fallback
         return ("untrusted", untrusted) if untrusted else ("coords-gate", None)
+    multi_retreat = multi_difference_retreat(box, holes, ce, usable, pins)
+    if multi_retreat:
+        return "pin", multi_retreat
     best, best_removed, retreat = None, None, {}
     for name, pv, wv in usable:
         if name in pins or name not in box:
@@ -5238,6 +5927,8 @@ def refutation_response(box, holes, ce, wit, pins, ranges=None,
         # have caught it); `pv` outside it is a C2 violation, and cutting there
         # could not "keep x_π" whichever side were taken.
         if not (lo <= wv <= hi and lo <= pv <= hi):
+            continue
+        if pv in hs:
             continue
         nb = cut_towards(lo, hi, wv, pv)
         if nb is None:
@@ -5294,7 +5985,8 @@ def refutation_response(box, holes, ce, wit, pins, ranges=None,
     # (`lo <= wv <= hi and lo <= pv <= hi`); only the retreat was missing it.
     fallback = {n: pv for n, pv, _wv in usable
                 if n in box and n not in pins and box[n][0] != box[n][1]
-                and box[n][0] <= pv <= box[n][1]}
+                and box[n][0] <= pv <= box[n][1]
+                and pv not in set(holes.get(n, ()))}
     if fallback:
         return "pin", fallback
     # ⛔ NOT "coords-gate". That kind means y and x_pi AGREE on every
@@ -5500,7 +6192,8 @@ def violated_properties(log):
 def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
             max_tx, timeout, cwd, ast=None, focus=None, memlimit="8g",
             holes=None, esbmc_args=(), state_structs=False,
-            want_property=False, establish=None):
+            want_property=False, establish=None, param_types=None,
+            state_types=None):
     """Step 5. Returns (verdict, suggested_box_or_None, witness).
 
     `holes` is Definition 5's punched set, and it must reach the query or the
@@ -5530,7 +6223,7 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
             {"target": target, "source": source}
             for target, source in sorted(establish.items())
         ]
-    path = os.path.join(cwd, "cert.json")
+    path = os.path.abspath(os.path.join(cwd, "cert.json"))
     with open(path, "w") as f:
         json.dump(spec, f)
     # FRESHNESS, enforced by removal rather than by a timestamp. This run may
@@ -5633,7 +6326,9 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
     # Harvested on every refutation, not only when the shrink fails: the caller
     # needs it in the budget-exhausted branch too, and by then this run's report
     # has been overwritten by the next one.
-    wit = witness_values(cwd, unit, state_structs=state_structs)
+    wit = witness_values(
+        cwd, unit, state_structs=state_structs, param_types=param_types,
+        state_types=state_types)
     # BOTH suggestions are returned; WHICH to apply is the caller's policy. The
     # tool prints both and says outright that neither is strictly better --
     # punching converges only where the excluded set is a few points, a side cut
@@ -6685,6 +7380,12 @@ def main():
     if args.esbmc_arg:
         print(f"[esbmc-arg] passing to EVERY ESBMC invocation: "
               f"{' '.join(args.esbmc_arg)}")
+    if (args.probe_ladder or args.level0_perturb) and not args.level0:
+        args.level0 = True
+        print("[level0] enabled automatically because "
+              + ("--probe-ladder needs published coordinate type ranges"
+                 if args.probe_ladder else
+                 "--level0-perturb has no effect without the level-0 batch"))
 
     pins = {}
     for p in args.pin:
@@ -6757,6 +7458,18 @@ def main():
                   "to measure it anyway.")
             return 1
 
+    declaration_id = path_function_declaration_id(args.path_function)
+    if args.path_function and declaration_id is None:
+        raise SystemExit(
+            f"[enumerate] malformed path_function {args.path_function!r}: "
+            "expected a trailing #<solc-node-id>")
+    enumeration_param_types = dict(unit_params(
+        args.ast, args.contract, args.unit, declaration_id=declaration_id))
+    try:
+        enumeration_state_types = contract_state_types(args.ast, args.contract)
+    except (OSError, ValueError):
+        enumeration_state_types = {}
+
     (paths, refused, caveats, members, path_extras,
      path_decisions, resolved_path_function) = enumerate_paths(
         args.esbmc, args.sol, args.contract, args.unit, args.max_tx,
@@ -6766,7 +7479,9 @@ def main():
         probe_witnesses=args.probe_witnesses,
         enumeration_index=args.enumeration_index,
         enumeration_report=args.enumeration_report,
-        scope_label=scope_label)
+        scope_label=scope_label,
+        param_types=enumeration_param_types,
+        state_types=enumeration_state_types)
     args.path_function = resolved_path_function
     all_paths = list(paths)
     write_generalise_progress(
@@ -6787,6 +7502,7 @@ def main():
         # claims had been abandoned at the per-claim budget and the sentence
         # above reported that as a property of the contract.
         fatal, why = empty_enumeration_reason(cwd, args.unit)
+        empty_diag = empty_enumeration_diagnostic(cwd, args.unit)
         print(f"[enumerate] no witnessed path for this unit, {why}")
         if not fatal:
             print("  A path with no counterexample has no known member of its "
@@ -6797,6 +7513,8 @@ def main():
             cwd, "no-witness",
             fatal_empty_enumeration=fatal,
             reason=why,
+            empty_witness_class=empty_diag.get("class"),
+            empty_witness_diagnostic=empty_diag,
         )
         if args.ce_collection_only:
             artifact = write_ce_collection(
@@ -6922,6 +7640,21 @@ def main():
               f"excluded. The ABI-gate revert path itself IS excluded, and its "
               f"region will be reported EMPTY. Disable with "
               f"--no-auto-pin-value")
+    abi_candidates = compiler_abi_gate_candidate_mapping(path_decisions, pins)
+    if abi_candidates:
+        print("[candidates] compiler ABI gate mapping: "
+              + "; ".join(
+                  f"enc={enc}: "
+                  + ", ".join(
+                      f"{candidate['coordinate']}="
+                      f"{candidate['arm']}"
+                      for candidate in candidates)
+                  for enc, candidates in sorted(abi_candidates.items())))
+    # Apply the first slice pin before deriving agreed state pins. Otherwise an
+    # ABI-reject witness can contribute an impossible state value to the body
+    # slice merely because its counterexample was enumerated first.
+    initial_pin_excluded = pinned_slice_exclusions(paths, pins)
+    paths = [path for path in paths if path[0] not in initial_pin_excluded]
     # ---- THE PARTITION THIS FILE ALREADY COMPUTES, APPLIED ------------------
     #
     # Placed HERE, after the msg.value auto-pin, so a pinned quantity is never
@@ -6952,10 +7685,36 @@ def main():
                      + "; ".join(kept))
                   + ". No coordinate was added")
     if args.pin_agreed_establishable_env:
+        relation_env_coords = relation_establishable_env_sources(
+            paths, path_decisions, pins,
+            sorted({k for _, _, ce in paths for k in ce} - set(pins)),
+            env_names)
+        if relation_env_coords:
+            env_names = [n for n in env_names if n not in relation_env_coords]
+            print("[env] NOT pinned because a complete-path decision can "
+                  "establish state from this environment coordinate: "
+                  + ", ".join(sorted(relation_env_coords))
+                  + ". These stay free until the structural relation pass, "
+                    "which can certify an explicit entry assignment such as "
+                    "`state.owner := msg.sender` instead of collapsing both "
+                    "sides to a concrete point")
         agreed, kept = derive_agreed_establishable_env_pins(
             paths, env_names, pins)
         for n, v in agreed.items():
             pins.setdefault(n, v)
+        decision_env_names = decision_read_env_coords(
+            paths, path_decisions, pins, env_names)
+        quantified = derive_agreed_unpinned_establishable_env_coords(
+            paths, env_names, pins, decision_env_names=decision_env_names)
+        if quantified:
+            env_names = [n for n in env_names if n not in quantified]
+            print("[env] NOT pinned but promoted to free coordinate(s): "
+                  + ", ".join(sorted(quantified))
+                  + ". All witnessed paths agree on an unestablishable "
+                    "Foundry value, so keeping it as an environment bucket "
+                    "would make it neither pinned nor fuzzed; each promoted "
+                    "quantity is read by a complete-path decision, so ESBMC "
+                    "must certify any widened executable sender range")
         if agreed:
             print(f"[env] pinned PUT-establishable agreement "
                   f"(all {len(paths)} paths agree): "
@@ -7077,17 +7836,25 @@ def main():
         relation_state = relation_establishable_state_targets(
             paths, path_decisions, pins, coords)
         relation_kept = []
+        live_by_enc, n_pin_witness_bad, n_pin_witness_missing = \
+            live_witness_vectors(paths, members, pins)
+        witness_varied = []
         for c in list(coords):
             if not c.startswith("state."):
                 continue
             if c in relation_state:
                 relation_kept.append(c)
                 continue
-            vals = {ce.get(c) for _, _, ce in paths}
+            vals = set()
+            for enc, _depth, ce in paths:
+                live = live_by_enc.get(enc) or [ce]
+                vals.update(v[c] for v in live if c in v)
             if len(vals) == 1 and None not in vals:
                 agreed_state[c] = next(iter(vals))
             else:
                 varying.append(c)
+                if len(vals) > 1:
+                    witness_varied.append(c)
         for n, v in agreed_state.items():
             pins.setdefault(n, v)          # an explicit --pin always wins
         if agreed_state:
@@ -7104,6 +7871,18 @@ def main():
                     "entry-state slice"
                   + (f". STILL FREE, the paths disagree on: "
                      + ", ".join(sorted(varying)) if varying else ""))
+            if witness_varied:
+                print("[coords] STATE NOT PINNED because witness/probe inputs "
+                      "already show multiple values inside the pinned slice: "
+                      + ", ".join(sorted(witness_varied))
+                      + ". Fuzz/probe evidence can refute a point-slice "
+                        "assumption cheaply; it is not proof of the final "
+                        "region, but it is enough to keep the coordinate live "
+                        "for ESBMC certification")
+            if n_pin_witness_bad or n_pin_witness_missing:
+                print("[coords] STATE PIN witness pool filtered: "
+                      f"{n_pin_witness_bad} vector(s) violated an existing pin "
+                      f"and {n_pin_witness_missing} missed a pinned name")
             if relation_kept:
                 print("[coords] STATE NOT PINNED because a complete-path "
                       "decision can establish it from another coordinate: "
@@ -7124,11 +7903,39 @@ def main():
                              f"coordinate -- " + ", ".join(sorted(varying)))
             print("[coords] --pin-agreed-state derived NOTHING" + why_state
                   + ". No pin was added")
+            if witness_varied:
+                print("[coords] STATE NOT PINNED because witness/probe inputs "
+                      "already show multiple values inside the pinned slice: "
+                      + ", ".join(sorted(witness_varied))
+                      + ". This is refutation evidence for the point pin only; "
+                        "the final widened region is still certified by ESBMC")
+            if n_pin_witness_bad or n_pin_witness_missing:
+                print("[coords] STATE PIN witness pool filtered: "
+                      f"{n_pin_witness_bad} vector(s) violated an existing pin "
+                      f"and {n_pin_witness_missing} missed a pinned name")
             if relation_kept:
                 print("[coords] STATE NOT PINNED because a complete-path "
                       "decision can establish it from another coordinate: "
                       + ", ".join(sorted(relation_kept))
                       + ". No agreed-state pin was added for these coordinate(s)")
+
+    # The path enumeration intentionally includes compiler-generated ABI reject
+    # paths so coverage remains complete. Once the non-payable slice pins
+    # msg.value to zero, however, those witnesses are outside the queried
+    # domain. Leaving them in sibling subtraction makes the body path empty;
+    # leaving them in static pair attribution makes an out-of-slice gate look
+    # like an uncontrolled body decision. Keep them in the final report, but
+    # remove them from every active region computation.
+    pin_excluded = pinned_slice_exclusions(all_paths, pins)
+    if pin_excluded:
+        print("[slice] excluding " + ", ".join(
+            f"enc={enc}" for enc in sorted(pin_excluded))
+              + " witnessed path(s) outside the pinned slice from region "
+                "search: "
+              + "; ".join(pin_excluded[enc] for enc in sorted(pin_excluded)))
+        paths = [path for path in paths if path[0] not in pin_excluded]
+        active_names = {name for _, _, ce in paths for name in ce}
+        coords = [name for name in coords if name in active_names]
 
     # ---- MAPPING SLOTS: PROPOSED from the source, never harvested ----
     #
@@ -7179,7 +7986,7 @@ def main():
             if slot_accesses is not None else None)
         key_literals, key_literal_skipped = agreed_bytes_mapping_key_literals(
             witnessed_raw_inputs(cwd, args.unit, paths, args.path_function),
-            params)
+            params, typed_paths=paths)
         proposed, skipped = propose_slot_coords(
             maps, params, args.slot_coords,
             dependencies=(
@@ -7302,15 +8109,76 @@ def main():
                 "paths were witnessed and their region is a point, so each "
                 "falls back to its concrete counterexample test. Widening the "
                 "ladder or the shrink budget cannot change it")
-        for enc, _depth, _ce in sorted(all_paths, key=lambda path: path[0]):
-            print(
-                f"  enc={enc}: NOT CERTIFIED — {no_coord_reason}. "
-                "NO GENERALISABLE COORDINATE: every harvested quantity is "
-                "pinned, unsettable, unsupported, or outside the generated "
-                "test's coordinate model; this path falls back to its "
-                "concrete counterexample test")
         ce_by_enc = {e: ce for e, _d, ce in all_paths}
         depth_by_enc = {e: d for e, d, _ce in all_paths}
+        pin_box = {n: (pv, pv) for n, pv in pins.items()}
+        no_coord_certified = []
+        no_coord_failed = []
+        for enc, _depth, ce in sorted(all_paths, key=lambda path: path[0]):
+            pin_violations = ce_in_region(pin_box, {}, ce)
+            if pin_violations:
+                why = (
+                    f"EXCLUDED FROM THE SLICE by the pins "
+                    f"({'; '.join(pin_violations)}), so this no-coordinate "
+                    f"path has no domain in the slice being generalised")
+                print(f"  enc={enc}: NOT CERTIFIED — {why}")
+                no_coord_failed.append({
+                    "enc": enc,
+                    "depth": depth_by_enc.get(enc),
+                    "verdict": "NOT_CERTIFIED",
+                    "reason": why,
+                    "concrete_fallback": False,
+                    "witness_check": "PIN-EXCLUDED-NO-COORDINATE",
+                    "ce": {
+                        n: str(v)
+                        for n, v in sorted(ce_by_enc.get(enc, {}).items())
+                    },
+                })
+                continue
+            if (len(path_decisions.get(enc) or []) == 1 and
+                    abi_gate_class(path_decisions.get(enc)) == "body"):
+                reason = (
+                    "STRUCTURAL ABI value gate with no free coordinate: "
+                    "the no-coordinate slice satisfies every pin, and the "
+                    "only complete-path decision is the compiler-inserted "
+                    "non-payable body gate")
+                print(f"  enc={enc}: CERTIFIED — {reason}")
+                no_coord_certified.append({
+                    "enc": enc,
+                    "piece": 1,
+                    "depth": depth_by_enc.get(enc),
+                    "verdict": "CERTIFIED",
+                    "retreated": {},
+                    "established": [],
+                    "extcall_pins": {},
+                    "certification_source":
+                        "structural-abi-gate-no-coordinate",
+                    "box": [],
+                    "ce": {
+                        n: str(v)
+                        for n, v in sorted(ce_by_enc.get(enc, {}).items())
+                    },
+                })
+                continue
+            why = (
+                no_coord_reason
+                + ". NO GENERALISABLE COORDINATE: this complete witness has "
+                  "no free coordinate for a parameterized region")
+            print(
+                f"  enc={enc}: NOT CERTIFIED — {why}; this path falls back "
+                "to its concrete counterexample test")
+            no_coord_failed.append({
+                "enc": enc,
+                "depth": depth_by_enc.get(enc),
+                "verdict": "NOT_CERTIFIED",
+                "reason": why,
+                "concrete_fallback": True,
+                "witness_check": "COMPLETE-WITNESS-NO-COORDINATE",
+                "ce": {
+                    n: str(v)
+                    for n, v in sorted(ce_by_enc.get(enc, {}).items())
+                },
+            })
         enumeration_report_path = (
             args.enumeration_report or enumeration_report_snapshot_path(cwd))
         result_path = os.path.join(cwd, "generalise-result.json")
@@ -7341,29 +8209,8 @@ def main():
                     },
                     "dropped_by_certify": [],
                     "no_coordinate_reason": no_coord_reason,
-                    "certified": [],
-                    "not_certified": [
-                        {
-                            "enc": e,
-                            "depth": depth_by_enc.get(e),
-                            "verdict": "NOT_CERTIFIED",
-                            "reason": (
-                                no_coord_reason
-                                + ". NO GENERALISABLE COORDINATE: this "
-                                  "complete witness has no free coordinate "
-                                  "for a parameterized region"),
-                            "concrete_fallback": True,
-                            "witness_check": (
-                                "COMPLETE-WITNESS-NO-COORDINATE"),
-                            "ce": {
-                                n: str(v)
-                                for n, v in sorted(
-                                    ce_by_enc.get(e, {}).items())
-                            },
-                        }
-                        for e, _depth, _ce in sorted(
-                            all_paths, key=lambda path: path[0])
-                    ],
+                    "certified": no_coord_certified,
+                    "not_certified": no_coord_failed,
                     "enumerated": [
                         {"enc": e, "depth": d} for e, d, _ in all_paths
                     ],
@@ -7372,14 +8219,17 @@ def main():
                 indent=2,
                 sort_keys=True)
         write_generalise_progress(
-            cwd, "no-generalizable-coordinate",
+            cwd, ("certified-no-coordinate"
+                  if no_coord_certified else "no-generalizable-coordinate"),
             witnessed=len(paths),
+            certified=len(no_coord_certified),
+            not_certified=len(no_coord_failed),
             refused=list(refused),
             unsettable=sorted(unsettable),
             pins={n: str(v) for n, v in sorted(pins.items())},
             reason=no_coord_reason,
         )
-        return 1
+        return 0 if no_coord_certified else 1
     # ---- `FREE:` IS A MARKER, NOT DECORATION ----
     #
     # certify_all matched this line as "any [coords] line without a [pinned:
@@ -7425,7 +8275,8 @@ def main():
     if args.static_uncontrolled_inseparable:
         pre_failed.update(
             uncontrolled_decision_splits(paths, path_decisions, coords, pins,
-                                         constants=constants))
+                                         constants=constants,
+                                         path_extras=path_extras))
     if pre_failed:
         pairs = []
         encs = [enc for enc, _, _ in paths]
@@ -7451,9 +8302,13 @@ def main():
         paths = [p for p in paths if p[0] not in pre_failed]
 
     if not paths:
-        print("[inseparable] every witnessed path was attributed to an "
-              "uncontrolled split; no ESBMC region query is started for this "
-              "unit.")
+        if pin_excluded and not pre_failed:
+            print("[slice] every witnessed path is outside the pinned slice; "
+                  "no ESBMC region query is started for this unit.")
+        else:
+            print("[inseparable] every remaining witnessed path was attributed "
+                  "to an uncontrolled split; no ESBMC region query is started "
+                  "for this unit.")
         args.level0 = False
         args.probe_witnesses = 0
         args.probe_ladder = False
@@ -7570,6 +8425,28 @@ def main():
     # refuses the whole query on one such name while the outer-box rounds carry
     # on -- so this set is exactly the difference between the two branches.
     unresolvable = set()
+    pre_dropped_unresolvable = set()
+
+    def drop_unresolvable_query_pins(stage, names):
+        """Drop pins once an outer round proves their names unqueryable."""
+        fresh = set(names or ()) - pre_dropped_unresolvable
+        if not fresh:
+            return set()
+        dropped = drop_unexpressible_query_names(
+            fresh, pins, structural_seed_regions, structural_seed_holes,
+            pre_structural_regions, pre_structural_holes)
+        if dropped:
+            pre_dropped_unresolvable.update(dropped)
+            print(f"[{stage}] PRE-DROPPED "
+                  + ", ".join(sorted(dropped))
+                  + " from subsequent region-search query pins because an "
+                    "outer-box round has already proved ESBMC cannot express "
+                    "the name(s) as unit coordinates. Later rounds therefore "
+                    "measure the remaining coordinates for ALL values of the "
+                    "dropped name(s), which is stronger than repeatedly "
+                    "refusing the batch.")
+        return dropped
+
     # Learned from the tool, round by round, and never guessed. Empty until a
     # round has published one, so the FIRST ladder falls back to the full 256-bit
     # range exactly as before -- there is nothing to know it from yet.
@@ -7616,6 +8493,7 @@ def main():
             "any of them), so no level-0 round was issued at all",
             {}, {}, [])
         unresolvable.update(unres)
+        drop_unresolvable_query_pins("level0", unres)
         # Level 0 lays no ladder, but it DOES publish every coordinate's type
         # range -- so the geometric bracket that follows can be bounded by the
         # type instead of by 2^256. That ordering is why the fix costs no extra
@@ -7775,6 +8653,7 @@ def main():
                     memlimit=args.memlimit, esbmc_args=args.esbmc_arg)
                 type_ranges.update(tr2)
                 unresolvable.update(unres2)
+                drop_unresolvable_query_pins("level0b", unres2)
                 if f2:
                     print(f"[level0b] round measured NOTHING — {f2}; the "
                           f"one-value blindness above STANDS")
@@ -8060,6 +8939,7 @@ def main():
                 path_values=path_ladders)
             type_ranges.update(tr_new)
             unresolvable.update(unres)
+            drop_unresolvable_query_pins("bracket", unres)
             print(f"[bracket] {brackets}")
     # MEASURED, and it is the binding cost on real input: the geometric round
     # ignores --probes entirely (see geometric_values) and lays down one probe
@@ -8096,6 +8976,7 @@ def main():
                 type_ranges=type_ranges, esbmc_args=args.esbmc_arg)
             type_ranges.update(tr_new)
             unresolvable.update(unres)
+            drop_unresolvable_query_pins(f"refine {r + 1}", unres)
             last_failure = round_failure or last_failure
             print(f"[refine {r+1}] spans={spans} regions={regions}"
                   + (f" holes={ {k: v for k, v in region_holes.items() if v} }"
@@ -8107,6 +8988,7 @@ def main():
                 break
             spans = new
 
+    dropped_by_certify = set(pre_dropped_unresolvable)
     if unresolvable:
         # STATE ONLY WHAT IS TRUE AT THIS POINT. An earlier version of this line
         # asserted "no region below carries a bound on them and each holds for
@@ -8126,10 +9008,26 @@ def main():
                  f"may be refused on them and the pin dropped below"
                  if pinned_too else
                  " and every region below holds for ALL their values"))
+        pre_dropped = drop_unexpressible_query_names(
+            unresolvable, pins, regions, region_holes, structural_seed_regions,
+            structural_seed_holes, pre_structural_regions,
+            pre_structural_holes)
+        if pre_dropped:
+            dropped_by_certify.update(pre_dropped)
+            print("[certify] PRE-DROPPED "
+                  + ", ".join(sorted(pre_dropped))
+                  + " before the first certification query because the "
+                    "outer-box round has already proved ESBMC cannot express "
+                    "these name(s) as unit coordinates. Re-querying them once "
+                    "per path would only reproduce a known refusal; every "
+                    "certified region below therefore holds for ALL values of "
+                    "the dropped name(s)")
 
     # Certify every candidate, shrinking on the witness when refuted.
-    ok, failed, ok_holes, ok_retreated, ok_established, ok_source = \
-        {}, dict(pre_failed), {}, {}, {}, {}
+    failed = dict(pin_excluded)
+    failed.update(pre_failed)
+    ok, ok_holes, ok_retreated, ok_established, ok_source = \
+        {}, {}, {}, {}, {}
     # Per (enc, piece), like ok_retreated and for the same reason: a region
     # reported without naming the harness-chosen values it was certified under
     # reads as an unconditional statement, and the emitter's rendering decision
@@ -8142,7 +9040,75 @@ def main():
     # Names the certify branch refused and the loop dropped. Accumulated across
     # paths because `pins` is global, so the drop is announced once but affects
     # every path after it.
-    dropped_by_certify = set()
+
+    def run_single_point_witness_check(enc, depth, ce, xpins, establishes):
+        """Run §Certification's concrete-replay floor for one failed path."""
+        if not args.witness_check:
+            return ""
+        point = {c: (ce[c], ce[c]) for c in coords if c in ce}
+        if not point:
+            witness_check[enc] = "NOT-PUT"
+            return (
+                " ⚠ The single-point check of §Certification was NOT put: "
+                "none of this path's free coordinates carries a counterexample "
+                "value, so there is no point to fix. Whether its witness trips "
+                "a compiler-inserted check is therefore UNKNOWN, not clear")
+
+        wv, _wnb, _ww, _wp, _wunexp, wwhy = certify(
+            args.esbmc, args.sol, args.contract, query_unit,
+            enc, depth, point, ce, dict(query_pins(), **xpins), args.max_tx,
+            args.timeout, cwd, ast=args.ast, focus=focus,
+            memlimit=args.memlimit, holes={},
+            esbmc_args=args.esbmc_arg, want_property=True,
+            establish=dict(establishes or {}))
+        witness_check[enc] = wv
+        if wv == "SUCCESSFUL":
+            print(f"[witness enc={enc}] the single point survives the inserted "
+                  "checks, so the concrete replay test stands")
+            return (
+                ". The single-point check of §Certification was PUT and "
+                "DISCHARGED, so this path's witness satisfies the "
+                "compiler-inserted checks and its concrete replay test stands")
+        if wv == "FAILED":
+            print(f"[witness enc={enc}] ⛔ REFUTED at the single point: this "
+                  "path gets NO test")
+            return (
+                ". ⛔ AND NO TEST IS EMITTED FOR IT. The single-point check of "
+                "§Certification was put on {x_pi} and REFUTED: some input "
+                "satisfying every pinned coordinate does NOT walk this path. "
+                "⚠ TWO causes are possible and this verdict does not separate "
+                "them, so neither may be quoted as the reason. (a) the witness "
+                "trips a compiler-inserted check -- enumeration keeps those "
+                "out of a path's identity and certification turns them on, "
+                "which is why the method puts this query at all. (b) a "
+                "quantity OUTSIDE the coordinate set is still free: the point "
+                "pins only the free coordinates, and the method says of the "
+                "rest that certification 'quantifies over it: where varying it "
+                "can lead away from π, that query is refuted'. On this unit "
+                "the refused and unmodelled quantities include the mapping "
+                "slots and any external-call return. Either way the path's own "
+                "counterexample is not shown to walk it under the checks a real "
+                "run performs, so no test is emitted. "
+                + (wwhy or
+                   "No `Violated property` block was harvested for this "
+                   "refutation, so which of the two causes applies stays "
+                   "UNKNOWN"))
+        print(f"[witness enc={enc}] single-point check {wv}; the replay test "
+              "is NOT cleared")
+        return (
+            f". The single-point check of §Certification came back {wv}"
+            + (f" ({wwhy})" if wwhy else "")
+            + ", so whether this witness trips a compiler-inserted check is "
+              "UNDECIDED. It is NOT cleared -- an undecided answer is not a "
+              "discharged one")
+
+    def concrete_fallback_cleared(enc):
+        if enc in pre_failed:
+            return False
+        if not args.witness_check:
+            return True
+        return witness_check.get(enc) == "SUCCESSFUL"
+
     for enc, box in sorted(pre_structural_regions.items()):
         key = (enc, 1)
         ok[key] = dict(box)
@@ -8185,6 +9151,7 @@ def main():
         # the tool's own emptiness check is the arbiter.
         holes = dict(structural_seed_holes.get(enc) or
                      (region_holes.get(enc) or {}))
+        xpins = dict(path_extras.get(enc, {})) if args.pin_extcall else {}
         empty = empty_coords(box, holes)
         if empty:
             # ---- THE PIN ATTRIBUTION IS NAMED ON THE OTHER BRANCH ONLY, AND
@@ -8248,6 +9215,10 @@ def main():
                     f"certifying it would hold vacuously. The path's own "
                     f"counterexample DOES satisfy every pin, so the emptiness is "
                     f"not attributable to them -- it came out of the subtraction")
+                failed[enc] += run_single_point_witness_check(
+                    enc, depth, ce, xpins,
+                    dict(structural_seed_establishes.get(enc) or
+                         structural_region_establishes.get(enc) or {}))
                 continue
         if enc in warned:
             # Not fatal: certification is the arbiter. But say it, because a
@@ -8319,7 +9290,6 @@ def main():
         # notes/coverage/poc/B5_ExtcallInCallee, enc=6 carries success=0 and
         # enc=7 carries success=1 -- so a single dict shared across paths would
         # certify one of them about the other's slice.
-        xpins = dict(path_extras.get(enc, {})) if args.pin_extcall else {}
         if xpins:
             print(f"[certify enc={enc}] --pin-extcall: fixing "
                   + ", ".join(f"{n}=={v}" for n, v in sorted(xpins.items()))
@@ -8359,7 +9329,9 @@ def main():
                     memlimit=args.memlimit, holes=holes,
                     esbmc_args=args.esbmc_arg,
                     state_structs=args.state_struct_fields,
-                    establish=established)
+                    establish=established,
+                    param_types=enumeration_param_types,
+                    state_types=enumeration_state_types)
                 # ---- A COORDINATE THE QUERY CANNOT EXPRESS: DROP AND RETRY ----
                 #
                 # Not a shrink round. The tool declined to ATTEMPT the query, so
@@ -8921,90 +9893,10 @@ def main():
             # It is one query and every quantity in it is fixed, which is why
             # the method calls the answer "a matter of evaluation" -- this is
             # not a second search.
-            if args.witness_check:
-                point = {c: (ce[c], ce[c]) for c in coords if c in ce}
-                if not point:
-                    # NOT silently skipped. A path whose free coordinates carry
-                    # no counterexample value has no single point to put the
-                    # question on, and saying nothing here would make the
-                    # unchecked case indistinguishable from the checked one.
-                    witness_check[enc] = "NOT-PUT"
-                    failed[enc] += (
-                        " ⚠ The single-point check of §Certification was NOT "
-                        "put: none of this path's free coordinates carries a "
-                        "counterexample value, so there is no point to fix. "
-                        "Whether its witness trips a compiler-inserted check "
-                        "is therefore UNKNOWN, not clear")
-                else:
-                    wv, _wnb, _ww, _wp, _wunexp, wwhy = certify(
-                        args.esbmc, args.sol, args.contract, query_unit,
-                        enc, depth, point, ce, dict(query_pins(), **xpins), args.max_tx,
-                        args.timeout, cwd, ast=args.ast, focus=focus,
-                        memlimit=args.memlimit, holes={},
-                        esbmc_args=args.esbmc_arg, want_property=True,
-                        establish=dict(structural_seed_establishes.get(enc) or
-                                       structural_region_establishes.get(enc) or {}))
-                    witness_check[enc] = wv
-                    if wv == "SUCCESSFUL":
-                        print(f"[witness enc={enc}] the single point survives "
-                              f"the inserted checks, so the concrete replay "
-                              f"test stands")
-                        failed[enc] += (
-                            ". The single-point check of §Certification was PUT "
-                            "and DISCHARGED, so this path's witness satisfies "
-                            "the compiler-inserted checks and its concrete "
-                            "replay test stands")
-                    elif wv == "FAILED":
-                        # THE BRANCH THAT MUST REFUSE. This is the whole reason
-                        # the query exists, and reporting it as "not certified,
-                        # falls back to a concrete test" would ship the red test.
-                        print(f"[witness enc={enc}] ⛔ REFUTED at the single "
-                              f"point: this path gets NO test")
-                        failed[enc] += (
-                            ". ⛔ AND NO TEST IS EMITTED FOR IT. The "
-                            "single-point check of §Certification was put on "
-                            "{x_pi} and REFUTED: some input satisfying every "
-                            "pinned coordinate does NOT walk this path. ⚠ TWO "
-                            "causes are possible and this verdict does not "
-                            "separate them, so neither may be quoted as the "
-                            "reason. (a) the witness trips a compiler-inserted "
-                            "check -- enumeration keeps those out of a path's "
-                            "identity and certification turns them on, which is "
-                            "why the method puts this query at all. (b) a "
-                            "quantity OUTSIDE the coordinate set is still free: "
-                            "the point pins only the free coordinates, and the "
-                            "method says of the rest that certification "
-                            "'quantifies over it: where varying it can lead "
-                            "away from π, that query is refuted'. On this unit "
-                            "the refused and unmodelled quantities include the "
-                            "mapping slots and any external-call return. Either "
-                            "way the path's own counterexample is not shown to "
-                            "walk it under the checks a real run performs, so "
-                            "no test is emitted")
-                        # ---- WHAT THE TOOL ITSELF SAID WAS VIOLATED ----
-                        #
-                        # The two causes named just above ARE separable, and
-                        # the separator was being discarded before it could be
-                        # read: this query used to run with the counterexample
-                        # suppressed, so the line naming which property failed
-                        # never reached this text. It is QUOTED, not
-                        # classified.
-                        failed[enc] += (
-                            ". " + (wwhy or
-                                    "No `Violated property` block was "
-                                    "harvested for this refutation, so which "
-                                    "of the two causes applies stays UNKNOWN"))
-                    else:
-                        print(f"[witness enc={enc}] single-point check "
-                              f"{wv}; the replay test is NOT cleared")
-                        failed[enc] += (
-                            f". The single-point check of §Certification came "
-                            f"back {wv}"
-                            + (f" ({wwhy})" if wwhy else "")
-                            + ", so whether this witness trips a "
-                              "compiler-inserted check is UNDECIDED. It is "
-                              "NOT cleared -- an undecided answer is not a "
-                              "discharged one")
+            failed[enc] += run_single_point_witness_check(
+                enc, depth, ce, xpins,
+                dict(structural_seed_establishes.get(enc) or
+                     structural_region_establishes.get(enc) or {}))
 
     # HARD CHECK, not a warning. Two certified regions that share a point mean
     # an input would have to walk two different paths. Reporting them and
@@ -9211,7 +10103,7 @@ def main():
         "not_certified": [
             {"enc": e, "depth": depth_by_enc.get(e), "verdict": "NOT_CERTIFIED",
              "reason": why,
-             "concrete_fallback": e not in pre_failed,
+             "concrete_fallback": concrete_fallback_cleared(e),
              # §Certification's floor. "SUCCESSFUL" clears this path's concrete
              # replay test; "FAILED" means it gets NO test; anything else is
              # undecided and clears nothing. A path MISSING from this map was

@@ -134,6 +134,10 @@ def test_schedule_prioritizes_hinted_units_and_preserves_argv():
                  and "--pin-agreed-establishable-env" in argv
                  and "--pin-agreed-state" in argv and "--slot-coords" in argv,
                  f"strong region controls are scheduled for benchmarks: {argv}")
+    bad += check("--esbmc-arg=--unwindsetname" in argv
+                 and "--esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33"
+                 in argv,
+                 f"library-loop unwindsetname is scheduled for benchmarks: {argv}")
     bad += check("--no-auto-pin-value" not in argv,
                  f"main benchmark recipe keeps the nonpayable body slice cheap: {argv}")
     bad += check("--env-coord" not in argv,
@@ -166,7 +170,7 @@ def test_schedule_prioritizes_hinted_units_and_preserves_argv():
     return bad
 
 
-def test_schedule_prioritizes_semantic_units_before_getter_like_units():
+def test_schedule_prioritizes_cheap_getters_before_complex_state_units():
     data = manifest()
     row = data["subjects"][0]
     row["unit_hints"] = {
@@ -206,12 +210,12 @@ def test_schedule_prioritizes_semantic_units_before_getter_like_units():
     got = [(job["unit"], job["priority"], job["priority_reason"])
            for job in doc["jobs"]]
     bad = 0
-    bad += check(got == [("setX", 1, "state-changing"),
-                         ("poke", 1, "zero-interface-state-changing"),
-                         ("quote", 2, "pure/view-with-interface"),
-                         ("name", 3, "zero-arg-view")],
-                 f"semantic units are sampled before getter-like rows: {got}")
-    bad += check(doc["jobs"][0]["unit_info"]["parameter_count"] == 1,
+    bad += check(got == [("name", 1, "cheap-pure/view-getter"),
+                         ("quote", 1, "cheap-pure/view-getter"),
+                         ("setX", 1, "state-changing"),
+                         ("poke", 2, "zero-interface-state-changing")],
+                 f"cheap getter-like units are sampled before state-changing rows: {got}")
+    bad += check(doc["jobs"][0]["unit_info"]["parameter_count"] == 0,
                  f"job keeps unit metadata for later audit: {doc['jobs'][0]}")
     poke = next(job for job in doc["jobs"] if job["unit"] == "poke")
     poke_argv = poke["certify_argv"]
@@ -269,10 +273,10 @@ def test_schedule_deprioritizes_unhinted_initializers():
     got = [(job["unit"], job["priority"], job["priority_reason"])
            for job in doc["jobs"]]
     bad = 0
-    bad += check(got == [("transfer", 1, "state-changing"),
-                         ("balanceOf", 2, "pure/view-with-interface"),
-                         ("setUp", 2, "initializer-like"),
-                         ("init", 2, "initializer-like")],
+    bad += check(got == [("balanceOf", 1, "cheap-pure/view-getter"),
+                         ("transfer", 2, "state-changing"),
+                         ("setUp", 3, "initializer-like"),
+                         ("init", 3, "initializer-like")],
                  f"unhinted initializer-like units do not monopolize first attempts: {got}")
 
     row["target"]["units_hint"] = ["init"]
@@ -285,7 +289,7 @@ def test_schedule_deprioritizes_unhinted_initializers():
     hinted = [(job["unit"], job["priority"], job["priority_reason"])
               for job in hinted_doc["jobs"][:2]]
     bad += check(hinted == [("init", 0, "target-hint"),
-                            ("transfer", 1, "state-changing")],
+                            ("balanceOf", 1, "cheap-pure/view-getter")],
                  f"explicit target hints still override initializer deprioritization: {hinted}")
     return bad
 
@@ -371,6 +375,52 @@ def test_schedule_orders_cheaper_units_inside_priority_bucket():
                  f"expensive target hints stay marked for audit: {got}")
     bad += check(got[0][3] < got[3][3],
                  f"schedule rank records the cheap-first decision: {got}")
+    return bad
+
+
+def test_schedule_prioritizes_ownership_transfer_before_business_mutators():
+    data = manifest()
+    row = data["subjects"][0]
+    row["target"]["units_hint"] = []
+    row["unit_hints"] = {
+        "hinted_units": [],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    row["units"]["units"] = [
+        "includeAccount",
+        "increaseAllowance",
+        "transferOwnership",
+    ]
+    row["units"]["unit_info"] = [
+        {
+            "name": "includeAccount",
+            "state_mutability": "nonpayable",
+            "parameter_count": 1,
+            "return_count": 0,
+        },
+        {
+            "name": "increaseAllowance",
+            "state_mutability": "nonpayable",
+            "parameter_count": 2,
+            "return_count": 1,
+        },
+        {
+            "name": "transferOwnership",
+            "state_mutability": "nonpayable",
+            "parameter_count": 1,
+            "return_count": 0,
+        },
+    ]
+    doc = unit_schedule.build_schedule(data)
+    got = [(job["unit"], job["schedule_rank"]["cheap_first"][0])
+           for job in doc["jobs"]]
+    bad = 0
+    bad += check(got[:3] == [
+        ("transferOwnership", 8),
+        ("includeAccount", 30),
+        ("increaseAllowance", 30),
+    ], f"ownership transfer is tried before broad business mutators: {got}")
     return bad
 
 
@@ -594,7 +644,7 @@ def test_schedule_deprioritizes_recursive_helper_obstacles():
            for job in doc["jobs"]]
     transfer = next(job for job in doc["jobs"] if job["unit"] == "transfer")
     bad = 0
-    bad += check(got == [("approve", 1, "state-changing"),
+    bad += check(got == [("approve", 2, "state-changing"),
                          ("transfer", 4, "static-obstacle")],
                  f"recursive-helper units stay scheduled but are deprioritized: {got}")
     bad += check(transfer["static_obstacles"][0]["tag"] == "recursive-helper-preflight",
@@ -666,6 +716,350 @@ def test_schedule_deduplicates_prepared_subject_units():
                  f"duplicate unit jobs are reported: {doc['summary']}")
     bad += check(doc["duplicate_jobs"][0]["unit"] in ("getX", "setX"),
                  f"duplicate sample names the unit: {doc['duplicate_jobs']}")
+    return bad
+
+
+def test_schedule_passes_unique_path_function_for_overloads():
+    data = manifest()
+    row = data["subjects"][0]
+    row["subject"]["contract"] = "Co"
+    row["subject"]["unit"] = ""
+    row["units"]["contract"] = "Co"
+    row["units"]["units"] = ["f"]
+    row["units"]["unit_info"] = [{
+        "name": "f",
+        "state_mutability": "nonpayable",
+        "parameter_count": 1,
+        "return_count": 0,
+        "visibility": "public",
+    }]
+    row["target"]["contract"] = "Co"
+    row["target"]["units_hint"] = ["f"]
+    row["unit_hints"] = {
+        "hinted_units": ["f"],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    ast = {
+        "nodes": [{
+            "nodeType": "ContractDefinition",
+            "id": 60,
+            "name": "Co",
+            "linearizedBaseContracts": [60],
+            "nodes": [
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 31,
+                    "name": "f",
+                    "implemented": True,
+                    "visibility": "public",
+                    "parameters": {
+                        "parameters": [{}],
+                    },
+                },
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 59,
+                    "name": "f",
+                    "implemented": True,
+                    "visibility": "public",
+                    "parameters": {
+                        "parameters": [{}, {}],
+                    },
+                },
+            ],
+        }],
+    }
+    with tempfile.TemporaryDirectory() as td:
+        solast = Path(td) / "flat.sol.solast"
+        solast.write_text(json.dumps(ast))
+        row["subject"]["solast"] = str(solast)
+        doc = unit_schedule.build_schedule(data)
+
+    job = doc["jobs"][0]
+    path_function = "sol:@C@Co@F@f#31"
+    bad = 0
+    bad += check(job["path_function"] == path_function,
+                 f"overload arity resolves a unique path function: {job}")
+    bad += check(argv_value(job["certify_argv"], "--path-function") == path_function,
+                 f"certifier argv pins the selected overload: {job['certify_argv']}")
+    bad += check(argv_value(job["dry_run_argv"], "--path-function") == path_function,
+                 f"dry-run argv pins the selected overload: {job['dry_run_argv']}")
+    return bad
+
+
+def test_schedule_rehomes_inherited_unit_info_path_function_to_target_owner():
+    data = manifest()
+    row = data["subjects"][0]
+    row["subject"]["contract"] = "Derived"
+    row["subject"]["unit"] = ""
+    row["units"]["contract"] = "Derived"
+    row["units"]["units"] = ["balanceOf"]
+    row["units"]["unit_info"] = [{
+        "name": "balanceOf",
+        "contract": "BaseToken",
+        "state_mutability": "view",
+        "parameter_count": 1,
+        "parameter_types": ["address"],
+        "return_count": 1,
+        "visibility": "public",
+        "path_function": "sol:@C@BaseToken@F@balanceOf#77",
+    }]
+    row["target"]["contract"] = "Derived"
+    row["target"]["units_hint"] = []
+    row["unit_hints"] = {
+        "hinted_units": [],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    doc = unit_schedule.build_schedule(data)
+    job = doc["jobs"][0]
+    path_function = "sol:@C@Derived@F@balanceOf#77"
+    bad = 0
+    bad += check(job["path_function"] == path_function,
+                 f"inherited unit info path_function uses target owner: {job}")
+    bad += check(argv_value(job["certify_argv"], "--path-function") == path_function,
+                 f"certifier argv pins target-owned inherited path: {job['certify_argv']}")
+    bad += check(job["priority_reason"] == "cheap-pure/view-getter",
+                 f"inherited getter remains cheap-first: {job}")
+    return bad
+
+
+def test_schedule_splits_same_arity_overloads_by_path_function():
+    data = manifest()
+    row = data["subjects"][0]
+    row["subject"]["contract"] = "Co"
+    row["subject"]["unit"] = ""
+    row["units"]["contract"] = "Co"
+    row["units"]["units"] = ["f"]
+    row["units"]["unit_info"] = [{
+        "name": "f",
+        "state_mutability": "nonpayable",
+        "parameter_count": 1,
+        "return_count": 0,
+        "visibility": "public",
+    }]
+    row["target"]["contract"] = "Co"
+    row["target"]["units_hint"] = ["f"]
+    ast = {
+        "nodes": [{
+            "nodeType": "ContractDefinition",
+            "id": 60,
+            "name": "Co",
+            "linearizedBaseContracts": [60],
+            "nodes": [
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 31,
+                    "name": "f",
+                    "implemented": True,
+                    "visibility": "public",
+                    "parameters": {
+                        "parameters": [{"typeDescriptions": {
+                            "typeString": "uint256"}}],
+                    },
+                },
+                {
+                    "nodeType": "FunctionDefinition",
+                    "id": 59,
+                    "name": "f",
+                    "implemented": True,
+                    "visibility": "public",
+                    "parameters": {
+                        "parameters": [{"typeDescriptions": {
+                            "typeString": "address"}}],
+                    },
+                },
+            ],
+        }],
+    }
+    with tempfile.TemporaryDirectory() as td:
+        solast = Path(td) / "flat.sol.solast"
+        solast.write_text(json.dumps(ast))
+        row["subject"]["solast"] = str(solast)
+        doc = unit_schedule.build_schedule(data)
+
+    pfs = sorted(job["path_function"] for job in doc["jobs"])
+    ids = sorted(job["job_id"] for job in doc["jobs"])
+    bad = 0
+    bad += check(pfs == ["sol:@C@Co@F@f#31", "sol:@C@Co@F@f#59"],
+                 f"same-arity overloads become separate jobs: {pfs}")
+    bad += check(ids == ["stress243__repo__C__f__pf31",
+                         "stress243__repo__C__f__pf59"],
+                 f"job ids include stable path-function suffixes: {ids}")
+    bad += check(all(argv_value(job["certify_argv"], "--path-function")
+                     == job["path_function"] for job in doc["jobs"]),
+                 f"each certifier argv pins its overload: {doc['jobs']}")
+    return bad
+
+
+def test_schedule_skips_unpinned_overloads_without_path_function():
+    data = manifest()
+    row = data["subjects"][0]
+    row["subject"]["solast"] = ""
+    row["subject"]["unit"] = ""
+    row["units"]["units"] = ["f", "f"]
+    row["units"]["unit_info"] = [
+        {
+            "name": "f",
+            "state_mutability": "nonpayable",
+            "parameter_count": 1,
+            "return_count": 0,
+            "visibility": "public",
+        },
+        {
+            "name": "f",
+            "state_mutability": "nonpayable",
+            "parameter_count": 2,
+            "return_count": 0,
+            "visibility": "public",
+        },
+    ]
+    row["target"]["units_hint"] = ["f"]
+    row["unit_hints"] = {
+        "hinted_units": ["f"],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    doc = unit_schedule.build_schedule(data)
+    bad = 0
+    bad += check(doc["jobs"] == [],
+                 f"ambiguous overloads without path_function are not scheduled: {doc['jobs']}")
+    bad += check(doc["summary"]["skipped_units_by_reason"] == {
+        "overloaded unit needs unique --path-function": 2,
+    }, f"ambiguous overload skip is audited: {doc['summary']}")
+    return bad
+
+
+def test_schedule_skips_unfocusable_fallback_and_receive_units():
+    data = manifest()
+    row = data["subjects"][0]
+    row["units"]["units"] = ["fallback", "receive", "setX"]
+    row["units"]["unit_info"] = [
+        {
+            "name": "fallback",
+            "state_mutability": "nonpayable",
+            "parameter_count": 0,
+            "return_count": 0,
+            "visibility": "external",
+            "implemented": True,
+        },
+        {
+            "name": "receive",
+            "state_mutability": "payable",
+            "parameter_count": 0,
+            "return_count": 0,
+            "visibility": "external",
+            "implemented": True,
+        },
+        {
+            "name": "setX",
+            "state_mutability": "nonpayable",
+            "parameter_count": 1,
+            "return_count": 0,
+            "visibility": "public",
+            "implemented": True,
+        },
+    ]
+    row["target"]["units_hint"] = ["fallback", "receive", "setX"]
+    row["unit_hints"] = {
+        "hinted_units": ["fallback", "receive", "setX"],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    doc = unit_schedule.build_schedule(data)
+    units = [job["unit"] for job in doc["jobs"]]
+    skipped = doc["skipped_units"]
+    bad = 0
+    bad += check(units == ["setX"], f"fallback/receive are not scheduled: {units}")
+    bad += check([item["unit"] for item in skipped] == ["fallback", "receive"],
+                 f"skipped special units are retained for audit: {skipped}")
+    bad += check(
+        doc["summary"]["skipped_units_by_reason"] == {
+            "fallback/receive cannot be selected by --focus-function": 2
+        },
+        f"skip reason is summarized: {doc['summary']}")
+    bad += check("--unit" in doc["jobs"][0]["certify_argv"]
+                 and "setX" in doc["jobs"][0]["certify_argv"],
+                 f"ordinary unit still gets a certify job: {doc['jobs'][0]}")
+    return bad
+
+
+def test_schedule_records_special_only_rows_for_deploy_fallback():
+    data = manifest()
+    row = data["subjects"][0]
+    row["units"]["units"] = ["fallback", "receive"]
+    row["units"]["unit_info"] = [
+        {
+            "name": "fallback",
+            "state_mutability": "nonpayable",
+            "parameter_count": 0,
+            "return_count": 0,
+            "visibility": "external",
+            "implemented": True,
+        },
+        {
+            "name": "receive",
+            "state_mutability": "payable",
+            "parameter_count": 0,
+            "return_count": 0,
+            "visibility": "external",
+            "implemented": True,
+        },
+    ]
+    row["target"]["units_hint"] = ["fallback", "receive"]
+    row["unit_hints"] = {
+        "hinted_units": ["fallback", "receive"],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    doc = unit_schedule.build_schedule(data)
+    no_unit = doc["no_unit_rows"][0]
+    bad = 0
+    bad += check(doc["jobs"] == [],
+                 f"special-only row does not get an invalid focus job: {doc['jobs']}")
+    bad += check(doc["summary"]["no_unit_rows"] == 1,
+                 f"special-only row is visible to deploy fallback: {doc['summary']}")
+    bad += check("fallback/receive" in no_unit["reason"],
+                 f"special-only reason is audit-friendly: {no_unit}")
+    bad += check([item["unit"] for item in no_unit["skipped"]] == [
+        "fallback", "receive"
+    ], f"special skipped entries are retained in no-unit row: {no_unit}")
+    return bad
+
+
+def test_schedule_records_ok_rows_without_schedulable_units():
+    data = manifest()
+    row = data["subjects"][0]
+    row["units"] = {
+        "schema": "veriput-subject-units/v1",
+        "contract": "C",
+        "units": [],
+        "unit_info": [],
+        "schedulable": False,
+        "no_unit_reason": (
+            "target contract has no public/external FunctionDefinition units"),
+        "skipped": [{
+            "contract": "C",
+            "kind": "constructor",
+            "reason": "constructor is not a focus-function",
+        }],
+    }
+    row["unit_hints"] = {
+        "hinted_units": [],
+        "missing_unit_hints": [],
+        "pending_unit_hints": [],
+    }
+    doc = unit_schedule.build_schedule(data)
+    no_unit = doc["no_unit_rows"][0]
+    bad = 0
+    bad += check(doc["jobs"] == [], f"no empty-unit job is emitted: {doc['jobs']}")
+    bad += check(doc["summary"]["no_unit_rows"] == 1,
+                 f"no-unit subject is counted: {doc['summary']}")
+    bad += check(no_unit["reason"] == row["units"]["no_unit_reason"],
+                 f"no-unit reason is retained: {no_unit}")
+    bad += check(no_unit["skipped"][0]["kind"] == "constructor",
+                 f"skip diagnostics are retained: {no_unit}")
     return bad
 
 
@@ -841,13 +1235,21 @@ def test_schedule_refuses_protected_write_paths():
 
 TESTS = [
     test_schedule_prioritizes_hinted_units_and_preserves_argv,
-    test_schedule_prioritizes_semantic_units_before_getter_like_units,
+    test_schedule_prioritizes_cheap_getters_before_complex_state_units,
     test_schedule_deprioritizes_unhinted_initializers,
     test_schedule_orders_cheaper_units_inside_priority_bucket,
+    test_schedule_prioritizes_ownership_transfer_before_business_mutators,
     test_schedule_deprioritizes_unhinted_admin_units,
     test_schedule_deprioritizes_recursive_helper_obstacles,
     test_schedule_cli_reads_stdin_and_applies_limit,
     test_schedule_deduplicates_prepared_subject_units,
+    test_schedule_passes_unique_path_function_for_overloads,
+    test_schedule_rehomes_inherited_unit_info_path_function_to_target_owner,
+    test_schedule_splits_same_arity_overloads_by_path_function,
+    test_schedule_skips_unpinned_overloads_without_path_function,
+    test_schedule_skips_unfocusable_fallback_and_receive_units,
+    test_schedule_records_special_only_rows_for_deploy_fallback,
+    test_schedule_records_ok_rows_without_schedulable_units,
     test_schedule_can_round_robin_across_benchmarks,
     test_schedule_can_round_robin_across_subjects,
     test_schedule_refuses_protected_write_paths,

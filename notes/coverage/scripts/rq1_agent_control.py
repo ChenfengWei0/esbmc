@@ -35,8 +35,10 @@ DEFAULT_DELTA_CACHE = Path("/tmp/veriput_rq1_agent_control_snapshot.json")
 DEFAULT_LOCAL_LEASES = Path("/tmp/veriput_rq1_case_leases.json")
 DEFAULT_REMOTE_LEASE_DIR = "/tmp/veriput_rq1_case_leases.d"
 FLOW_DOC = HERE / "rq1_automation_flow.md"
-MIN_ACTIVE = 3
-MAX_SPAWN = 3
+# One repair/review agent is kept for each gated verification worker slot:
+# three local slots and two remote slots.
+MIN_ACTIVE = 5
+MAX_SPAWN = 5
 SUBAGENT_MODEL = "gpt-5.6-luna"
 WORKER_PATTERN = (
     "esbmc|rq1_veriput_run|certify_all|put_all|solidity_path_put|"
@@ -284,6 +286,14 @@ Subjects:
     }
 
 
+def _scope_overlaps(scope: list[str], occupied: list[list[str]]) -> bool:
+    """Keep write repair assignments disjoint from active repair owners."""
+    requested = set(scope)
+    if not requested:
+        return False
+    return any(requested.intersection(current) for current in occupied)
+
+
 def build_actions(theory_tsv: Path, min_active: int, max_spawn: int,
                   remote_host_name: str) -> dict:
     autoclose = _run_json([sys.executable, str(AUTOCLOSE), "plan"])
@@ -324,16 +334,36 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int,
         gate = "open"
 
     if gate == "open" and active < min_active:
-        needed = max_spawn
+        needed = min(max_spawn, min_active - active)
         repair_assignments = repair.get("assignments") or []
         review_assignments = review.get("assignments") or []
-        # Failed worker feedback is the critical path.  Fill the active
-        # threshold with repair shards before spending a slot on review-only
-        # work; review assignments remain available after the repair deficit
-        # is cleared.
-        spawn_from = repair_assignments + review_assignments
-        for assignment in spawn_from[:needed]:
+        # Review is performed by the main controller.  Agent capacity is
+        # reserved exclusively for independent code-repair/root-cause shards;
+        # never consume a worker-aligned slot with a reviewer subagent.
+        # Prefer independent write repairs.  Read-only root-cause assignments
+        # only fill spare supervision slots when no further disjoint owner is
+        # available in this cycle.
+        spawn_from = (
+            [item for item in repair_assignments if item.get("mode") == "write"]
+            + [item for item in repair_assignments if item.get("mode") != "write"]
+        )
+        occupied_scopes = [
+            list(item.get("write_scope") or [])
+            for item in (watchdog.get("active_details") or [])
+            if item.get("mode") == "write"
+        ]
+        spawned = 0
+        for assignment in spawn_from:
+            if spawned >= needed:
+                break
+            scope = list(assignment.get("write_scope") or [])
+            mode = assignment.get("mode")
+            if mode == "write" and _scope_overlaps(scope, occupied_scopes):
+                continue
             actions.append(_spawn_action(assignment))
+            spawned += 1
+            if mode == "write":
+                occupied_scopes.append(scope)
 
     theory_case_count = _count_tsv_rows(theory_tsv)
     if theory_case_count > 0 and active >= min_active and gate == "open":

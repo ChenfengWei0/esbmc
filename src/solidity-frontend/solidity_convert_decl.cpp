@@ -2004,7 +2004,8 @@ bool solidity_convertert::get_error_definition(const nlohmann::json &ast_node)
 
   // Custom error body: `__ESBMC_assume(false)` to prune the revert path
   // at the SMT level (matches real-EVM revert-aborts-construction
-  // semantics). Coverage-mode exception (--branch-coverage-claims):
+  // semantics). Coverage-mode exception (--branch-coverage-claims and
+  // --solidity-path-coverage):
   // a custom error inside a constructor invariant pruning the
   // construction path means EVERY post-constructor path is proven
   // unreachable when SAT cannot satisfy the invariant's PASS direction
@@ -2020,7 +2021,8 @@ bool solidity_convertert::get_error_definition(const nlohmann::json &ast_node)
   // assertions to guards via goto_coverage.cpp:438-441 for the same
   // reason — the mode is for coverage, not safety).
   const bool coverage_mode =
-    !config.options.get_option("branch-coverage-claims").empty();
+    !config.options.get_option("branch-coverage-claims").empty() ||
+    config.options.get_bool_option("solidity-path-coverage-enabled");
   code_blockt body;
   if (coverage_mode)
   {
@@ -2074,7 +2076,34 @@ void solidity_convertert::get_state_var_decl_name(
   //  - For state variable name, just use the ast_node["name"], e.g. sol:@C@Base@x#11
   //  - For state variable id, add prefix "sol:@"
   name = ast_node["name"].get<std::string>();
-  if (ast_node.contains("is_inherited"))
+  bool duplicate_state_name = false;
+  if (!name.empty())
+  {
+    size_t matches = 0;
+    std::vector<const nlohmann::json *> stack;
+    stack.push_back(&src_ast_json);
+    while (!stack.empty() && matches < 2)
+    {
+      const nlohmann::json *cur = stack.back();
+      stack.pop_back();
+      if (cur->is_object())
+      {
+        if (
+          cur->value("nodeType", "") == "VariableDeclaration" &&
+          cur->value("stateVariable", false) && cur->value("name", "") == name)
+          ++matches;
+        for (const auto &it : cur->items())
+          stack.push_back(&it.value());
+      }
+      else if (cur->is_array())
+      {
+        for (const auto &it : *cur)
+          stack.push_back(&it);
+      }
+    }
+    duplicate_state_name = matches > 1;
+  }
+  if (ast_node.contains("is_inherited") || duplicate_state_name)
   {
     // Solidity permits different base contracts to declare state variables
     // with the same source name. ESBMC flattens inherited state into one

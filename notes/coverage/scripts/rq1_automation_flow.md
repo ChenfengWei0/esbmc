@@ -49,7 +49,7 @@ Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`；该边界通过
 4. 生成控制动作
 
    - 运行：
-     `rq1_agent_control.py --format text --only-changes --max-spawn 3`
+     `rq1_agent_control.py --format text --only-changes --max-spawn 5`
    - 无数字变化时不打印固定状态。
    - 有变化时必须打印中文固定报告，至少包括：
      active subagents、pending close、non-medium、write conflict、stale、
@@ -64,16 +64,19 @@ Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`；该边界通过
    - 派发后立即顺序登记，不能并行写 ledger：
      `rq1_subagent_orchestrator.py lease ...`
      `rq1_subagent_orchestrator.py running ...`
-   - 最低 active 阈值是 `3`。低于 3 且有可派任务时，必须继续派发。
+   - 最低 active 阈值是 `5`。低于 5 且有可派任务时，必须继续派发。
    - write-mode 任务必须有独占 `write_scope`；readonly review 可并发。
 
-6. review 后的 commit
+6. 主审后的 commit
 
+   - completed patch 的 review 由主 agent 完成，不派 review subagent；主审必须
+     读取失败 artifacts、diff 和相邻调用路径，并可直接在该 exclusive scope 修订。
    - accepted、needs-work、rejected 都必须自动尝试 commit 本次实际文件改动；
      没有文件改动时不伪造 commit。
    - 只有 accepted 且记录 commit sha 后，才能把对应 patch 算入 net theory。
    - review 不通过时理论仍为 0/回扣，并必须派新的 repair patch。
-   - 同一个 patch 最多 review 一次；ledger 和 dispatcher 都拒绝第二次。
+   - 同一个 patch 最多主审一次；主审修改后的最终 patch 直接进入 validation
+     queue 或回扣，不再产生 review-repair-review 循环。
 
 7. 理论覆盖清单
 
@@ -124,7 +127,9 @@ Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`；该边界通过
 
 ## 资源最大化规则
 
-- active subagents 目标：至少 `3`。
+- active subagents 目标：至少 `5`，对应 `local-1..3` 与 `remote-1..2` 五个
+  theory-worker 槽位。每个被 review 接受的 repair patch 必须绑定一个独立槽位，
+  然后才允许该槽位运行其 theory manifest case。
 - subagent 总容量：`24`。
 - 本机 worker 和远程 worker 只在 theory manifest 合法时启动。
 - worker supervisor 默认本机 3 个 pump、远程 2-case 并发；每个进程有独立
