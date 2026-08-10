@@ -23,7 +23,9 @@ WATCHDOG = HERE / "rq1_watchdog_status.py"
 DISPATCHER = HERE / "rq1_repair_dispatcher.py"
 REVIEW_DISPATCHER = HERE / "rq1_review_dispatcher.py"
 DISPATCH_QUEUE = Path("/tmp/veriput_rq1_dispatch_queue.json")
+PATCH_REVIEW_SUMMARY = HERE / "rq1_patch_review_summary.py"
 MIN_PENDING_REPAIR_ASSIGNMENTS = 10
+RESULTS_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 
 SUMMARY_KEYS = (
     "implemented_progress_provisional_gross",
@@ -172,12 +174,22 @@ def _dispatch_subject_index(
     return index
 
 
-def _state_case_count(state: dict) -> int:
+def _state_case_count(state: dict, rows: list[dict] | None = None) -> int:
     worker = state.get("worker") if isinstance(state.get("worker"), dict) else {}
     try:
-        return int(state.get("case_count") or worker.get("case_count") or 0)
+        configured = int(state.get("case_count") or worker.get("case_count") or 0)
     except (TypeError, ValueError):
+        configured = 0
+    if configured:
+        return configured
+    if rows is None:
         return 0
+    cases = {
+        (row.get("bench"), row.get("subject"))
+        for row in rows
+        if row.get("bench") and row.get("subject")
+    }
+    return len(cases)
 
 
 def _state_pid(state: dict) -> object:
@@ -255,7 +267,7 @@ def _worker_progress_row(name: str, state_path: Path,
         "pid": pid,
         "alive": _pid_alive(pid) if name != "remote" else "remote-probed",
         "M": len(done),
-        "N": _state_case_count(state),
+        "N": _state_case_count(state, rows),
         "running": len(running),
         "failed_or_skipped": len(failed),
         "weak_done": len(weak),
@@ -351,6 +363,66 @@ def _print_worker_mn_summary(watchdog_stdout: str) -> None:
             f" leases={remote.get('leases')}")
 
 
+def _result_counts(path: Path) -> tuple[int, int, int]:
+    try:
+        doc = json.loads(path.read_text(errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return 0, 0, 0
+    row = doc.get("row") if isinstance(doc.get("row"), dict) else doc
+    put = doc.get("put") if isinstance(doc.get("put"), dict) else {}
+
+    def as_int(obj: dict, key: str) -> int:
+        try:
+            return int(obj.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    return (
+        max(as_int(row, "valid"), as_int(put, "valid")),
+        max(as_int(row, "put_valid"), as_int(put, "put_valid")),
+        max(
+            as_int(row, "valid_put_with_R1_or_R2"),
+            as_int(put, "valid_put_with_R1_or_R2"),
+        ),
+    )
+
+
+def _print_recent_canonical_results(limit: int = 8) -> None:
+    rows = []
+    for path in RESULTS_ROOT.glob("*/subjects/*/result.json"):
+        text = str(path)
+        if any(marker in text for marker in (
+                ".redo.", ".superseded.", ".adopted_from_", ".incomplete.")):
+            continue
+        try:
+            rel = path.relative_to(RESULTS_ROOT).parts
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if len(rel) < 4 or rel[1] != "subjects":
+            continue
+        rows.append((mtime, rel[0], rel[2], path))
+    print("recent_canonical_results:")
+    for _mtime, bench, subject, path in sorted(rows, reverse=True)[:limit]:
+        valid, put_valid, r1r2 = _result_counts(path)
+        if valid <= 0:
+            bucket = "NO_VALID_AFTER_RUN"
+        elif put_valid <= 0:
+            bucket = "VALID_NO_PUT"
+        elif r1r2 <= 0:
+            bucket = "PUT_NO_R1R2"
+        else:
+            bucket = "VALID_PUT_R1R2"
+        print(
+            f"  result={bench}/{subject} valid={valid} put={put_valid}"
+            f" r1r2={r1r2} bucket={bucket} path={path}")
+        if bucket != "VALID_PUT_R1R2":
+            print(
+                "    intervention_required=true;"
+                "theory_or_quality_must_be_decremented=true;"
+                "repair_dispatch_required=true")
+
+
 def _print_feedback_dispatch_summary(ledger_stdout: str,
                                      watchdog_stdout: str) -> None:
     feedback = _extract_json_section(ledger_stdout,
@@ -438,6 +510,32 @@ def _print_feedback_dispatch_summary(ledger_stdout: str,
         print(
             "  HARD_ALERT=REVIEW_ASSIGNMENTS_PENDING;"
             "do_not_count_pending_patches_as_theory=true")
+    review_proc = subprocess.run(
+        [sys.executable, str(PATCH_REVIEW_SUMMARY)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    review_summary = {}
+    if review_proc.returncode == 0:
+        try:
+            review_summary = json.loads(review_proc.stdout)
+        except json.JSONDecodeError:
+            review_summary = {}
+    counts = review_summary.get("counts") if isinstance(
+        review_summary.get("counts"), dict) else {}
+    print(
+        "  patch_review_summary="
+        f"accepted={counts.get('accepted')}"
+        f" pending={counts.get('pending')}"
+        f" needs_work={counts.get('needs-work')}"
+        f" rejected={counts.get('rejected')}"
+        " rule=accepted_only_counts_to_net_theory")
+    for item in (review_summary.get("buckets") or {}).get("needs-work", [])[:8]:
+        print(
+            f"    needs_work_patch={item.get('slot')}/{item.get('patch_id')}"
+            f" note={str(item.get('note') or '')[:120]}")
     for label, queue in (("repair_assignment", dispatch.get("assignments") or []),
                          ("review_assignment",
                           review_dispatch.get("assignments") or [])):

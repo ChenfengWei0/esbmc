@@ -94,6 +94,25 @@ def _int(doc: dict, key: str) -> int:
         return 0
 
 
+def _has_valid_r1r2_test(doc: dict) -> bool:
+    put = doc.get("put") if isinstance(doc.get("put"), dict) else {}
+    for source in (put, doc):
+        tests = source.get("valid_tests") if isinstance(source, dict) else None
+        if not isinstance(tests, list):
+            continue
+        for test in tests:
+            if not isinstance(test, dict):
+                continue
+            if test.get("kind") != "put":
+                continue
+            if not test.get("valid_reference_test", True):
+                continue
+            classes = {str(label) for label in test.get("oracle_classes") or []}
+            if classes & {"R1", "R2"}:
+                return True
+    return False
+
+
 def _canonical_weak_rows(
     results_root: Path,
     root_causes: dict[tuple[str, str], dict],
@@ -125,6 +144,8 @@ def _canonical_weak_rows(
             category = "NO_VALID_AFTER_RUN"
         elif put_valid <= 0:
             category = "NO_PUT_MATERIALIZATION"
+        elif r1r2 <= 0 and _has_valid_r1r2_test(doc):
+            category = "ORACLE_ACCOUNTING_METADATA_LOST"
         elif r1r2 <= 0:
             category = "NO_R1R2_ORACLE"
         else:
@@ -190,6 +211,10 @@ def _row_priority(row: dict) -> tuple[int, str, str, str]:
 
 
 def _default_scopes(category: str) -> list[str]:
+    if category == "ORACLE_ACCOUNTING_METADATA_LOST":
+        return ["notes/coverage/scripts/rq1_veriput_run.py",
+                "notes/coverage/scripts/put_all.py",
+                "notes/coverage/scripts/rq1_results_adopt.py"]
     if category.startswith("ESBMC_"):
         return ["src/solidity-frontend/*.cpp", "src/goto-programs/goto_coverage.cpp"]
     if category == "NO_R1R2_ORACLE":
