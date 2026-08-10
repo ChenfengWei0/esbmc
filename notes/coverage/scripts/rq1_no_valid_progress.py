@@ -786,6 +786,44 @@ def rate(numerator: int, denominator: int) -> float:
     return round(numerator / denominator, 6) if denominator else 0.0
 
 
+def _valid_strength_from_tests(*sources: dict) -> tuple[int, int, int]:
+    valid = put_valid = r1r2 = 0
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        tests = source.get("valid_tests")
+        if not isinstance(tests, list):
+            continue
+        for test in tests:
+            if not isinstance(test, dict):
+                continue
+            if test.get("valid_reference_test") is False:
+                continue
+            valid += 1
+            if test.get("kind") != "put":
+                continue
+            put_valid += 1
+            classes = {str(label) for label in test.get("oracle_classes") or []}
+            if classes & {"R1", "R2"}:
+                r1r2 += 1
+    return valid, put_valid, r1r2
+
+
+def _strength_counts(row: dict, put_doc: dict | None = None) -> tuple[int, int, int]:
+    put_doc = put_doc if isinstance(put_doc, dict) else {}
+    derived_valid, derived_put, derived_r1r2 = _valid_strength_from_tests(
+        row, put_doc)
+    v = max(_as_int(row, "valid"), _as_int(put_doc, "valid"), derived_valid)
+    pv = max(_as_int(row, "put_valid"), _as_int(put_doc, "put_valid"),
+             derived_put)
+    rv = max(
+        _as_int(row, "valid_put_with_R1_or_R2"),
+        _as_int(put_doc, "valid_put_with_R1_or_R2"),
+        derived_r1r2,
+    )
+    return v, pv, rv
+
+
 def actual_rq1_progress(results_root: Path) -> dict:
     total = valid = put = r1r2 = 0
     by_dataset: dict[str, Counter[str]] = {}
@@ -837,12 +875,7 @@ def actual_rq1_progress(results_root: Path) -> dict:
             except (TypeError, ValueError):
                 return 0
 
-        v = max(as_int(row, "valid"), as_int(put_doc, "valid"))
-        pv = max(as_int(row, "put_valid"), as_int(put_doc, "put_valid"))
-        rv = max(
-            as_int(row, "valid_put_with_R1_or_R2"),
-            as_int(put_doc, "valid_put_with_R1_or_R2"),
-        )
+        v, pv, rv = _strength_counts(row, put_doc)
         bucket = by_dataset.setdefault(dataset, Counter())
         total += 1
         bucket["total"] += 1
@@ -1142,12 +1175,7 @@ def _canonical_validation_feedback_rows(
         put_doc = doc.get("put") if isinstance(doc.get("put"), dict) else {}
         if not isinstance(row, dict):
             continue
-        valid = max(_as_int(row, "valid"), _as_int(put_doc, "valid"))
-        put_valid = max(_as_int(row, "put_valid"), _as_int(put_doc, "put_valid"))
-        r1r2 = max(
-            _as_int(row, "valid_put_with_R1_or_R2"),
-            _as_int(put_doc, "valid_put_with_R1_or_R2"),
-        )
+        valid, put_valid, r1r2 = _strength_counts(row, put_doc)
         if valid > 0 and put_valid > 0 and r1r2 > 0:
             continue
         original = root_cause_index.get((bench, subject), {})
@@ -1211,16 +1239,13 @@ def _canonical_latest_status(results_root: Path) -> dict[tuple[str, str], dict]:
         put_doc = doc.get("put") if isinstance(doc.get("put"), dict) else {}
         if not isinstance(row, dict):
             continue
+        valid, put_valid, r1r2 = _strength_counts(row, put_doc)
         latest[(bench, subject)] = {
             "bench": bench,
             "subject": subject,
-            "valid": max(_as_int(row, "valid"), _as_int(put_doc, "valid")),
-            "put_valid": max(_as_int(row, "put_valid"),
-                             _as_int(put_doc, "put_valid")),
-            "r1r2": max(
-                _as_int(row, "valid_put_with_R1_or_R2"),
-                _as_int(put_doc, "valid_put_with_R1_or_R2"),
-            ),
+            "valid": valid,
+            "put_valid": put_valid,
+            "r1r2": r1r2,
             "result_file": str(result),
             "result_mtime": result_mtime,
             "result_mtime_utc": _utc(result_mtime),
