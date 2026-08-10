@@ -13,8 +13,10 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -27,8 +29,11 @@ PATCH_REVIEW_SUMMARY = HERE / "rq1_patch_review_summary.py"
 THEORY_CASES = HERE / "rq1_theory_covered_cases.py"
 LEDGER = HERE / "rq1_no_valid_progress.py"
 WATCHDOG_STATUS = HERE / "rq1_watchdog_status.py"
+REAP_STALE_LEASES = HERE / "rq1_reap_stale_worker_leases.py"
 DEFAULT_THEORY_TSV = Path("/tmp/veriput_rq1_theory_covered_cases.tsv")
 DEFAULT_DELTA_CACHE = Path("/tmp/veriput_rq1_agent_control_snapshot.json")
+DEFAULT_LOCAL_LEASES = Path("/tmp/veriput_rq1_case_leases.json")
+DEFAULT_REMOTE_LEASE_DIR = "/tmp/veriput_rq1_case_leases.d"
 FLOW_DOC = HERE / "rq1_automation_flow.md"
 MIN_ACTIVE = 10
 MAX_SPAWN = 10
@@ -375,6 +380,10 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int,
     if local_stale_leases or remote_stale_leases:
         actions.insert(0, {
             "action": "reap_stale_worker_leases",
+            "command": [
+                sys.executable,
+                str(REAP_STALE_LEASES),
+            ],
             "local_stale": local_stale_leases,
             "remote_stale": remote_stale_leases,
             "reason": "lease says running but no live worker process owns it",
@@ -428,8 +437,8 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int,
                 "local/remote worker process is alive."),
         },
         "remote_memory": {
-            "available_gib": round(
-                float(remote_host.get("mem_available_mib") or 0) / 1024, 3),
+            "available_gib":
+                (remote_resource.get("memory") or {}).get("available_gib"),
             "nproc": remote_host.get("nproc"),
             "total_gib": (remote_resource.get("memory") or {}).get("total_gib"),
             "free_gib": (remote_resource.get("memory") or {}).get("free_gib"),
@@ -567,6 +576,67 @@ def _read_json(path: Path) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _write_json(path: Path, doc: dict) -> None:
+    path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+
+
+def _reap_stale_worker_leases(doc: dict, remote_host: str) -> dict:
+    stale = doc.get("stale_worker_progress")
+    if not isinstance(stale, dict):
+        return {"local_removed": 0, "remote_removed": 0}
+    if doc.get("local_worker_process_count") or doc.get(
+            "remote_worker_process_count"):
+        return {
+            "local_removed": 0,
+            "remote_removed": 0,
+            "skipped": "live worker process exists",
+        }
+
+    removed_local = 0
+    lease_doc = _read_json(DEFAULT_LOCAL_LEASES)
+    leases = lease_doc.get("leases")
+    if isinstance(leases, dict):
+        for item in stale.get("local_stale_leases") or []:
+            key = item.get("key")
+            if key in leases:
+                leases[key]["status"] = "stale-reaped"
+                leases[key]["reaped_ts"] = time.time()
+                removed_local += 1
+        _write_json(DEFAULT_LOCAL_LEASES, lease_doc)
+
+    remote_names = [
+        str(item.get("lease") or "")
+        for item in (stale.get("remote_stale_leases") or [])
+        if item.get("lease")
+    ]
+    removed_remote = 0
+    if remote_names:
+        quoted = " ".join(
+            shlex.quote(f"{DEFAULT_REMOTE_LEASE_DIR}/{name}")
+            for name in remote_names)
+        proc = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=5",
+                remote_host,
+                f"rm -rf {quoted}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            removed_remote = len(remote_names)
+    return {
+        "local_removed": removed_local,
+        "remote_removed": removed_remote,
+    }
+
+
 def _delta(doc: dict, cache: Path) -> dict:
     current = _tracked_snapshot(doc)
     previous = _read_json(cache)
@@ -688,22 +758,16 @@ def _print_text(doc: dict, changed: dict | None) -> None:
     for worker in (doc.get("remote_worker_process_details") or [])[:6]:
         print(f"    远程worker明细={worker[:220]}")
     print(
-        "  远程资源="
-        f"available={remote_memory.get('available_gib')}GiB"
-        f" total={remote_memory.get('total_gib')}GiB"
-        f" free={remote_memory.get('free_gib')}GiB"
-        f" buff_cache={remote_memory.get('buffer_cache_gib')}GiB"
-        f" nproc={remote_memory.get('nproc')}")
-    print(
         "  worker最近反馈="
         f"done={worker_progress.get('recent_done_count_in_tail')}"
         f" failed={worker_progress.get('recent_failed_count_in_tail')}"
         f" oom={worker_progress.get('recent_oom_count_in_tail')}"
         f" weak_or_failed={worker_progress.get('recent_weak_or_failed_count_in_tail')}")
-    for item in (worker_progress.get("currently_running_cases") or [])[:8]:
-        print(
-            f"    正在跑case={item.get('bench')}/{item.get('subject')}"
-            f" status={item.get('status')} bucket={item.get('bucket')}")
+    if int(doc.get("total_worker_running_case_count") or 0) > 0:
+        for item in (worker_progress.get("currently_running_cases") or [])[:8]:
+            print(
+                f"    正在跑case={item.get('bench')}/{item.get('subject')}"
+                f" status={item.get('status')} bucket={item.get('bucket')}")
     for item in (worker_progress.get("recent_failed_tail") or [])[-5:]:
         print(
             f"    最近失败case={item.get('bench')}/{item.get('subject')}"
@@ -774,6 +838,10 @@ def _print_text(doc: dict, changed: dict | None) -> None:
             f" 本机陈旧={action.get('local_stale')}"
             f" 远程陈旧={action.get('remote_stale')}"
             f" 弱/失败tail={action.get('weak_or_failed_tail_count')}")
+    for item in doc.get("safe_actions_applied") or []:
+        print(
+            f"    已执行安全动作={item.get('action')}"
+            f" 结果={item.get('result')}")
     boundary = doc.get("host_tool_boundary")
     if isinstance(boundary, dict):
         print(
@@ -792,10 +860,20 @@ def main() -> int:
     parser.add_argument("--remote-host", default="invmut-w2")
     parser.add_argument("--format", choices=("json", "text"), default="json")
     parser.add_argument("--only-changes", action="store_true")
+    parser.add_argument("--apply-safe-actions", action="store_true")
     parser.add_argument("--delta-cache", type=Path, default=DEFAULT_DELTA_CACHE)
     args = parser.parse_args()
     doc = build_actions(args.theory_tsv, args.min_active, args.max_spawn,
                         args.remote_host)
+    if args.apply_safe_actions:
+        applied = []
+        if any(action.get("action") == "reap_stale_worker_leases"
+               for action in doc.get("actions") or []):
+            applied.append({
+                "action": "reap_stale_worker_leases",
+                "result": _reap_stale_worker_leases(doc, args.remote_host),
+            })
+        doc["safe_actions_applied"] = applied
     if args.format == "json":
         print(json.dumps(doc, indent=2, sort_keys=True))
     else:
