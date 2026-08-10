@@ -23,6 +23,7 @@ from rq1_no_valid_progress import SUBAGENT_PLAN
 
 DEFAULT_STATE = Path("/tmp/veriput_rq1_subagents.json")
 DEFAULT_LOCK = Path("/tmp/veriput_rq1_subagents.lock")
+DEFAULT_REVIEW_EVENTS = Path("/tmp/veriput_rq1_review_events.jsonl")
 DEFAULT_MAX_AGENTS = 24
 DEFAULT_STALE_MINUTES = 20.0
 REQUIRED_REASONING_EFFORT = "medium"
@@ -197,6 +198,21 @@ def review_agent(
                 agent["review_commit"] = commit_sha.strip()
             if note:
                 agent["review_note"] = note
+            event = {
+                "event": "review",
+                "ts": now(),
+                "slot": agent.get("slot"),
+                "task": agent.get("task"),
+                "agent_id": agent_id,
+                "reviewer_id": reviewer_id,
+                "patch_id": agent.get("patch_id"),
+                "verdict": verdict,
+                "commit_sha": commit_sha.strip(),
+                "note": note,
+                "write_scope": agent.get("write_scope") or [],
+            }
+            with DEFAULT_REVIEW_EVENTS.open("a") as stream:
+                stream.write(json.dumps(event, sort_keys=True) + "\n")
             return agent
     raise SystemExit(f"agent_id not found: {agent_id}")
 

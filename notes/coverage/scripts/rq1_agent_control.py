@@ -222,9 +222,9 @@ def _progress_summary() -> dict:
 
 def _review_field(note: str, field: str) -> str:
     match = re.search(
-        rf"(?:^|[;\n])\s*{re.escape(field)}\s*[:=]\s*(.*?)(?=(?:[;\n]\s*"
+        rf"(?:^|[;\n]|[.]\s+)\s*{re.escape(field)}\s*[:=]\s*(.*?)(?=(?:[;\n]|[.]\s+)\s*"
         rf"(?:changed_code|prior_failure|correctness_argument|verdict|"
-        rf"theory_delta|next_action)\s*[:=])|$)",
+        rf"theory_delta|commit decision|next_action)\s*[:=]|\Z)",
         note,
         flags=re.DOTALL,
     )
@@ -883,6 +883,9 @@ def _print_text(doc: dict, changed: dict | None) -> None:
     ):
         for item in (buckets.get(verdict) or [])[:8]:
             note = str(item.get("note") or "")
+            review_fields = item.get("review_fields")
+            if not isinstance(review_fields, dict):
+                review_fields = {}
             print(
                 f"    {label}={item.get('slot')}/{item.get('patch_id')}"
                 f" agent={item.get('agent_id')}"
@@ -898,7 +901,8 @@ def _print_text(doc: dict, changed: dict | None) -> None:
                     ("commit decision", "提交决定"),
                     ("next_action", "下一步"),
             ):
-                value = _review_field(note, field) or "<缺失>"
+                value = review_fields.get(field) or _review_field(
+                    note, field) or "<缺失>"
                 print(f"      {field_label}={value[:260]}")
             missing = item.get("missing_review_fields") or []
             if missing:
