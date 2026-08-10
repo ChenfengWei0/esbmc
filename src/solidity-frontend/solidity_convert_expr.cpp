@@ -7114,6 +7114,17 @@ bool solidity_convertert::get_conditional_operator_expr(
   if (get_expr(expr["falseExpression"], expr["typeDescriptions"], else_expr))
     return true;
 
+  // solc records the common conditional type separately from the two
+  // source branches.  Normalize both branches before constructing irep2's
+  // if expression; if2t requires exact type identity, not merely Solidity
+  // source-level compatibility.
+  convert_type_expr(ns, then, t, expr);
+  convert_type_expr(ns, else_expr, t, expr);
+  if (then.type() != t)
+    then = typecast_exprt(then, t);
+  if (else_expr.type() != t)
+    else_expr = typecast_exprt(else_expr, t);
+
   exprt if_expr("if", t);
   if_expr.copy_to_operands(cond, then, else_expr);
 
