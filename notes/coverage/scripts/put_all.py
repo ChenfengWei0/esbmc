@@ -19,6 +19,7 @@ esbmc invocations and this loop is serial.
 
 import argparse
 import ast
+import hashlib
 import json
 import os
 import re
@@ -649,6 +650,323 @@ def append_stage4_driver_options(cmd, args, path_function, exit_kind,
     return cmd
 
 
+CE_COLLECTION_SCHEMA = "veriput-ce-collection/1"
+CE_REPLAY_MANIFEST_SCHEMA = "veriput-ce-replay-manifest/1"
+CE_REPLAY_CANDIDATE_SCHEMA = "veriput-ce-replay-candidate/1"
+
+
+def _read_json(path):
+    try:
+        with open(path) as fh:
+            value = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return value
+
+
+def _ce_collection_artifacts(root):
+    """Return ``(case_dir, collection_dir, artifact_dir)`` triples.
+
+    CE collection output is deliberately separate from the canonical RQ1
+    result.  Accept a case directory, its ``ce-collection`` directory, one
+    artifact directory, or a subjects directory, but never infer a source from
+    a neighbouring case.
+    """
+    root = os.path.abspath(os.path.expanduser(str(root)))
+    if os.path.isfile(os.path.join(root, "ce-collection.json")):
+        artifact = root
+        collection = os.path.dirname(artifact)
+        case_dir = os.path.dirname(collection)
+        return [(case_dir, collection, artifact)]
+    if os.path.basename(root) == "ce-collection":
+        collection_dirs = [root]
+    elif os.path.isdir(os.path.join(root, "ce-collection")):
+        collection_dirs = [os.path.join(root, "ce-collection")]
+    else:
+        collection_dirs = [
+            os.path.join(root, name, "ce-collection")
+            for name in sorted(os.listdir(root))
+            if os.path.isdir(os.path.join(root, name, "ce-collection"))
+        ] if os.path.isdir(root) else []
+    out = []
+    for collection in collection_dirs:
+        if not os.path.isdir(collection):
+            continue
+        case_dir = os.path.dirname(collection)
+        for name in sorted(os.listdir(collection)):
+            artifact = os.path.join(collection, name)
+            if not os.path.isdir(artifact):
+                continue
+            if os.path.isfile(os.path.join(artifact, "ce-collection.json")):
+                out.append((case_dir, collection, artifact))
+    return out
+
+
+def _ce_cert_rows(collection_dir):
+    path = os.path.join(collection_dir, "certify-results.jsonl")
+    rows = []
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return rows
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _ce_name_value_list(value):
+    """Keep witness values losslessly and reject malformed entries."""
+    if not isinstance(value, list):
+        return None
+    out = []
+    for item in value:
+        if not isinstance(item, dict) or not item.get("name"):
+            return None
+        if "value" not in item:
+            return None
+        out.append({"name": str(item["name"]), "value": item["value"]})
+    return out
+
+
+def _ce_path_witnesses(path_summary):
+    """Return path witnesses, preferring the nested complete journal list."""
+    nested = path_summary.get("witnesses")
+    if isinstance(nested, list) and nested:
+        return [item for item in nested if isinstance(item, dict)]
+    # A one-witness journal stores the path summary itself as the witness.
+    return [path_summary] if isinstance(path_summary, dict) else []
+
+
+def _ce_row_for_path(rows, unit, path_function, path_id):
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("unit") != unit:
+            continue
+        if path_function and row.get("path_function") != path_function:
+            continue
+        journal = row.get("partial_witness_journal") or {}
+        paths = journal.get("paths") if isinstance(journal, dict) else []
+        if any(str(item.get("path_id")) == str(path_id)
+               for item in paths if isinstance(item, dict)):
+            return row
+        # The CE-only archive may have only the path summary, so a matching
+        # unit/path row is still the authoritative no-formal-result guard.
+        if path_function == row.get("path_function"):
+            return row
+    return None
+
+
+def _ce_candidate(case_dir, collection_dir, artifact_dir, collection,
+                  summary, row, journal, path_summary, witness, index):
+    subject = (summary or {}).get("subject_id") or os.path.basename(case_dir)
+    benchmark = (summary or {}).get("benchmark")
+    contract = ((summary or {}).get("contract")
+                or collection.get("contract"))
+    unit = ((summary or {}).get("unit") or collection.get("unit"))
+    path_function = (path_summary.get("path_function")
+                     or collection.get("path_function"))
+    path_id = path_summary.get("path_id")
+    if not subject or not benchmark or not contract or not unit:
+        return None, "missing case identity"
+    if not path_function or path_id is None:
+        return None, "missing path identity"
+    if not isinstance(journal, dict) or journal.get("complete") is not True:
+        return None, "journal is not complete"
+    if journal.get("partial") is True:
+        return None, "journal is partial"
+    if journal.get("kind") != "solidity-complete-path-ce-journal":
+        return None, "journal kind is not a complete path witness journal"
+    if not isinstance(row, dict):
+        return None, "missing CE certification row"
+    if row.get("certified"):
+        return None, "CE row unexpectedly contains a certified region"
+    if row.get("valid") or row.get("put") or row.get("r1r2"):
+        return None, "CE row unexpectedly contains a formal result"
+    inputs = _ce_name_value_list(witness.get("inputs"))
+    entry_storage = _ce_name_value_list(witness.get("entry_storage"))
+    environment = _ce_name_value_list(witness.get("env"))
+    if inputs is None or entry_storage is None or environment is None:
+        return None, "witness lacks lossless inputs/state/environment lists"
+    if witness.get("entry_storage_known") is not True:
+        return None, "entry storage is not known"
+    digest_input = json.dumps(
+        [subject, unit, str(path_id), index, inputs, entry_storage,
+         environment],
+        sort_keys=True, separators=(",", ":"), default=str).encode()
+    candidate_id = "ce-" + hashlib.sha256(digest_input).hexdigest()[:20]
+    return {
+        "schema": CE_REPLAY_CANDIDATE_SCHEMA,
+        "candidate_id": candidate_id,
+        "candidate_kind": "concrete-replay-candidate",
+        "status": "candidate-only",
+        "proof_status": "not-proven",
+        "source": {
+            "stage": "ce-collection",
+            "evidence": "complete-path-witness",
+            "refutation_only": True,
+            "case_dir": case_dir,
+            "artifact_dir": artifact_dir,
+            "journal": os.path.join(artifact_dir,
+                                     "ce-witness-journal.json"),
+            "certification_row": os.path.join(collection_dir,
+                                               "certify-results.jsonl"),
+            "bucket": row.get("bucket"),
+            "diagnostic": row.get("driver_diagnostic"),
+        },
+        "case": {
+            "benchmark": benchmark,
+            "subject_id": subject,
+            "contract": contract,
+            "unit": unit,
+        },
+        "path": {
+            "path_function": str(path_function),
+            "path_id": str(path_id),
+            "path_id_stable": path_summary.get("path_id_stable"),
+            "claim": path_summary.get("claim"),
+            "path_depth": path_summary.get("path_depth"),
+        },
+        "replay": {
+            "inputs": inputs,
+            "entry_storage": entry_storage,
+            "environment": environment,
+            "final_state": _ce_name_value_list(
+                witness.get("final_state")) or [],
+            "extcall_returns": _ce_name_value_list(
+                witness.get("extcall_returns")) or [],
+            "return_value": witness.get("return_value"),
+            "return_value_known": witness.get("return_value_known"),
+            "revert_pre_rollback": witness.get("revert_pre_rollback"),
+        },
+        "rq1_accounting": {
+            "raw": 0,
+            "valid": 0,
+            "put": 0,
+            "r1r2": 0,
+            "theory_delta": 0,
+            "counted_as_formal_result": False,
+        },
+        "next_step": {
+            "requires_concrete_replay_verification": True,
+            "requires_foundry_double_oracle": True,
+            "assertions": [],
+            "oracle": None,
+        },
+    }, None
+
+
+def materialize_ce_replay_candidates(roots, output_path=None,
+                                     max_witnesses_per_path=1):
+    """Archive concrete CE candidates without entering the RQ1 result flow."""
+    if max_witnesses_per_path <= 0:
+        print("--ce-max-witnesses-per-path must be positive")
+        return 2
+    candidates, skipped, seen = [], [], set()
+    for root in roots:
+        for case_dir, collection_dir, artifact_dir in \
+                _ce_collection_artifacts(root):
+            collection = _read_json(
+                os.path.join(artifact_dir, "ce-collection.json"))
+            journal = _read_json(
+                os.path.join(artifact_dir, "ce-witness-journal.json"))
+            summary = _read_json(os.path.join(collection_dir, "summary.json"))
+            if not isinstance(collection, dict) or collection.get(
+                    "schema") != CE_COLLECTION_SCHEMA:
+                skipped.append({"artifact": artifact_dir,
+                                "reason": "invalid CE collection schema"})
+                continue
+            if collection.get("status") != "witnessed":
+                skipped.append({"artifact": artifact_dir,
+                                "reason": "collection is not witnessed"})
+                continue
+            rows = _ce_cert_rows(collection_dir)
+            witnesses = ((journal or {}).get("witnesses")
+                         if isinstance(journal, dict) else None)
+            if not isinstance(witnesses, dict):
+                skipped.append({"artifact": artifact_dir,
+                                "reason": "missing witness map"})
+                continue
+            for path_key, path_summary in witnesses.items():
+                if not isinstance(path_summary, dict):
+                    skipped.append({"artifact": artifact_dir,
+                                    "path": str(path_key),
+                                    "reason": "malformed path summary"})
+                    continue
+                path_function = (path_summary.get("path_function")
+                                 or collection.get("path_function"))
+                path_id = path_summary.get("path_id")
+                row = _ce_row_for_path(rows, collection.get("unit"),
+                                       path_function, path_id)
+                if row is None:
+                    skipped.append({"artifact": artifact_dir,
+                                    "path": str(path_key),
+                                    "reason": "no matching CE result row"})
+                    continue
+                path_witnesses = _ce_path_witnesses(path_summary)
+                emitted = 0
+                for witness in path_witnesses:
+                    if emitted >= max_witnesses_per_path:
+                        break
+                    candidate, reason = _ce_candidate(
+                        case_dir, collection_dir, artifact_dir, collection,
+                        summary, row, journal, path_summary, witness,
+                        emitted)
+                    if candidate is None:
+                        if emitted == 0:
+                            skipped.append({"artifact": artifact_dir,
+                                            "path": str(path_key),
+                                            "reason": reason})
+                        continue
+                    if candidate["candidate_id"] in seen:
+                        continue
+                    seen.add(candidate["candidate_id"])
+                    candidates.append(candidate)
+                    emitted += 1
+                if emitted == 0 and path_witnesses:
+                    skipped.append({"artifact": artifact_dir,
+                                    "path": str(path_key),
+                                    "reason": "no safe structured witness"})
+    manifest = {
+        "schema": CE_REPLAY_MANIFEST_SCHEMA,
+        "mode": "ce-materialize",
+        "proof_status": "refutation-only",
+        "formal_results_written": False,
+        "note": ("Concrete replay candidates only. CE is not proof; no "
+                 "candidate is valid, PUT, R1/R2, or theory credit."),
+        "candidate_count": len(candidates),
+        "skipped_count": len(skipped),
+        "candidates": candidates,
+        "skipped": skipped,
+    }
+    payload = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    if output_path:
+        output_path = os.path.abspath(os.path.expanduser(output_path))
+        if os.path.basename(output_path) in ("result.json", "put.json"):
+            print("refusing CE manifest output named result.json or put.json")
+            return 2
+        try:
+            ensure_path_not_protected("--ce-materialize-out", output_path)
+        except ValueError as exc:
+            print(str(exc))
+            return 2
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w") as fh:
+            fh.write(payload)
+        print(f"CE replay candidates written: {output_path}")
+    else:
+        print(payload, end="")
+    print(f"CE replay candidates: {len(candidates)}; formal credit: +0")
+    return 0 if candidates else 2
+
+
 def print_stage2_path_accounting(accounting):
     print()
     print("STAGE 2 PATH ACCOUNTING for the selected unit(s)")
@@ -885,7 +1203,30 @@ def main():
     ap.add_argument("--out-root", default=OUT,
                     help="project and scratch root. A single POC should point "
                          "this at its own output directory.")
+    ap.add_argument("--ce-materialize", action="store_true",
+                    help="read CE-only complete witness journals and emit an "
+                         "isolated concrete replay-candidate manifest. This "
+                         "mode never invokes ESBMC, never emits a PUT, and "
+                         "never writes result.json or put.json.")
+    ap.add_argument("--ce-materialize-root", action="append", default=[],
+                    metavar="PATH",
+                    help="case dir, ce-collection dir, artifact dir, or a "
+                         "subjects dir consumed by --ce-materialize. Repeat "
+                         "for multiple roots.")
+    ap.add_argument("--ce-materialize-out", default=None, metavar="PATH",
+                    help="optional JSON manifest path for --ce-materialize; "
+                         "without it the refutation-only manifest is printed")
+    ap.add_argument("--ce-max-witnesses-per-path", type=int, default=1,
+                    metavar="N",
+                    help="maximum deterministic replay candidates per CE path "
+                         "(default: 1)")
     args = ap.parse_args()
+    if args.ce_materialize:
+        if not args.ce_materialize_root:
+            ap.error("--ce-materialize requires --ce-materialize-root")
+        return materialize_ce_replay_candidates(
+            args.ce_materialize_root, args.ce_materialize_out,
+            args.ce_max_witnesses_per_path)
     main_start = time.monotonic()
     stage4_recipe_version = apply_strong_put_recipe(args)
     if args.timeout <= 0:
