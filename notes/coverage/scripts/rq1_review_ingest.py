@@ -19,6 +19,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ORCHESTRATOR = HERE / "rq1_subagent_orchestrator.py"
+DEFAULT_REVIEW_EVENTS = Path("/tmp/veriput_rq1_review_events.jsonl")
 REQUIRED_FIELDS = (
     "changed_code",
     "prior_failure",
@@ -122,7 +123,7 @@ def _auto_commit(paths: list[str], message: str) -> str:
 
 
 def _record_review(agent_id: str, reviewer_id: str, verdict: str, note: str,
-                   commit_sha: str) -> None:
+                   commit_sha: str, event: dict, allow_event_only: bool) -> str:
     cmd = [
         sys.executable,
         str(ORCHESTRATOR),
@@ -141,7 +142,23 @@ def _record_review(agent_id: str, reviewer_id: str, verdict: str, note: str,
     proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE, check=False)
     if proc.returncode != 0:
-        raise SystemExit(proc.stderr.strip() or proc.stdout.strip())
+        if not allow_event_only:
+            raise SystemExit(proc.stderr.strip() or proc.stdout.strip())
+        event = dict(event)
+        event.update({
+            "event": "review",
+            "agent_id": agent_id,
+            "reviewer_id": reviewer_id,
+            "verdict": verdict,
+            "commit_sha": commit_sha,
+            "note": note,
+            "orchestrator_record": "missing-agent-event-only",
+            "orchestrator_error": proc.stderr.strip() or proc.stdout.strip(),
+        })
+        with DEFAULT_REVIEW_EVENTS.open("a") as stream:
+            stream.write(json.dumps(event, sort_keys=True) + "\n")
+        return "event-only"
+    return "orchestrator"
 
 
 def main() -> int:
@@ -151,6 +168,7 @@ def main() -> int:
     parser.add_argument("--patch-id", default="")
     parser.add_argument("--commit-message", default="")
     parser.add_argument("--auto-commit", action="store_true")
+    parser.add_argument("--event-only-if-missing", action="store_true")
     args = parser.parse_args()
 
     doc = _read_json_stdin()
@@ -180,10 +198,18 @@ def main() -> int:
         f"changed_code={values['changed_code'][:500]} | "
         f"prior_failure={values['prior_failure'][:500]} | "
         f"correctness_argument={values['correctness_argument'][:700]} | "
+        f"verdict={verdict} | "
         f"theory_delta={values['theory_delta'][:120]} | "
+        f"commit decision={values['commit decision'][:240]} | "
         f"next_action={values['next_action'][:240]}"
     )
-    _record_review(agent_id, reviewer_id, verdict, compact_note, commit_sha)
+    record_mode = _record_review(agent_id, reviewer_id, verdict, compact_note,
+                                 commit_sha, {
+                                     "patch_id": args.patch_id,
+                                     "slot": "",
+                                     "task": "",
+                                     "write_scope": changed_paths,
+                                 }, args.event_only_if_missing)
 
     print("RQ1 review入账报告:")
     print(f"  被review_agent={agent_id}")
@@ -197,6 +223,7 @@ def main() -> int:
     print(f"  提交决定={values['commit decision']}")
     print(f"  下一步={values['next_action']}")
     print(f"  自动commit={'yes' if commit_sha else 'no'}")
+    print(f"  入账模式={record_mode}")
     if commit_sha:
         print(f"  commit={commit_sha}")
     return 0
