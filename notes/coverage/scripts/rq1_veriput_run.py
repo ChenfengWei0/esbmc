@@ -710,6 +710,20 @@ def _write_normalized_case_result(case_dir: Path, row: dict, *,
         # stale put_valid/valid counters in result.json even though the
         # journal and retained artifacts were correct.
         doc["put"] = put_summary
+        adoption = dict(doc.get("adoption") or {})
+        for key in (
+                "valid", "put_valid", "concrete_valid",
+                "valid_put_with_R1", "valid_put_with_R2",
+                "valid_put_with_R1_or_R2"):
+            adoption[key] = row.get(key, 0)
+        adoption["has_R0"] = bool(row.get("valid_tests"))
+        adoption["has_R1"] = row.get("valid_put_with_R1", 0) > 0
+        adoption["has_R2"] = row.get("valid_put_with_R2", 0) > 0
+        adoption["oracle_tags"] = sorted(
+            set(row.get("valid_oracle_tag_counts") or {}))
+        adoption["source"] = "rq1_veriput_run.normalized_case_result"
+        adoption["adopted_ts"] = time.time()
+        doc["adoption"] = adoption
     normalization = dict(doc.get("normalization") or {})
     normalization.update({
         "normalized_at": _utc_now(),
