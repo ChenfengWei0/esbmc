@@ -7940,6 +7940,7 @@ def main():
         "dropped": [],
         "evidence": [],
     }
+    dropped_state_coords = []
     state_deps, state_dep_evidence = unit_state_dependencies(
         args.ast, args.contract, args.unit, declaration_id=declaration_id)
     has_assembly, assembly_evidence = unit_contains_inline_assembly(
@@ -8273,6 +8274,7 @@ def main():
          "pinned": set(pins),
          "environment (unconstrained)": set(env_names),
          "dropped lowering artifact": set(artifacts),
+         "dropped unrelated state coordinate": set(dropped_state_coords),
          "unsettable, pinned at its CE": set(unsettable),
          "refused by the tool": set(refused or ())})
     if unaccounted:
