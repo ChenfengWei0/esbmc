@@ -514,7 +514,15 @@ def probe_goal_cap_retry_esbmc_args(diagnostic):
 
 
 def thin_outer_box_retry_cmd(cmd, workdir):
-    """Downsample one region-proof retry after solver OOM."""
+    """Downsample and switch solver for one region-proof retry after OOM.
+
+    The Solidity frontend may auto-select CVC5 for a subject containing nested
+    mappings.  That choice is useful for the full contract, but an outer-box
+    certification query for a scalar unit can still exhaust CVC5 before it
+    reaches the path claim.  Repeating the same backend with fewer probes does
+    not change that failure mode.  Z3 is a sound independent retry backend;
+    keep an explicit caller-selected solver untouched.
+    """
     out = replace_driver_workdir(cmd, workdir)
     for flag, value in (
             ("--probes", 2),
@@ -522,6 +530,9 @@ def thin_outer_box_retry_cmd(cmd, workdir):
             ("--probe-ladder-budget", 1),
     ):
         out = replace_driver_value_flag(out, flag, value)
+    solver_flags = ("--boolector", "--z3", "--cvc5", "--bitwuzla")
+    if not any(f"--esbmc-arg={flag}" in out for flag in solver_flags):
+        out.append("--esbmc-arg=--z3")
     return out
 
 
@@ -4159,6 +4170,11 @@ def main():
                     "probes": 2,
                     "refine_rounds": 1,
                     "probe_ladder_budget": 1,
+                    "solver": ("explicit caller solver"
+                                if any(f"--esbmc-arg={flag}" in retry_cmd
+                                       for flag in ("--boolector", "--z3",
+                                                    "--cvc5", "--bitwuzla"))
+                                else "z3 fallback"),
                 }
                 command_logs.append({
                     "label": "thin-outer-box-retry",
