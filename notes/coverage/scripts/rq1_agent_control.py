@@ -35,6 +35,9 @@ MAX_SPAWN = 10
 WORKER_PATTERN = (
     "esbmc|rq1_veriput_run|certify_all|put_all|solidity_path_put|"
     "rq1_local_pump|rq1_remote_pump|forge|anvil")
+LOCAL_WORKER_SCRIPT_RE = (
+    r"/(rq1_veriput_run|rq1_local_pump|rq1_local_supervisor|certify_all|"
+    r"put_all|solidity_path_put|solidity_path_generalise)\.py(\s|$)")
 
 
 def _run_json(cmd: list[str]) -> dict:
@@ -130,17 +133,25 @@ def _meminfo() -> dict:
 
 def _worker_process_count() -> int:
     proc = subprocess.run(
-        ["pgrep", "-af",
-         "esbmc|rq1_veriput_run|certify_all|put_all|solidity_path_put|rq1_local_pump|rq1_remote_pump"],
+        ["ps", "-eo", "comm=,args="],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
         check=False,
     )
-    rows = [
-        line for line in proc.stdout.splitlines()
-        if "pgrep -af" not in line and line.strip()
-    ]
+    rows = []
+    for line in proc.stdout.splitlines():
+        parts = line.split(None, 1)
+        if not parts:
+            continue
+        comm = parts[0]
+        args = parts[1] if len(parts) > 1 else ""
+        if comm in {"esbmc", "forge", "anvil"}:
+            rows.append(line)
+        elif "/build/src/esbmc/esbmc" in args or "/release/bin/esbmc" in args:
+            rows.append(line)
+        elif re.search(LOCAL_WORKER_SCRIPT_RE, args):
+            rows.append(line)
     return len(rows)
 
 
@@ -353,6 +364,33 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int,
     remote_progress_running = int(remote_worker.get("running_case_count") or 0)
     local_running = local_progress_running if local_process_count else 0
     remote_running = remote_progress_running if remote_process_count else 0
+    local_leases = host_watchdog.get("local_leases")
+    if not isinstance(local_leases, dict):
+        local_leases = {}
+    remote_leases = remote_worker.get("leases")
+    if not isinstance(remote_leases, dict):
+        remote_leases = {}
+    local_stale_leases = int(local_leases.get("stale_running_count") or 0)
+    remote_stale_leases = int(remote_leases.get("stale_running_count") or 0)
+    if local_stale_leases or remote_stale_leases:
+        actions.insert(0, {
+            "action": "reap_stale_worker_leases",
+            "local_stale": local_stale_leases,
+            "remote_stale": remote_stale_leases,
+            "reason": "lease says running but no live worker process owns it",
+        })
+    weak_or_failed_count = int(
+        worker_progress.get("recent_failed_count_in_tail") or 0) + int(
+            worker_progress.get("recent_oom_count_in_tail") or 0) + len(
+                worker_progress.get("recent_weak_tail") or [])
+    if weak_or_failed_count:
+        actions.append({
+            "action": "refresh_dispatch_and_spawn_repair_for_worker_feedback",
+            "weak_or_failed_tail_count": weak_or_failed_count,
+            "reason": (
+                "worker output below valid PUT R1/R2 must subtract theory or "
+                "spawn a repair/review assignment"),
+        })
     return {
         "schema": "veriput-rq1-agent-control/v1",
         "actual_progress": progress,
@@ -380,6 +418,11 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int,
                 local_progress_running if not local_process_count else 0,
             "remote_progress_running_without_process":
                 remote_progress_running if not remote_process_count else 0,
+            "local_stale_lease_count": local_stale_leases,
+            "remote_stale_lease_count": remote_stale_leases,
+            "local_stale_leases": local_leases.get("stale_running_tail") or [],
+            "remote_stale_leases":
+                remote_leases.get("stale_running_tail") or [],
             "rule": (
                 "Progress-file running rows are stale unless a matching "
                 "local/remote worker process is alive."),
@@ -612,6 +655,20 @@ def _print_text(doc: dict, changed: dict | None) -> None:
             f"{stale.get('local_progress_running_without_process')}"
             " 远程无进程running="
             f"{stale.get('remote_progress_running_without_process')}")
+        print(
+            "  陈旧worker租约="
+            f"本机={stale.get('local_stale_lease_count')}"
+            f" 远程={stale.get('remote_stale_lease_count')}")
+        for item in (stale.get("local_stale_leases") or [])[:5]:
+            print(
+                f"    本机陈旧租约={item.get('bench')}/{item.get('subject')}"
+                f" age_s={item.get('age_s')}"
+                f" worker={item.get('worker_id')}")
+        for item in (stale.get("remote_stale_leases") or [])[:5]:
+            print(
+                f"    远程陈旧租约={item.get('bench')}/{item.get('subject')}"
+                f" age_s={item.get('age_s')}"
+                f" lease={item.get('lease')}")
     print(
         "  本机内存="
         f"total={memory.get('total_gib')}GiB"
@@ -698,6 +755,7 @@ def _print_text(doc: dict, changed: dict | None) -> None:
                     ("changed_code", "改了什么"),
                     ("prior_failure", "为什么改"),
                     ("correctness_argument", "是否正确"),
+                    ("verdict", "review结论"),
                     ("theory_delta", "理论变化"),
                     ("next_action", "下一步"),
             ):
@@ -712,7 +770,10 @@ def _print_text(doc: dict, changed: dict | None) -> None:
             f"    {index}. 动作={action.get('action')}"
             f" bucket={action.get('bucket_key')}"
             f" effort={action.get('reasoning_effort')}"
-            f" 原因={action.get('reason')}")
+            f" 原因={action.get('reason')}"
+            f" 本机陈旧={action.get('local_stale')}"
+            f" 远程陈旧={action.get('remote_stale')}"
+            f" 弱/失败tail={action.get('weak_or_failed_tail_count')}")
     boundary = doc.get("host_tool_boundary")
     if isinstance(boundary, dict):
         print(
