@@ -2145,12 +2145,59 @@ void solidity_convertert::get_local_var_decl_name(
   const nlohmann::json &ast_node,
   const std::string &cname,
   std::string &name,
-  std::string &id)
+  std::string &id,
+  const nlohmann::json *parameter_owner)
 {
   assert(ast_node.contains("id"));
   assert(ast_node.contains("name"));
 
   name = ast_node["name"].get<std::string>();
+  if (name.empty())
+  {
+    // Unnamed ABI parameters are still caller-controlled coordinates. Use the
+    // source declaration, not a synthetic modifier wrapper, to derive their
+    // stable ordinal so declaration and wrapper symbols agree.
+    const nlohmann::json *owner =
+      parameter_owner != nullptr ? parameter_owner : current_functionDecl;
+    const nlohmann::json *decl_params = nullptr;
+    if (
+      owner != nullptr && owner->contains("parameters") &&
+      (*owner)["parameters"].is_object() &&
+      (*owner)["parameters"].contains("parameters") &&
+      (*owner)["parameters"]["parameters"].is_array())
+      decl_params = &(*owner)["parameters"]["parameters"];
+
+    if (decl_params != nullptr)
+    {
+      size_t ordinal = 0;
+      for (const auto &candidate : *decl_params)
+      {
+        if (candidate.value("id", -1) == ast_node.value("id", -2))
+          break;
+        ++ordinal;
+      }
+      const std::string base_name =
+        "omitted_param_" + std::to_string(ordinal);
+      name = base_name;
+      size_t suffix = 0;
+      while (std::any_of(
+        decl_params->begin(), decl_params->end(), [&](const auto &candidate) {
+          return candidate.value("name", "") == name;
+        }))
+        name = base_name + "_" + std::to_string(++suffix);
+    }
+    else
+    {
+      // This is only a malformed synthetic declaration. Keep conversion
+      // non-crashing and make the fallback visibly non-source so it cannot be
+      // mistaken for an ABI coordinate by downstream tooling.
+      name = "omitted_param_id_" + std::to_string(ast_node["id"].get<int>());
+      log_warning(
+        "unnamed Solidity parameter id {} has no source parameter owner; "
+        "using a synthetic id-based name",
+        ast_node["id"].get<int>());
+    }
+  }
   // Struct/error fields carry a `scope` pointing to the StructDefinition
   // (or ErrorDefinition) AST node id, which we registered in
   // member_entity_scope when walking the struct.  Detect that *before*

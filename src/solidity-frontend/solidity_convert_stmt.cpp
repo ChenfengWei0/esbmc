@@ -232,7 +232,8 @@ void solidity_convertert::reset_auxiliary_vars()
 bool solidity_convertert::get_function_params(
   const nlohmann::json &pd,
   const std::string &cname,
-  exprt &param)
+  exprt &param,
+  const nlohmann::json *parameter_owner)
 {
   // 1. get parameter type
   // Route through the decl-aware overload when the parameter AST carries a
@@ -261,50 +262,7 @@ bool solidity_convertert::get_function_params(
   std::string id, name;
   assert(current_functionName != ""); // we are converting a function param now
   assert(current_functionDecl);
-  get_local_var_decl_name(pd, cname, name, id);
-  // 2b. handle Omitted Names in Function Definitions
-  if (name == "")
-  {
-    // Keep omitted ABI parameters in the model under a reserved, stable name.
-    // They are inaccessible to Solidity source, so naming them cannot change
-    // program semantics. Dropping the name from the symbol id, however, made
-    // path-coverage CE harvesting lose the parameter entirely: an otherwise
-    // unconditional path looked parameterless and Stage 4 could only emit a
-    // concrete replay. Derive the ordinal from the enclosing declaration so
-    // overloads use the same deterministic scheme.
-    size_t ordinal = 0;
-    const auto &decl_params =
-      (*current_functionDecl)["parameters"]["parameters"];
-    for (const auto &candidate : decl_params)
-    {
-      if (candidate.value("id", -1) == pd.value("id", -2))
-        break;
-      ++ordinal;
-    }
-    const std::string base_name =
-      "omitted_param_" + std::to_string(ordinal);
-    name = base_name;
-    size_t suffix = 0;
-    for (const auto &candidate : decl_params)
-    {
-      if (candidate.value("name", "") != name)
-        continue;
-      do
-      {
-        name = base_name + "_" + std::to_string(++suffix);
-      } while (std::any_of(
-        decl_params.begin(), decl_params.end(), [&](const auto &decl) {
-          return decl.value("name", "") == name;
-        }));
-      break;
-    }
-    if (cname.empty())
-      id = "sol:@F@" + current_functionName + "@" + name + "#" +
-           i2string(pd["id"].get<int>());
-    else
-      id = "sol:@C@" + cname + "@F@" + current_functionName + "@" + name +
-           "#" + i2string(pd["id"].get<int>());
-  }
+  get_local_var_decl_name(pd, cname, name, id, parameter_owner);
 
   param = code_typet::argumentt();
   param.type() = param_type;

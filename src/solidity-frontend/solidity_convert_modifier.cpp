@@ -1523,7 +1523,7 @@ bool solidity_convertert::get_func_modifier(
       for (const auto &param : ast_node["parameters"]["parameters"])
       {
         code_typet::argumentt arg;
-        if (get_function_params(param, c_name, arg))
+        if (get_function_params(param, c_name, arg, &ast_node))
           return true;
         aux_type.arguments().push_back(arg);
       }
@@ -1531,7 +1531,7 @@ bool solidity_convertert::get_func_modifier(
     for (const auto &param : mod_def["parameters"]["parameters"])
     {
       code_typet::argumentt arg;
-      if (get_function_params(param, c_name, arg))
+      if (get_function_params(param, c_name, arg, &mod_def))
         return true;
       aux_type.arguments().push_back(arg);
     }
@@ -1981,7 +1981,7 @@ bool solidity_convertert::get_func_modifier(
         for (const auto &param : ast_node["parameters"]["parameters"])
         {
           std::string pname, pid;
-          get_local_var_decl_name(param, c_name, pname, pid);
+          get_local_var_decl_name(param, c_name, pname, pid, &ast_node);
           const symbolt *psym = context.find_symbol(pid);
           if (psym == nullptr)
           {
@@ -2054,7 +2054,7 @@ bool solidity_convertert::get_func_modifier(
         for (const auto &param : ast_node["parameters"]["parameters"])
         {
           std::string pname, pid;
-          get_local_var_decl_name(param, c_name, pname, pid);
+          get_local_var_decl_name(param, c_name, pname, pid, &ast_node);
           const symbolt *psym = context.find_symbol(pid);
           if (psym == nullptr)
           {

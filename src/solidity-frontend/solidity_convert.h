@@ -222,7 +222,8 @@ protected:
   bool get_function_params(
     const nlohmann::json &pd,
     const std::string &cname,
-    exprt &param);
+    exprt &param,
+    const nlohmann::json *parameter_owner = nullptr);
   void get_function_this_pointer_param(
     const std::string &contract_name,
     const std::string &ctor_id,
@@ -495,7 +496,8 @@ protected:
     const nlohmann::json &ast_node,
     const std::string &cname,
     std::string &name,
-    std::string &id);
+    std::string &id,
+    const nlohmann::json *parameter_owner = nullptr);
   void get_function_definition_name(
     const nlohmann::json &ast_node,
     std::string &name,
