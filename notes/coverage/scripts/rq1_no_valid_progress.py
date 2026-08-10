@@ -1241,6 +1241,10 @@ def _feedback_suggested_scope(row: dict) -> list[str]:
     bucket = str(row.get("category") or row.get("result_bucket") or "")
     original = str(row.get("original_category")
                    or row.get("root_cause_category") or "")
+    if bucket == "ORACLE_ACCOUNTING_METADATA_LOST":
+        return ["notes/coverage/scripts/rq1_veriput_run.py",
+                "notes/coverage/scripts/put_all.py",
+                "notes/coverage/scripts/rq1_results_adopt.py"]
     if bucket in {"NO_PUT_MATERIALIZATION", "NO_R1R2_ORACLE"}:
         return ["scripts/solidity_path_put.py", "notes/coverage/scripts/put_all.py"]
     if original.startswith("ESBMC_") or bucket.startswith("ESBMC_"):
