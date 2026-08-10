@@ -8427,10 +8427,12 @@ def _source_point_expr(name, sol_type, region, pins):
             return f"{t}(0)"
     length = _point_int_for_name(f"{name}.length", region, pins)
     if length is not None:
+        if length < 0 or length > 4096:
+            return None
         if t == "bytes":
-            return "hex\"" + ("00" * max(0, min(length, 32))) + "\""
+            return "hex\"" + ("00" * length) + "\""
         if t == "string":
-            return "\"" + ("A" * max(0, min(length, 32))) + "\""
+            return "\"" + ("A" * length) + "\""
     return None
 
 
@@ -13232,7 +13234,12 @@ def apply_constructor_param_interface_mocks(lines, contract, specs, source,
                 f"code at constructor argument `{spec['param_name']}`.",
             ]
             if target_expr == addr_expr:
-                local.append(f"{indent}address {mock_name} = {addr_expr};")
+                param_type = _norm_ty(spec.get("param_type") or "address")
+                mock_source = addr_expr
+                if param_type not in ("address", "address payable"):
+                    mock_source = f"address({addr_expr})"
+                local.append(
+                    f"{indent}address {mock_name} = {mock_source};")
                 if not _is_precompile_address_expr(addr_expr):
                     local.append(f"{indent}vm.etch({mock_name}, hex\"00\");")
                 target_expr = mock_name
