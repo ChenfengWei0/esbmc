@@ -188,7 +188,7 @@ def main() -> int:
     parser.add_argument("--local-parallel", type=int, default=3)
     parser.add_argument("--remote-parallel", type=int, default=2)
     parser.add_argument("--ce-collection-only", action="store_true")
-    parser.add_argument("--timeout-s", type=int, default=600)
+    parser.add_argument("--timeout-s", type=int, default=60)
     parser.add_argument("--local-memlimit-gib", type=int, default=8)
     parser.add_argument("--remote-memlimit-gib", type=float, default=5.5)
     parser.add_argument("--local-rss-limit-gib", type=int, default=12)

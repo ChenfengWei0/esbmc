@@ -743,8 +743,8 @@ def main() -> int:
     parser.add_argument("--category", action="append", default=[])
     parser.add_argument("--limit", type=int, default=12)
     parser.add_argument("--ce-collection-only", action="store_true")
-    parser.add_argument("--timeout", type=int, default=600)
-    parser.add_argument("--esbmc-run-timeout", type=int, default=600)
+    parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--esbmc-run-timeout", type=int, default=60)
     parser.add_argument("--wrapper-grace", type=int, default=60)
     parser.add_argument(
         "--forge-timeout",
