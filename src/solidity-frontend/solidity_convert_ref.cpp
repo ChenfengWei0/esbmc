@@ -297,7 +297,13 @@ bool solidity_convertert::get_enum_member_ref(
   const nlohmann::json &decl,
   exprt &new_expr)
 {
-  assert(decl["nodeType"] == "EnumValue");
+  if (decl.value("nodeType", "") != "EnumValue")
+  {
+    log_error(
+      "get_enum_member_ref: expected EnumValue, got '{}'",
+      decl.value("nodeType", "<missing>"));
+    return true;
+  }
 
   // The integer value lives in `Value`, but only when add_enum_member_val
   // has been run on the parent EnumDefinition. That preprocessing is
@@ -438,13 +444,17 @@ bool solidity_convertert::get_sol_builtin_ref(
   const nlohmann::json expr,
   exprt &new_expr)
 {
+  // get the reference from the pre-populated symbol table
+  // note that this could be either vars or funcs.
+  if (!expr.is_object() || !expr.contains("nodeType"))
+  {
+    log_error("Solidity builtin reference has no nodeType");
+    return true;
+  }
   log_debug(
     "solidity",
     "\t@@@ expecting solidity builtin ref, got nodeType={}",
     expr["nodeType"].get<std::string>());
-  // get the reference from the pre-populated symbol table
-  // note that this could be either vars or funcs.
-  assert(expr.contains("nodeType"));
   locationt l;
   get_location_from_node(expr, l);
 
@@ -681,11 +691,19 @@ bool solidity_convertert::get_sol_builtin_ref(
             solt == SolidityGrammar::SolType::DYNARRAY &&
             base_t.get_bool("#sol_mapping_array"))
           {
-            assert(base.is_symbol());
+            if (!base.is_symbol())
+            {
+              log_error("mapping-array length base is not a symbol");
+              return true;
+            }
             std::string len_id =
               base.identifier().as_string() + "_mapping_arr_len";
             const symbolt *len_sym = ns.lookup(len_id);
-            assert(len_sym);
+            if (len_sym == nullptr)
+            {
+              log_error("Cannot find mapping-array length symbol {}", len_id);
+              return true;
+            }
             new_expr = symbol_expr(*len_sym);
           }
           // mapping(K => V[]) state-var: per-key length aux indexed by k.
@@ -702,7 +720,12 @@ bool solidity_convertert::get_sol_builtin_ref(
             std::string len_id =
               m_sym.identifier().as_string() + "_mapdynarr_len";
             const symbolt *len_sym = ns.lookup(len_id);
-            assert(len_sym);
+            if (len_sym == nullptr)
+            {
+              log_error(
+                "Cannot find mapping-dynarray length symbol {}", len_id);
+              return true;
+            }
             new_expr = index_exprt(
               symbol_expr(*len_sym), folded_k, unsignedbv_typet(256));
           }
@@ -713,11 +736,14 @@ bool solidity_convertert::get_sol_builtin_ref(
             solt == SolidityGrammar::SolType::DYNARRAY && base.is_symbol() &&
             base.type().get_bool("#sol_dynarray_state"))
           {
-            assert(base.is_symbol());
             std::string len_id =
               base.identifier().as_string() + "_dynarray_len";
             const symbolt *len_sym = ns.lookup(len_id);
-            assert(len_sym);
+            if (len_sym == nullptr)
+            {
+              log_error("Cannot find dynarray length symbol {}", len_id);
+              return true;
+            }
             if (get_dynarr_len_ref(*len_sym, new_expr))
               return true;
           }
@@ -738,7 +764,11 @@ bool solidity_convertert::get_sol_builtin_ref(
           {
             // static array:  uint[2] arr; arr.length = 2;
             std::string arr_size = base_t.get("#sol_array_size").as_string();
-            assert(!arr_size.empty());
+            if (arr_size.empty())
+            {
+              log_error("Static array length metadata is missing");
+              return true;
+            }
             new_expr = constant_exprt(
               integer2binary(string2integer(arr_size), bv_width(uint_type())),
               arr_size,
@@ -1708,11 +1738,15 @@ bool solidity_convertert::get_sol_builtin_ref(
       else if (name == "selector")
       {
         // <external_func_ref>.selector — returns the 4-byte function selector
-        // e.g. this.f.selector => bytes4(keccak256("f()"))
+        // e.g. this.f.selector => bytes4(keccak256("f()")). Solidity models this
+        // as bytes4, not as a bare uint32; pack the scalar selector into the
+        // frontend's BytesStatic representation so calls expecting bytes4 do not
+        // see a scalar/struct mismatch.
         std::string ts = expr["expression"]["typeDescriptions"]["typeString"]
                            .get<std::string>();
         if (ts.find("function") != std::string::npos)
         {
+          exprt selector_word;
           // Try to extract functionSelector from the referenced declaration
           int ref_id = -1;
           if (expr["expression"].contains("referencedDeclaration"))
@@ -1724,15 +1758,43 @@ bool solidity_convertert::get_sol_builtin_ref(
             // Parse the hex selector string to a numeric value
             std::string sel_hex =
               func_ref["functionSelector"].get<std::string>();
-            BigInt sel_val = string2integer("0x" + sel_hex, 16);
-            new_expr = constant_exprt(
+            BigInt sel_val = string2integer(sel_hex, 16);
+            selector_word = constant_exprt(
               integer2binary(sel_val, 32), sel_hex, unsignedbv_typet(32));
           }
           else
           {
-            // Fall back to nondet bytes4
-            new_expr = side_effect_expr_nondett(unsignedbv_typet(32));
+            log_error(
+              "Cannot resolve function selector for referenced declaration {}",
+              ref_id);
+            return true;
           }
+          side_effect_expr_function_callt pack_call;
+          // Prefer the AST's bytes4 type so the generated value has the
+          // exact representation expected by modifier/formal arguments.
+          // Older lowering paths represented `.selector` as uint32, which
+          // later reached an inline call without a scalar-to-bytes cast.
+          typet selector_type;
+          if (
+            !expr.contains("typeDescriptions") ||
+            get_type_description(expr["typeDescriptions"], selector_type) ||
+            !is_bytesN_type(selector_type) ||
+            selector_type.get("#sol_bytesn_size").empty() ||
+            selector_type.get("#sol_bytesn_size").as_string() != "4")
+          {
+            log_error("Function selector does not have a bytes4 type");
+            return true;
+          }
+          get_library_function_call_no_args(
+            "bytes_static_from_uint",
+            "c:@F@bytes_static_from_uint",
+            selector_type,
+            l,
+            pack_call);
+          pack_call.arguments().push_back(
+            typecast_exprt(selector_word, unsignedbv_typet(256)));
+          pack_call.arguments().push_back(from_integer(4, size_type()));
+          new_expr = pack_call;
           new_expr.location() = l;
           return false;
         }

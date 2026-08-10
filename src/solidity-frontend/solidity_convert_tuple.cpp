@@ -29,19 +29,6 @@ const nlohmann::json *get_tuple_assignment_rhs_json(const nlohmann::json &expr)
   return nullptr;
 }
 
-bool is_tuple_typed_function_call(const nlohmann::json *rhs_json)
-{
-  if (
-    rhs_json == nullptr || !rhs_json->is_object() ||
-    rhs_json->value("nodeType", "") != "FunctionCall" ||
-    !rhs_json->contains("typeDescriptions"))
-    return false;
-
-  const auto &td = (*rhs_json)["typeDescriptions"];
-  const std::string type_id = td.value("typeIdentifier", "");
-  const std::string type_str = td.value("typeString", "");
-  return type_id.find("t_tuple") == 0 || type_str.find("tuple(") == 0;
-}
 } // namespace
 
 bool solidity_convertert::get_tuple_definition(const nlohmann::json &ast_node)
@@ -98,7 +85,8 @@ bool solidity_convertert::get_tuple_definition(const nlohmann::json &ast_node)
 
     // manually create a member_name
     // follow the naming rule defined in get_local_var_decl_name
-    assert(!current_contractName.empty());
+    if (current_contractName.empty())
+      current_contractName = "__free__";
     const std::string mem_name = "mem" + std::to_string(counter);
     const std::string mem_id = "sol:@C@" + current_contractName + "@" + name +
                                "@" + mem_name + "#" +
@@ -157,7 +145,11 @@ bool solidity_convertert::get_tuple_instance(
   // get type
   typet t = context.find_symbol(id)->type;
   set_sol_type(t, SolidityGrammar::SolType::TUPLE_INSTANCE);
-  assert(t.id() == typet::id_struct);
+  if (t.id() != typet::id_struct)
+  {
+    log_error("Tuple definition {} is not a struct", id);
+    return true;
+  }
 
   // get instance name,id
   if (get_tuple_instance_name(ast_node, name, id))
@@ -191,13 +183,26 @@ bool solidity_convertert::get_tuple_instance(
   }
 
   // do assignment
+  if (!ast_node["components"].is_array())
+  {
+    log_error("Tuple components are not an array");
+    return true;
+  }
+
   auto &args = ast_node["components"];
 
   size_t i = 0;
   size_t j = 0;
   unsigned is = to_struct_type(t).components().size();
   unsigned as = args.size();
-  assert(is <= as);
+  if (is > as)
+  {
+    log_error(
+      "Tuple instance has {} fields but only {} AST components",
+      is,
+      as);
+    return true;
+  }
 
   exprt comp;
   exprt member_access;
@@ -263,7 +268,20 @@ bool solidity_convertert::get_tuple_function_ref(
   const nlohmann::json &ast_node,
   exprt &new_expr)
 {
-  assert(ast_node.contains("nodeType"));
+  if (!ast_node.is_object() || !ast_node.contains("nodeType"))
+  {
+    log_error("Tuple function reference has no nodeType");
+    return true;
+  }
+
+  if (
+    ast_node["nodeType"] == "FunctionCallOptions" &&
+    ast_node.contains("expression") && ast_node["expression"].is_object())
+    return get_tuple_function_ref(ast_node["expression"], new_expr);
+  if (
+    ast_node["nodeType"] == "FunctionCall" && ast_node.contains("expression") &&
+    ast_node["expression"].is_object())
+    return get_tuple_function_ref(ast_node["expression"], new_expr);
 
   // Resolve the function declaration ID depending on the node type:
   // - Identifier: direct function reference (e.g., func())
@@ -295,8 +313,8 @@ bool solidity_convertert::get_tuple_function_ref(
     // Call through a function-pointer variable: the referencedDeclaration
     // points to a VariableDeclaration of FunctionTypeName, not to any
     // FunctionDefinition. No per-callee tuple_instance symbol exists for
-    // these (we do not inline the target), so fail softly and let the
-    // caller fall back to nondet-per-member over-approximation.
+    // these (we do not inline the target), so reject the unresolved
+    // provenance instead of fabricating tuple members.
     const nlohmann::json &ref_node =
       find_node_by_id(src_ast_json["nodes"], ref_decl_id);
     if (
@@ -306,14 +324,15 @@ bool solidity_convertert::get_tuple_function_ref(
       log_debug(
         "solidity",
         "get_tuple_function_ref: callee is a function-pointer variable "
-        "(refDecl={}), falling back to nondet tuple",
+        "(refDecl={}), tuple provenance is unavailable",
         ref_decl_id);
       return true;
     }
   }
   else
   {
-    log_error(
+    log_debug(
+      "solidity",
       "get_tuple_function_ref: unexpected nodeType '{}'",
       ast_node["nodeType"].get<std::string>());
     return true;
@@ -406,12 +425,40 @@ bool solidity_convertert::get_tuple_member_call(
   exprt &new_expr)
 {
   // tuple_instance
-  assert(!instance_id.empty());
-  exprt base;
-  if (context.find_symbol(instance_id) == nullptr)
+  if (instance_id.empty() || comp.name().empty())
+  {
+    log_error("Cannot construct tuple member reference without instance/name");
     return true;
+  }
+  exprt base;
+  const symbolt *sym = context.find_symbol(instance_id);
+  if (sym == nullptr)
+  {
+    log_error("Cannot find tuple instance symbol {}", instance_id);
+    return true;
+  }
 
-  base = symbol_expr(*context.find_symbol(instance_id));
+  base = symbol_expr(*sym);
+  if (!base.type().is_struct())
+  {
+    if (
+      base.type().is_symbol() &&
+      context.find_symbol(base.type().identifier()) != nullptr)
+    {
+      const typet followed = ns.follow(base.type());
+      if (followed.is_struct())
+        base.type() = followed;
+    }
+    if (!base.type().is_struct())
+    {
+      log_error(
+        "Tuple instance {} has non-struct type; cannot resolve member {}",
+        instance_id,
+        comp.name());
+      return true;
+    }
+  }
+
   new_expr = member_exprt(base, comp.name(), comp.type());
   return false;
 }
@@ -524,24 +571,9 @@ bool solidity_convertert::construct_tuple_assigments(
 
   assert(lhs.type().is_code() && to_code(lhs).statement() == "block");
   exprt new_rhs = rhs;
-  bool rhs_is_nondet = false;
   const nlohmann::json *rhs_call_json = get_tuple_assignment_rhs_json(expr);
 
-  // If a source-level tuple-producing builtin was lowered to a non-struct
-  // expression (e.g. abi.decode(data, (T,U,...)) through the ABI/hash table
-  // path), we cannot split it into tuple members the normal way. Treat it as a
-  // fully nondet tuple RHS. This matches the over-approximation documented in
-  // src/c2goto/library/solidity/solidity_abi.c and the sibling fallback in the
-  // return-statement tuple path.
-  if (
-    rt_sol != SolidityGrammar::SolType::TUPLE_RETURNS &&
-    !new_rhs.type().is_struct() &&
-    (new_rhs.id() == "sideeffect" ||
-     is_tuple_typed_function_call(rhs_call_json)))
-  {
-    rhs_is_nondet = true;
-  }
-  else if (rt_sol == SolidityGrammar::SolType::TUPLE_RETURNS)
+  if (rt_sol == SolidityGrammar::SolType::TUPLE_RETURNS)
   {
     // (x,y) = func();
     // => func() populates tuple instance; then extract members
@@ -609,18 +641,15 @@ bool solidity_convertert::construct_tuple_assigments(
         return false;
       }
 
-      // Unhandled Conditional shape: fall through to nondet fallback.
-      rhs_is_nondet = true;
+      log_error("tuple assignment: unsupported Conditional RHS shape");
+      return true;
     }
     else if (rhs_call_json && rhs_call_json->contains("expression"))
     {
       if (get_tuple_function_ref((*rhs_call_json)["expression"], new_rhs))
       {
-        // Builtin tuple-producing callee (abi.decode(data, (T,U,...)),
-        // addr.call(...), ...) has no per-function tuple instance.
-        // Over-approximate each LHS slot as nondet — matches the
-        // corresponding fallback in the return-statement tuple path.
-        rhs_is_nondet = true;
+        log_error("tuple assignment: cannot resolve RHS tuple function");
+        return true;
       }
     }
     else
@@ -629,23 +658,7 @@ bool solidity_convertert::construct_tuple_assigments(
       return true;
     }
 
-    if (!rhs_is_nondet)
-      get_tuple_function_call(rhs);
-  }
-
-  if (rhs_is_nondet)
-  {
-    // No RHS struct to pull components from — synthesise an independent
-    // nondet value for every non-nil LHS slot and return.
-    for (const auto &lop : lhs.operands())
-    {
-      if (lop.is_nil())
-        continue;
-      exprt rop;
-      get_nondet_expr(lop.type(), rop);
-      get_tuple_assignment(expr, lop, rop);
-    }
-    return false;
+    get_tuple_function_call(rhs);
   }
 
   if (!new_rhs.type().is_struct())
@@ -682,6 +695,7 @@ bool solidity_convertert::construct_tuple_assigments(
     // then fall back to positional index (library structs like sol_llc_ret).
     std::string mem_name = "mem" + std::to_string(i);
     exprt comp;
+    exprt rop;
     auto it = rhs_by_name.find(mem_name);
     if (it != rhs_by_name.end())
       comp = it->second;
@@ -694,7 +708,6 @@ bool solidity_convertert::construct_tuple_assigments(
       return true;
     }
 
-    exprt rop;
     if (get_tuple_member_call(new_rhs.identifier(), comp, rop))
       return true;
 
@@ -730,8 +743,14 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
   //   RHS components: [FunctionCall(getPair), Literal(30)]
   //   Result: call getPair() → a = tuple.mem0, b = tuple.mem1, c = 30
 
-  assert(lhs_json.value("nodeType", "") == "TupleExpression");
-  assert(lhs_json.contains("components"));
+  if (
+    !lhs_json.is_object() ||
+    lhs_json.value("nodeType", "") != "TupleExpression" ||
+    !lhs_json.contains("components") || !lhs_json["components"].is_array())
+  {
+    log_error("nested tuple assignment received non-tuple LHS");
+    return true;
+  }
 
   // Strip redundant outer parens. `((a, b)) = (2, true)` parses as a
   // 1-component TupleExpression wrapping the real 2-tuple. Without unwrapping
@@ -781,8 +800,13 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
       // Nested LHS: ((a, b), ...) — RHS must be a tuple-returning function call
       const auto &rhs_val = rhs_comps[i];
       typet rhs_t;
-      if (get_type_description(rhs_val["typeDescriptions"], rhs_t))
+      if (
+        !rhs_val.is_object() || !rhs_val.contains("typeDescriptions") ||
+        get_type_description(rhs_val["typeDescriptions"], rhs_t))
+      {
+        log_error("nested tuple: RHS component has no valid type description");
         return true;
+      }
 
       // Only treat the RHS as a tuple-returning function call when it
       // actually *is* a FunctionCall node. A tuple LITERAL (e.g.
@@ -803,10 +827,16 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
         get_tuple_function_call(func_call);
 
         // 2. Find the tuple instance for this function
-        assert(rhs_val.contains("expression"));
         exprt tuple_inst;
-        if (get_tuple_function_ref(rhs_val["expression"], tuple_inst))
+        if (!rhs_val.contains("expression"))
+        {
+          log_error("nested tuple: tuple call has no callee expression");
           return true;
+        }
+        if (get_tuple_function_ref(rhs_val["expression"], tuple_inst))
+        {
+          return true;
+        }
 
         // 3. Assign inner LHS targets from the tuple instance members
         const struct_typet &inner_struct = to_struct_type(tuple_inst.type());
@@ -828,10 +858,13 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
             if (comp.get_name().as_string() == mem_name)
             {
               exprt target;
-              if (get_expr(
-                    inner_lhs_comps[j],
-                    inner_lhs_comps[j]["typeDescriptions"],
-                    target))
+              if (
+                !inner_lhs_comps[j].is_object() ||
+                !inner_lhs_comps[j].contains("typeDescriptions") ||
+                get_expr(
+                  inner_lhs_comps[j],
+                  inner_lhs_comps[j]["typeDescriptions"],
+                  target))
                 return true;
 
               exprt member;
@@ -852,23 +885,39 @@ bool solidity_convertert::flatten_nested_tuple_assignment(
           mem_idx++;
         }
       }
-      else
+      else if (
+        rhs_val.is_object() &&
+        rhs_val.value("nodeType", "") == "TupleExpression")
       {
         // Nested LHS but RHS is a tuple literal — recurse
         if (flatten_nested_tuple_assignment(expr, lhs_comps[i], rhs_comps[i]))
           return true;
+      }
+      else
+      {
+        log_error("nested tuple: RHS component is not a tuple expression");
+        return true;
       }
     }
     else
     {
       // Leaf LHS target — direct assignment
       exprt target;
-      if (get_expr(lhs_comps[i], lhs_comps[i]["typeDescriptions"], target))
+      if (
+        !lhs_comps[i].is_object() ||
+        !lhs_comps[i].contains("typeDescriptions") ||
+        get_expr(lhs_comps[i], lhs_comps[i]["typeDescriptions"], target))
         return true;
 
       exprt value;
-      if (get_expr(rhs_comps[i], rhs_comps[i]["typeDescriptions"], value))
+      if (
+        !rhs_comps[i].is_object() ||
+        !rhs_comps[i].contains("typeDescriptions") ||
+        get_expr(rhs_comps[i], rhs_comps[i]["typeDescriptions"], value))
+      {
+        log_error("nested tuple: RHS leaf has no valid expression");
         return true;
+      }
 
       get_tuple_assignment(expr, target, value);
     }
@@ -882,17 +931,6 @@ void solidity_convertert::get_tuple_assignment(
   const exprt &lop,
   exprt rop)
 {
-  // When the LHS is `bytes memory` but the RHS is not bytes (e.g. the `y`
-  // component of sol_llc_ret, which is a plain uint placeholder), substitute a
-  // fresh nondet BytesDynamic so that `data.length` has the correct type and a
-  // fully unconstrained symbolic length value.
-  // We use get_nondet_expr with lop.type() to avoid any sort mismatch that
-  // would arise from casting the uint placeholder to BytesDynamic.
-  if (is_bytes_type(lop.type()) && !is_bytes_type(rop.type()))
-  {
-    get_nondet_expr(lop.type(), rop);
-  }
-
   exprt assign_expr;
   if (get_sol_type(lop.type()) == SolidityGrammar::SolType::STRING)
     get_string_assignment(lop, rop, assign_expr);
@@ -907,4 +945,54 @@ void solidity_convertert::get_tuple_assignment(
     move_to_back_block(assign_expr);
   else
     move_to_initializer(assign_expr);
+}
+
+void solidity_convertert::get_solidity_nondet_value(
+  const typet &t,
+  const locationt &loc,
+  exprt &new_expr)
+{
+  if (is_bytes_type(t))
+  {
+    side_effect_expr_function_callt nondet_b;
+    get_library_function_call_no_args(
+      "llc_nondet_bytes", "c:@F@llc_nondet_bytes", t, loc, nondet_b);
+    new_expr = nondet_b;
+    return;
+  }
+
+  if (is_bytesN_type(t))
+  {
+    side_effect_expr_function_callt nondet_u;
+    get_library_function_call_no_args(
+      "nondet_uint", "c:@F@nondet_uint", uint_type(), loc, nondet_u);
+
+    side_effect_expr_function_callt pack_call;
+    get_library_function_call_no_args(
+      "bytes_static_from_uint",
+      "c:@F@bytes_static_from_uint",
+      t,
+      loc,
+      pack_call);
+    pack_call.arguments().push_back(nondet_u);
+
+    unsigned long bytesn_size = 32;
+    if (!t.get("#sol_bytesn_size").empty())
+      bytesn_size = std::stoul(t.get("#sol_bytesn_size").as_string());
+    pack_call.arguments().push_back(from_integer(bytesn_size, size_type()));
+
+    new_expr = pack_call;
+    return;
+  }
+
+  if (get_sol_type(t) == SolidityGrammar::SolType::STRING)
+  {
+    side_effect_expr_function_callt nondet_s;
+    get_library_function_call_no_args(
+      "nondet_string", "c:@F@nondet_string", t, loc, nondet_s);
+    new_expr = nondet_s;
+    return;
+  }
+
+  get_nondet_expr(t, new_expr);
 }
