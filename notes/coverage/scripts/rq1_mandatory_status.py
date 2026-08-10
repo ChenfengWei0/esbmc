@@ -746,6 +746,7 @@ def main() -> int:
         print(f"watchdog_stderr_tail={watchdog_proc.stderr[-1000:]}")
     _print_watchdog_hard_alerts(watchdog_proc.stdout)
     _print_worker_mn_summary(watchdog_proc.stdout)
+    _print_recent_canonical_results()
     _print_feedback_dispatch_summary(proc.stdout, watchdog_proc.stdout)
     if proc.returncode != 0:
         return proc.returncode
