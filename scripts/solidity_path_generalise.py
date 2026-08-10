@@ -4878,6 +4878,9 @@ CERT_TRUNCATED_RE = re.compile(
     r"RESULT: UNDECIDED-TRUNCATED.*?Loops truncated: (.*)$", re.M)
 CERT_TRUNCATED_LOOP_RE = re.compile(
     r"(?:loop|recursion)\s+([0-9]+)\s+at\s+file\b")
+CERT_TRUNCATED_FUNCTION_RE = re.compile(
+    r"(?:loop|recursion)\s+[0-9]+\s+at\s+file\b.*?"
+    r"\bfunction\s+([A-Za-z_][A-Za-z0-9_$]*)")
 
 
 def certification_unwind_retry_args(log, existing_args, *, unwind=512):
@@ -4903,6 +4906,12 @@ def certification_unwind_retry_args(log, existing_args, *, unwind=512):
             loop_ids.append(match.group(1))
     if not loop_ids:
         return []
+    functions = []
+    for match in CERT_TRUNCATED_FUNCTION_RE.finditer(detail.group(1)):
+        if match.group(1) not in functions:
+            functions.append(match.group(1))
+    if len(loop_ids) == len(functions) == 1:
+        return ["--unwindsetname", f"{functions[0]}:0:{unwind}"]
     return ["--unwindset", ",".join(
         f"{loop_id}:{unwind}" for loop_id in loop_ids)]
 
@@ -6333,13 +6342,28 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
                   "enc=%s: %s" % (enc, _e))
         print(f"[certify] enc={enc} retrying only the certification query "
               f"with {' '.join(retry_args)}")
+        retry_esbmc_args = list(esbmc_args)
+        if retry_args[0] == "--unwindsetname":
+            try:
+                unwindsetname_index = retry_esbmc_args.index(
+                    "--unwindsetname")
+            except ValueError:
+                retry_esbmc_args.extend(retry_args)
+            else:
+                if unwindsetname_index + 1 >= len(retry_esbmc_args):
+                    retry_esbmc_args.extend(retry_args)
+                else:
+                    retry_esbmc_args[unwindsetname_index + 1] += (
+                        "," + retry_args[1])
+        else:
+            retry_esbmc_args.extend(retry_args)
         _retry_t0 = time.time()
         retry_log = run(
             esbmc, sol, contract,
             ["--path-cov-certify", path, "--cov-report-json"],
             max_tx, timeout, retry_cwd, ast=ast, focus=focus,
             memlimit=memlimit,
-            esbmc_args=tuple(esbmc_args) + tuple(retry_args),
+            esbmc_args=tuple(retry_esbmc_args),
             result_only=not want_property)
         _wall += time.time() - _retry_t0
         log, v, cwd = retry_log, verdict(retry_log), retry_cwd
