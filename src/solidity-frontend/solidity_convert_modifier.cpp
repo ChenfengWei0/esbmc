@@ -1778,13 +1778,17 @@ bool solidity_convertert::get_func_modifier(
       current_functionDecl = modifier_func;
       current_functionName = next_aux_func_name;
 
-      for (const auto &arg_json : (*it)["arguments"])
-      {
-        exprt arg_expr;
-        if (get_expr(arg_json, arg_json["typeDescriptions"], arg_expr))
-          return true;
-        func_modifier.arguments().push_back(arg_expr);
-      }
+      // This call targets the next wrapper, so its trailing arguments belong
+      // to next_it's modifier, not to the outer modifier currently being
+      // lowered. Passing `it` here shifts arguments between stacked
+      // parameterized modifiers and can produce a malformed call shape.
+      if (
+        next_it->contains("arguments") && (*next_it)["arguments"].is_array())
+        for (const auto &arg_json : (*next_it)["arguments"])
+        {
+          if (append_modifier_argument(arg_json))
+            return true;
+        }
 
       // reset
       current_functionDecl = old_decl;
