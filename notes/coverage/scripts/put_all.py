@@ -409,6 +409,7 @@ def cleared_concrete_fallback_rows(record):
         # replay state, so let the CE supply the environment pins.
         pin_excluded = (
             witness_check == "PIN-EXCLUDED-NO-COORDINATE"
+            or "EXCLUDED FROM THE SLICE by the pins" in str(reason)
             or "EXCLUDED FROM THE SLICE by the pins" in str(
                 detail.get("reason") or ""))
         if pin_excluded:
@@ -448,6 +449,8 @@ def authenticated_pin_excluded_fallback_rows(record):
         row for row in cleared_concrete_fallback_rows(record)
         if ((row.get("detail") or {}).get("witness_check") ==
             "PIN-EXCLUDED-NO-COORDINATE"
+            or "EXCLUDED FROM THE SLICE by the pins" in str(
+                row.get("reason") or "")
             or "EXCLUDED FROM THE SLICE by the pins" in str(
                 (row.get("detail") or {}).get("reason") or ""))
     ]
@@ -2345,6 +2348,8 @@ def main():
                 pin_excluded = (
                     fb_detail.get("witness_check") ==
                     "PIN-EXCLUDED-NO-COORDINATE"
+                    or "EXCLUDED FROM THE SLICE by the pins" in str(
+                        fb.get("reason") or "")
                     or "EXCLUDED FROM THE SLICE by the pins" in str(
                         fb_detail.get("reason") or ""))
                 if selected_static_pure and pin_excluded:
