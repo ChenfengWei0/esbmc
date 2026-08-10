@@ -32,6 +32,10 @@ def row_from_result(path: Path) -> dict | None:
     if valid > 0:
         return None
     subject = path.parent.name
+    # RQ1 preserves previous attempts under `<subject>.redo.<timestamp>`.
+    # They are audit artifacts, not independently schedulable benchmark cases.
+    if ".redo." in subject:
+        return None
     bench = path.parents[2].name
     if bench == "peer182" and subject != "contract080":
         return None
