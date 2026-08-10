@@ -2061,6 +2061,52 @@ def _oracle_class_counts_from_stats(stats: dict) -> tuple[list[str], dict, list[
     )
 
 
+def _merge_oracle_metadata(*sources: dict) -> tuple[list[str], dict, list[str], dict, list[dict]]:
+    labels = Counter()
+    combos = Counter()
+    details: list[dict] = []
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        source_details = source.get("assertion_oracles") or []
+        for detail in source_details:
+            if not isinstance(detail, dict):
+                continue
+            details.append(detail)
+            classes = tuple(str(item) for item in (detail.get("classes") or []))
+            if not classes:
+                continue
+            for label in classes:
+                labels[label] += 1
+            combos["+".join(classes)] += 1
+        for label in source.get("oracle_classes") or source.get(
+                "oracle_tags") or []:
+            labels[str(label)] += 0
+        class_counts = source.get("oracle_class_counts") or {}
+        if isinstance(class_counts, dict):
+            for label, count in class_counts.items():
+                try:
+                    labels[str(label)] += int(count)
+                except (TypeError, ValueError):
+                    labels[str(label)] += 0
+        for combo in source.get("oracle_class_combinations") or []:
+            combos[str(combo)] += 0
+        combo_counts = source.get("oracle_class_combo_counts") or {}
+        if isinstance(combo_counts, dict):
+            for combo, count in combo_counts.items():
+                try:
+                    combos[str(combo)] += int(count)
+                except (TypeError, ValueError):
+                    combos[str(combo)] += 0
+    return (
+        sorted(labels),
+        dict(sorted(labels.items())),
+        sorted(combos),
+        dict(sorted(combos.items())),
+        details,
+    )
+
+
 def _is_valid_reference_test(row: dict) -> bool:
     # RQ1 uses the Foundry replay as a second oracle after verifier
     # certification.  Missing validity is unknown, not valid.
@@ -2084,6 +2130,13 @@ def _put_json_artifact_row(rec: dict) -> dict:
         "valid_reference_test": rec.get("valid_reference_test"),
         "b": rec.get("b"),
         "concrete_reason": rec.get("concrete_reason"),
+        "oracle_classes": rec.get("oracle_classes"),
+        "oracle_class_counts": rec.get("oracle_class_counts"),
+        "oracle_class_combinations": rec.get("oracle_class_combinations"),
+        "oracle_class_combo_counts": rec.get("oracle_class_combo_counts"),
+        "assertion_oracles": (
+            rec.get("assertion_oracles")
+            or (rec.get("stats") or {}).get("assertion_oracles")),
         "_from_put_json_only": True,
     }
 
@@ -2244,7 +2297,8 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             continue
         stats = rec.get("stats") or {}
         oracle_classes, oracle_class_counts, oracle_class_combinations, \
-            oracle_class_combo_counts = _oracle_class_counts_from_stats(stats)
+            oracle_class_combo_counts, assertion_details = (
+                _merge_oracle_metadata(row, rec, stats))
         entry = {
             "kind": row.get("kind"),
             "stage4_kind": (
@@ -2268,7 +2322,7 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             "oracle_class_counts": oracle_class_counts,
             "oracle_class_combinations": oracle_class_combinations,
             "oracle_class_combo_counts": oracle_class_combo_counts,
-            "assertion_oracles": stats.get("assertion_oracles") or [],
+            "assertion_oracles": assertion_details,
             "r2_requested": rec.get("r2_requested"),
             "r2_depth": rec.get("r2_depth"),
             "r2_term_budget": rec.get("r2_term_budget"),
