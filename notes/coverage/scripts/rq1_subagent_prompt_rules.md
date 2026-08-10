@@ -50,7 +50,7 @@ Every spawned subagent must follow these rules.
    - run `rq1_repair_dispatcher.py` after worker results or repair tickets
    - if it emits assignments, spawn or reuse subagents for those assignments
    - keep at least 3 active repair/review subagents while assignments exist;
-     a controller that emits fewer than 10 available spawn actions is failing
+     a controller that emits fewer than 3 available spawn actions is failing
      to use the configured parallelism
    - if spawning is blocked by capacity, close completed agents first and report
      the capacity blocker explicitly
