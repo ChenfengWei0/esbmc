@@ -153,6 +153,7 @@ CONCRETE_FALLBACK_WITNESS_CHECKS = {
     "SUCCESSFUL",
     "COMPLETE-WITNESS-NO-COORDINATE",
     "PIN-EXCLUDED-NO-COORDINATE",
+    "NOT-CERTIFIED-CE-FALLBACK",
 }
 CONCRETE_ONLY_STAGE2_SOURCES = {
     "cleared-concrete-fallback": "cleared_not_certified_fallback",
@@ -406,7 +407,11 @@ def cleared_concrete_fallback_rows(record):
         # A pin-excluded witness is intentionally outside the generalized
         # slice. Its row pin is the rejected slice boundary, not the concrete
         # replay state, so let the CE supply the environment pins.
-        if witness_check == "PIN-EXCLUDED-NO-COORDINATE":
+        pin_excluded = (
+            witness_check == "PIN-EXCLUDED-NO-COORDINATE"
+            or "EXCLUDED FROM THE SLICE by the pins" in str(
+                detail.get("reason") or ""))
+        if pin_excluded:
             fallback_pins = {}
         else:
             fallback_pins = row_pins
@@ -441,8 +446,10 @@ def authenticated_pin_excluded_fallback_rows(record):
     """
     return [
         row for row in cleared_concrete_fallback_rows(record)
-        if (row.get("detail") or {}).get("witness_check") ==
-        "PIN-EXCLUDED-NO-COORDINATE"
+        if ((row.get("detail") or {}).get("witness_check") ==
+            "PIN-EXCLUDED-NO-COORDINATE"
+            or "EXCLUDED FROM THE SLICE by the pins" in str(
+                (row.get("detail") or {}).get("reason") or ""))
     ]
 
 
@@ -2334,9 +2341,13 @@ def main():
                              fb_detail.get("certification_source"),
                              fb_detail))
             for fb in cleared_concrete_fallback_rows(r):
-                if (selected_static_pure and
-                        (fb.get("detail") or {}).get("witness_check") ==
-                        "PIN-EXCLUDED-NO-COORDINATE"):
+                fb_detail = fb.get("detail") or {}
+                pin_excluded = (
+                    fb_detail.get("witness_check") ==
+                    "PIN-EXCLUDED-NO-COORDINATE"
+                    or "EXCLUDED FROM THE SLICE by the pins" in str(
+                        fb_detail.get("reason") or ""))
+                if selected_static_pure and pin_excluded:
                     continue
                 try:
                     enc_i = int(fb["enc"])
@@ -2352,11 +2363,9 @@ def main():
                 path_function = fb.get("path_function") or r.get("path_function")
                 exit_kind = report_exit_kind(
                     r.get("enumeration_report"), path_function, enc_i)
-                fb_detail = fb.get("detail") or {}
                 fallback_source = (
                     "no-coordinate-concrete-fallback"
-                    if fb_detail.get("witness_check") ==
-                    "PIN-EXCLUDED-NO-COORDINATE"
+                    if pin_excluded
                     else "cleared-concrete-fallback")
                 rows.append((key, is_poc, r["unit"], path_function,
                              enc_i, None, None, [], False, {}, exit_kind, None,
@@ -2440,7 +2449,8 @@ def main():
                              fb_detail.get("stage4_kind"),
                              fb_detail.get("certification_source"),
                              fb_detail))
-        elif (not selected_static_pure and
+        elif (not args.emit_cleared_concrete_fallbacks and
+              not selected_static_pure and
               authenticated_pin_excluded_fallback_rows(r)):
             # This witness is authenticated by Stage 2 but lies outside the
             # normal slice because the non-payable ABI gate rejected
