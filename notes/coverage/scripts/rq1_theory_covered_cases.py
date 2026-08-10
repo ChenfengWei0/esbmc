@@ -28,11 +28,36 @@ from rq1_no_valid_progress import (
 
 
 DEFAULT_OUT = Path("/tmp/veriput_rq1_theory_covered_cases.tsv")
+DEFAULT_CASE_CLAIMS = Path("/tmp/veriput_rq1_case_theory_claims.jsonl")
 
 
 def _load_rows(tsv: Path) -> list[dict]:
     with tsv.open(newline="") as stream:
         return list(csv.DictReader(stream, delimiter="\t"))
+
+
+def _load_case_claims(path: Path, include_provisional: bool) -> list[dict]:
+    rows = []
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return rows
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("review_status") or "")
+        commit = str(row.get("commit_sha") or row.get("review_commit") or "")
+        accepted = status == "accepted" and bool(commit.strip())
+        if not accepted and not include_provisional:
+            continue
+        if not row.get("bench") or not row.get("subject"):
+            continue
+        rows.append(row)
+    return rows
 
 
 def _patch_category_claims(patch_ids: set[str]) -> list[dict]:
@@ -61,11 +86,38 @@ def _patch_category_claims(patch_ids: set[str]) -> list[dict]:
     return [claim for claim in claims if claim["category"]]
 
 
-def build_manifest(rows: list[dict], patch_ids: set[str]) -> tuple[list[dict], dict]:
+def build_manifest(rows: list[dict], patch_ids: set[str],
+                   case_claims: list[dict]) -> tuple[list[dict], dict]:
     claims = _patch_category_claims(patch_ids)
     out = []
     seen_subjects: set[tuple[str, str]] = set()
     used_by_patch: dict[str, int] = {}
+    by_subject = {
+        (str(row.get("bench") or ""), str(row.get("subject") or "")): row
+        for row in rows
+    }
+    used_case_claims = 0
+    for claim in case_claims:
+        key = (str(claim.get("bench") or ""), str(claim.get("subject") or ""))
+        if key in seen_subjects:
+            continue
+        base = dict(by_subject.get(key) or {
+            "bench": key[0],
+            "subject": key[1],
+            "category": claim.get("category") or "CASE_LEVEL_THEORY_CLAIM",
+            "fix_target": claim.get("fix_target") or "",
+        })
+        base["theory_patch_id"] = claim.get("patch_id")
+        base["theory_patch_kind"] = "case"
+        base["theory_review_status"] = (
+            "accepted-with-commit"
+            if claim.get("review_status") == "accepted" else "provisional")
+        base["theory_fix_target"] = claim.get("fix_target") or claim.get("reason") or ""
+        base["theory_commit_sha"] = (
+            claim.get("commit_sha") or claim.get("review_commit") or "")
+        out.append(base)
+        seen_subjects.add(key)
+        used_case_claims += 1
     for claim in claims:
         used = 0
         for row in rows:
@@ -89,6 +141,8 @@ def build_manifest(rows: list[dict], patch_ids: set[str]) -> tuple[list[dict], d
             claim["patch_id"], 0) + used
     return out, {
         "claims": claims,
+        "case_claim_count": len(case_claims),
+        "used_case_claims": used_case_claims,
         "used_by_patch": used_by_patch,
         "subject_count": len(out),
     }
@@ -125,6 +179,7 @@ def main() -> int:
     parser.add_argument("--extra-subagents",
                         type=Path,
                         default=DEFAULT_EXTRA_SUBAGENTS)
+    parser.add_argument("--case-claims", type=Path, default=DEFAULT_CASE_CLAIMS)
     parser.add_argument("--include-provisional", action="store_true")
     args = parser.parse_args()
 
@@ -139,7 +194,8 @@ def main() -> int:
     if args.include_provisional:
         patch_ids.update(review_sets["provisional"])
         review_status = "accepted-with-commit-or-provisional"
-    manifest, details = build_manifest(rows, patch_ids)
+    case_claims = _load_case_claims(args.case_claims, args.include_provisional)
+    manifest, details = build_manifest(rows, patch_ids, case_claims)
     for row in manifest:
         row["theory_review_status"] = review_status
     write_tsv(args.out, manifest)
@@ -152,6 +208,7 @@ def main() -> int:
             sorted(review_sets["provisional"])
             if args.include_provisional else []),
         "rejected_patch_ids_excluded": sorted(review_sets["rejected"]),
+        "case_claims": str(args.case_claims),
         "details": details,
         "worker_rule": (
             "rq1_local_pump.py and rq1_remote_pump.py must run this TSV by "
