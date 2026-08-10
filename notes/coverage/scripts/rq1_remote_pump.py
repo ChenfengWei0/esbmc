@@ -21,6 +21,7 @@ from pathlib import Path
 
 DEFAULT_TSV = Path("/tmp/veriput_no_valid_root_causes.tsv")
 THEORY_TSV_MARKER = "theory_patch_id"
+CE_TSV_MARKER = "ce_collection_id"
 DEFAULT_REMOTE_HOST = "invmut-w2"
 DEFAULT_REMOTE_ESBMC = Path("/tmp/veriput_esbmc_remote")
 DEFAULT_REMOTE_VERIPUT = Path("/tmp/veriput_Ver iPUT_remote".replace(" ", ""))
@@ -155,20 +156,19 @@ def run_logged_command(
 
 
 def load_cases(tsv_path: Path, categories: set[str], limit: int,
-               allow_uncovered_tsv: bool) -> list[dict]:
+               allow_uncovered_tsv: bool, ce_collection_only: bool) -> list[dict]:
     cases = []
     with tsv_path.open(newline="") as stream:
         reader = csv.DictReader(stream, delimiter="\t")
         fieldnames = set(reader.fieldnames or [])
-        if not allow_uncovered_tsv and THEORY_TSV_MARKER not in fieldnames:
+        required_marker = CE_TSV_MARKER if ce_collection_only else THEORY_TSV_MARKER
+        if not allow_uncovered_tsv and required_marker not in fieldnames:
             raise SystemExit(
-                f"{tsv_path} is not a theory-covered manifest; run "
-                "rq1_theory_covered_cases.py first or pass "
-                "--allow-uncovered-tsv explicitly")
+                f"{tsv_path} lacks required manifest marker {required_marker!r}")
         for row in reader:
             if categories and row.get("category") not in categories:
                 continue
-            if not allow_uncovered_tsv and not row.get(THEORY_TSV_MARKER):
+            if not allow_uncovered_tsv and not row.get(required_marker):
                 continue
             if row.get("bench") == "peer182" and "contract080" not in row.get("subject", ""):
                 continue
@@ -860,7 +860,7 @@ def main() -> int:
 
     categories = set(args.category or PRIORITY_CATEGORIES)
     cases = load_cases(args.tsv, categories, args.limit,
-                       args.allow_uncovered_tsv)
+                       args.allow_uncovered_tsv, args.ce_collection_only)
     if not cases and not args.allow_uncovered_tsv:
         raise SystemExit(
             "theory-covered manifest has zero cases; refusing to start remote "

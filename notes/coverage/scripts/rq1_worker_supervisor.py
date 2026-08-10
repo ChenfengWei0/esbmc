@@ -36,13 +36,15 @@ def _read(path: Path) -> dict:
         return {}
 
 
-def _manifest_count(path: Path) -> int:
+def _manifest_count(path: Path, *, ce_collection_only: bool = False) -> int:
     if not path.exists():
         return 0
     with path.open(newline="") as stream:
         reader = csv.DictReader(stream, delimiter="\t")
-        if "theory_patch_id" not in set(reader.fieldnames or []):
-            raise SystemExit("theory manifest missing theory_patch_id")
+        markers = set(reader.fieldnames or [])
+        required = "ce_collection_id" if ce_collection_only else "theory_patch_id"
+        if required not in markers:
+            raise SystemExit(f"manifest missing {required}")
         return sum(1 for row in reader if row.get("bench") and row.get("subject"))
 
 
@@ -96,7 +98,8 @@ def _base_local_args(args: argparse.Namespace, index: int, manifest: Path) -> li
 def start(args: argparse.Namespace, action: dict | None = None) -> dict:
     if action:
         args.manifest = Path(action.get("tsv") or args.manifest)
-    count = _manifest_count(args.manifest)
+    count = _manifest_count(args.manifest,
+                            ce_collection_only=args.ce_collection_only)
     if count <= 0:
         return {"started": False, "reason": "empty-theory-manifest", "case_count": 0}
     existing = _read(args.state)

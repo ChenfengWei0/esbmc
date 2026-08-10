@@ -16,6 +16,7 @@ from pathlib import Path
 
 DEFAULT_TSV = Path("/tmp/veriput_no_valid_root_causes.tsv")
 THEORY_TSV_MARKER = "theory_patch_id"
+CE_TSV_MARKER = "ce_collection_id"
 DEFAULT_STATE = Path("/tmp/veriput_rq1_local_state.json")
 DEFAULT_VERIPUT = Path("/home/samson/workspace/VeriPUT")
 DEFAULT_RESULT_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
@@ -46,20 +47,19 @@ def mem_available_gib() -> int:
 
 
 def load_cases(tsv: Path, categories: set[str], limit: int,
-               allow_uncovered_tsv: bool) -> list[dict]:
+               allow_uncovered_tsv: bool, ce_collection_only: bool) -> list[dict]:
     cases = []
     with tsv.open(newline="") as stream:
         reader = csv.DictReader(stream, delimiter="\t")
         fieldnames = set(reader.fieldnames or [])
-        if not allow_uncovered_tsv and THEORY_TSV_MARKER not in fieldnames:
+        required_marker = CE_TSV_MARKER if ce_collection_only else THEORY_TSV_MARKER
+        if not allow_uncovered_tsv and required_marker not in fieldnames:
             raise SystemExit(
-                f"{tsv} is not a theory-covered manifest; run "
-                "rq1_theory_covered_cases.py first or pass "
-                "--allow-uncovered-tsv explicitly")
+                f"{tsv} lacks required manifest marker {required_marker!r}")
         for row in reader:
             if categories and row.get("category") not in categories:
                 continue
-            if not allow_uncovered_tsv and not row.get(THEORY_TSV_MARKER):
+            if not allow_uncovered_tsv and not row.get(required_marker):
                 continue
             if row.get("bench") == "peer182" and "contract080" not in row.get("subject", ""):
                 continue
@@ -533,7 +533,7 @@ def main() -> int:
     args = parser.parse_args()
 
     cases = load_cases(args.tsv, set(args.category), args.limit,
-                       args.allow_uncovered_tsv)
+                       args.allow_uncovered_tsv, args.ce_collection_only)
     if not cases and not args.allow_uncovered_tsv:
         raise SystemExit(
             "theory-covered manifest has zero cases; refusing to start local "
