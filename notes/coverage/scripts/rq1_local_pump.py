@@ -566,7 +566,11 @@ def main() -> int:
         reset_leases(args)
     while True:
         for case in cases:
-            if bucket_paused(args, str(case.get("category") or "")):
+            # CE discovery is refutation-only and has its own manifest.  A
+            # paused certification/repair bucket must not suppress collection
+            # of the evidence needed to repair that bucket.
+            if (not args.ce_collection_only and
+                    bucket_paused(args, str(case.get("category") or ""))):
                 emit(args.progress, {
                     "bench": case.get("bench"),
                     "subject": case.get("subject"),

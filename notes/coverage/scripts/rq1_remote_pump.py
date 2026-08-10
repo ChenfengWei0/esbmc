@@ -858,7 +858,11 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    categories = set(args.category or PRIORITY_CATEGORIES)
+    # CE manifests use CE_COLLECTION_NO_VALID, not a certification priority
+    # category.  Filtering them through PRIORITY_CATEGORIES silently empties
+    # the remote queue before it can collect any refutation evidence.
+    categories = set(args.category or ([] if args.ce_collection_only
+                                       else PRIORITY_CATEGORIES))
     cases = load_cases(args.tsv, categories, args.limit,
                        args.allow_uncovered_tsv, args.ce_collection_only)
     if not cases and not args.allow_uncovered_tsv:
