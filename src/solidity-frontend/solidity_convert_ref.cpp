@@ -18,6 +18,9 @@
 #include <util/std_expr.h>
 #include <util/message.h>
 #include <fstream>
+#include <functional>
+#include <limits>
+#include <set>
 
 namespace
 {
@@ -552,13 +555,15 @@ bool solidity_convertert::get_sol_builtin_ref(
         name == "creationCode" || name == "runtimeCode" ||
         name == "interfaceId")
       {
-        // Stable per-name ID. Same `type(C).<name>` returns the same
-        // value across reads; distinct contracts/interfaces map to
-        // distinct IDs (counter-based, no probability argument).
-        // Library helper applies a uint-bijection (`~id`) so the
-        // result is a deterministic injection of the source name.
-        // Closes ledger #15 — pre-fix the helpers ignored context and
-        // returned fresh nondets, breaking real-EVM stability.
+        // `creationCode` and `runtimeCode` remain deterministic abstract
+        // values. `interfaceId` is different: it is observable calldata data
+        // and Solidity defines it as the XOR of the externally callable
+        // function selectors in the referenced contract/interface (EIP-165).
+        // A counter-based stand-in is stable, but it is not a refinement of
+        // the real EVM and makes a path such as `supportsInterface` certify the
+        // wrong input region. Prefer the selectors solc already records in the
+        // AST and retain the old deterministic fallback only for ASTs that do
+        // not carry selector metadata.
         std::string ts = expr["expression"]["typeDescriptions"]["typeString"]
                            .get<std::string>();
         // Extract name from "type(contract C)" / "type(interface I)" /
@@ -578,7 +583,100 @@ bool solidity_convertert::get_sol_builtin_ref(
         uint32_t id;
         if (it == interface_id_table.end())
         {
-          id = next_interface_id++;
+          bool exact_interface_id = false;
+          if (name == "interfaceId")
+          {
+            int type_ref = -1;
+            const auto &type_expr = expr["expression"];
+            if (
+              type_expr.contains("arguments") &&
+              type_expr["arguments"].is_array() &&
+              !type_expr["arguments"].empty() &&
+              type_expr["arguments"][0].contains("referencedDeclaration"))
+              type_ref =
+                type_expr["arguments"][0]["referencedDeclaration"]
+                  .get<int>();
+
+            uint32_t actual = 0;
+            std::set<int> visited;
+            std::set<uint32_t> selectors;
+            std::function<bool(int)> collect_selectors =
+              [&](int decl_id) -> bool {
+              if (!visited.insert(decl_id).second)
+                return true;
+              const auto &decl = find_decl_ref(decl_id);
+              if (
+                decl.empty() || decl.value("nodeType", "") !=
+                                  "ContractDefinition")
+                return false;
+
+              // linearizedBaseContracts includes the declaration itself. A
+              // set of selectors prevents an inherited override from being
+              // XORed twice.
+              if (decl.contains("linearizedBaseContracts") &&
+                  decl["linearizedBaseContracts"].is_array())
+                for (const auto &base : decl["linearizedBaseContracts"])
+                  if (base.is_number_integer() &&
+                      !collect_selectors(base.get<int>()))
+                    return false;
+
+              if (!decl.contains("nodes") || !decl["nodes"].is_array())
+                return true;
+              for (const auto &node : decl["nodes"])
+              {
+                if (!node.is_object())
+                  continue;
+                const std::string kind = node.value("kind", "");
+                const std::string node_type = node.value("nodeType", "");
+                const bool is_function =
+                  node_type == "FunctionDefinition" && kind == "function";
+                const bool is_public_state =
+                  node_type == "VariableDeclaration" &&
+                  node.value("stateVariable", false) &&
+                  node.value("visibility", "") == "public";
+                if (!is_function && !is_public_state)
+                  continue;
+                if (
+                  is_function && node.value("visibility", "") != "public" &&
+                  node.value("visibility", "") != "external")
+                  continue;
+                if (!node.contains("functionSelector") ||
+                    !node["functionSelector"].is_string())
+                  return false;
+                const std::string selector =
+                  node["functionSelector"].get<std::string>();
+                try
+                {
+                  size_t parsed = 0;
+                  const unsigned long value =
+                    std::stoul(selector, &parsed, 16);
+                  if (
+                    parsed != selector.size() ||
+                    value > std::numeric_limits<uint32_t>::max())
+                    return false;
+                  selectors.insert(static_cast<uint32_t>(value));
+                }
+                catch (const std::exception &)
+                {
+                  return false;
+                }
+              }
+              return true;
+            };
+
+            if (type_ref >= 0 && collect_selectors(type_ref))
+            {
+              for (const uint32_t selector : selectors)
+                actual ^= selector;
+              // `_interfaceId` is shared with the deterministic fallback and
+              // applies `~id`; pass its inverse so the helper returns the
+              // exact EIP-165 value without changing creation/runtime models.
+              id = ~actual;
+              exact_interface_id = true;
+            }
+          }
+          if (!exact_interface_id)
+            id = next_interface_id++;
           interface_id_table[key] = id;
         }
         else
