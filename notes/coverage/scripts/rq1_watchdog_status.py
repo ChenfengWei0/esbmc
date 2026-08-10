@@ -830,7 +830,7 @@ def main() -> int:
     parser.add_argument("--remote-host", default=DEFAULT_REMOTE_HOST)
     parser.add_argument("--no-remote-probe", action="store_true")
     parser.add_argument("--stale-subagent-s", type=float, default=1200.0)
-    parser.add_argument("--min-active-subagents", type=int, default=10)
+    parser.add_argument("--min-active-subagents", type=int, default=3)
     parser.add_argument("--worker-stuck-after-s", type=float, default=900.0)
     parser.add_argument("--progress-glob",
                         action="append",

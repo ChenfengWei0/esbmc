@@ -36,7 +36,7 @@ DEFAULT_PEER_DATASET_ROOT = Path(
 DEFAULT_DEADLINE_HOURS = 16.0
 DEFAULT_REMOTE_HOST = "invmut-w2"
 DEFAULT_REQUIRED_SUBAGENTS = 24
-DEFAULT_MIN_ACTIVE_SUBAGENTS = 10
+DEFAULT_MIN_ACTIVE_SUBAGENTS = 3
 DEFAULT_SUBAGENT_REASONING_EFFORT = "medium"
 
 HARD_REQUIREMENTS = (
@@ -48,7 +48,7 @@ HARD_REQUIREMENTS = (
     "the persisted deadline state, subagent status, remote host status, "
     "theoretical repair N/204, and actual RQ1 valid/PUT/R1R2 progress.",
     "Every user-facing progress update must warn and trigger repair dispatch "
-    "when active spawned subagents are below 10.",
+    "when active spawned subagents are below 3.",
     "Local machine role: edit ESBMC/VeriPUT code and coordinate subagents.",
     "Remote invmut-w2 role: continuously run ESBMC/RQ1 validation jobs after "
     "code sync and update RQ1 artifacts; the local agent must not wait idle for "

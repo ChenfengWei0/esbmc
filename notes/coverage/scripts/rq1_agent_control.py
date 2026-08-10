@@ -35,8 +35,8 @@ DEFAULT_DELTA_CACHE = Path("/tmp/veriput_rq1_agent_control_snapshot.json")
 DEFAULT_LOCAL_LEASES = Path("/tmp/veriput_rq1_case_leases.json")
 DEFAULT_REMOTE_LEASE_DIR = "/tmp/veriput_rq1_case_leases.d"
 FLOW_DOC = HERE / "rq1_automation_flow.md"
-MIN_ACTIVE = 10
-MAX_SPAWN = 10
+MIN_ACTIVE = 3
+MAX_SPAWN = 3
 WORKER_PATTERN = (
     "esbmc|rq1_veriput_run|certify_all|put_all|solidity_path_put|"
     "rq1_local_pump|rq1_remote_pump|forge|anvil")
@@ -323,9 +323,13 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int,
 
     if gate == "open" and active < min_active:
         needed = max_spawn
-        review_assignments = review.get("assignments") or []
         repair_assignments = repair.get("assignments") or []
-        spawn_from = review_assignments + repair_assignments
+        review_assignments = review.get("assignments") or []
+        # Failed worker feedback is the critical path.  Fill the active
+        # threshold with repair shards before spending a slot on review-only
+        # work; review assignments remain available after the repair deficit
+        # is cleared.
+        spawn_from = repair_assignments + review_assignments
         for assignment in spawn_from[:needed]:
             actions.append(_spawn_action(assignment))
 
@@ -483,7 +487,7 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int,
             "Consume actions in order. Do not start workers while the manifest "
             "is empty. Spawn actions must use reasoning_effort=medium and must "
             "be recorded via rq1_subagent_orchestrator.py lease/running. Keep "
-            "at least 10 active subagents whenever repair/review assignments "
+            f"at least {min_active} active subagents whenever repair/review assignments "
             f"exist. Follow {FLOW_DOC}."),
     }
 
@@ -939,7 +943,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--theory-tsv", type=Path, default=DEFAULT_THEORY_TSV)
     parser.add_argument("--min-active", type=int, default=MIN_ACTIVE)
-    parser.add_argument("--max-spawn", type=int, default=10)
+    parser.add_argument("--max-spawn", type=int, default=MAX_SPAWN)
     parser.add_argument("--remote-host", default="invmut-w2")
     parser.add_argument("--format", choices=("json", "text"), default="json")
     parser.add_argument("--only-changes", action="store_true")

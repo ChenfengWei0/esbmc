@@ -45,7 +45,7 @@ Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`，所以自动化边
 4. 生成控制动作
 
    - 运行：
-     `rq1_agent_control.py --format text --only-changes --max-spawn 10`
+     `rq1_agent_control.py --format text --only-changes --max-spawn 3`
    - 无数字变化时不打印固定状态。
    - 有变化时必须打印中文固定报告，至少包括：
      active subagents、pending close、non-medium、write conflict、stale、
@@ -59,7 +59,7 @@ Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`，所以自动化边
    - 派发后立即顺序登记，不能并行写 ledger：
      `rq1_subagent_orchestrator.py lease ...`
      `rq1_subagent_orchestrator.py running ...`
-   - 最低 active 阈值是 `10`。低于 10 且有可派任务时，必须继续派发。
+   - 最低 active 阈值是 `3`。低于 3 且有可派任务时，必须继续派发。
    - write-mode 任务必须有独占 `write_scope`；readonly review 可并发。
 
 6. review 通过后的 commit
@@ -98,11 +98,11 @@ Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`，所以自动化边
 
 ## 资源最大化规则
 
-- active subagents 目标：至少 `10`。
+- active subagents 目标：至少 `3`。
 - subagent 总容量：`24`。
 - 本机 worker 和远程 worker 只在 theory manifest 合法时启动。
 - 如果资源未最大化，状态报告必须给出具体原因，例如：
-  pending close、active below 10、write conflict、stale agent、theory manifest empty、
+  pending close、active below 3、write conflict、stale agent、theory manifest empty、
   worker stopped by gate。
 
 ## 禁止项
@@ -113,4 +113,3 @@ Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`，所以自动化边
 - 禁止 review 未通过就提交。
 - 禁止无 commit sha 就把 patch 算作 net theory。
 - 禁止并行写 `/tmp/veriput_rq1_subagents.json`。
-
