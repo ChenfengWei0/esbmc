@@ -3040,6 +3040,23 @@ def _copy_ce_collection_artifacts(source: Path, destination: Path) -> list[str]:
 
 
 def run_ce_collection_subject(subject: PreparedSubject, case_dir: Path,
+def _ce_artifact_workdir(result_path: Path, fallback: Path) -> Path:
+    """Return this invocation's driver workdir, never a stale sibling run."""
+    try:
+        rows = [json.loads(line) for line in result_path.read_text().splitlines()
+                if line.strip()]
+    except (OSError, json.JSONDecodeError):
+        return fallback
+    for row in reversed(rows):
+        evidence = row.get("failure_evidence") if isinstance(row, dict) else None
+        active = evidence.get("active_workdir") if isinstance(evidence, dict) else None
+        if isinstance(active, str) and active:
+            candidate = Path(active)
+            if candidate.is_dir():
+                return candidate
+    return fallback
+
+
                               jobs: list[dict], args) -> tuple[dict, dict]:
     """Collect one bounded CE for a subject without touching RQ1 test results."""
     collection_root = case_dir / "ce-collection"
@@ -3068,7 +3085,8 @@ def run_ce_collection_subject(subject: PreparedSubject, case_dir: Path,
         result = run_command(
             argv, 60 + args.wrapper_grace,
             case_dir / "logs" / f"ce-{_safe_name(unit)}")
-        source = Path(job["certification_budget"]["workdir"])
+        source = _ce_artifact_workdir(
+            out_path, Path(job["certification_budget"]["workdir"]))
         artifact_dir = collection_root / _safe_name(unit)
         copied = _copy_ce_collection_artifacts(source, artifact_dir)
         stage.update(result)
