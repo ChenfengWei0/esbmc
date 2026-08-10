@@ -813,6 +813,60 @@ def generalise_progress_path(cwd):
     return os.path.join(cwd, "generalise-progress.json")
 
 
+def ce_collection_path(cwd):
+    return os.path.join(cwd, "ce-collection.json")
+
+
+def _ce_collection_value(value):
+    if isinstance(value, dict):
+        return {str(k): _ce_collection_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_ce_collection_value(v) for v in value]
+    return str(value) if isinstance(value, int) else value
+
+
+def write_ce_collection(cwd, args, scope_label, paths, refused, caveats,
+                        members, path_decisions, *, status, reason=None):
+    """Persist refutation evidence without promoting it to a test or proof."""
+    journal = os.path.join(cwd, "cov-ce-journal.json")
+    journal_copy = os.path.join(cwd, "ce-witness-journal.json")
+    if os.path.exists(journal):
+        shutil.copyfile(journal, journal_copy)
+    data = {
+        "schema": "veriput-ce-collection/1",
+        "status": status,
+        "reason": reason,
+        "contract": args.contract,
+        "unit": args.unit,
+        "path_function": args.path_function,
+        "scope": scope_label,
+        "max_tx": args.max_tx,
+        "timeout_s": args.timeout,
+        "config": run_config(args, scope_label),
+        "witnesses": [
+            {
+                "enc": enc,
+                "depth": depth,
+                "counterexample": _ce_collection_value(ce),
+                "members": _ce_collection_value(members.get(enc, [])),
+                "decisions": _ce_collection_value(path_decisions.get(enc, [])),
+            }
+            for enc, depth, ce in paths
+        ],
+        "refused_coordinates": list(refused or []),
+        "caveats": list(caveats or []),
+        "cov_report": file_identity(enumeration_report_snapshot_path(cwd)),
+        "ce_journal": file_identity(journal_copy),
+        "progress": file_identity(generalise_progress_path(cwd)),
+    }
+    path = ce_collection_path(cwd)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as stream:
+        json.dump(data, stream, indent=2, sort_keys=True)
+    os.replace(tmp, path)
+    return path
+
+
 def progress_jsonable(value):
     if isinstance(value, dict):
         return {str(k): progress_jsonable(v) for k, v in value.items()}
@@ -5768,6 +5822,8 @@ def run_config(args, scope_label):
         "max_region_pieces": arg_value(args, "max_region_pieces", 1),
         "max_holes": arg_value(args, "max_holes", 0),
         "timeout": arg_value(args, "timeout", 900),
+        "ce_collection_only": bool(
+            arg_value(args, "ce_collection_only", False)),
         "memlimit": arg_value(args, "memlimit", "8g"),
         "env_coords": sorted(arg_value(args, "env_coord", []) or []),
         "claim_budget": arg_value(args, "claim_budget", 0),
@@ -5849,6 +5905,10 @@ def main():
     ap.add_argument("--contract", required=True)
     ap.add_argument("--unit", required=True)
     ap.add_argument("--max-tx", type=int, default=1)
+    ap.add_argument("--ce-collection-only", action="store_true",
+                    help="run only path enumeration, then persist concrete "
+                         "counterexamples and exit. This mode never certifies "
+                         "a region and never treats a witness as a valid test.")
     ap.add_argument("--probes", type=int, default=16)
     ap.add_argument("--refine-rounds", type=int, default=3)
     ap.add_argument("--shrink-rounds", type=int, default=4,
@@ -6575,7 +6635,24 @@ def main():
             fatal_empty_enumeration=fatal,
             reason=why,
         )
+        if args.ce_collection_only:
+            artifact = write_ce_collection(
+                cwd, args, scope_label, paths, refused, caveats, members,
+                path_decisions, status="no-witness", reason=why)
+            print("[ce-collection] no witness was found within this bounded "
+                  f"run; artifact written to {artifact}")
+            return 0
         return 1
+    if args.ce_collection_only:
+        artifact = write_ce_collection(
+            cwd, args, scope_label, paths, refused, caveats, members,
+            path_decisions, status="witnessed")
+        write_generalise_progress(
+            cwd, "ce-collected", witnessed=len(paths),
+            artifact=os.path.basename(artifact))
+        print("[ce-collection] persisted refutation evidence only; no "
+              f"region was certified and no test was emitted: {artifact}")
+        return 0
     arith_conditions_seen = enumeration_has_arith_conditions(cwd)
     if arith_conditions_seen:
         print("[structural] checked-arithmetic conditions were seen during "

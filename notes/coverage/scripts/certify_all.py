@@ -1101,6 +1101,10 @@ def main():
                     help="driver transaction-sequence length. This travels "
                          "with --scope; changing either selects a different "
                          "cell and is recorded on every row.")
+    ap.add_argument("--ce-collection-only", action="store_true",
+                    help="stop each driver after 60-second-style path "
+                         "enumeration evidence collection. The resulting "
+                         "witness artifact is not a certified region or test.")
     ap.add_argument("--timeout", type=int, default=600,
                     help="per DRIVER invocation, i.e. one unit's WHOLE loop -- "
                          "enumeration, level 0, the geometric bracket, every "
@@ -1700,6 +1704,9 @@ def main():
     except ValueError as exc:
         print(f"[sweep] REFUSED: {exc}", file=sys.stderr)
         return 1
+    if args.ce_collection_only:
+        args.timeout = min(args.timeout, 60)
+        args.run_timeout = min(args.run_timeout, 60)
     try:
         ensure_path_not_protected("--out", args.out)
         ensure_path_not_protected("--workdir", args.workdir)
@@ -2096,6 +2103,8 @@ def main():
                    # sweep is byte-identical in behaviour to every recorded one.
                    "--max-holes", str(args.max_holes),
                    "--max-region-pieces", str(args.max_region_pieces)]
+            if args.ce_collection_only:
+                cmd.append("--ce-collection-only")
             if args.level0:
                 cmd.append("--level0")
             if args.path_function:
