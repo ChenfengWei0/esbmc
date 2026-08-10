@@ -37,6 +37,7 @@ DEFAULT_REMOTE_LEASE_DIR = "/tmp/veriput_rq1_case_leases.d"
 FLOW_DOC = HERE / "rq1_automation_flow.md"
 MIN_ACTIVE = 3
 MAX_SPAWN = 3
+SUBAGENT_MODEL = "gpt-5.6-luna"
 WORKER_PATTERN = (
     "esbmc|rq1_veriput_run|certify_all|put_all|solidity_path_put|"
     "rq1_local_pump|rq1_remote_pump|forge|anvil")
@@ -274,6 +275,7 @@ Subjects:
 """
     return {
         "action": "spawn_agent",
+        "model": SUBAGENT_MODEL,
         "reasoning_effort": "high",
         "bucket_key": assignment.get("bucket_key"),
         "mode": assignment.get("mode"),

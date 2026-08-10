@@ -134,7 +134,8 @@ def _ledger_lease(action: dict, result: dict) -> tuple[bool, str]:
     cmd = [
         sys.executable, str(ORCHESTRATOR), "lease", "--slot", slot,
         "--agent-id", agent_id, "--mode", str(action.get("mode") or "write"),
-        "--allow-pending-close"
+        "--allow-pending-close", "--model",
+        str(action.get("model") or "gpt-5.6-luna")
     ]
     for scope in action.get("write_scope") or []:
         cmd.extend(["--write-scope", str(scope)])

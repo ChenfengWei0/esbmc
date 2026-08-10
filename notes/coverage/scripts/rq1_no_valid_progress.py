@@ -38,6 +38,7 @@ DEFAULT_REMOTE_HOST = "invmut-w2"
 DEFAULT_REQUIRED_SUBAGENTS = 24
 DEFAULT_MIN_ACTIVE_SUBAGENTS = 3
 DEFAULT_SUBAGENT_REASONING_EFFORT = "high"
+DEFAULT_SUBAGENT_MODEL = "gpt-5.6-luna"
 
 HARD_REQUIREMENTS = (
     "Do not report N/204 from memory; run this script or quote its last output.",
@@ -66,6 +67,7 @@ HARD_REQUIREMENTS = (
     "review_status=accepted and the subagent record contains a commit sha. "
     "Review without a commit is incomplete and remains provisional at most.",
     "Every spawned subagent must be requested with reasoning_effort=high. "
+    "Every spawned subagent must also explicitly use model=gpt-5.6-luna. "
     "Config-file defaults are not considered a hard guarantee unless the "
     "subagent ledger records the explicit effort.",
     "Workers may run only the theory-covered case manifest by default.  Broad "
@@ -543,6 +545,7 @@ def _subagent_template() -> list[dict]:
             "status": "queued",
             "patch_id": "",
             "required_reasoning_effort": DEFAULT_SUBAGENT_REASONING_EFFORT,
+            "required_model": DEFAULT_SUBAGENT_MODEL,
         })
     return agents
 
@@ -567,7 +570,8 @@ def init_subagent_state(path: Path, force: bool = False) -> dict:
         "schema": "veriput-rq1-subagents/v1",
         "status": "active",
         "max_concurrent_threads_per_session": DEFAULT_REQUIRED_SUBAGENTS,
-        "required_reasoning_effort": DEFAULT_SUBAGENT_REASONING_EFFORT,
+            "required_reasoning_effort": DEFAULT_SUBAGENT_REASONING_EFFORT,
+            "required_model": DEFAULT_SUBAGENT_MODEL,
         "agents": agents,
         "rules": {
             "write_scope": "subagents may edit only their exclusive write_scope",

@@ -28,6 +28,7 @@ DEFAULT_REVIEW_EVENTS = Path("/tmp/veriput_rq1_review_events.jsonl")
 DEFAULT_MAX_AGENTS = 24
 DEFAULT_STALE_MINUTES = 20.0
 REQUIRED_REASONING_EFFORT = "high"
+REQUIRED_MODEL = "gpt-5.6-luna"
 AUTOCLOSE = Path(__file__).resolve().parent / "rq1_subagent_autoclose.py"
 
 
@@ -132,7 +133,8 @@ def lease_slot(state: dict, slot: str, agent_id: str, mode: str,
                allow_pending_close: bool = False,
                write_scope: list[str] | None = None,
                task: str = "",
-               expected_coverage: str = "") -> dict:
+               expected_coverage: str = "",
+               model: str = "") -> dict:
     pending = pending_close_count()
     if pending and not allow_pending_close:
         raise SystemExit(
@@ -162,6 +164,9 @@ def lease_slot(state: dict, slot: str, agent_id: str, mode: str,
         lease["task"] = task
     if expected_coverage:
         lease["expected_coverage"] = expected_coverage
+    if model and model != REQUIRED_MODEL:
+        raise SystemExit(
+            f"MODEL_MISMATCH: required={REQUIRED_MODEL} requested={model}")
     lease.update({
         "agent_id": agent_id,
         "mode": mode,
@@ -169,6 +174,8 @@ def lease_slot(state: dict, slot: str, agent_id: str, mode: str,
         "leased_ts": now(),
         "reasoning_effort": REQUIRED_REASONING_EFFORT,
         "required_reasoning_effort": REQUIRED_REASONING_EFFORT,
+        "model": REQUIRED_MODEL,
+        "required_model": REQUIRED_MODEL,
     })
     if mode == "write":
         for active in active_agents(state):
@@ -429,6 +436,7 @@ def main() -> int:
     lease.add_argument("--write-scope", action="append", default=[])
     lease.add_argument("--task", default="")
     lease.add_argument("--expected-coverage", default="")
+    lease.add_argument("--model", default=REQUIRED_MODEL)
     lease.add_argument("--allow-pending-close", action="store_true")
     running = sub.add_parser("running")
     running.add_argument("--agent-id", required=True)
@@ -451,7 +459,7 @@ def main() -> int:
                 result = lease_slot(state, args.slot, args.agent_id, args.mode,
                                     args.allow_pending_close,
                                     args.write_scope, args.task,
-                                    args.expected_coverage)
+                                    args.expected_coverage, args.model)
             elif args.cmd == "running":
                 result = mark_running(state, args.agent_id)
             elif args.cmd == "complete":

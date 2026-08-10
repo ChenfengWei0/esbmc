@@ -60,6 +60,7 @@ Codex host 级 `spawn_agent` / `wait_agent` / `close_agent`；该边界通过
 
    - 只消费 `rq1_agent_control.py` 输出的 `spawn_agent` 动作。
    - 每个新 subagent 必须显式 `reasoning_effort=high`。
+   - 每个新 subagent 必须显式 `model=gpt-5.6-luna`；ledger 会拒绝其它型号。
    - 派发后立即顺序登记，不能并行写 ledger：
      `rq1_subagent_orchestrator.py lease ...`
      `rq1_subagent_orchestrator.py running ...`
