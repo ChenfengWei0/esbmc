@@ -24,7 +24,9 @@ DEFAULT_PROGRESS_GLOBS = (
 )
 DEFAULT_REPAIR_TICKETS = Path("/tmp/veriput_rq1_repair_tickets.jsonl")
 DEFAULT_DISPATCH_QUEUE = Path("/tmp/veriput_rq1_dispatch_queue.json")
+DEFAULT_REVIEW_QUEUE = Path("/tmp/veriput_rq1_review_queue.json")
 DEFAULT_SUBAGENT_CLOSE_STATE = Path("/tmp/veriput_rq1_subagent_close_state.json")
+DEFAULT_OOM_HIGHMEM_QUEUE = Path("/tmp/veriput_rq1_oom_highmem.tsv")
 
 
 def _json(path: Path) -> dict:
@@ -221,13 +223,28 @@ def _progress_report(globs: tuple[str, ...], tail_limit: int) -> dict:
     }
 
 
+def _tsv_count(path: Path) -> int:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return 0
+    return max(0, len([line for line in lines if line.strip()]) - 1)
+
+
 def _subagent_report(state: dict, extra_state: dict, stale_s: float) -> dict:
     now = time.time()
     agents = list(state.get("agents") or [])
     agents.extend(extra_state.get("agents") or [])
+    dispatch_pending = [
+        agent for agent in agents
+        if str(agent.get("slot") or "").startswith("AUTO-")
+        and agent.get("status") in {"leased", "running"}
+        and not str(agent.get("patch_id") or "").strip()
+    ]
     active = [
         agent for agent in agents
         if agent.get("status") in ("leased", "running")
+        and agent not in dispatch_pending
     ]
     stale = []
     for agent in active:
@@ -240,11 +257,41 @@ def _subagent_report(state: dict, extra_state: dict, stale_s: float) -> dict:
                 "age_s": round(age, 3),
                 "task": agent.get("task"),
             })
+    pending_review = []
+    rejected_or_needs_work = []
+    for agent in agents:
+        if agent.get("status") != "completed" or agent.get("mode") != "write":
+            continue
+        review = str(agent.get("review_status") or "pending")
+        row = {
+            "slot": agent.get("slot"),
+            "agent_id": agent.get("agent_id"),
+            "patch_id": agent.get("patch_id"),
+            "task": agent.get("task"),
+            "write_scope": agent.get("write_scope") or [],
+            "review_status": review,
+        }
+        if review == "pending":
+            pending_review.append(row)
+        elif review in {"rejected", "needs-work"}:
+            rejected_or_needs_work.append(row)
     return {
         "active": len(active),
+        "dispatch_pending_not_spawned": len(dispatch_pending),
+        "dispatch_pending_slots": [
+            agent.get("slot") for agent in dispatch_pending
+        ],
         "completed": sum(1 for a in agents if a.get("status") == "completed"),
         "queued": sum(1 for a in agents if a.get("status") == "queued"),
         "stale": stale,
+        "pending_review_count": len(pending_review),
+        "pending_review_tail": pending_review[-12:],
+        "rejected_or_needs_work_count": len(rejected_or_needs_work),
+        "rejected_or_needs_work_tail": rejected_or_needs_work[-12:],
+        "review_rule": (
+            "Completed write-mode patches remain provisional until an "
+            "independent review marks review_status=accepted; rejected or "
+            "needs-work patches must not justify net theoretical coverage."),
     }
 
 
@@ -286,6 +333,7 @@ def build_report(args: argparse.Namespace) -> dict:
     subagent_state = _json(args.subagent_state)
     extra_subagent_state = _json(args.extra_subagent_state)
     dispatch_queue = _json(args.dispatch_queue)
+    review_queue = _json(args.review_queue)
     close_state = _json(args.subagent_close_state)
     local_rows = _local_process_rows()
     local_rss_limit = int(local_state.get("esbmc_rss_limit_gib")
@@ -359,6 +407,19 @@ def build_report(args: argparse.Namespace) -> dict:
             "rule": dispatch_queue.get("rule"),
             "dispatch_status": subagent_dispatch_status,
         },
+        "review_dispatch": {
+            "queue_file": str(args.review_queue),
+            "assignment_count": int(review_queue.get("assignment_count") or 0),
+            "assignments": (review_queue.get("assignments") or [])[:8],
+            "rule": review_queue.get("rule"),
+        },
+        "oom_highmem_queue": {
+            "queue_file": str(args.oom_highmem_queue),
+            "case_count": _tsv_count(args.oom_highmem_queue),
+            "rule": (
+                "Only explicit OOM/memory-pressure cases should be rerun with "
+                "higher memory; all other cases stay on the normal budget."),
+        },
         "local_processes": local_rows,
         "remote_worker": {
             "state_file": str(args.remote_state),
@@ -406,9 +467,15 @@ def main() -> int:
     parser.add_argument("--dispatch-queue",
                         type=Path,
                         default=DEFAULT_DISPATCH_QUEUE)
+    parser.add_argument("--review-queue",
+                        type=Path,
+                        default=DEFAULT_REVIEW_QUEUE)
     parser.add_argument("--subagent-close-state",
                         type=Path,
                         default=DEFAULT_SUBAGENT_CLOSE_STATE)
+    parser.add_argument("--oom-highmem-queue",
+                        type=Path,
+                        default=DEFAULT_OOM_HIGHMEM_QUEUE)
     parser.add_argument("--out", type=Path)
     args = parser.parse_args()
     doc = build_report(args)

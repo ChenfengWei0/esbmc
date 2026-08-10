@@ -571,17 +571,38 @@ def record_subagent(
     return doc
 
 
-def applied_from_subagents(subagents: dict) -> set[str]:
+def subagent_patch_review_sets(subagents: dict) -> dict[str, set[str]]:
     applied = set()
+    provisional = set()
+    rejected = set()
     for agent in subagents.get("agents") or []:
         if not isinstance(agent, dict):
             continue
         if agent.get("status") != "completed":
             continue
         patch_id = str(agent.get("patch_id") or "").strip()
-        if patch_id:
+        if not patch_id:
+            continue
+        if agent.get("mode") == "write":
+            review_status = str(agent.get("review_status") or "pending")
+            if review_status == "accepted":
+                applied.add(patch_id)
+            elif review_status in {"rejected", "needs-work"}:
+                rejected.add(patch_id)
+            else:
+                provisional.add(patch_id)
+        else:
             applied.add(patch_id)
-    return applied
+    return {
+        "accepted": applied,
+        "provisional": provisional,
+        "rejected": rejected,
+    }
+
+
+def applied_from_subagents(subagents: dict) -> set[str]:
+    review_sets = subagent_patch_review_sets(subagents)
+    return review_sets["accepted"] | review_sets["provisional"]
 
 
 def merge_subagent_docs(primary: dict, extra: dict) -> dict:
@@ -597,14 +618,25 @@ def subagent_summary(subagents: dict) -> dict:
         if isinstance(agent, dict)
     ]
     by_status = Counter(str(agent.get("status") or "unknown") for agent in agents)
+    dispatch_pending = [
+        agent for agent in agents
+        if str(agent.get("slot") or "").startswith("AUTO-")
+        and agent.get("status") in {"leased", "running"}
+        and not str(agent.get("patch_id") or "").strip()
+    ]
     return {
         "required_slots": DEFAULT_REQUIRED_SUBAGENTS,
         "defined_slots": len(agents),
         "active_or_completed": sum(
             1 for agent in agents
-            if agent.get("status") in {"running", "completed"}),
+            if agent.get("status") in {"running", "completed"}
+            and agent not in dispatch_pending),
         "completed": by_status.get("completed", 0),
-        "running": by_status.get("running", 0),
+        "running": max(0, by_status.get("running", 0) - len(dispatch_pending)),
+        "dispatch_pending_not_spawned": len(dispatch_pending),
+        "dispatch_pending_slots": [
+            agent.get("slot") for agent in dispatch_pending
+        ],
         "queued": by_status.get("queued", 0),
         "by_status": dict(sorted(by_status.items())),
         "capacity_configured": int(
@@ -858,6 +890,10 @@ def resource_maximization(
     if sub_summary["running"] + sub_summary["queued"] + sub_summary[
             "completed"] < DEFAULT_REQUIRED_SUBAGENTS:
         reasons.append("subagent_slots_not_fully_accounted")
+    if sub_summary.get("dispatch_pending_not_spawned"):
+        reasons.append(
+            "subagent_dispatch_pending_not_spawned:"
+            f"{sub_summary['dispatch_pending_not_spawned']}")
 
     worker = remote_state.get("worker") or {}
     worker_watchdog = worker.get("remote_watchdog") or {}
@@ -1084,8 +1120,15 @@ def validation_feedback(
             row["original_category"] = original.get("category")
             row["root_cause_category"] = original.get("category")
         row.setdefault("source", "repair_ticket")
-    rows.extend(_canonical_validation_feedback_rows(results_root,
-                                                    root_cause_index))
+    # Canonical result.json files are useful for quality debt and dispatch, but
+    # a canonical no-valid row may be an old pre-patch result.  Only explicit
+    # repair tickets represent a later worker contradiction of no-valid repair
+    # coverage.  Otherwise the gross no-valid theory would be zeroed by stale
+    # historical outputs immediately after a code patch.
+    rows.extend(
+        row for row in _canonical_validation_feedback_rows(results_root,
+                                                           root_cause_index)
+        if int(row.get("valid") or 0) > 0)
     no_valid: dict[tuple[str, str], dict] = {}
     no_put: dict[tuple[str, str], dict] = {}
     no_r1r2: dict[tuple[str, str], dict] = {}
@@ -1250,6 +1293,7 @@ def main() -> int:
         )
 
     counts = load_counts(args.tsv)
+    root_cause_index = load_root_cause_index(args.tsv)
     state = load_or_init_state(args.state, args.deadline_hours)
     countdown = countdown_fields(state)
     primary_subagents = load_json_file(args.subagents, {
@@ -1275,15 +1319,36 @@ def main() -> int:
     resources = resource_maximization(subagents, remote_state, remote_live,
                                       local_state)
     row_total = sum(counts.values())
-    applied = {item.strip() for item in args.applied.split(",") if item.strip()}
-    applied.update(applied_from_subagents(subagents))
+    cli_applied = {item.strip() for item in args.applied.split(",") if item.strip()}
+    applied = set(cli_applied)
+    review_sets = subagent_patch_review_sets(subagents)
+    applied.update(review_sets["accepted"])
+    implemented = set(cli_applied)
+    implemented.update(review_sets["accepted"])
+    implemented.update(review_sets["provisional"])
     covered_gross, covered_categories, coverage_details = patch_coverage(
         counts, applied)
-    feedback = validation_feedback(args.repair_tickets, set(covered_categories),
+    implemented_gross, implemented_categories, implemented_details = patch_coverage(
+        counts, implemented)
+    feedback = validation_feedback(args.repair_tickets, args.results_root,
+                                   root_cause_index, set(covered_categories),
                                    applied, actual)
+    implemented_feedback = validation_feedback(
+        args.repair_tickets,
+        args.results_root,
+        root_cause_index,
+        set(implemented_categories),
+        implemented,
+        actual,
+    )
     covered = max(
         0,
         covered_gross - int(feedback.get("no_valid_invalidated_count") or 0),
+    )
+    implemented_net = max(
+        0,
+        implemented_gross - int(implemented_feedback.get(
+            "no_valid_invalidated_count") or 0),
     )
     schedule = schedule_status(countdown, applied)
 
@@ -1292,12 +1357,37 @@ def main() -> int:
     if row_total != DENOMINATOR:
         print(f"row_denominator_delta={row_total - DENOMINATOR}")
     print(f"applied_patch_ids={','.join(sorted(applied)) or '<none>'}")
-    print(f"theoretical_progress_gross={covered_gross}/{DENOMINATOR}")
-    print(f"theoretical_progress={covered}/{DENOMINATOR}")
-    put_net = feedback["put_theoretical_progress_net"]
-    put_gross = feedback["put_theoretical_progress_gross"]
-    r1r2_net = feedback["r1r2_theoretical_progress_net"]
-    r1r2_gross = feedback["r1r2_theoretical_progress_gross"]
+    print(f"implemented_patch_ids={','.join(sorted(implemented)) or '<none>'}")
+    print("subagent_patch_review_gate:")
+    print(json.dumps({
+        "accepted_patch_ids_counted_as_fully_integrated":
+            sorted(review_sets["accepted"]),
+        "provisional_pending_review_patch_ids_counted_but_not_fully_integrated":
+            sorted(review_sets["provisional"]),
+        "rejected_or_needs_work_patch_ids_not_counted":
+            sorted(review_sets["rejected"]),
+        "rule": (
+            "completed write-mode patch_ids count toward provisional "
+            "theoretical coverage unless review_status is rejected or "
+            "needs-work. review_status=accepted marks the patch fully "
+            "integrated; pending-review patches must still be cross-reviewed "
+            "and may later be removed if review or worker feedback contradicts "
+            "the claim."),
+    }, indent=2, sort_keys=True))
+    print(
+        f"implemented_progress_provisional_gross={implemented_gross}/"
+        f"{DENOMINATOR}")
+    print(
+        f"implemented_progress_provisional={implemented_net}/"
+        f"{DENOMINATOR}")
+    print(f"fully_integrated_progress_gross={covered_gross}/{DENOMINATOR}")
+    print(f"fully_integrated_progress={covered}/{DENOMINATOR}")
+    print(f"theoretical_progress_gross={implemented_gross}/{DENOMINATOR}")
+    print(f"theoretical_progress={implemented_net}/{DENOMINATOR}")
+    put_net = implemented_feedback["put_theoretical_progress_net"]
+    put_gross = implemented_feedback["put_theoretical_progress_gross"]
+    r1r2_net = implemented_feedback["r1r2_theoretical_progress_net"]
+    r1r2_gross = implemented_feedback["r1r2_theoretical_progress_gross"]
     print(
         "put_theoretical_progress_gross="
         f"{put_gross['numerator']}/{put_gross['denominator']}")
@@ -1310,9 +1400,13 @@ def main() -> int:
     print(
         "r1r2_theoretical_progress="
         f"{r1r2_net['numerator']}/{r1r2_net['denominator']}")
-    print("theoretical_progress_details:")
+    print("fully_integrated_progress_details:")
     print(json.dumps(coverage_details, indent=2, sort_keys=True))
-    print("validation_feedback:")
+    print("theoretical_progress_details:")
+    print(json.dumps(implemented_details, indent=2, sort_keys=True))
+    print("theoretical_validation_feedback:")
+    print(json.dumps(implemented_feedback, indent=2, sort_keys=True))
+    print("fully_integrated_validation_feedback:")
     print(json.dumps(feedback, indent=2, sort_keys=True))
     print("resource_maximization:")
     print(json.dumps(resources, indent=2, sort_keys=True))
