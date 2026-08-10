@@ -330,6 +330,16 @@ def cleared_concrete_fallback_rows(record):
         by_enc = {str(k): v for k, v in details.items() if isinstance(v, dict)}
     else:
         by_enc = {}
+    journal = record.get("partial_witness_journal") or {}
+    journal_path_functions = {}
+    if isinstance(journal, dict):
+        for path in journal.get("paths") or []:
+            if not isinstance(path, dict):
+                continue
+            path_id = path.get("path_id")
+            path_function = path.get("path_function")
+            if path_id is not None and path_function:
+                journal_path_functions[str(path_id)] = str(path_function)
     coords = [str(c) for c in (record.get("coords") or [])]
     row_pins = parse_pins(record.get("pins"))
     for enc, reason in not_certified.items():
@@ -356,7 +366,10 @@ def cleared_concrete_fallback_rows(record):
         region, pins = region_and_pins
         rows.append({
             "enc": str(enc),
-            "path_function": detail.get("path_function"),
+            "path_function": (
+                detail.get("path_function")
+                or journal_path_functions.get(str(enc))
+                or record.get("path_function")),
             "region": region,
             "pins": pins,
             "reason": reason,
