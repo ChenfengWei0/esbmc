@@ -26451,3 +26451,39 @@ Hard-coded implementation:
 - `notes/coverage/scripts/rq1_no_valid_progress.py` derives valid/PUT/R1R2
   strength from `valid_tests` when aggregate counters are missing, avoiding
   false no-R1/R2 debt caused only by summary metadata loss.
+
+## v87 - Current-evidence dispatch and fixed status evidence
+
+Current hard status from `rq1_mandatory_status.py` after this update:
+
+- Countdown remaining: about 14.34 h.
+- Actual RQ1: 501 subjects, 309 valid, 263 PUT, 208 R1/R2.
+- Net no-valid theory: 0/204.  Provisional after feedback/review gate: 14/204.
+- Active subagents: 0/5, so every report must include
+  `HARD_ALERT=ACTIVE_SUBAGENTS_BELOW_MIN`.
+- Running cases: local=3, remote=0.  Remote is not maximized.
+- Worker M/N is now derived from worker progress rows when state files omit
+  `case_count`: local-main 4/4, local-extra1 4/4, local-extra2 6/6,
+  remote 0/24.
+- Recent canonical results are printed directly with valid/PUT/R1R2 counts.
+  Recent weak examples include `DynamicWeightedLPOracle` no-valid,
+  `BalancerContractRegistryInitializer` no-valid, `acfix_030` valid-no-PUT,
+  and `SeaportValidator` valid-no-PUT.  Each weak result must show
+  `intervention_required=true` and stay in repair dispatch.
+
+Hard-coded implementation:
+
+- `scripts/solidity_ast_dependencies.py` now treats a public state getter as a
+  target even when the selected path/function identity carries the state
+  `VariableDeclaration` id.  This fixes focus-function attribution for
+  inherited/public getter units and preserves mapping/array slot coordinates
+  such as `state.m[key0]`.
+- `notes/coverage/scripts/rq1_repair_dispatcher.py` now routes repair scope
+  from current evidence (`category`, `original_category`, and root-cause/fix
+  target text) before falling back to stale ticket `suggested_write_scope`.
+  Runner, scheduler, ESBMC frontend, certifier/generalise, PUT, and AST-deps
+  failures should no longer collapse into one low-quality certifier bucket.
+- `notes/coverage/scripts/rq1_mandatory_status.py` now prints recent canonical
+  `result.json` strength and marks weak/no-valid cases as requiring immediate
+  intervention.  It also computes worker `N` from unique progress cases when a
+  worker state file has no `case_count`.
