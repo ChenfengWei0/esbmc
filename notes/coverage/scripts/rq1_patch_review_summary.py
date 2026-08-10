@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 
@@ -25,6 +26,14 @@ MANDATORY_REVIEW_FIELDS = (
     "commit decision",
     "next_action",
 )
+COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
+VERDICT_RANK = {
+    "readonly": 0,
+    "pending": 1,
+    "accepted": 2,
+    "needs-work": 3,
+    "rejected": 4,
+}
 
 
 def _extract_review_fields(note: str) -> dict[str, str]:
@@ -87,6 +96,10 @@ def _jsonl(path: Path) -> list[dict]:
     return rows
 
 
+def _valid_commit_sha(value: str) -> bool:
+    return COMMIT_RE.match(str(value or "").strip()) is not None
+
+
 def _bucket_row(source: str, agent: dict, verdict: str,
                 missing_fields: list[str]) -> dict:
     note = str(agent.get("review_note") or agent.get("note", ""))
@@ -106,6 +119,50 @@ def _bucket_row(source: str, agent: dict, verdict: str,
         "missing_review_fields": missing_fields,
         "verdict": verdict,
     }
+
+
+def _reconcile_buckets(buckets: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """Keep one effective verdict per write patch.
+
+    Review events can arrive more than once.  A later needs-work/rejected review
+    must not coexist with an older accepted event for the same patch, otherwise
+    status reports tell the runner both to commit and not to commit.  For write
+    patches the stricter verdict wins; readonly rows are informational unless no
+    write verdict exists for that key.
+    """
+
+    by_key: dict[tuple[str, str], dict] = {}
+    readonly_rows = []
+    for verdict, rows in buckets.items():
+        for row in rows:
+            if verdict == "readonly":
+                readonly_rows.append(row)
+                continue
+            key = (str(row.get("agent_id") or ""),
+                   str(row.get("patch_id") or ""))
+            if not key[0] or not key[1]:
+                continue
+            current = by_key.get(key)
+            if current is None:
+                by_key[key] = row
+                continue
+            cur_rank = VERDICT_RANK.get(str(current.get("verdict")), 0)
+            new_rank = VERDICT_RANK.get(str(row.get("verdict")), 0)
+            if new_rank >= cur_rank:
+                by_key[key] = row
+    out = {key: [] for key in buckets}
+    for row in by_key.values():
+        verdict = str(row.get("verdict") or "pending")
+        out.setdefault(verdict, []).append(row)
+    write_keys = {
+        (str(row.get("agent_id") or ""), str(row.get("patch_id") or ""))
+        for row in by_key.values()
+    }
+    for row in readonly_rows:
+        key = (str(row.get("agent_id") or ""), str(row.get("patch_id") or ""))
+        if key not in write_keys:
+            out["readonly"].append(row)
+    return out
 
 
 def build_summary(paths: list[Path], review_events: Path) -> dict:
@@ -134,7 +191,7 @@ def build_summary(paths: list[Path], review_events: Path) -> dict:
                 agent.get("review_commit") or agent.get("commit_sha")
                 or agent.get("commit") or agent.get("patch_commit") or ""
             ).strip()
-            if verdict == "accepted" and not commit_sha:
+            if verdict == "accepted" and not _valid_commit_sha(commit_sha):
                 verdict = "pending"
             note = str(agent.get("review_note") or agent.get("note", ""))
             review_fields = _extract_review_fields(note)
@@ -173,6 +230,9 @@ def build_summary(paths: list[Path], review_events: Path) -> dict:
         ]
         if missing_fields:
             verdict = "pending"
+        if verdict == "accepted" and not _valid_commit_sha(
+                str(event.get("commit_sha") or "")):
+            verdict = "pending"
         buckets[verdict].append(
             _bucket_row(str(review_events), {
                 "slot": event.get("slot"),
@@ -183,6 +243,7 @@ def build_summary(paths: list[Path], review_events: Path) -> dict:
                 "commit_sha": event.get("commit_sha") or "",
                 "note": note,
             }, verdict, missing_fields))
+    buckets = _reconcile_buckets(buckets)
     return {
         "schema": "veriput-rq1-patch-review-summary/v1",
         "reviewed_ledgers": [str(path) for path in paths] + [str(review_events)],
