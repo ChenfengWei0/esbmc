@@ -50,6 +50,13 @@ struct sol_llc_ret
 uint256_t nondet_uint256();
 address_t nondet_address_t();
 
+/* Exponentiation helper for Solidity expressions whose exponent is uint8.
+ * The body is deliberately straight-line: path coverage uses a small default
+ * unwind for library calls, while a uint8 exponent needs at most eight
+ * binary-exponentiation steps.  The generic sol_pow_uint model remains the
+ * sound path for wider exponent types. */
+uint256_t sol_pow_uint8(uint256_t base, uint256_t exp);
+
 /* Bounded nondet initial contract balance in [0, 2^128). See
  * solidity_misc.c for the rationale (avoids the near-2^256 overflow corner
  * that spuriously drops reentrant `.call{value:}` callbacks). */

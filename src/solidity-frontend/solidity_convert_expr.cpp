@@ -6351,11 +6351,20 @@ bool solidity_convertert::get_binary_operator_expr(
     else
     {
       // Use integer power function to avoid fixedbv/floatbv type mismatch.
-      // Solidity ** is purely integer arithmetic.
+      // Solidity ** is purely integer arithmetic.  A narrow unsigned
+      // exponent has a statically bounded number of binary-exponentiation
+      // steps; use the straight-line helper so path coverage does not report
+      // a false truncation from the generic 256-bit loop.
       unsignedbv_typet u256(256);
       side_effect_expr_function_callt call_expr;
+      const bool narrow_unsigned_exp =
+        rhs.type().is_unsignedbv() && bv_width(rhs.type()) <= 8;
       get_library_function_call_no_args(
-        "sol_pow_uint", "c:@F@sol_pow_uint", u256, lhs.location(), call_expr);
+        narrow_unsigned_exp ? "sol_pow_uint8" : "sol_pow_uint",
+        narrow_unsigned_exp ? "c:@F@sol_pow_uint8" : "c:@F@sol_pow_uint",
+        u256,
+        lhs.location(),
+        call_expr);
 
       call_expr.arguments().push_back(typecast_exprt(lhs, u256));
       call_expr.arguments().push_back(typecast_exprt(rhs, u256));

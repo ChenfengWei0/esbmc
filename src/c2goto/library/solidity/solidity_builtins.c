@@ -30,6 +30,49 @@ __ESBMC_HIDE:;
   return result;
 }
 
+/* uint8 exponent variant.  Keep this straight-line so a caller does not
+ * require a large global unwind merely to account for the exponent's source
+ * type.  The Solidity frontend selects this helper only when the original
+ * exponent expression is an unsigned bit-vector of width at most 8. */
+uint256_t sol_pow_uint8(uint256_t base, uint256_t exp)
+{
+__ESBMC_HIDE:;
+  uint256_t result = 1;
+
+  if (exp & 1)
+    result *= base;
+  base *= base;
+  exp >>= 1;
+  if (exp & 1)
+    result *= base;
+  base *= base;
+  exp >>= 1;
+  if (exp & 1)
+    result *= base;
+  base *= base;
+  exp >>= 1;
+  if (exp & 1)
+    result *= base;
+  base *= base;
+  exp >>= 1;
+  if (exp & 1)
+    result *= base;
+  base *= base;
+  exp >>= 1;
+  if (exp & 1)
+    result *= base;
+  base *= base;
+  exp >>= 1;
+  if (exp & 1)
+    result *= base;
+  base *= base;
+  exp >>= 1;
+  if (exp & 1)
+    result *= base;
+
+  return result;
+}
+
 /*
  * Modular arithmetic — arbitrary precision per Solidity spec.
  *
