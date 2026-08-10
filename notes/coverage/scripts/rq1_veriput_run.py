@@ -58,6 +58,8 @@ CONCRETE_FALLBACK_WITNESS_CHECKS = {
     "SUCCESSFUL",
     "COMPLETE-WITNESS-NO-COORDINATE",
 }
+CE_REPLAY_MANIFEST_SCHEMA = "veriput-ce-replay-manifest/1"
+CE_REPLAY_CANDIDATE_SCHEMA = "veriput-ce-replay-candidate/1"
 QUALITY_BUCKET_RANK = {
     "no-valid": 0,
     "valid-no-PUT": 1,
@@ -149,6 +151,260 @@ def _append_jsonl(path: Path, row: dict) -> None:
         stream.write(json.dumps(row, sort_keys=True) + "\n")
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def _candidate_manifest_paths(raw_paths: list[str] | None) -> list[Path]:
+    """Normalize explicit CE replay manifests without discovering siblings."""
+    out = []
+    for raw in raw_paths or []:
+        path = Path(raw).expanduser().resolve()
+        if path not in out:
+            out.append(path)
+    return out
+
+
+def _candidate_value_map(values: object) -> dict[str, int] | None:
+    """Convert lossless CE name/value lists to the Stage-4 integer CE shape."""
+    if not isinstance(values, list):
+        return None
+    out = {}
+    for item in values:
+        if not isinstance(item, dict) or not item.get("name"):
+            return None
+        try:
+            value = int(str(item.get("value")), 0)
+        except (TypeError, ValueError):
+            return None
+        name = str(item["name"])
+        previous = out.get(name)
+        if previous is not None and previous != value:
+            return None
+        out[name] = value
+    return out
+
+
+def _candidate_replay_ce(candidate: dict) -> dict[str, int] | None:
+    replay = candidate.get("replay") or {}
+    if not isinstance(replay, dict):
+        return None
+    merged = {}
+    for key in ("inputs", "entry_storage", "environment"):
+        values = _candidate_value_map(replay.get(key))
+        if values is None:
+            return None
+        for name, value in values.items():
+            previous = merged.get(name)
+            if previous is not None and previous != value:
+                return None
+            merged[name] = value
+    return merged
+
+
+def _candidate_source_is_local(candidate: dict, case_dir: Path) -> bool:
+    source = candidate.get("source") or {}
+    if not isinstance(source, dict):
+        return False
+    recorded_case = source.get("case_dir")
+    if not recorded_case:
+        return False
+    try:
+        if Path(recorded_case).expanduser().resolve() != case_dir.resolve():
+            return False
+        collection_root = (case_dir / "ce-collection").resolve()
+        artifact = Path(source.get("artifact_dir", "")).expanduser().resolve()
+        journal = Path(source.get("journal", "")).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return False
+    return (_is_under(artifact, collection_root)
+            and _is_under(journal, collection_root)
+            and artifact.is_dir() and journal.is_file())
+
+
+def _load_ce_replay_candidates(manifest_paths: list[Path],
+                               target_row: dict, subject: PreparedSubject,
+                               case_dir: Path) -> tuple[list[dict], list[dict]]:
+    """Load only immutable, case-local CE candidates.
+
+    A CE manifest is refutation evidence.  This function deliberately returns
+    candidate records, never an RQ1 result row.  Formal accounting begins only
+    after the isolated Stage-4 command passes both gates below.
+    """
+    candidates = []
+    rejected = []
+    seen = set()
+    for manifest_path in manifest_paths:
+        try:
+            doc = json.loads(manifest_path.read_text(errors="replace"))
+        except (OSError, json.JSONDecodeError) as exc:
+            rejected.append({"manifest": str(manifest_path),
+                             "reason": f"invalid manifest: {exc}"})
+            continue
+        if not isinstance(doc, dict) or doc.get(
+                "schema") != CE_REPLAY_MANIFEST_SCHEMA:
+            rejected.append({"manifest": str(manifest_path),
+                             "reason": "unexpected CE replay manifest schema"})
+            continue
+        if doc.get("formal_results_written") is not False:
+            rejected.append({"manifest": str(manifest_path),
+                             "reason": "manifest is not explicitly refutation-only"})
+            continue
+        for candidate in doc.get("candidates") or []:
+            reason = None
+            if not isinstance(candidate, dict):
+                reason = "candidate is not an object"
+            elif candidate.get("schema") != CE_REPLAY_CANDIDATE_SCHEMA:
+                reason = "unexpected candidate schema"
+            elif candidate.get("status") != "candidate-only":
+                reason = "candidate is not candidate-only"
+            elif candidate.get("proof_status") != "not-proven":
+                reason = "candidate proof status is not not-proven"
+            elif (candidate.get("source") or {}).get("refutation_only") is not True:
+                reason = "candidate source is not marked refutation-only"
+            elif not _candidate_source_is_local(candidate, case_dir):
+                reason = "candidate source is not local to this case's CE archive"
+            elif not candidate.get("candidate_id"):
+                reason = "candidate has no stable id"
+            elif candidate.get("candidate_id") in seen:
+                reason = "duplicate candidate id"
+            else:
+                case = candidate.get("case") or {}
+                if not isinstance(case, dict):
+                    reason = "candidate case identity is malformed"
+                elif (case.get("benchmark") != target_row.get("benchmark")
+                      or case.get("subject_id") != target_row.get("subject_id")
+                      or case.get("contract") != subject.contract):
+                    reason = "candidate case identity does not match target"
+                elif not case.get("unit"):
+                    reason = "candidate has no unit"
+                path = candidate.get("path") or {}
+                if reason is None and (not isinstance(path, dict)
+                                       or not path.get("path_function")
+                                       or not re.fullmatch(r"\d+", str(path.get("path_id")))):
+                    reason = "candidate path identity is malformed"
+                if reason is None and _candidate_replay_ce(candidate) is None:
+                    reason = "candidate replay contains non-integer or conflicting values"
+            if reason is not None:
+                rejected.append({"manifest": str(manifest_path),
+                                 "candidate_id": (candidate.get("candidate_id")
+                                                   if isinstance(candidate, dict)
+                                                   else None),
+                                 "reason": reason})
+                continue
+            seen.add(candidate["candidate_id"])
+            candidate = copy.deepcopy(candidate)
+            candidate["_manifest"] = str(manifest_path)
+            candidates.append(candidate)
+    return candidates, rejected
+
+
+def _candidate_cert_row(candidate: dict, subject: PreparedSubject) -> dict:
+    """Build an isolated Stage-4 input row; never a certified/result row."""
+    path = candidate["path"]
+    enc = str(path["path_id"])
+    detail = {
+        "concrete_fallback": True,
+        "witness_check": "COMPLETE-WITNESS-NO-COORDINATE",
+        "path_function": str(path["path_function"]),
+        "certification_source": "ce-replay-candidate",
+        "candidate_id": candidate["candidate_id"],
+        "ce": _candidate_replay_ce(candidate),
+    }
+    return {
+        "schema": "veriput-rq1-ce-replay-stage4-row/v1",
+        "benchmark": subject.benchmark_key,
+        "unit": candidate["case"]["unit"],
+        "path_function": str(path["path_function"]),
+        "bucket": "NOT-CERTIFIED",
+        "certified": {},
+        "certified_details": {},
+        "not_certified": {enc: "CE replay candidate; no region proof"},
+        "not_certified_details": {enc: detail},
+        "coords": [],
+        "pins": {},
+        "scope": "focus",
+        "max_tx": 1,
+        "subject": subject.to_record(),
+        "candidate_provenance": {
+            "candidate_id": candidate["candidate_id"],
+            "manifest": candidate.get("_manifest"),
+            "formal_results_written": False,
+            "theory_credit": 0,
+        },
+    }
+
+
+def _candidate_gate(summary: dict, candidate: dict) -> dict:
+    """Return the two independent gates required before promotion."""
+    path = candidate.get("path") or {}
+    expected_enc = str(path.get("path_id"))
+    expected_unit = (candidate.get("case") or {}).get("unit")
+    valid_rows = [row for row in summary.get("valid_tests") or []
+                  if isinstance(row, dict)]
+    rows = [row for row in valid_rows
+            if isinstance(row, dict)
+            and str(row.get("unit")) == str(expected_unit)
+            and str(row.get("enc")) == expected_enc]
+    verifier_passed = bool(rows) and all(
+        bool(row.get("valid_reference_test"))
+        and not row.get("refused")
+        and not row.get("stale")
+        for row in rows)
+    foundry_passed = bool(rows) and all(
+        row.get("forge_status") == "Success" for row in rows)
+    # A refutation-only candidate may become a concrete replay, never a PUT or
+    # an R1/R2 claim.  A PUT-shaped result here indicates an isolation failure.
+    isolation_passed = (bool(rows) and len(rows) == len(valid_rows)
+                        and all(row.get("kind") == "concrete"
+                                for row in rows))
+    return {
+        "verifier_passed": verifier_passed,
+        "foundry_double_oracle_passed": foundry_passed,
+        "candidate_isolation_passed": isolation_passed,
+        "promotable": verifier_passed and foundry_passed and isolation_passed,
+        "matching_valid_tests": len(rows),
+        "unexpected_valid_tests": len(valid_rows) - len(rows),
+        "theory_delta": 0,
+    }
+
+
+def _rewrite_promoted_paths(root: Path, old_root: Path, new_root: Path) -> None:
+    """Relocate absolute artifact paths in copied JSON ledgers."""
+    old = str(old_root)
+    new = str(new_root)
+    for path in root.rglob("*.json"):
+        try:
+            text = path.read_text(errors="replace")
+            updated = text.replace(old, new)
+            if updated != text:
+                path.write_text(updated)
+        except OSError:
+            continue
+
+
+def _promote_candidate_artifacts(staging_root: Path, case_dir: Path,
+                                 candidate_id: str) -> Path:
+    """Copy an accepted isolated Stage-4 result into the formal artifact tree."""
+    destination = (case_dir / "put" / "ce-replay" / _safe_name(candidate_id))
+    if destination.exists():
+        raise RQ1RunError(
+            f"refusing to overwrite existing CE replay artifact: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(staging_root, destination)
+    _rewrite_promoted_paths(destination, staging_root, destination)
+    return destination
+
+
+def _candidate_rejection(candidate: dict, reason: str,
+                         detail: str | None = None) -> dict:
+    rejection = {
+        "candidate_id": candidate.get("candidate_id"),
+        "unit": (candidate.get("case") or {}).get("unit"),
+        "path_id": (candidate.get("path") or {}).get("path_id"),
+        "reason": reason,
+    }
+    if detail:
+        rejection["detail"] = detail
+    return rejection
 
 
 def prepare_case_dir(case_dir: Path, *, force_fresh: bool = False) -> None:
@@ -579,10 +835,31 @@ def _historical_case_dirs(case_dir: Path) -> list[Path]:
                   reverse=True)
 
 
+def _stale_scope_matches_target(old_dir: Path, target_row: dict) -> bool:
+    """Reject retained artifacts generated from inherited non-target units."""
+    schedule_path = old_dir / "unit-schedule.json"
+    if not schedule_path.exists():
+        # Older artifacts predate the auditable schedule.  Keep the legacy
+        # adoption path for them; new runs always write the scope evidence.
+        return True
+    try:
+        schedule = json.loads(schedule_path.read_text(errors="replace"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    expected = str(target_row.get("contract") or "")
+    for job in schedule.get("jobs") or []:
+        owner = str((job.get("unit_info") or {}).get("contract") or "")
+        if owner and expected and owner != expected:
+            return False
+    return True
+
+
 def _best_stale_artifact_row(target_row: dict, dataset_label: str,
                              case_dir: Path, current: dict) -> dict | None:
     best = None
     for old_dir in _historical_case_dirs(case_dir):
+        if not _stale_scope_matches_target(old_dir, target_row):
+            continue
         row = _load_subject_result_row(old_dir)
         if row is None:
             row = _artifact_summary_row(target_row, dataset_label, old_dir)
@@ -3449,6 +3726,89 @@ def _put_argv(cert_path: Path, unit: str, benchmark_key: str, out_root: Path,
     return argv
 
 
+def _run_ce_replay_candidate(subject: PreparedSubject, case_dir: Path,
+                             candidate: dict, args,
+                             deadline: float) -> dict:
+    """Run one CE candidate through an isolated Stage-4 transaction.
+
+    The candidate cert row and all generated files live below
+    ``candidate-stage4`` until the final verifier/Foundry gate passes.  In
+    particular, no candidate is merged into the canonical cert journal or
+    result row merely because it was materialized.
+    """
+    candidate_id = str(candidate["candidate_id"])
+    run_root = (case_dir / "candidate-stage4" / _safe_name(candidate_id)
+                / f"run-{time.time_ns()}")
+    cert_path = run_root / "candidate-cert.jsonl"
+    output_root = run_root / "out"
+    _append_jsonl(cert_path, _candidate_cert_row(candidate, subject))
+    remaining = _remaining(deadline)
+    unit = str(candidate["case"]["unit"])
+    path_function = str(candidate["path"]["path_function"])
+    argv = _put_argv(
+        cert_path,
+        unit,
+        subject.benchmark_key,
+        output_root,
+        remaining,
+        args.memlimit_gib,
+        args.forge_timeout,
+        path_function,
+        getattr(args, "esbmc", "") or None)
+    wrapper_timeout = max(1.0, remaining) + args.wrapper_grace + 2 * args.forge_timeout
+    stage = run_command(
+        argv, wrapper_timeout,
+        run_root / "candidate-stage4")
+    summary = summarize_put_artifacts(output_root)
+    gate = _candidate_gate(summary, candidate)
+    promotion = {
+        "candidate_id": candidate_id,
+        "formal_results_written_before_gate": False,
+        "gate": gate,
+        "promoted": False,
+        "destination": None,
+    }
+    if stage["status"] == "ok" and gate["promotable"]:
+        try:
+            destination = _promote_candidate_artifacts(
+                output_root, case_dir, candidate_id)
+        except Exception as exc:  # noqa: BLE001 - isolate one candidate
+            gate["promotable"] = False
+            promotion.update({
+                "reason": "promotion-failed",
+                "error": str(exc),
+            })
+        else:
+            promotion.update({
+                "promoted": True,
+                "destination": str(destination),
+            })
+    _write_json(run_root / "candidate-result.json", {
+        "schema": "veriput-rq1-ce-replay-stage4-result/v1",
+        "candidate": candidate,
+        "stage": stage,
+        "put": summary,
+        "gate": gate,
+        "promotion": promotion,
+        "formal_results_written": bool(promotion["promoted"]),
+        "theory_delta": 0,
+    })
+    stage.update({
+        "stage": "candidate-stage4",
+        "candidate_id": candidate_id,
+        "unit": unit,
+        "path_function": path_function,
+        "candidate_root": str(run_root),
+        "candidate_output_root": str(output_root),
+        "put_summary": summary,
+        "candidate_gate": gate,
+        "candidate_promotion": promotion,
+        "formal_results_written": bool(promotion["promoted"]),
+        "theory_delta": 0,
+    })
+    return stage
+
+
 def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]:
     start = time.monotonic()
     subject_id = target_row["subject_id"]
@@ -3485,6 +3845,9 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     concrete_only_stage4_budget_caps = []
     concrete_only_stage4_soft_failures = []
     cert_shard_merges = []
+    ce_replay_candidates = []
+    ce_replay_rejected = []
+    ce_replay_stages = []
     concrete_only_stage4_timeout_cap_s = int(
         getattr(args, "concrete_only_stage4_timeout_cap_s",
                 DEFAULT_CONCRETE_ONLY_STAGE4_TIMEOUT_CAP_S) or 0)
@@ -3512,9 +3875,62 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     jobs = list(schedule.get("jobs") or [])
     if args.ce_collection_only:
         return run_ce_collection_subject(subject, case_dir, jobs, args)
-    if result_status == "ok" and not jobs:
+    if getattr(args, "ce_replay_manifest", None):
+        ce_replay_candidates, ce_replay_rejected = (
+            _load_ce_replay_candidates(
+                _candidate_manifest_paths(args.ce_replay_manifest),
+                target_row, subject, case_dir))
+        requested_units = set(getattr(args, "unit", []) or [])
+        if requested_units:
+            admissible = []
+            for candidate in ce_replay_candidates:
+                unit = candidate["case"]["unit"]
+                if unit in requested_units:
+                    admissible.append(candidate)
+                else:
+                    ce_replay_rejected.append({
+                        "manifest": candidate.get("_manifest"),
+                        "candidate_id": candidate["candidate_id"],
+                        "reason": "candidate unit excluded by --unit",
+                        "unit": unit,
+                    })
+            ce_replay_candidates = admissible
+        if getattr(args, "ce_replay_only", False):
+            jobs = []
+        for candidate in ce_replay_candidates:
+            remaining = _remaining(deadline)
+            if remaining < args.min_remaining_s:
+                ce_replay_rejected.append(
+                    _candidate_rejection(
+                        candidate,
+                        "case budget exhausted before candidate Stage 4"))
+                continue
+            mem_wait = wait_for_mem_budget(
+                args.memlimit_gib,
+                deadline,
+                fraction=args.stage_mem_fraction,
+                poll_s=args.mem_wait_poll_s,
+                min_remaining_s=args.min_remaining_s)
+            if mem_wait["status"] != "ok":
+                ce_replay_rejected.append(
+                    _candidate_rejection(
+                        candidate,
+                        "insufficient memory before candidate Stage 4",
+                        f"{mem_wait['mem_available_gib']}GiB available"))
+                continue
+            candidate_stage = _run_ce_replay_candidate(
+                subject, case_dir, candidate, args, deadline)
+            ce_replay_stages.append(candidate_stage)
+            stages.append(candidate_stage)
+        if (getattr(args, "ce_replay_only", False)
+                and not ce_replay_candidates):
+            result_status = "no-output"
+            failure_reason = "no admissible CE replay candidates"
+    if (result_status == "ok" and not jobs
+            and not getattr(args, "ce_replay_only", False)):
         result_status, failure_reason = _empty_schedule_status_reason(schedule)
-        if result_status == "no-units":
+        if (result_status == "no-units"
+                and not getattr(args, "ce_replay_only", False)):
             fallback_stage = emit_no_unit_deploy_fallback(
                 subject, case_dir, schedule, args.forge_timeout)
             stages.append(fallback_stage)
@@ -4365,6 +4781,18 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             stage.get("unit") for stage in overload_path_function_stages
         ],
         "stage4_candidate_units_attempted": stage4_candidate_units_attempted,
+        "ce_replay_manifest_paths": [
+            str(path) for path in _candidate_manifest_paths(
+                getattr(args, "ce_replay_manifest", []))
+        ],
+        "ce_replay_only": bool(getattr(args, "ce_replay_only", False)),
+        "ce_replay_candidates_discovered": len(ce_replay_candidates),
+        "ce_replay_candidates_attempted": len(ce_replay_stages),
+        "ce_replay_candidates_promoted": sum(
+            1 for stage in ce_replay_stages
+            if (stage.get("candidate_promotion") or {}).get("promoted")),
+        "ce_replay_candidate_rejections": ce_replay_rejected,
+        "ce_replay_theory_delta": 0,
         "zero_output_stage4_stop_s": args.zero_output_stage4_stop_s,
         "min_concrete_only_stage4_s": args.min_concrete_only_stage4_s,
         "min_timeout_only_stage4_s": args.min_timeout_only_stage4_s,
@@ -4468,8 +4896,16 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "recipe_version": STRONG_RECIPE_VERSION,
     }
     row.update(_bounded_holds_retry_policy(args))
-    stale_row = _best_stale_artifact_row(target_row, dataset_label, case_dir, row)
-    row = _adopt_stale_artifacts(row, stale_row)
+    # A replay-only invocation is a transaction over explicit CE candidates.
+    # It must not turn a neighbouring .redo/.incomplete artifact into formal
+    # credit when every candidate was rejected. Existing canonical artifacts
+    # are still summarized normally; only cross-directory stale adoption is
+    # disabled for this isolated entry point.
+    stale_row = None
+    if not getattr(args, "ce_replay_only", False):
+        stale_row = _best_stale_artifact_row(target_row, dataset_label, case_dir,
+                                             row)
+        row = _adopt_stale_artifacts(row, stale_row)
     detail = {
         "schema": "veriput-rq1-case-result/v1",
         "row": row,
@@ -4480,6 +4916,17 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             "summary": schedule.get("summary") or {},
         },
         "stages": stages,
+        "ce_replay": {
+            "schema": "veriput-rq1-ce-replay-accounting/v1",
+            "candidates_discovered": len(ce_replay_candidates),
+            "candidates_attempted": len(ce_replay_stages),
+            "candidates_promoted": sum(
+                1 for stage in ce_replay_stages
+                if (stage.get("candidate_promotion") or {}).get("promoted")),
+            "rejections": ce_replay_rejected,
+            "theory_delta": 0,
+            "formal_results_written_only_after_gates": True,
+        },
         "certification": cert_summary,
         "put": put_summary,
         "stale_artifact_adoption": {
@@ -4487,6 +4934,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             "source": row.get("stale_artifact_root"),
             "source_result_json": row.get("stale_result_json"),
             "source_quality_bucket": row.get("stale_quality_bucket"),
+            "disabled_for_ce_replay_only": bool(
+                getattr(args, "ce_replay_only", False)),
         },
     }
     _write_json(case_dir / "result.json", detail)
@@ -4753,6 +5202,12 @@ def build_dry_run(args) -> dict:
             "contract": row.get("contract"),
             "units_hint": row.get("units_hint") or [],
         } for row in rows],
+        "ce_replay_manifest_paths": [
+            str(path) for path in _candidate_manifest_paths(
+                getattr(args, "ce_replay_manifest", []))
+        ],
+        "ce_replay_only": bool(getattr(args, "ce_replay_only", False)),
+        "ce_replay_theory_delta": 0,
     }
     doc.update(_bounded_holds_retry_policy(args))
     return doc
@@ -4781,6 +5236,16 @@ def main(argv=None) -> int:
                     help="collect at most one bounded 60-second CE artifact "
                          "per subject. This does not generate tests or update "
                          "canonical RQ1 validity results.")
+    ap.add_argument("--ce-replay-manifest", action="append", default=[],
+                    metavar="PATH",
+                    help="consume explicit refutation-only CE replay candidate "
+                         "manifest(s) through an isolated Stage-4 entry. A "
+                         "candidate is never formal credit by itself; only a "
+                         "reference-valid and Foundry-green replay is promoted.")
+    ap.add_argument("--ce-replay-only", action="store_true",
+                    help="run only the admitted CE replay candidates from "
+                         "--ce-replay-manifest; do not run normal Stage 2 "
+                         "jobs. Requires at least one manifest candidate.")
     ap.add_argument("--timeout", type=int, default=60,
                     help="whole subject generation budget, seconds; the RQ1 "
                          "first pass is intentionally CE-first and bounded")
@@ -4973,6 +5438,11 @@ def main(argv=None) -> int:
         if args.esbmc_run_timeout > args.timeout:
             raise RQ1RunError("--esbmc-run-timeout must not exceed --timeout")
         validate_jobs(args)
+        if args.ce_replay_only and not args.ce_replay_manifest:
+            raise RQ1RunError("--ce-replay-only requires --ce-replay-manifest")
+        if args.ce_collection_only and args.ce_replay_manifest:
+            raise RQ1RunError(
+                "--ce-collection-only and --ce-replay-manifest are mutually exclusive")
         if args.ce_collection_only:
             args.timeout = 60
             args.esbmc_run_timeout = 60
