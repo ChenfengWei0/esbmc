@@ -2253,7 +2253,16 @@ def unwindset_retry_args(diagnostic, existing_args, *, unwind=512):
             loop_ids.append(m.group(1))
     if not loop_ids:
         return []
-    return ["--unwindset", ",".join(f"{lid}:{unwind}" for lid in loop_ids)]
+    args = []
+    if "--unwind" not in (existing_args or []):
+        # Path coverage supplies a default global unwind of 4 when the caller
+        # omits --unwind.  A numeric --unwindset is only effective after that
+        # baseline is explicit; keep the enumeration-compatible baseline and
+        # raise only the named loop below.
+        args += ["--unwind", "4"]
+    args += ["--unwindset", ",".join(
+        f"{lid}:{unwind}" for lid in loop_ids)]
+    return args
 
 
 def result_driver_diagnostic(out):
