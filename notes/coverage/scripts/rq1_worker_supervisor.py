@@ -103,15 +103,26 @@ def start(args: argparse.Namespace, action: dict | None = None) -> dict:
     if count <= 0:
         return {"started": False, "reason": "empty-theory-manifest", "case_count": 0}
     existing = _read(args.state)
-    existing_workers = existing.get("workers") if isinstance(existing.get("workers"), list) else []
-    if existing_workers and all(_alive(row.get("pid")) for row in existing_workers):
+    existing_workers = (existing.get("workers")
+                        if isinstance(existing.get("workers"), list) else [])
+    live_workers = [row for row in existing_workers if _alive(row.get("pid"))]
+    if existing_workers and len(live_workers) == len(existing_workers):
         return {"started": False, "reason": "already-running", "case_count": count,
                 "workers": existing_workers}
     local_manifest, remote_manifest, local_cases, remote_cases = (
         _partition_manifest(args.manifest, args.local_parallel,
                             args.remote_parallel))
-    workers = []
+    # Keep healthy slots alive when only the remote transport/build worker
+    # dies. Restarting every local slot creates duplicate pumps and makes the
+    # supervisor's resource report disagree with the actual process set.
+    workers = list(live_workers)
+    live_local_indices = {
+        int(row["index"]) for row in live_workers
+        if row.get("kind") == "local" and str(row.get("index", "")).isdigit()
+    }
     for index in range(min(args.local_parallel, local_cases)):
+        if index in live_local_indices:
+            continue
         log = Path(f"/tmp/veriput_rq1_local_worker_{index}.log")
         log_stream = log.open("ab")
         command = _base_local_args(args, index, local_manifest)
@@ -133,7 +144,8 @@ def start(args: argparse.Namespace, action: dict | None = None) -> dict:
     ]
     if args.ce_collection_only:
         remote_cmd.append("--ce-collection-only")
-    if remote_cases:
+    remote_alive = any(row.get("kind") == "remote" for row in live_workers)
+    if remote_cases and not remote_alive:
         log = Path("/tmp/veriput_rq1_remote_worker_supervisor.log")
         log_stream = log.open("ab")
         proc = subprocess.Popen(remote_cmd, stdout=log_stream, stderr=subprocess.STDOUT,
