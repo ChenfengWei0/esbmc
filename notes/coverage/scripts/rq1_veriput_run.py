@@ -4587,9 +4587,10 @@ def main(argv=None) -> int:
                     help="collect at most one bounded 60-second CE artifact "
                          "per subject. This does not generate tests or update "
                          "canonical RQ1 validity results.")
-    ap.add_argument("--timeout", type=int, default=600,
-                    help="whole subject generation budget, seconds")
-    ap.add_argument("--esbmc-run-timeout", type=int, default=600,
+    ap.add_argument("--timeout", type=int, default=60,
+                    help="whole subject generation budget, seconds; the RQ1 "
+                         "first pass is intentionally CE-first and bounded")
+    ap.add_argument("--esbmc-run-timeout", type=int, default=60,
                     help="per ESBMC invocation budget inside certification, "
                          "seconds. The whole subject still gets --timeout")
     ap.add_argument("--esbmc", default="",
