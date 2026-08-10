@@ -7010,6 +7010,26 @@ def _source_contract_chunk(source, contract):
     return source[m.start():nxt.start() if nxt else len(source)]
 
 
+def _source_inheritance_names(chunk):
+    """Base contract/interface names declared by a source contract header."""
+    if not chunk:
+        return []
+    match = re.search(
+        r"^\s*(?:abstract\s+)?(?:contract|interface|library)\s+"
+        r"[A-Za-z_]\w*\s+is\s+([^{}]+)\{",
+        chunk,
+        re.S,
+    )
+    if match is None:
+        return []
+    names = []
+    for item in split_top_level(match.group(1)):
+        base = re.match(r"\s*([A-Za-z_]\w*)", item)
+        if base:
+            names.append(base.group(1))
+    return names
+
+
 def source_constructor_param_types(forge_project, contract):
     return [typ for _name, typ in source_constructor_params(
         forge_project, contract)]
@@ -7301,7 +7321,8 @@ def source_inherited_function_params(source, contract, unit, arity=None):
     replay contains the correct call.  Stage 4 still needs the declaration to
     repair an unsupported concrete skeleton; source parsing is a conservative
     fallback because it selects only declarations reachable through the
-    target's constructor base chain and, when known, the emitted call arity.
+    target's declared inheritance graph and constructor base chain and, when
+    known, the emitted call arity.
     """
     if not source or not contract or not unit:
         return None
@@ -7322,6 +7343,13 @@ def source_inherited_function_params(source, contract, unit, arity=None):
                 if matching:
                     return matching[-1]
             return defs[-1][0]
+        # A base can be inherited without appearing in the constructor
+        # initializer list.  This is the common shape for zero-argument
+        # inherited getters such as Ownable2Step.pendingOwner().
+        for base_name in _source_inheritance_names(chunk):
+            result = visit(base_name)
+            if result is not None:
+                return result
         for base_name, _args in _constructor_initializer_calls(chunk):
             result = visit(base_name)
             if result is not None:
