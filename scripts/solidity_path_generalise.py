@@ -8066,13 +8066,26 @@ def main():
                     f"applied. Counting it against the certification rate "
                     f"prices a stated design cost as a search result")
                 continue
-            failed[enc] = (
-                f"region is EMPTY on {', '.join(empty)} (lo > hi) under the "
-                f"current pins, so this path has no domain in this slice; "
-                f"certifying it would hold vacuously. The path's own "
-                f"counterexample DOES satisfy every pin, so the emptiness is "
-                f"not attributable to them -- it came out of the subtraction")
-            continue
+            # Sibling subtraction can invert a box even though this path's
+            # enumerated counterexample is a known member. Keep that witness
+            # as a non-empty singleton seed, then use the normal certification
+            # loop below; this does not turn the witness into a proof.
+            point = {n: (ce[n], ce[n]) for n in box if n in ce}
+            point_bad = ce_in_region(point, holes, ce)
+            missing = sorted(set(box) - set(point))
+            if not missing and not point_bad:
+                print(f"[certify enc={enc}] inverted outer region recovered "
+                      "as the enumerated counterexample singleton; normal "
+                      "ESBMC certification is still required")
+                box, holes, empty = point, {}, []
+            else:
+                failed[enc] = (
+                    f"region is EMPTY on {', '.join(empty)} (lo > hi) under the "
+                    f"current pins, so this path has no domain in this slice; "
+                    f"certifying it would hold vacuously. The path's own "
+                    f"counterexample DOES satisfy every pin, so the emptiness is "
+                    f"not attributable to them -- it came out of the subtraction")
+                continue
         if enc in warned:
             # Not fatal: certification is the arbiter. But say it, because a
             # region that a cut could not separate is EXPECTED to be refuted.
