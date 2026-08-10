@@ -1714,6 +1714,8 @@ RE_OVERLOADED_UNIT_PATH_FUNCTIONS = re.compile(
     re.MULTILINE | re.DOTALL)
 RE_COVERAGE_UNWIND_TRUNCATION = re.compile(
     r"Coverage may be UNDER-REPORTED: ([0-9]+) loop\(s\) hit the unwind bound")
+RE_CERTIFICATION_UNWIND_TRUNCATION = re.compile(
+    r"\b(?:loop|recursion)\s+([0-9]+)\s+at\s+file\b")
 RE_TRUNCATED_LOOP_ID = re.compile(r"^(?:loop|recursion)\s+([0-9]+)\b")
 RE_PARTIAL_SIGNAL_CLAIMS = re.compile(
     r"Report Completeness: PARTIAL .*?terminated by signal.*?"
@@ -2171,6 +2173,34 @@ def coverage_unwind_truncation(out):
     }
 
 
+def certification_unwind_truncation(out):
+    """Recognise truncation reported by certification, not path coverage.
+
+    The path-coverage command prints a structured warning, but the later
+    single-point certification query reports the same condition only as
+    ``UNDECIDED-TRUNCATED`` followed by the named loop.  Treating that output
+    as a terminal concrete fallback loses a retry even though the existing
+    named-loop repair is applicable.
+    """
+    if "UNDECIDED-TRUNCATED" not in (out or ""):
+        return None
+    loops = []
+    for loop_id in RE_CERTIFICATION_UNWIND_TRUNCATION.findall(out or ""):
+        line = f"loop {loop_id}"
+        if line not in loops:
+            loops.append(line)
+    if not loops:
+        return None
+    return {
+        "tag": "unwind-truncation",
+        "reason": (
+            "certification returned UNDECIDED-TRUNCATED because a named "
+            "loop was cut at the unwind bound"),
+        "loop_count": len(loops),
+        "loops": loops,
+    }
+
+
 def unwindset_retry_args(diagnostic, existing_args, *, unwind=16):
     """ESBMC args for one named-loop retry after coverage truncation."""
     if not isinstance(diagnostic, dict):
@@ -2194,6 +2224,9 @@ def unwindset_retry_args(diagnostic, existing_args, *, unwind=16):
 def result_driver_diagnostic(out):
     out = out or ""
     truncated = coverage_unwind_truncation(out)
+    if truncated:
+        return truncated
+    truncated = certification_unwind_truncation(out)
     if truncated:
         return truncated
     if "ERROR: Out of memory" in out and "ERROR: SMT solver failed" in out:
