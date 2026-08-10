@@ -60,6 +60,30 @@ def _json(path: Path) -> dict:
         return {}
 
 
+def _root_cause_index(path: Path) -> dict[tuple[str, str], dict]:
+    rows: dict[tuple[str, str], dict] = {}
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return rows
+    if not lines:
+        return rows
+    header = lines[0].split("\t")
+    for line in lines[1:]:
+        if not line.strip():
+            continue
+        fields = line.split("\t")
+        row = {
+            header[index]: fields[index] if index < len(fields) else ""
+            for index in range(len(header))
+        }
+        bench = row.get("bench") or row.get("dataset") or ""
+        subject = row.get("subject") or ""
+        if bench and subject:
+            rows[(bench, subject)] = row
+    return rows
+
+
 def _int(doc: dict, key: str) -> int:
     try:
         return int(doc.get(key) or 0)
@@ -67,7 +91,11 @@ def _int(doc: dict, key: str) -> int:
         return 0
 
 
-def _canonical_weak_rows(results_root: Path, limit: int) -> list[dict]:
+def _canonical_weak_rows(
+    results_root: Path,
+    root_causes: dict[tuple[str, str], dict],
+    limit: int,
+) -> list[dict]:
     rows = []
     seen = set()
     for result in sorted(results_root.glob("*/subjects/*/result.json")):
@@ -102,6 +130,13 @@ def _canonical_weak_rows(results_root: Path, limit: int) -> list[dict]:
             "bench": bench,
             "subject": subject,
             "category": category,
+            "original_category": root_causes.get(
+                (bench, subject), {}).get("category"),
+            "root_cause": root_causes.get((bench, subject), {}).get("fix_target"),
+            "theoretical_action": (
+                "subtract covered no-valid claim until a follow-up patch "
+                "clears this canonical result" if valid <= 0 else
+                "quality debt: valid result still needs PUT/R1/R2 repair"),
             "result_file": str(result),
             "valid": valid,
             "put_valid": put_valid,
@@ -152,6 +187,7 @@ def _assignment_prompt(group: dict) -> str:
     subjects = group["subjects"][:8]
     subject_lines = "\n".join(
         f"- {item['bench']}/{item['subject']} category={item['category']} "
+        f"original={item.get('original_category') or '<none>'} "
         f"valid={item.get('valid')} put={item.get('put_valid')} "
         f"r1r2={item.get('r1r2')} result={item.get('result_file') or item.get('subject_dir')}"
         for item in subjects)
@@ -175,7 +211,9 @@ code-level root cause, changed paths, theoretical coverage delta (+/-), and
 confirmation that Datasets were untouched."""
 
 
-def build_dispatch(repair_tickets: Path, results_root: Path, limit: int) -> dict:
+def build_dispatch(repair_tickets: Path, results_root: Path, no_valid_tsv: Path,
+                   limit: int) -> dict:
+    root_causes = _root_cause_index(no_valid_tsv)
     rows = []
     for ticket in _jsonl(repair_tickets):
         if not isinstance(ticket, dict):
@@ -183,12 +221,18 @@ def build_dispatch(repair_tickets: Path, results_root: Path, limit: int) -> dict
         category = str(ticket.get("result_bucket") or ticket.get("category") or "")
         if not category:
             continue
+        root = root_causes.get((str(ticket.get("bench") or ""),
+                                str(ticket.get("subject") or "")), {})
         rows.append({
             **ticket,
             "category": category,
+            "original_category": ticket.get("original_category")
+            or root.get("category"),
+            "root_cause": root.get("fix_target"),
             "result_file": ticket.get("subject_dir"),
         })
-    rows.extend(_canonical_weak_rows(results_root, limit=max(limit, 0)))
+    rows.extend(
+        _canonical_weak_rows(results_root, root_causes, limit=max(limit, 0)))
 
     grouped: OrderedDict[str, dict] = OrderedDict()
     for row in rows:
@@ -215,6 +259,7 @@ def build_dispatch(repair_tickets: Path, results_root: Path, limit: int) -> dict
         "schema": "veriput-rq1-repair-dispatch/v1",
         "generated_ts": time.time(),
         "repair_tickets": str(repair_tickets),
+        "no_valid_tsv": str(no_valid_tsv),
         "results_root": str(results_root),
         "assignment_count": len(assignments),
         "assignments": assignments,
@@ -232,10 +277,14 @@ def main() -> int:
                         type=Path,
                         default=DEFAULT_REPAIR_TICKETS)
     parser.add_argument("--results-root", type=Path, default=DEFAULT_RESULTS_ROOT)
+    parser.add_argument("--no-valid-tsv",
+                        type=Path,
+                        default=DEFAULT_NO_VALID_TSV)
     parser.add_argument("--out", type=Path, default=DEFAULT_DISPATCH_QUEUE)
     parser.add_argument("--limit", type=int, default=8)
     args = parser.parse_args()
-    doc = build_dispatch(args.repair_tickets, args.results_root, args.limit)
+    doc = build_dispatch(args.repair_tickets, args.results_root,
+                         args.no_valid_tsv, args.limit)
     args.out.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
     print(json.dumps(doc, indent=2, sort_keys=True))
     return 0

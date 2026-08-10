@@ -76,3 +76,14 @@ Every spawned subagent must follow these rules.
    - close every pending completed agent with the Codex `close_agent` tool
    - after each successful close, run `rq1_subagent_autoclose.py ack --agent-id`
    - do not wait for the thread limit error before releasing completed agents
+   - every user-facing progress report must include active subagent count and
+     active subagent ids/tasks from `rq1_watchdog_status.py`
+
+10. OOM handling is separate from ordinary repair:
+   - do not raise memory for every subject preemptively
+   - only explicit `OOM_OR_MEMORY_PRESSURE` / killed-over-RSS cases enter
+     `rq1_oom_highmem_queue.py`
+   - high-memory reruns must use case parallelism 1 unless the user explicitly
+     allows more
+   - non-OOM failures should produce code-repair assignments, not high-memory
+     reruns

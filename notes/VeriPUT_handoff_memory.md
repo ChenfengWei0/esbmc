@@ -26304,3 +26304,75 @@ Hard-coded implementation:
   `subagent_autoclose.pending_close_count`.
 - `notes/coverage/scripts/rq1_subagent_prompt_rules.md` includes the close/ack
   requirement.
+
+## v83 - OOM-only high-memory queue
+
+New hard constraint:
+
+- Do not raise memory globally just because memory is available.
+- Only subjects with explicit OOM/memory-pressure evidence are routed to a
+  high-memory rerun queue.
+- High-memory reruns use case parallelism 1 by default; ordinary failures stay
+  on the normal memory budget and should produce code-repair assignments.
+
+Hard-coded implementation:
+
+- Added `notes/coverage/scripts/rq1_oom_highmem_queue.py`.
+  It scans repair tickets and canonical RQ1 result files for
+  `OOM_OR_MEMORY_PRESSURE` evidence, writes
+  `/tmp/veriput_rq1_oom_highmem.tsv`, and can launch a remote high-memory
+  worker only for that TSV.
+- `notes/coverage/scripts/rq1_watchdog_status.py` reports
+  `oom_highmem_queue.case_count`.
+- `notes/coverage/scripts/rq1_subagent_prompt_rules.md` includes the OOM-only
+  high-memory policy.
+
+## v84 - Active subagent visibility
+
+New hard constraint:
+
+- Every progress report must include active subagent count plus concrete active
+  agent ids/tasks.  A bare running count is insufficient.
+- Running autonomous repair agents count as active even before they produce a
+  patch id.
+
+Hard-coded implementation:
+
+- `notes/coverage/scripts/rq1_watchdog_status.py` now reports
+  `subagents.active_details` for all leased/running agents.
+- `notes/coverage/scripts/rq1_subagent_prompt_rules.md` records the active
+  subagent visibility requirement.
+
+## v84 - Non-monotonic theory and mandatory review gate
+
+New hard constraints:
+
+- Theoretical progress is non-monotonic.  Canonical `result.json` rows with
+  `valid=0` must be mapped back to `/tmp/veriput_no_valid_root_causes.tsv`; if
+  their original root-cause category was claimed covered, net
+  `theoretical_progress` must subtract them until a follow-up patch clears the
+  result.
+- Valid-but-no-PUT and PUT-but-no-R1/R2 are quality debt.  They subtract from
+  PUT/R1R2 theoretical quality progress and must keep autonomous repair
+  assignments alive.
+- Completed write-mode subagent patches are provisional until an independent
+  review marks `review_status=accepted`.  Pending/rejected/needs-work patch IDs
+  are reported but do not count toward net theoretical coverage.
+- Every mandatory status refresh must regenerate both repair assignments and
+  cross-review assignments before printing ledger/watchdog status.
+
+Hard-coded implementation:
+
+- `notes/coverage/scripts/rq1_no_valid_progress.py` now loads the no-valid TSV
+  as a root-cause index, scans canonical RQ1 `result.json` files, and reports
+  accepted/provisional/rejected patch IDs separately.
+- `notes/coverage/scripts/rq1_repair_dispatcher.py` now annotates weak results
+  with `original_category`, root cause, and whether they subtract a covered
+  no-valid claim or represent PUT/R1R2 quality debt.
+- Added `notes/coverage/scripts/rq1_review_dispatcher.py`, which groups all
+  completed write-mode patches without accepted review into deterministic
+  cross-review assignments.
+- `notes/coverage/scripts/rq1_mandatory_status.py` refreshes repair and review
+  queues before running the progress ledger and watchdog.
+- `notes/coverage/scripts/rq1_watchdog_status.py` reports pending review counts
+  and the review dispatch queue.

@@ -235,16 +235,9 @@ def _subagent_report(state: dict, extra_state: dict, stale_s: float) -> dict:
     now = time.time()
     agents = list(state.get("agents") or [])
     agents.extend(extra_state.get("agents") or [])
-    dispatch_pending = [
-        agent for agent in agents
-        if str(agent.get("slot") or "").startswith("AUTO-")
-        and agent.get("status") in {"leased", "running"}
-        and not str(agent.get("patch_id") or "").strip()
-    ]
     active = [
         agent for agent in agents
         if agent.get("status") in ("leased", "running")
-        and agent not in dispatch_pending
     ]
     stale = []
     for agent in active:
@@ -257,6 +250,19 @@ def _subagent_report(state: dict, extra_state: dict, stale_s: float) -> dict:
                 "age_s": round(age, 3),
                 "task": agent.get("task"),
             })
+    active_details = []
+    for agent in active:
+        started = float(agent.get("running_ts") or agent.get("leased_ts") or now)
+        active_details.append({
+            "slot": agent.get("slot"),
+            "agent_id": agent.get("agent_id"),
+            "nickname": agent.get("nickname"),
+            "task": agent.get("task"),
+            "mode": agent.get("mode") or "unknown",
+            "write_scope": agent.get("write_scope") or [],
+            "runtime_s": round(max(0.0, now - started), 3),
+            "expected_coverage": agent.get("expected_coverage"),
+        })
     pending_review = []
     rejected_or_needs_work = []
     for agent in agents:
@@ -277,10 +283,7 @@ def _subagent_report(state: dict, extra_state: dict, stale_s: float) -> dict:
             rejected_or_needs_work.append(row)
     return {
         "active": len(active),
-        "dispatch_pending_not_spawned": len(dispatch_pending),
-        "dispatch_pending_slots": [
-            agent.get("slot") for agent in dispatch_pending
-        ],
+        "active_details": active_details,
         "completed": sum(1 for a in agents if a.get("status") == "completed"),
         "queued": sum(1 for a in agents if a.get("status") == "queued"),
         "stale": stale,
@@ -292,6 +295,10 @@ def _subagent_report(state: dict, extra_state: dict, stale_s: float) -> dict:
             "Completed write-mode patches remain provisional until an "
             "independent review marks review_status=accepted; rejected or "
             "needs-work patches must not justify net theoretical coverage."),
+        "active_report_rule": (
+            "Every progress report must include active subagent count and "
+            "active_details; running AUTO repair agents count as active even "
+            "before they have a patch_id."),
     }
 
 
