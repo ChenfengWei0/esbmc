@@ -54,11 +54,21 @@ def build_summary(paths: list[Path]) -> dict:
             verdict = str(agent.get("review_status") or "pending")
             if verdict not in {"accepted", "pending", "needs-work", "rejected"}:
                 verdict = "pending"
+            commit_sha = str(
+                agent.get("review_commit") or agent.get("commit_sha")
+                or agent.get("commit") or agent.get("patch_commit") or ""
+            ).strip()
+            if verdict == "accepted" and not commit_sha:
+                verdict = "pending"
         buckets[verdict].append({
             "slot": agent.get("slot"),
             "patch_id": patch_id,
             "agent_id": agent.get("agent_id"),
             "source": str(path),
+            "commit_sha": str(
+                agent.get("review_commit") or agent.get("commit_sha")
+                or agent.get("commit") or agent.get("patch_commit") or ""
+            ).strip(),
             "note": agent.get("note", ""),
         })
     return {
@@ -67,8 +77,9 @@ def build_summary(paths: list[Path]) -> dict:
         "counts": {key: len(value) for key, value in buckets.items()},
         "net_theory_rule": (
             "Only accepted write-mode patches may raise net theoretical "
-            "coverage. Pending, needs-work, and rejected patches must remain "
-            "visible and cannot be reported as theory progress."),
+            "coverage, and accepted reviews must record a commit sha. Pending, "
+            "needs-work, rejected, and accepted-without-commit patches must "
+            "remain visible and cannot be reported as theory progress."),
         "buckets": buckets,
     }
 

@@ -20,6 +20,7 @@ from rq1_no_valid_progress import SUBAGENT_PLAN
 DEFAULT_STATE = Path("/tmp/veriput_rq1_subagents.json")
 DEFAULT_MAX_AGENTS = 24
 DEFAULT_STALE_MINUTES = 20.0
+REQUIRED_REASONING_EFFORT = "medium"
 
 
 def now() -> float:
@@ -89,6 +90,8 @@ def lease_slot(state: dict, slot: str, agent_id: str, mode: str) -> dict:
         "mode": mode,
         "status": "leased",
         "leased_ts": now(),
+        "reasoning_effort": REQUIRED_REASONING_EFFORT,
+        "required_reasoning_effort": REQUIRED_REASONING_EFFORT,
     })
     if mode == "write":
         for active in active_agents(state):
@@ -123,9 +126,14 @@ def review_agent(
     reviewer_id: str,
     verdict: str,
     note: str,
+    commit_sha: str,
 ) -> dict:
     if verdict not in ("accepted", "rejected", "needs-work"):
         raise SystemExit("--verdict must be accepted, rejected, or needs-work")
+    if verdict == "accepted" and not commit_sha.strip():
+        raise SystemExit(
+            "--commit-sha is required when --verdict accepted; review without "
+            "a commit cannot count toward net theory")
     for agent in state.get("agents") or []:
         if agent.get("agent_id") == agent_id:
             if agent.get("mode") != "write":
@@ -133,6 +141,9 @@ def review_agent(
             agent["review_status"] = verdict
             agent["reviewed_ts"] = now()
             agent["reviewer_id"] = reviewer_id
+            if commit_sha.strip():
+                agent["commit_sha"] = commit_sha.strip()
+                agent["review_commit"] = commit_sha.strip()
             if note:
                 agent["review_note"] = note
             return agent
@@ -221,6 +232,30 @@ def watchdog_report(state: dict, stale_minutes: float) -> dict:
         if agent.get("mode") == "write"
         and (agent.get("review_status") or "pending") != "accepted"
     ]
+    accepted_without_commit = [
+        {
+            "slot": agent.get("slot"),
+            "agent_id": agent.get("agent_id"),
+            "patch_id": agent.get("patch_id"),
+            "reviewer_id": agent.get("reviewer_id"),
+        }
+        for agent in completed
+        if agent.get("mode") == "write"
+        and (agent.get("review_status") or "pending") == "accepted"
+        and not str(agent.get("review_commit") or agent.get("commit_sha")
+                    or agent.get("commit") or agent.get("patch_commit")
+                    or "").strip()
+    ]
+    non_medium_active = [
+        {
+            "slot": agent.get("slot"),
+            "agent_id": agent.get("agent_id"),
+            "reasoning_effort": agent.get("reasoning_effort"),
+            "task": agent.get("task"),
+        }
+        for agent in active
+        if str(agent.get("reasoning_effort") or "") != REQUIRED_REASONING_EFFORT
+    ]
     queued_slots = [
         {
             "slot": slot,
@@ -243,6 +278,9 @@ def watchdog_report(state: dict, stale_minutes: float) -> dict:
         "completed_without_patch_id": completed_without_patch,
         "completed_write_agents_without_accepted_review":
             completed_write_without_review,
+        "accepted_reviews_without_commit": accepted_without_commit,
+        "non_medium_active_agents": non_medium_active,
+        "required_reasoning_effort": REQUIRED_REASONING_EFFORT,
         "queued_slots": queued_slots,
         "supervision_rule": (
             "Poll this command before progress reports; stale agents must be "
@@ -254,7 +292,9 @@ def watchdog_report(state: dict, stale_minutes: float) -> dict:
             "and owning source code before editing; fresh ESBMC/RQ1 runs are "
             "not accepted as a substitute for code-level root-cause analysis. "
             "Completion must state inspected failure artifacts, inspected code, "
-            "root cause, fix target, and theoretical coverage."),
+            "root cause, fix target, and theoretical coverage. Accepted "
+            "reviews must record a commit sha, and every spawned subagent must "
+            "be explicitly requested with reasoning_effort=medium."),
     }
 
 
@@ -284,6 +324,7 @@ def main() -> int:
                         choices=("accepted", "rejected", "needs-work"),
                         required=True)
     review.add_argument("--note", default="")
+    review.add_argument("--commit-sha", default="")
     args = parser.parse_args()
 
     state = load_state(args.state)
@@ -314,7 +355,7 @@ def main() -> int:
     elif args.cmd == "review":
         print(json.dumps(
             review_agent(state, args.agent_id, args.reviewer_id, args.verdict,
-                         args.note),
+                         args.note, args.commit_sha),
             indent=2,
             sort_keys=True))
         save_state(args.state, state)

@@ -36,6 +36,7 @@ DEFAULT_DEADLINE_HOURS = 16.0
 DEFAULT_REMOTE_HOST = "invmut-w2"
 DEFAULT_REQUIRED_SUBAGENTS = 24
 DEFAULT_MIN_ACTIVE_SUBAGENTS = 5
+DEFAULT_SUBAGENT_REASONING_EFFORT = "medium"
 
 HARD_REQUIREMENTS = (
     "Do not report N/204 from memory; run this script or quote its last output.",
@@ -60,6 +61,14 @@ HARD_REQUIREMENTS = (
     "A subagent completion counts toward theoretical_progress only when its "
     "patch_id is recorded in the subagent status file or passed via --applied; "
     "free-form claims do not count.",
+    "A reviewed patch counts toward net theoretical_progress only when "
+    "review_status=accepted and the subagent record contains a commit sha. "
+    "Review without a commit is incomplete and remains provisional at most.",
+    "Every spawned subagent must be requested with reasoning_effort=medium. "
+    "Config-file defaults are not considered a hard guarantee unless the "
+    "subagent ledger records the explicit effort.",
+    "Workers may run only the theory-covered case manifest by default.  Broad "
+    "root-cause TSV input requires an explicit allow-uncovered override.",
     "Subagents must analyze prior failure artifacts and the concrete owning "
     "source code before editing.  A subagent is not allowed to use a fresh "
     "ESBMC/RQ1 run as a substitute for root-cause analysis.  Every subagent "
@@ -502,6 +511,7 @@ def _subagent_template() -> list[dict]:
             "mode": "write",
             "status": "queued",
             "patch_id": "",
+            "required_reasoning_effort": DEFAULT_SUBAGENT_REASONING_EFFORT,
         })
     return agents
 
@@ -526,6 +536,7 @@ def init_subagent_state(path: Path, force: bool = False) -> dict:
         "schema": "veriput-rq1-subagents/v1",
         "status": "active",
         "max_concurrent_threads_per_session": DEFAULT_REQUIRED_SUBAGENTS,
+        "required_reasoning_effort": DEFAULT_SUBAGENT_REASONING_EFFORT,
         "agents": agents,
         "rules": {
             "write_scope": "subagents may edit only their exclusive write_scope",
@@ -539,6 +550,13 @@ def init_subagent_state(path: Path, force: bool = False) -> dict:
                 "source code. Do not run ESBMC/RQ1 to discover the bug. "
                 "Completion must report inspected artifacts, inspected code, "
                 "code-level root cause, fix target, and theoretical coverage."),
+            "accepted_review_requires_commit": (
+                "review_status=accepted is ignored for net theory unless the "
+                "agent record also has review_commit, commit_sha, commit, or "
+                "patch_commit."),
+            "reasoning_effort": (
+                "Spawn calls must explicitly request reasoning_effort=medium; "
+                "records without reasoning_effort=medium are noncompliant."),
         },
     }
     path.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
@@ -553,6 +571,8 @@ def record_subagent(
     agent_id: str,
     note: str,
     review_status: str = "",
+    commit_sha: str = "",
+    reasoning_effort: str = "",
 ) -> dict:
     doc = init_subagent_state(path)
     now = time.time()
@@ -574,6 +594,11 @@ def record_subagent(
                     "pending, accepted, rejected, needs-work")
             agent["review_status"] = review_status
             agent["reviewed_ts"] = now
+        if commit_sha:
+            agent["commit_sha"] = commit_sha
+            agent["review_commit"] = commit_sha
+        if reasoning_effort:
+            agent["reasoning_effort"] = reasoning_effort
         if status == "completed":
             agent["completed_ts"] = now
         else:
@@ -600,7 +625,11 @@ def subagent_patch_review_sets(subagents: dict) -> dict[str, set[str]]:
         mode = str(agent.get("mode") or "").strip().lower()
         if mode != "readonly":
             review_status = str(agent.get("review_status") or "pending")
-            if review_status == "accepted":
+            commit_sha = str(
+                agent.get("review_commit") or agent.get("commit_sha")
+                or agent.get("commit") or agent.get("patch_commit") or ""
+            ).strip()
+            if review_status == "accepted" and commit_sha:
                 applied.add(patch_id)
             elif review_status in {"rejected", "needs-work"}:
                 rejected.add(patch_id)
@@ -645,12 +674,25 @@ def subagent_summary(subagents: dict) -> dict:
     ]
     write_patch_agents = []
     pending_review = []
+    accepted_without_commit = []
+    non_medium_active = []
     for agent in agents:
+        if agent.get("status") in {"leased", "running"}:
+            effort = str(agent.get("reasoning_effort") or "").strip()
+            if effort != DEFAULT_SUBAGENT_REASONING_EFFORT:
+                non_medium_active.append(agent)
         if agent.get("status") != "completed":
             continue
         mode = str(agent.get("mode") or "").strip().lower()
         if mode == "readonly":
             continue
+        commit_sha = str(
+            agent.get("review_commit") or agent.get("commit_sha")
+            or agent.get("commit") or agent.get("patch_commit") or ""
+        ).strip()
+        if str(agent.get("review_status") or "pending") == "accepted" \
+                and not commit_sha:
+            accepted_without_commit.append(agent)
         if mode == "write" or (
                 str(agent.get("patch_id") or "").strip()
                 and (agent.get("write_scope") or [])):
@@ -688,6 +730,17 @@ def subagent_summary(subagents: dict) -> dict:
         ],
         "completed_write_patches_requiring_review": len(write_patch_agents),
         "pending_review_count": len(pending_review),
+        "accepted_without_commit_count": len(accepted_without_commit),
+        "accepted_without_commit_patch_ids": [
+            agent.get("patch_id") for agent in accepted_without_commit[-20:]
+        ],
+        "non_medium_active_count": len(non_medium_active),
+        "non_medium_active_details": [{
+            "slot": agent.get("slot"),
+            "agent_id": agent.get("agent_id"),
+            "reasoning_effort": agent.get("reasoning_effort"),
+            "task": agent.get("task"),
+        } for agent in non_medium_active[:20]],
         "pending_review_patch_ids": [
             agent.get("patch_id") for agent in pending_review[-20:]
         ],
@@ -1533,6 +1586,8 @@ def main() -> int:
     parser.add_argument("--record-subagent-agent-id", default="")
     parser.add_argument("--record-subagent-note", default="")
     parser.add_argument("--record-subagent-review-status", default="")
+    parser.add_argument("--record-subagent-commit-sha", default="")
+    parser.add_argument("--record-subagent-reasoning-effort", default="")
     parser.add_argument(
         "--applied",
         default="",
@@ -1553,6 +1608,8 @@ def main() -> int:
             args.record_subagent_agent_id,
             args.record_subagent_note,
             args.record_subagent_review_status,
+            args.record_subagent_commit_sha,
+            args.record_subagent_reasoning_effort,
         )
 
     counts = load_counts(args.tsv)

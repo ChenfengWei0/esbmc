@@ -22,6 +22,8 @@ LEDGER = HERE / "rq1_no_valid_progress.py"
 WATCHDOG = HERE / "rq1_watchdog_status.py"
 DISPATCHER = HERE / "rq1_repair_dispatcher.py"
 REVIEW_DISPATCHER = HERE / "rq1_review_dispatcher.py"
+THEORY_CASES = HERE / "rq1_theory_covered_cases.py"
+THEORY_CASES_OUT = Path("/tmp/veriput_rq1_theory_covered_cases.tsv")
 DISPATCH_QUEUE = Path("/tmp/veriput_rq1_dispatch_queue.json")
 PATCH_REVIEW_SUMMARY = HERE / "rq1_patch_review_summary.py"
 MIN_PENDING_REPAIR_ASSIGNMENTS = 10
@@ -38,6 +40,20 @@ SUMMARY_KEYS = (
     "put_theoretical_progress",
     "r1r2_theoretical_progress_gross",
     "r1r2_theoretical_progress",
+)
+
+MANDATORY_REPORT_FIELDS = (
+    "countdown_remaining_h",
+    "actual_subjects",
+    "actual_valid_cases",
+    "actual_put_cases",
+    "actual_r1r2_cases",
+    "theoretical_progress",
+    "implemented_progress_provisional",
+    "resource_maximized",
+    "active_subagents",
+    "running_case_count",
+    "theory_manifest_case_count",
 )
 
 WORKER_SPECS = (
@@ -174,6 +190,14 @@ def _dispatch_subject_index(
     return index
 
 
+def _count_tsv_rows(path: Path) -> int:
+    try:
+        with path.open() as stream:
+            return max(0, sum(1 for _line in stream) - 1)
+    except OSError:
+        return 0
+
+
 def _state_case_count(state: dict, rows: list[dict] | None = None) -> int:
     worker = state.get("worker") if isinstance(state.get("worker"), dict) else {}
     try:
@@ -305,10 +329,33 @@ def _feedback_status(row: dict, ticket_index: set[tuple[str, str, str]],
         f"repair_dispatch_queued={str(dispatched).lower()}")
 
 
+def _feedback_flags(row: dict, ticket_index: set[tuple[str, str, str]],
+                    dispatch_index: set[tuple[str, str, str]]) -> tuple[bool, bool, bool]:
+    bench = str(row.get("bench") or "")
+    subject = str(row.get("subject") or "")
+    bucket = str(row.get("bucket") or row.get("category") or "")
+    status = str(row.get("status") or "")
+    valid = int(row.get("valid") or 0)
+    put_valid = int(row.get("put_valid") or 0)
+    r1r2 = int(row.get("r1r2") or 0)
+    has_quality = any(k in row for k in ("valid", "put_valid", "r1r2",
+                                         "bucket"))
+    below_expected = status not in {"", "running", "done"} or (
+        status == "done" and has_quality and
+        (valid <= 0 or put_valid <= 0 or r1r2 <= 0))
+    key = (bench, subject, bucket)
+    generic_key = (bench, subject, "")
+    ticketed = key in ticket_index or generic_key in ticket_index
+    dispatched = key in dispatch_index or generic_key in dispatch_index
+    return below_expected, ticketed, dispatched
+
+
 def _print_worker_mn_summary(watchdog_stdout: str) -> None:
     print("worker_progress_MN:")
     ticket_index = _repair_ticket_index()
     dispatch_index = _dispatch_subject_index()
+    missing_ticket = []
+    missing_dispatch = []
     for row in [_worker_progress_row(*spec) for spec in WORKER_SPECS]:
         if row["N"] == 0 and row["M"] == 0 and row["running"] == 0 \
                 and row["failed_or_skipped"] == 0:
@@ -340,12 +387,37 @@ def _print_worker_mn_summary(watchdog_stdout: str) -> None:
                 f"    running={item.get('bench')}/{item.get('subject')}"
                 f" category={item.get('category')} ts={item.get('ts')}")
         for item in row["recent_tail"]:
+            below, ticketed, dispatched = _feedback_flags(
+                item, ticket_index, dispatch_index)
+            if below and not ticketed:
+                missing_ticket.append(item)
+            if below and not dispatched:
+                missing_dispatch.append(item)
             print(
                 f"    recent={item.get('bench')}/{item.get('subject')}"
                 f" status={item.get('status')} rc={item.get('rc')}"
                 f" valid={item.get('valid')} put={item.get('put_valid')}"
                 f" r1r2={item.get('r1r2')} ts={item.get('ts')}"
                 f" feedback={_feedback_status(item, ticket_index, dispatch_index)}")
+    print("failed_case_dispatch_status:")
+    print(f"  missing_repair_ticket_count={len(missing_ticket)}")
+    print(f"  missing_dispatch_count={len(missing_dispatch)}")
+    for label, rows in (("missing_ticket", missing_ticket[-8:]),
+                        ("missing_dispatch", missing_dispatch[-8:])):
+        for item in rows:
+            print(
+                f"  {label}={item.get('bench')}/{item.get('subject')}"
+                f" status={item.get('status')} bucket={item.get('bucket')}"
+                f" valid={item.get('valid')} put={item.get('put_valid')}"
+                f" r1r2={item.get('r1r2')}")
+    if missing_ticket:
+        print(
+            "  HARD_ALERT=FAILED_OR_WEAK_CASE_WITHOUT_REPAIR_TICKET;"
+            "refresh_worker_interpret_and_repair_dispatch=true")
+    if missing_dispatch:
+        print(
+            "  HARD_ALERT=FAILED_OR_WEAK_CASE_NOT_ASSIGNED_TO_SUBAGENT;"
+            "spawn_or_reuse_repair_subagent=true")
     try:
         watchdog = json.loads(watchdog_stdout)
     except json.JSONDecodeError:
@@ -567,6 +639,28 @@ def _print_feedback_dispatch_summary(ledger_stdout: str,
             f" scope={','.join(ticket.get('suggested_write_scope') or [])}")
 
 
+def _print_theory_manifest_status() -> None:
+    proc = subprocess.run(
+        [sys.executable, str(THEORY_CASES), "--out", str(THEORY_CASES_OUT)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    case_count = _count_tsv_rows(THEORY_CASES_OUT)
+    print("theory_worker_manifest:")
+    print(f"  returncode={proc.returncode}")
+    print(f"  path={THEORY_CASES_OUT}")
+    print(f"  case_count={case_count}")
+    print("  worker_input_rule=workers_must_use_this_tsv_by_default")
+    if case_count <= 0:
+        print(
+            "  HARD_ALERT=NO_THEORY_COVERED_CASES_FOR_WORKERS;"
+            "do_not_start_new_esbmc_workers_without_allow_uncovered_tsv=true")
+    if proc.stderr:
+        print(f"  stderr_tail={proc.stderr[-1000:]}")
+
+
 def _print_ledger_summary(stdout: str) -> None:
     actual = _extract_json_section(stdout, "actual_rq1_progress")
     resources = _extract_json_section(stdout, "resource_maximization")
@@ -599,6 +693,64 @@ def _print_ledger_summary(stdout: str) -> None:
     reasons = resources.get("reasons") or []
     if reasons:
         print("  resource_not_maximized_reasons=" + ";".join(map(str, reasons)))
+
+
+def _required_field_snapshot(ledger_stdout: str,
+                             watchdog_stdout: str) -> dict[str, object]:
+    actual = _extract_json_section(ledger_stdout, "actual_rq1_progress")
+    resources = _extract_json_section(ledger_stdout, "resource_maximization")
+    countdown = _extract_countdown(ledger_stdout)
+    summary = _extract_key_values(ledger_stdout)
+    try:
+        watchdog = json.loads(watchdog_stdout)
+    except json.JSONDecodeError:
+        watchdog = {}
+    subagents = watchdog.get("subagents") if isinstance(
+        watchdog.get("subagents"), dict) else {}
+    active = (
+        subagents.get("active_count") or subagents.get("active")
+        or subagents.get("active_running_or_leased")
+    )
+    if active is None:
+        match = re.search(r"^\s*active_subagents=(\d+)\s*$",
+                          watchdog_stdout,
+                          re.MULTILINE)
+        if match:
+            active = int(match.group(1))
+    if active is None:
+        active = 0
+    local_running, remote_running, _done, _failed, _oom = _worker_counts(watchdog)
+    return {
+        "countdown_remaining_h": countdown.get("remaining_h"),
+        "actual_subjects": actual.get("subjects"),
+        "actual_valid_cases": actual.get("valid_cases"),
+        "actual_put_cases": actual.get("put_cases"),
+        "actual_r1r2_cases": actual.get("r1r2_cases"),
+        "theoretical_progress": summary.get("theoretical_progress"),
+        "implemented_progress_provisional":
+            summary.get("implemented_progress_provisional"),
+        "resource_maximized": resources.get("maximized"),
+        "active_subagents": active,
+        "running_case_count": int(local_running or 0) + int(remote_running or 0),
+        "theory_manifest_case_count": _count_tsv_rows(THEORY_CASES_OUT),
+    }
+
+
+def _print_report_completeness(ledger_stdout: str,
+                               watchdog_stdout: str) -> None:
+    snapshot = _required_field_snapshot(ledger_stdout, watchdog_stdout)
+    missing = [
+        key for key in MANDATORY_REPORT_FIELDS
+        if snapshot.get(key) is None or snapshot.get(key) == ""
+    ]
+    print("mandatory_report_completeness:")
+    for key in MANDATORY_REPORT_FIELDS:
+        print(f"  {key}={snapshot.get(key)}")
+    print(f"  missing_count={len(missing)}")
+    if missing:
+        print(
+            "  HARD_ALERT=STATUS_FIELD_MISSING;"
+            f"missing={','.join(missing)}")
 
 
 def _worker_counts(doc: dict) -> tuple[int, int, int, int, int]:
@@ -747,7 +899,9 @@ def main() -> int:
     _print_watchdog_hard_alerts(watchdog_proc.stdout)
     _print_worker_mn_summary(watchdog_proc.stdout)
     _print_recent_canonical_results()
+    _print_theory_manifest_status()
     _print_feedback_dispatch_summary(proc.stdout, watchdog_proc.stdout)
+    _print_report_completeness(proc.stdout, watchdog_proc.stdout)
     if proc.returncode != 0:
         return proc.returncode
     return watchdog_proc.returncode
