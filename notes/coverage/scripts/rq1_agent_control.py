@@ -178,7 +178,7 @@ def _remote_resource_snapshot(host: str) -> dict:
 
 def _progress_summary() -> dict:
     _rc, stdout, stderr = _run_text(
-        [sys.executable, str(LEDGER), "--init-subagents", "--no-remote-probe"])
+        [sys.executable, str(LEDGER), "--no-remote-probe"])
     keys = _extract_key_values(stdout)
     actual = _extract_json_section(stdout, "actual_rq1_progress")
     resources = _extract_json_section(stdout, "resource_maximization")
@@ -205,13 +205,14 @@ def _progress_summary() -> dict:
 
 
 def _review_field(note: str, field: str) -> str:
-    for line in note.splitlines():
-        stripped = line.strip()
-        for sep in (":", "="):
-            prefix = f"{field}{sep}"
-            if stripped.startswith(prefix):
-                return stripped[len(prefix):].strip()
-    return ""
+    match = re.search(
+        rf"(?:^|[;\n])\s*{re.escape(field)}\s*[:=]\s*(.*?)(?=(?:[;\n]\s*"
+        rf"(?:changed_code|prior_failure|correctness_argument|verdict|"
+        rf"theory_delta|next_action)\s*[:=])|$)",
+        note,
+        flags=re.DOTALL,
+    )
+    return (match.group(1).strip() if match else "")[:800]
 
 
 def _watchdog_status(min_active: int) -> dict:
@@ -470,6 +471,7 @@ def _tracked_snapshot(doc: dict) -> dict:
         "theory_manifest_case_count": doc.get("theory_manifest_case_count"),
         "actual_progress": doc.get("actual_progress"),
         "local_memory": doc.get("local_memory"),
+        "remote_memory": doc.get("remote_memory"),
         "local_worker_running_case_count": doc.get(
             "local_worker_running_case_count"),
         "remote_worker_running_case_count": doc.get(
@@ -478,7 +480,12 @@ def _tracked_snapshot(doc: dict) -> dict:
             "total_worker_running_case_count"),
         "local_worker_process_count": doc.get("local_worker_process_count"),
         "remote_worker_process_count": doc.get("remote_worker_process_count"),
+        "remote_worker_process_details": doc.get(
+            "remote_worker_process_details"),
         "stale_worker_progress": doc.get("stale_worker_progress"),
+        "remote_memory": doc.get("remote_memory"),
+        "worker_progress": doc.get("worker_progress"),
+        "host_tool_boundary": doc.get("host_tool_boundary"),
         "gate": doc.get("gate"),
         "hard_fail": doc.get("hard_fail"),
         "review_counts": review_counts,
@@ -533,19 +540,27 @@ def _delta(doc: dict, cache: Path) -> dict:
 
 
 def _print_text(doc: dict, changed: dict | None) -> None:
+    if changed is not None:
+        if not changed:
+            return
     print("RQ1自动控制报告:")
     if changed is not None:
         print(f"  变化项数量={len(changed)}")
-        if not changed:
-            return
         for key in sorted(changed):
-            print(f"  变化={key} old={changed[key]['old']} new={changed[key]['new']}")
+            print(
+                f"  变化={key} 旧值={changed[key]['old']} 新值={changed[key]['new']}")
     progress = doc.get("actual_progress")
     if not isinstance(progress, dict):
         progress = {}
     memory = doc.get("local_memory")
     if not isinstance(memory, dict):
         memory = {}
+    remote_memory = doc.get("remote_memory")
+    if not isinstance(remote_memory, dict):
+        remote_memory = {}
+    worker_progress = doc.get("worker_progress")
+    if not isinstance(worker_progress, dict):
+        worker_progress = {}
     print(
         "  实际RQ1="
         f"valid={progress.get('actual_valid_cases')}/{progress.get('actual_subjects')}"
@@ -603,6 +618,47 @@ def _print_text(doc: dict, changed: dict | None) -> None:
         f" available={memory.get('available_gib')}GiB"
         f" free={memory.get('free_gib')}GiB"
         f" buff_cache={memory.get('buffer_cache_gib')}GiB")
+    remote_memory = doc.get("remote_memory")
+    if not isinstance(remote_memory, dict):
+        remote_memory = {}
+    print(
+        "  远程内存="
+        f"total={remote_memory.get('total_gib')}GiB"
+        f" available={remote_memory.get('available_gib')}GiB"
+        f" free={remote_memory.get('free_gib')}GiB"
+        f" buff_cache={remote_memory.get('buffer_cache_gib')}GiB"
+        f" nproc={remote_memory.get('nproc')}")
+    for worker in (doc.get("remote_worker_process_details") or [])[:6]:
+        print(f"    远程worker明细={worker[:220]}")
+    print(
+        "  远程资源="
+        f"available={remote_memory.get('available_gib')}GiB"
+        f" total={remote_memory.get('total_gib')}GiB"
+        f" free={remote_memory.get('free_gib')}GiB"
+        f" buff_cache={remote_memory.get('buffer_cache_gib')}GiB"
+        f" nproc={remote_memory.get('nproc')}")
+    print(
+        "  worker最近反馈="
+        f"done={worker_progress.get('recent_done_count_in_tail')}"
+        f" failed={worker_progress.get('recent_failed_count_in_tail')}"
+        f" oom={worker_progress.get('recent_oom_count_in_tail')}"
+        f" weak_or_failed={worker_progress.get('recent_weak_or_failed_count_in_tail')}")
+    for item in (worker_progress.get("currently_running_cases") or [])[:8]:
+        print(
+            f"    正在跑case={item.get('bench')}/{item.get('subject')}"
+            f" status={item.get('status')} bucket={item.get('bucket')}")
+    for item in (worker_progress.get("recent_failed_tail") or [])[-5:]:
+        print(
+            f"    最近失败case={item.get('bench')}/{item.get('subject')}"
+            f" status={item.get('status')} bucket={item.get('bucket')}"
+            f" valid={item.get('valid')} PUT={item.get('put_valid')}"
+            f" R1R2={item.get('r1r2')}")
+    for item in (worker_progress.get("recent_weak_tail") or [])[-5:]:
+        print(
+            f"    最近弱case={item.get('bench')}/{item.get('subject')}"
+            f" status={item.get('status')} bucket={item.get('bucket')}"
+            f" valid={item.get('valid')} PUT={item.get('put_valid')}"
+            f" R1R2={item.get('r1r2')}")
     reasons = progress.get("resource_reasons") or []
     print(f"  资源最大化={progress.get('resource_maximized')}")
     if reasons:
@@ -631,13 +687,22 @@ def _print_text(doc: dict, changed: dict | None) -> None:
             ("pending", "等待review"),
     ):
         for item in (buckets.get(verdict) or [])[:8]:
+            note = str(item.get("note") or "")
             print(
                 f"    {label}={item.get('slot')}/{item.get('patch_id')}"
                 f" agent={item.get('agent_id')}"
                 f" commit={item.get('commit_sha')}"
                 f" 任务={item.get('task')}"
-                f" 修改范围={','.join(item.get('write_scope') or [])}"
-                f" 结论={str(item.get('note') or '')[:180]}")
+                f" 修改范围={','.join(item.get('write_scope') or [])}")
+            for field, field_label in (
+                    ("changed_code", "改了什么"),
+                    ("prior_failure", "为什么改"),
+                    ("correctness_argument", "是否正确"),
+                    ("theory_delta", "理论变化"),
+                    ("next_action", "下一步"),
+            ):
+                value = _review_field(note, field) or "<缺失>"
+                print(f"      {field_label}={value[:260]}")
             missing = item.get("missing_review_fields") or []
             if missing:
                 print(f"      review缺字段={','.join(missing)}")
@@ -648,6 +713,13 @@ def _print_text(doc: dict, changed: dict | None) -> None:
             f" bucket={action.get('bucket_key')}"
             f" effort={action.get('reasoning_effort')}"
             f" 原因={action.get('reason')}")
+    boundary = doc.get("host_tool_boundary")
+    if isinstance(boundary, dict):
+        print(
+            "  host工具边界="
+            f"脚本可spawn={boundary.get('repo_script_can_spawn_codex_subagent')}"
+            f" 脚本可close={boundary.get('repo_script_can_close_codex_subagent')}"
+            " 必须由主agent执行host动作并回填ledger=true")
     print(f"  规则=必须按自动动作顺序执行；禁止手写漂移状态；流程文件={FLOW_DOC}")
 
 

@@ -49,6 +49,9 @@ Every spawned subagent must follow these rules.
 8. Autonomous repair dispatch is mandatory:
    - run `rq1_repair_dispatcher.py` after worker results or repair tickets
    - if it emits assignments, spawn or reuse subagents for those assignments
+   - keep at least 10 active repair/review subagents while assignments exist;
+     a controller that emits fewer than 10 available spawn actions is failing
+     to use the configured parallelism
    - if spawning is blocked by capacity, close completed agents first and report
      the capacity blocker explicitly
    - do not let the main agent manually serialize all repair work when dispatch
@@ -64,14 +67,33 @@ Every spawned subagent must follow these rules.
      and whether a later worker result contradicts the patch's claimed coverage
    - if review rejects or weakens the claim, update the subagent status and
      theoretical ledger so progress can decrease
+   - every review report must include, for each reviewed patch_id:
+     `changed_code`, `prior_failure`, `correctness_argument`, `verdict`,
+     `theory_delta`, and `next_action`
+   - `changed_code` must state what code the previous subagent changed with
+     file/function references
+   - `prior_failure` must name the concrete failed or weak RQ1 case/artifact
+     that contradicted the old theory
+   - `correctness_argument` must explain why the reviewed or newly proposed
+     code fixes that failure path, not merely that it looks plausible
+   - reviews missing any of these fields are invalid and must leave
+     `review_status` as `pending`
 
 10. Worker feedback drives new repair work:
    - every completed worker case must be interpreted into one of valid PUT/R1R2,
      valid-no-PUT, PUT-no-R1/R2, no-valid, OOM, timeout, or schema/artifact bug
    - any status below valid PUT/R1R2 emits or preserves a dispatcher assignment
    - do not wait for the main agent to notice weak results manually
+   - after each weak/no-valid/OOM/timeout worker result, refresh both
+     `rq1_repair_dispatcher.py` and `rq1_review_dispatcher.py` immediately;
+     do not wait for a worker batch to finish before creating the intervention
+     queue
+   - review feedback is worker feedback too: `needs-work` or `rejected` review
+     verdicts must remain in the dispatcher queue until a follow-up patch is
+     reviewed and accepted; they must also remove or withhold any provisional
+     theory coverage claimed by the rejected patch
 
-9. Completed subagents must be closed:
+11. Completed subagents must be closed:
    - run `rq1_subagent_autoclose.py plan` before spawning new agents
    - close every pending completed agent with the Codex `close_agent` tool
    - after each successful close, run `rq1_subagent_autoclose.py ack --agent-id`
@@ -79,7 +101,7 @@ Every spawned subagent must follow these rules.
    - every user-facing progress report must include active subagent count and
      active subagent ids/tasks from `rq1_watchdog_status.py`
 
-10. OOM handling is separate from ordinary repair:
+12. OOM handling is separate from ordinary repair:
    - do not raise memory for every subject preemptively
    - only explicit `OOM_OR_MEMORY_PRESSURE` / killed-over-RSS cases enter
      `rq1_oom_highmem_queue.py`

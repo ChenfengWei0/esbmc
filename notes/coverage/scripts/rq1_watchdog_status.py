@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -29,6 +30,17 @@ DEFAULT_DISPATCH_QUEUE = Path("/tmp/veriput_rq1_dispatch_queue.json")
 DEFAULT_REVIEW_QUEUE = Path("/tmp/veriput_rq1_review_queue.json")
 DEFAULT_SUBAGENT_CLOSE_STATE = Path("/tmp/veriput_rq1_subagent_close_state.json")
 DEFAULT_OOM_HIGHMEM_QUEUE = Path("/tmp/veriput_rq1_oom_highmem.tsv")
+LOCAL_WORKER_SCRIPT_RE = (
+    r"/(rq1_veriput_run|rq1_local_pump|rq1_local_supervisor|certify_all|"
+    r"put_all|solidity_path_put|solidity_path_generalise)\.py(\s|$)")
+
+
+def _is_rq1_worker_process(comm: str, args: str) -> bool:
+    if comm in {"esbmc", "forge", "anvil"}:
+        return True
+    if "/build/src/esbmc/esbmc" in args or "/release/bin/esbmc" in args:
+        return True
+    return re.search(LOCAL_WORKER_SCRIPT_RE, args) is not None
 
 
 def _json(path: Path) -> dict:
@@ -69,15 +81,43 @@ def _pid_alive(pid: object) -> bool:
     return Path(f"/proc/{pid_i}").exists()
 
 
-def _mem_available_mib() -> int:
+def _meminfo_mib() -> dict:
     try:
         text = Path("/proc/meminfo").read_text()
     except OSError:
-        return 0
+        return {}
+    values = {}
     for line in text.splitlines():
-        if line.startswith("MemAvailable:"):
-            return int(int(line.split()[1]) / 1024)
-    return 0
+        parts = line.split()
+        if len(parts) >= 2 and parts[0].endswith(":"):
+            try:
+                values[parts[0][:-1]] = int(int(parts[1]) / 1024)
+            except ValueError:
+                pass
+    total = values.get("MemTotal", 0)
+    free = values.get("MemFree", 0)
+    available = values.get("MemAvailable", 0)
+    cached = values.get("Cached", 0) + values.get("SReclaimable", 0)
+    buffers = values.get("Buffers", 0)
+    swap_total = values.get("SwapTotal", 0)
+    swap_free = values.get("SwapFree", 0)
+    return {
+        "mem_total_mib": total,
+        "mem_free_mib": free,
+        "mem_available_mib": available,
+        "buff_cache_mib": cached + buffers,
+        "process_used_estimate_mib": max(0, total - free - cached - buffers),
+        "swap_total_mib": swap_total,
+        "swap_used_mib": max(0, swap_total - swap_free),
+        "cache_explanation": (
+            "Linux buff/cache is reclaimable and must not be counted as live "
+            "RQ1/ESBMC worker RSS. Use local_processes/local_esbmc_memory to "
+            "decide whether workers are still running."),
+    }
+
+
+def _mem_available_mib() -> int:
+    return int(_meminfo_mib().get("mem_available_mib") or 0)
 
 
 def _local_process_rows() -> list[dict]:
@@ -92,15 +132,7 @@ def _local_process_rows() -> list[dict]:
         if len(parts) != 6:
             continue
         pid, ppid, etimes, rss, comm, args = parts
-        haystack = f"{comm} {args}"
-        if not any(token in haystack for token in (
-                "esbmc",
-                "rq1_veriput_run.py",
-                "certify_all.py",
-                "put_all.py",
-                "solidity_path_put.py",
-                "rq1_local_pump.py",
-        )):
+        if not _is_rq1_worker_process(comm, args):
             continue
         rows.append({
             "pid": int(pid),
@@ -592,9 +624,29 @@ def build_report(args: argparse.Namespace) -> dict:
     local_lease_file = Path(
         str(local_state.get("lease_file") or "/tmp/veriput_rq1_case_leases.json"))
     local_lease_stale_s = float(local_state.get("lease_stale_s") or 1200)
-    remote = _remote_probe(args.remote_host, args.remote_progress_tail)
+    if args.no_remote_probe:
+        remote = {
+            "returncode": 0,
+            "stdout": "",
+            "stderr": "remote probe skipped by --no-remote-probe",
+        }
+    else:
+        remote = _remote_probe(args.remote_host, args.remote_progress_tail)
     remote_summary = _remote_probe_summary(remote["stdout"],
                                            args.worker_stuck_after_s)
+    progress_report = _progress_report(tuple(args.progress_glob),
+                                       args.progress_tail,
+                                       args.worker_stuck_after_s)
+    local_running_count = (
+        progress_report["currently_running_count"] if local_rows else 0
+    )
+    remote_worker_pid = remote_summary.get("worker_pid") or {}
+    remote_has_process = bool(remote_summary.get("process_count"))
+    remote_pid_alive = bool(remote_worker_pid.get("alive"))
+    remote_running_count = (
+        remote_summary["progress"]["currently_running_count"]
+        if (remote_has_process or remote_pid_alive) else 0
+    )
     assignments = dispatch_queue.get("assignments") or []
     assignment_count = int(dispatch_queue.get("assignment_count") or 0)
     subagent_dispatch_status = {
@@ -637,7 +689,7 @@ def build_report(args: argparse.Namespace) -> dict:
                                                 extra_subagent_state,
                                                 close_state),
         "local_host": {
-            "mem_available_mib": _mem_available_mib(),
+            **_meminfo_mib(),
             "mem_available_gib": round(_mem_available_mib() / 1024, 3),
         },
         "local_worker": {
@@ -649,10 +701,12 @@ def build_report(args: argparse.Namespace) -> dict:
             "progress_watchdog": bool(local_state.get("progress_watchdog")),
             "lease_watchdog": bool(local_state.get("lease_file")),
             "case_parallel": local_state.get("case_parallel"),
-            "running_case_count": _progress_report(tuple(args.progress_glob),
-                                                   args.progress_tail,
-                                                   args.worker_stuck_after_s)[
-                                                       "currently_running_count"],
+            "running_case_count": local_running_count,
+            "stale_progress_running_count": progress_report[
+                "currently_running_count"],
+            "running_count_rule": (
+                "current running cases require a live local ESBMC/RQ1 process; "
+                "stale progress-tail rows are not counted as active workers."),
         },
         "local_leases": _local_lease_report(local_lease_file,
                                             local_lease_stale_s),
@@ -671,9 +725,7 @@ def build_report(args: argparse.Namespace) -> dict:
                 extra_local_states)
         ],
         "local_esbmc_memory": _esbmc_rss_summary(local_rows, local_rss_limit),
-        "worker_progress": _progress_report(tuple(args.progress_glob),
-                                            args.progress_tail,
-                                            args.worker_stuck_after_s),
+        "worker_progress": progress_report,
         "repair_tickets_tail": _jsonl_tail(args.repair_tickets,
                                            args.repair_ticket_tail),
         "repair_dispatch": {
@@ -733,8 +785,13 @@ def build_report(args: argparse.Namespace) -> dict:
                 int((remote_summary.get("leases") or {}).get("counts", {}).get(
                     status, 0) or 0)
                 for status in ("done", "failed", "killed-over-rss")),
-            "running_case_count": remote_summary["progress"][
+            "running_case_count": remote_running_count,
+            "stale_progress_running_count": remote_summary["progress"][
                 "currently_running_count"],
+            "running_count_rule": (
+                "current running cases require a live remote worker pid or "
+                "remote ESBMC/RQ1 process; stale progress-tail rows are not "
+                "counted as active workers."),
             "running_cases": remote_summary["progress"][
                 "currently_running_cases"],
             "recent_done_count_in_tail": remote_summary["progress"][
@@ -771,8 +828,9 @@ def main() -> int:
                         default=DEFAULT_EXTRA_LOCAL_STATE_GLOB)
     parser.add_argument("--remote-state", type=Path, default=DEFAULT_REMOTE_STATE)
     parser.add_argument("--remote-host", default=DEFAULT_REMOTE_HOST)
+    parser.add_argument("--no-remote-probe", action="store_true")
     parser.add_argument("--stale-subagent-s", type=float, default=1200.0)
-    parser.add_argument("--min-active-subagents", type=int, default=5)
+    parser.add_argument("--min-active-subagents", type=int, default=10)
     parser.add_argument("--worker-stuck-after-s", type=float, default=900.0)
     parser.add_argument("--progress-glob",
                         action="append",
