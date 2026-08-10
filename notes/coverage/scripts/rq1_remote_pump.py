@@ -663,9 +663,32 @@ def sync_command(args) -> list[str]:
         ".git",
         "--exclude",
         "cache",
+        # The remote needs source and RQ1 scripts, not local build products or
+        # multi-gigabyte experiment archives.  Syncing those made the SSH
+        # transport fail before a single bounded remote case could start.
+        "--exclude",
+        "build*",
+        "--exclude",
+        "release*",
+        "--exclude",
+        "Testing",
+        "--exclude",
+        "regression",
+        "--exclude",
+        "Dataset",
+        "--exclude",
+        "bench",
+        "--exclude",
+        "notes/coverage-comparison",
+        "--include",
+        "notes/coverage/scripts/***",
+        "--exclude",
+        "notes/coverage/***",
+        "--exclude",
+        "*.cov.t.sol",
+        "--exclude",
+        "*.solast",
     ]
-    if not args.sync_build:
-        cmd += ["--exclude", "build"]
     cmd += [str(Path.cwd()) + "/", f"{args.host}:{args.remote_esbmc}/"]
     return cmd
 
