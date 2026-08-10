@@ -262,7 +262,7 @@ def start_remote_worker(args, cases: list[dict]) -> dict:
     runner_memlimit_gib = int(math.ceil(float(args.memlimit_gib)))
     esbmc_rss_limit_kib = int(float(args.esbmc_rss_limit_gib) * 1024 * 1024)
     ce_collection_arg = (
-        "      --ce-collection-only \\\n+"
+        "      --ce-collection-only \\\n"
         if args.ce_collection_only else "")
 
     worker = f"""
