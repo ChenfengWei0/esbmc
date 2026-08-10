@@ -90,7 +90,7 @@ def _base_local_args(args: argparse.Namespace, index: int, manifest: Path) -> li
         "--timeout", str(args.timeout_s), "--esbmc-run-timeout", str(args.timeout_s),
         "--memlimit-gib", str(args.local_memlimit_gib), "--jobs", "1",
         "--esbmc-rss-limit-gib", str(args.local_rss_limit_gib),
-    ]
+    ] + (["--ce-collection-only"] if args.ce_collection_only else [])
 
 
 def start(args: argparse.Namespace, action: dict | None = None) -> dict:
@@ -128,6 +128,8 @@ def start(args: argparse.Namespace, action: dict | None = None) -> dict:
         "--sync-code", "--sync-veriput", "--remote-build",
         "--sync-results-back", "--start-pull-loop",
     ]
+    if args.ce_collection_only:
+        remote_cmd.append("--ce-collection-only")
     if remote_cases:
         log = Path("/tmp/veriput_rq1_remote_worker_supervisor.log")
         log_stream = log.open("ab")
@@ -182,6 +184,7 @@ def main() -> int:
     parser.add_argument("--remote-host", default="invmut-w2")
     parser.add_argument("--local-parallel", type=int, default=3)
     parser.add_argument("--remote-parallel", type=int, default=2)
+    parser.add_argument("--ce-collection-only", action="store_true")
     parser.add_argument("--timeout-s", type=int, default=600)
     parser.add_argument("--local-memlimit-gib", type=int, default=8)
     parser.add_argument("--remote-memlimit-gib", type=float, default=5.5)

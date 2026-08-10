@@ -418,6 +418,8 @@ def run_case(args, case: dict) -> int:
         str(args.esbmc),
         "--redo",
     ]
+    if args.ce_collection_only:
+        cmd.append("--ce-collection-only")
     log = Path("/tmp/veriput_local_worker.log")
     with log.open("a") as stream:
         stream.write("[local-rq1] " + shell_join(cmd) + "\n")
@@ -516,6 +518,7 @@ def main() -> int:
     parser.add_argument("--esbmc", type=Path, default=DEFAULT_ESBMC)
     parser.add_argument("--category", action="append", default=[])
     parser.add_argument("--limit", type=int, default=4)
+    parser.add_argument("--ce-collection-only", action="store_true")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--esbmc-run-timeout", type=int, default=600)
     parser.add_argument("--wrapper-grace", type=int, default=60)

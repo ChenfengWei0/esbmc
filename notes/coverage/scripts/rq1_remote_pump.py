@@ -261,6 +261,9 @@ def start_remote_worker(args, cases: list[dict]) -> dict:
             + args.remote_stale_proc_s))
     runner_memlimit_gib = int(math.ceil(float(args.memlimit_gib)))
     esbmc_rss_limit_kib = int(float(args.esbmc_rss_limit_gib) * 1024 * 1024)
+    ce_collection_arg = (
+        "      --ce-collection-only \\\n+"
+        if args.ce_collection_only else "")
 
     worker = f"""
 set -euo pipefail
@@ -492,6 +495,7 @@ while true; do
       --memlimit-gib {runner_memlimit_gib} \\
       --jobs {int(args.jobs)} \\
       --esbmc "$ESBMC_BIN" \\
+{ce_collection_arg}
       --redo >> "$REMOTE_LOG" 2>&1
     rc=$?
     kill "$lease_heartbeat_pid" 2>/dev/null || true
@@ -738,6 +742,7 @@ def main() -> int:
     parser.add_argument("--state", type=Path, default=DEFAULT_REMOTE_STATE)
     parser.add_argument("--category", action="append", default=[])
     parser.add_argument("--limit", type=int, default=12)
+    parser.add_argument("--ce-collection-only", action="store_true")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--esbmc-run-timeout", type=int, default=600)
     parser.add_argument("--wrapper-grace", type=int, default=60)
