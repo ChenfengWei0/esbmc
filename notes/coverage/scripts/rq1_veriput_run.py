@@ -1795,6 +1795,27 @@ def _rss_tree_mb(pid: int) -> float:
     return round(sum(_rss_kb(child) for child in _proc_tree(pid)) / 1024.0, 1)
 
 
+def _kill_process_tree(pid: int, sig: int) -> None:
+    """Kill a wrapper and nested independent sessions before they detach."""
+    pids = _proc_tree(pid)
+    groups = set()
+    for child in pids:
+        try:
+            groups.add(os.getpgid(child))
+        except (OSError, ProcessLookupError):
+            pass
+    for pgid in groups:
+        try:
+            os.killpg(pgid, sig)
+        except (OSError, ProcessLookupError):
+            pass
+    for child in pids:
+        try:
+            os.kill(child, sig)
+        except (OSError, ProcessLookupError):
+            pass
+
+
 def _tail_file(path: Path, limit: int = 4000) -> str:
     try:
         data = path.read_bytes()
@@ -1838,17 +1859,11 @@ def run_command(argv: list[str], timeout_s: float, log_prefix: Path) -> dict:
                 maxrss_proc_mb = max(maxrss_proc_mb, _rss_tree_mb(proc.pid))
                 if time.monotonic() > deadline:
                     timed_out = True
-                    try:
-                        os.killpg(proc.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
+                    _kill_process_tree(proc.pid, signal.SIGTERM)
                     try:
                         proc.wait(timeout=5)
                     except subprocess.TimeoutExpired:
-                        try:
-                            os.killpg(proc.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
+                        _kill_process_tree(proc.pid, signal.SIGKILL)
                         proc.wait()
                     break
                 time.sleep(0.5)

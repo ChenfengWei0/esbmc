@@ -339,23 +339,54 @@ def binary_identity():
     }
 
 
-def _killpg(proc):
-    """Kill a subprocess's whole process GROUP, tolerating a dead one.
+def _proc_tree(pid):
+    """Return descendants while the parent still exposes its child list."""
+    seen, stack = set(), [pid]
+    while stack:
+        current = stack.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        try:
+            with open(f"/proc/{current}/task/{current}/children") as stream:
+                text = stream.read()
+        except OSError:
+            continue
+        for item in text.split():
+            try:
+                stack.append(int(item))
+            except ValueError:
+                pass
+    return sorted(seen, reverse=True)
 
-    Paired with `start_new_session=True`. Killing only the direct child leaves
-    esbmc grandchildren alive holding their full `--memlimit`, which is what
-    makes `jobs * memlimit` stop being a bound. Idempotent, because it is called
-    from both the timeout path and a `finally`.
+
+def _killpg(proc):
+    """Kill a subprocess and descendants, including nested sessions.
+
+    ``solidity_path_generalise.py`` starts ESBMC with its own session, so
+    killing only the direct driver's process group leaks the solver and its
+    memory budget. Capture descendant groups before killing the parent.
+    Idempotent because this runs on both timeout and normal cleanup paths.
     """
     if proc is None:
         return
-    # Called even after a NORMAL exit, on purpose: the group is then empty and
-    # killpg raises ESRCH, which is caught. That costs nothing and means there
-    # is exactly one reaping path instead of two that can drift apart.
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (OSError, ProcessLookupError, AttributeError):
-        pass
+    pids = _proc_tree(proc.pid)
+    groups = set()
+    for pid in pids:
+        try:
+            groups.add(os.getpgid(pid))
+        except (OSError, ProcessLookupError):
+            pass
+    for pgid in groups:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (OSError, ProcessLookupError):
+            pass
 
 
 def run_driver_subprocess(cmd, timeout_s):
