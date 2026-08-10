@@ -3639,11 +3639,13 @@ def unit_params(ast_path, contract, unit, declaration_id=None):
                     # reader in lockstep is essential: otherwise ESBMC
                     # publishes a parameter coordinate that Stage 2 cannot
                     # resolve back to a source type and Stage 4 drops it.
-                    name = p.get("name") or f"omitted_param_{ordinal}"
-                    suffix = 0
-                    while name in declared_names:
-                        suffix += 1
-                        name = (f"omitted_param_{ordinal}_{suffix}")
+                    name = p.get("name")
+                    if not name:
+                        name = f"omitted_param_{ordinal}"
+                        suffix = 0
+                        while name in declared_names:
+                            suffix += 1
+                            name = (f"omitted_param_{ordinal}_{suffix}")
                     params.append((name, _type_string(p)))
                 found.append(params)
             for v in n.values():
