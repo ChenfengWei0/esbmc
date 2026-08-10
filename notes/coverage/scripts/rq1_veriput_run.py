@@ -4326,9 +4326,16 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
             except Exception as exc:  # Subject-level fail-soft.
                 now = round(time.time(), 3)
                 row = {
-                    "key": f"gen:veriput:{target_row['subject_id']}",
-                    "stage": "gen_veriput",
-                    "schema": "veriput-rq1-result-row/v1",
+                    "key": _run_key(
+                        target_row["subject_id"],
+                        ce_collection_only=args.ce_collection_only),
+                    "stage": (
+                        "ce_collection" if args.ce_collection_only
+                        else "gen_veriput"),
+                    "schema": (
+                        "veriput-rq1-ce-collection-row/v1"
+                        if args.ce_collection_only else
+                        "veriput-rq1-result-row/v1"),
                     "ts": now,
                     "generated_at": _utc_now(),
                     "host": socket.gethostname(),
