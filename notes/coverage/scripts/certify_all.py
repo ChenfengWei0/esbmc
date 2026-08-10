@@ -2201,8 +2201,12 @@ def certification_unwind_truncation(out):
     }
 
 
-def unwindset_retry_args(diagnostic, existing_args, *, unwind=16):
-    """ESBMC args for one named-loop retry after coverage truncation."""
+def unwindset_retry_args(diagnostic, existing_args, *, unwind=512):
+    """ESBMC args for one named-loop retry after coverage truncation.
+
+    A small retry bound can leave the same symbolic exponent truncated again;
+    the measured named-loop repair used 512 and produced a decisive result.
+    """
     if not isinstance(diagnostic, dict):
         return []
     if diagnostic.get("tag") != "unwind-truncation":
