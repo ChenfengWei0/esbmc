@@ -314,6 +314,57 @@ def parse_certified_detail_region(details, row_pins):
     return region, holes, pins
 
 
+STRUCTURAL_GETTER_SENDER_MAX = (1 << 160) - 1
+
+
+def widen_structural_getter_sender_region(row_subject, unit, path_function,
+                                          details, region, holes, pins):
+    """Expose an executable caller coordinate for a sender-independent getter.
+
+    ``structural-abi-gate-no-coordinate`` certificates describe a legal
+    non-payable ABI entry whose only complete-path gate is ``msg.value == 0``.
+    For a zero-argument getter whose source dependency closure reads no
+    ``msg/tx/block`` value, ``msg.sender`` is genuinely unconstrained by that
+    certificate.  Foundry can execute that coordinate, but the old Stage 4
+    handoff dropped it and classified the otherwise oracle-backed artifact as
+    concrete.  Widen only this narrow, source-checked shape; ordinary regions
+    and sender-dependent getters keep their original coordinates.
+    """
+    if not isinstance(details, dict) or details.get(
+            "certification_source") != "structural-abi-gate-no-coordinate":
+        return region, holes, pins, None
+    if row_subject is None or not row_subject.solast:
+        return region, holes, pins, None
+    declaration_id = path_function_declaration_id(path_function)
+    facts, _evidence = unit_callable_facts(
+        row_subject.solast, row_subject.contract, unit,
+        declaration_id=declaration_id)
+    if not isinstance(facts, dict) or facts.get("parameters"):
+        return region, holes, pins, None
+    env_deps, _env_evidence = unit_env_dependencies(
+        row_subject.solast, row_subject.contract, unit,
+        declaration_id=declaration_id)
+    if env_deps != []:
+        return region, holes, pins, None
+    if "msg.sender" in region or "msg.sender" in pins:
+        return region, holes, pins, None
+    widened = dict(region or {})
+    widened["msg.sender"] = [1, STRUCTURAL_GETTER_SENDER_MAX]
+    widened_holes = {name: list(values) for name, values in
+                     (holes or {}).items()}
+    widened_pins = dict(pins or {})
+    derivation = {
+        "kind": "structural-getter-unconstrained-sender",
+        "coordinate": "msg.sender",
+        "lo": 1,
+        "hi": STRUCTURAL_GETTER_SENDER_MAX,
+        "source": "structural-abi-gate-no-coordinate",
+        "dependency_check": "unit_env_dependencies == []",
+        "unit_parameters": 0,
+    }
+    return widened, widened_holes, widened_pins, derivation
+
+
 def cleared_concrete_fallback_rows(record):
     """Stage-2 NOT_CERTIFIED paths whose concrete replay is authenticated.
 
@@ -2492,6 +2543,16 @@ def main():
                       "cut_policy", "max_region_pieces", "max_holes",
                       "esbmc_args")
                      if r.get(k) is not None}
+            (detail_region, detail_holes, detail_pins,
+             region_derivation) = widen_structural_getter_sender_region(
+                 row_subject, r["unit"], r.get("path_function"), details,
+                 detail_region, detail_holes, detail_pins)
+            if region_derivation:
+                deriv["region_derivation"] = region_derivation
+                print(
+                    f"  [region] {key}.{r['unit']} enc={enc_s}: widened "
+                    "the source-checked unconstrained msg.sender coordinate "
+                    "for Stage 4 PUT materialization")
             n_certified += 1
             if not stage4_selector_matches(
                     args.only, key, r["unit"], r.get("path_function")):

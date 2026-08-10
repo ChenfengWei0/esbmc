@@ -16421,6 +16421,7 @@ def main():
                    "test": f"test_put_{a.contract}_{a.unit}"
                            f"_path{a.enc}{plabel}",
                    "piece": a.piece,
+                   "derived_by": json.loads(a.derived_by or "{}"),
                    "region": {k: [str(v[0]), str(v[1])]
                               for k, v in region.items()},
                    "holes": {k: [str(x) for x in v] for k, v in holes.items()},
