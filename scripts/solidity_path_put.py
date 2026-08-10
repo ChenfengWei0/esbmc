@@ -9709,6 +9709,26 @@ def bound_lines(pname, kind, width, lo, hi, holes):
     return out
 
 
+def dynamic_length_assume_lines(var, sol_type, lo, hi, holes):
+    """Constrain a dynamic calldata value by the certified length region.
+
+    The bytes/string contents are deliberately left unconstrained.  Stage 2
+    can resolve the length member, while treating the aggregate payload as a
+    coordinate would invent a scalar ordering for its contents.
+    """
+    t = _norm_ty(sol_type)
+    length = f"bytes({var}).length" if t == "string" else f"{var}.length"
+    expr = f"uint256({length})"
+    out = []
+    if int(lo) > 0:
+        out.append(f"    vm.assume({expr} >= {int(lo)});")
+    if int(hi) < UINT256_MAX:
+        out.append(f"    vm.assume({expr} <= {int(hi)});")
+    for hole in holes:
+        out.append(f"    vm.assume({expr} != {int(hole)});")
+    return out
+
+
 # ---- DID THIS PATH EXIT THROUGH A ROLLBACK REVERT? -------------------------
 #
 # The tool says so in the ladder run, in its own words:
@@ -10105,6 +10125,10 @@ def potential_rendered_widths_for_put(unit, params, emitted, case, region,
     for idx, (pname, ptype) in enumerate(params):
         if pname in region:
             width = rendered_width_for_region(pname, region, holes)
+        elif (f"{pname}.length" in region
+              and dynamic_calldata_signature_type(ptype)):
+            width = rendered_width_for_region(f"{pname}.length", region,
+                                              holes)
         elif idx in implicit_full:
             bounds = full_lift_bounds(ptype)
             if bounds is None:
@@ -10382,7 +10406,13 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
         dynamic_sig_ty = None
         lo = hi = None
         param_holes = []
-        if pname in region:
+        dynamic_length_name = f"{pname}.length"
+        if (dynamic_length_name in region
+                and dynamic_calldata_signature_type(ptype)):
+            dynamic_sig_ty = dynamic_calldata_signature_type(ptype)
+            lo, hi = region[dynamic_length_name]
+            param_holes = sorted(holes.get(dynamic_length_name, ()))
+        elif pname in region:
             lo, hi = region[pname]
             param_holes = sorted(holes.get(pname, ()))
         elif idx in implicit_full:
@@ -10428,11 +10458,17 @@ def build_put(contract, unit, enc, depth_, path_function, region, holes, pins,
             repl[idx] = var
             lifted.append(pname)
             dynamic_fuzz_coords.append(pname)
-            rendered_width[pname] = DYNAMIC_RENDERED_WIDTH
+            if dynamic_length_name in region:
+                rendered_width[pname] = rendered_width_for_region(
+                    dynamic_length_name, region, holes)
+                pre_lines += dynamic_length_assume_lines(
+                    var, ptype, lo, hi, param_holes)
+            else:
+                rendered_width[pname] = DYNAMIC_RENDERED_WIDTH
             notes.append(
                 f"coordinate `{pname}` has dynamic type `{ptype}`; it is "
-                "rendered as a calldata fuzz input but is not available as a "
-                "numeric R1/R2 endpoint")
+                "rendered as a calldata fuzz input; only its certified length "
+                "coordinate is constrained, and it is not an R1/R2 endpoint")
             continue
         lk = lift_kind(ptype)
         if lk is None:

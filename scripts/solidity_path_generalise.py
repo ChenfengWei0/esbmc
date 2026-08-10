@@ -3839,19 +3839,33 @@ def propose_slot_coords(maps, params, limit, dependencies=None, slot_accesses=No
     return cand, skipped
 
 
-def lowering_artifacts(coords, declared):
+def lowering_artifacts(coords, declared, param_types=None):
     """Struct-field coordinates the SOURCE never declared.
 
     Only `base.field` coordinates are considered, and only when the declared set
     is non-empty -- with nothing to compare against, everything would look
     undeclared and the whole coordinate list would vanish for a reason that has
     nothing to do with the contract.
+
+    A dynamic ABI parameter is a source-level aggregate whose ``length`` is a
+    real caller-controlled scalar.  ESBMC publishes that scalar as
+    ``param.length``; it is not a lowering artifact, even though ``length`` is
+    absent from Solidity's source struct declarations.
     """
+    param_types = dict(param_types or {})
     if not declared:
         return {}
     out = {}
     for c in coords:
         if "." not in c or c.startswith(("state.", "msg.", "tx.", "block.")):
+            continue
+        base, field = c.rsplit(".", 1)
+        param_type = str(param_types.get(base) or "").strip()
+        param_type = re.sub(r"\s+(?:memory|calldata|storage)$", "",
+                            param_type)
+        dynamic_param = (param_type in ("bytes", "string")
+                         or param_type.endswith("[]"))
+        if field == "length" and dynamic_param:
             continue
         field = c.rsplit(".", 1)[1]
         if field not in declared:
@@ -7915,7 +7929,8 @@ def main():
     # an input at all (padding), so it is DROPPED rather than pinned -- pinning
     # would print it beside the region as though it were part of the slice the
     # caller asked about, and it is not a quantity anything can ask about.
-    artifacts = lowering_artifacts(coords, declared_struct_fields(args.ast))
+    artifacts = lowering_artifacts(
+        coords, declared_struct_fields(args.ast), enumeration_param_types)
     if artifacts:
         coords = [c for c in coords if c not in artifacts]
         print("[coords] DROPPED as struct-lowering artifact(s), not source "
