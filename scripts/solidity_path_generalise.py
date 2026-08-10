@@ -785,6 +785,26 @@ def elementary_type_range(type_string):
     return None
 
 
+def unobserved_scalar_parameter_coords(params, observed, pins, env_names):
+    """Return scalar ABI parameters absent from a path counterexample.
+
+    ESBMC is allowed to slice a parameter that does not affect a path decision
+    (for example, an unconditional revert).  Such a parameter is still a
+    caller-controlled coordinate: omitting it would turn a universal region
+    into a concrete replay merely because the witness did not need to read it.
+    Aggregate and dynamic parameters remain outside this coordinate model and
+    are left for the existing refusal/materialisation paths.
+    """
+    observed = set(observed or ())
+    pins = set(pins or ())
+    env_names = set(env_names or ())
+    items = (params.items() if isinstance(params, dict) else (params or ()))
+    return sorted({name for name, type_string in items
+                   if name and name not in observed and name not in pins
+                   and name not in env_names
+                   and elementary_type_range(type_string) is not None})
+
+
 def bytes_static_value_from_ce(type_string, raw_value):
     """Return the raw uint value carried by a concrete bytesN CE aggregate."""
     n = bytes_static_len(type_string)
@@ -3604,8 +3624,21 @@ def unit_params(ast_path, contract, unit, declaration_id=None):
                     and (declaration_id is None
                          or n.get("id") == declaration_id)):
                 ps = ((n.get("parameters") or {}).get("parameters") or [])
-                found.append([(p.get("name"), _type_string(p))
-                              for p in ps if p.get("name")])
+                params = []
+                declared_names = {p.get("name") for p in ps if p.get("name")}
+                for ordinal, p in enumerate(ps):
+                    # The Solidity frontend gives omitted ABI parameters the
+                    # same reserved name as the symbol table. Keeping the AST
+                    # reader in lockstep is essential: otherwise ESBMC
+                    # publishes a parameter coordinate that Stage 2 cannot
+                    # resolve back to a source type and Stage 4 drops it.
+                    name = p.get("name") or f"omitted_param_{ordinal}"
+                    suffix = 0
+                    while name in declared_names:
+                        suffix += 1
+                        name = (f"omitted_param_{ordinal}_{suffix}")
+                    params.append((name, _type_string(p)))
+                found.append(params)
             for v in n.values():
                 walk(v)
         elif isinstance(n, list):
@@ -7756,6 +7789,24 @@ def main():
 
     coords = sorted({k for _, _, ce in paths for k in ce}
                     - set(pins) - set(env_names))
+
+    # A parameter that is unused by a path is normally absent from the CE
+    # payload because slicing has no backward edge from the path claim to its
+    # entry assignment.  It remains a caller-controlled input, however.  Add
+    # scalar ABI parameters from the AST/type table as full-domain coordinates
+    # so unconditional paths (notably deliberate revert-only methods) can be
+    # certified and rendered as PUTs instead of being forced into concrete
+    # fallback solely because the witness did not read the argument.
+    observed_payload_names = {k for _, _, ce in paths for k in ce}
+    unobserved_param_coords = unobserved_scalar_parameter_coords(
+        enumeration_param_types, observed_payload_names, pins, env_names)
+    if unobserved_param_coords:
+        coords = sorted(set(coords) | set(unobserved_param_coords))
+        print("[coords] ABI parameter(s) absent from the CE payload but kept "
+              "as full-domain scalar coordinates: "
+              + ", ".join(unobserved_param_coords)
+              + ". The path did not read these caller inputs; it did not prove "
+              "that they are fixed")
 
     # ---- Drop coordinates NO generated test can set ----
     #
