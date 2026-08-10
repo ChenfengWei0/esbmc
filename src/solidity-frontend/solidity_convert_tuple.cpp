@@ -401,9 +401,14 @@ bool solidity_convertert::get_tuple_function_ref(
     fn_def.contains("returnParameters"))
   {
     typet rt;
+    const auto &returns = fn_def["returnParameters"];
+    const bool has_multiple_returns =
+      returns.is_object() && returns.contains("parameters") &&
+      returns["parameters"].is_array() && returns["parameters"].size() > 1;
     if (
-      !get_type_description(fn_def["returnParameters"], rt) &&
-      get_sol_type(rt) == SolidityGrammar::SolType::TUPLE_RETURNS)
+      has_multiple_returns ||
+      (!get_type_description(returns, rt) &&
+       get_sol_type(rt) == SolidityGrammar::SolType::TUPLE_RETURNS))
     {
       exprt dump;
       if (!get_tuple_definition(fn_def) && !get_tuple_instance(fn_def, dump))
@@ -633,6 +638,14 @@ bool solidity_convertert::construct_tuple_assigments(
           convert_type_expr(ns, t_val, lop, empty_json);
           convert_type_expr(ns, f_val, lop, empty_json);
 
+          // Some Solidity address/contract and integer casts retain a
+          // frontend-specific type wrapper after conversion. if2t requires
+          // both branches to carry the exact declared LHS type.
+          if (t_val.type() != lop.type())
+            t_val = typecast_exprt(t_val, lop.type());
+          if (f_val.type() != lop.type())
+            f_val = typecast_exprt(f_val, lop.type());
+
           exprt ternary("if", lop.type());
           ternary.copy_to_operands(cond_expr, t_val, f_val);
 
@@ -648,6 +661,30 @@ bool solidity_convertert::construct_tuple_assigments(
     {
       if (get_tuple_function_ref((*rhs_call_json)["expression"], new_rhs))
       {
+        const auto &callee = (*rhs_call_json)["expression"];
+        const bool is_abi_decode =
+          callee.is_object() &&
+          callee.value("nodeType", "") == "MemberAccess" &&
+          callee.value("memberName", "") == "decode" &&
+          callee.contains("expression") &&
+          callee["expression"].is_object() &&
+          callee["expression"].value("name", "") == "abi";
+        if (is_abi_decode)
+        {
+          // abi.decode has no stateful callee to inline. Its decoded tuple
+          // is an unconstrained value at this frontend boundary, so keep the
+          // conversion sound by assigning an independent typed nondet value
+          // to each requested component instead of aborting the frontend.
+          for (const auto &lop : lhs.operands())
+          {
+            if (lop.is_nil())
+              continue;
+            exprt value;
+            get_solidity_nondet_value(lop.type(), lop.location(), value);
+            get_tuple_assignment(expr, lop, value);
+          }
+          return false;
+        }
         log_error("tuple assignment: cannot resolve RHS tuple function");
         return true;
       }
