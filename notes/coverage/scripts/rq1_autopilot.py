@@ -6,7 +6,7 @@ script owns everything that *can* be automated from the repository side:
 
 1. collect the current controller decision;
 2. write host-level spawn/close/start-worker actions to a durable queue;
-3. enforce the 10-active-subagent threshold as a hard gate;
+3. enforce the three-active-subagent threshold as a hard gate;
 4. print the Chinese status format only when tracked values change.
 
 The main agent must execute host actions from the queue in order and record the
@@ -31,6 +31,8 @@ AUTOCLOSE = HERE / "rq1_subagent_autoclose.py"
 ORCHESTRATOR = HERE / "rq1_subagent_orchestrator.py"
 REVIEW_INGEST = HERE / "rq1_review_ingest.py"
 COMPLETION_INGEST = HERE / "rq1_completion_ingest.py"
+MIN_ACTIVE = 3
+MAX_SPAWN = 3
 
 DEFAULT_HOST_ACTIONS = Path("/tmp/veriput_rq1_host_actions.jsonl")
 DEFAULT_AUTOPILOT_STATE = Path("/tmp/veriput_rq1_autopilot_state.json")
@@ -384,8 +386,8 @@ def main() -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     tick_cmd = sub.add_parser("tick")
-    tick_cmd.add_argument("--min-active", type=int, default=10)
-    tick_cmd.add_argument("--max-spawn", type=int, default=10)
+    tick_cmd.add_argument("--min-active", type=int, default=MIN_ACTIVE)
+    tick_cmd.add_argument("--max-spawn", type=int, default=MAX_SPAWN)
     tick_cmd.add_argument("--remote-host", default="invmut-w2")
     tick_cmd.add_argument("--apply-safe-actions", action="store_true")
 
