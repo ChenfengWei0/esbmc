@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """Versioned VeriPUT recipe fragments shared by POC and benchmark runners."""
 
-STRONG_RECIPE_VERSION = "veriput-strong/16-zero-interface-sender-arm"
-STRONG_PROBE_WITNESSES = 8
-STRONG_PUT_AUTO_UNWIND = 1
+STRONG_RECIPE_VERSION = "veriput-strong/27-proof-budgeted-r2"
+STRONG_PROBE_WITNESSES = 16
+STRONG_PROBE_LADDER_BUDGET = 8
+STRONG_MAX_HOLES = 3
+STRONG_MAX_REGION_PIECES = 4
+STRONG_SLOT_COORDS = 20
+STRONG_PUT_AUTO_UNWIND = 2
 STRONG_PUT_AUTO_PARTIAL_LOOPS = True
 STRONG_PUT_LIFT_UNCONSTRAINED_CALLDATA = True
 STRONG_PUT_R2_DEPTH = 1
-STRONG_PUT_R2_TERM_BUDGET = 96
-STRONG_PUT_R2_CANDIDATE_BUDGET = 128
-STRONG_PUT_FUZZ_RUNS = 256
-STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET = 128
+STRONG_PUT_R2_TERM_BUDGET = 256
+STRONG_PUT_R2_CANDIDATE_BUDGET = 512
+STRONG_PUT_FUZZ_RUNS = 64
+STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET = 96
+STRONG_PUT_FUZZ_R2_PREFILTER_TIMEOUT = 60
+STRONG_PUT_MIN_R2_ESBMC_BUDGET = 150
 
 STRONG_CERTIFY_ARGS = [
     "--recipe-version", STRONG_RECIPE_VERSION,
@@ -24,20 +30,22 @@ STRONG_CERTIFY_ARGS = [
     "--level0-perturb",
     "--probe-witnesses", str(STRONG_PROBE_WITNESSES),
     "--probe-ladder",
-    "--probe-ladder-budget", "4",
+    "--probe-ladder-budget", str(STRONG_PROBE_LADDER_BUDGET),
     "--skip-bracket",
     "--env-coord-disagreed",
     "--pin-agreed-establishable-env",
     "--pin-agreed-state",
-    "--max-holes", "1",
-    "--max-region-pieces", "1",
+    "--max-holes", str(STRONG_MAX_HOLES),
+    "--max-region-pieces", str(STRONG_MAX_REGION_PIECES),
     "--cut-policy", "spec",
     "--state-struct-fields",
-    "--slot-coords", "8",
+    "--slot-coords", str(STRONG_SLOT_COORDS),
     "--static-uncontrolled-inseparable",
     "--esbmc-arg=--overflow-check",
     "--esbmc-arg=--div-by-zero-check",
     "--esbmc-arg=--path-cov-arith-resolve",
+    "--esbmc-arg=--unwindsetname",
+    "--esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
 ]
 
 
@@ -74,4 +82,6 @@ def strong_put_args():
         "--fuzz-r2-prefilter",
         "--fuzz-runs", str(STRONG_PUT_FUZZ_RUNS),
         "--fuzz-r2-candidate-budget", str(STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET),
+        "--fuzz-r2-prefilter-timeout", str(STRONG_PUT_FUZZ_R2_PREFILTER_TIMEOUT),
+        "--min-r2-esbmc-budget", str(STRONG_PUT_MIN_R2_ESBMC_BUDGET),
     ]
