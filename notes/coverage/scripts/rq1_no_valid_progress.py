@@ -583,7 +583,8 @@ def subagent_patch_review_sets(subagents: dict) -> dict[str, set[str]]:
         patch_id = str(agent.get("patch_id") or "").strip()
         if not patch_id:
             continue
-        if agent.get("mode") == "write":
+        mode = str(agent.get("mode") or "write")
+        if mode != "readonly":
             review_status = str(agent.get("review_status") or "pending")
             if review_status == "accepted":
                 applied.add(patch_id)
@@ -602,7 +603,7 @@ def subagent_patch_review_sets(subagents: dict) -> dict[str, set[str]]:
 
 def applied_from_subagents(subagents: dict) -> set[str]:
     review_sets = subagent_patch_review_sets(subagents)
-    return review_sets["accepted"] | review_sets["provisional"]
+    return review_sets["accepted"]
 
 
 def merge_subagent_docs(primary: dict, extra: dict) -> dict:
@@ -1362,17 +1363,16 @@ def main() -> int:
     print(json.dumps({
         "accepted_patch_ids_counted_as_fully_integrated":
             sorted(review_sets["accepted"]),
-        "provisional_pending_review_patch_ids_counted_but_not_fully_integrated":
+        "provisional_pending_review_patch_ids_not_counted":
             sorted(review_sets["provisional"]),
         "rejected_or_needs_work_patch_ids_not_counted":
             sorted(review_sets["rejected"]),
         "rule": (
-            "completed write-mode patch_ids count toward provisional "
-            "theoretical coverage unless review_status is rejected or "
-            "needs-work. review_status=accepted marks the patch fully "
-            "integrated; pending-review patches must still be cross-reviewed "
-            "and may later be removed if review or worker feedback contradicts "
-            "the claim."),
+            "completed write-mode patch_ids count toward net theoretical "
+            "coverage only when review_status=accepted. Pending patch_ids are "
+            "reported as implemented/provisional but do not raise net N/204; "
+            "rejected/needs-work patch_ids are removed from both provisional "
+            "and fully-integrated counts."),
     }, indent=2, sort_keys=True))
     print(
         f"implemented_progress_provisional_gross={implemented_gross}/"
@@ -1382,8 +1382,8 @@ def main() -> int:
         f"{DENOMINATOR}")
     print(f"fully_integrated_progress_gross={covered_gross}/{DENOMINATOR}")
     print(f"fully_integrated_progress={covered}/{DENOMINATOR}")
-    print(f"theoretical_progress_gross={implemented_gross}/{DENOMINATOR}")
-    print(f"theoretical_progress={implemented_net}/{DENOMINATOR}")
+    print(f"theoretical_progress_gross={covered_gross}/{DENOMINATOR}")
+    print(f"theoretical_progress={covered}/{DENOMINATOR}")
     put_net = implemented_feedback["put_theoretical_progress_net"]
     put_gross = implemented_feedback["put_theoretical_progress_gross"]
     r1r2_net = implemented_feedback["r1r2_theoretical_progress_net"]
