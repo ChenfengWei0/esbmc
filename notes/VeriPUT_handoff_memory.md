@@ -26376,3 +26376,78 @@ Hard-coded implementation:
   queues before running the progress ledger and watchdog.
 - `notes/coverage/scripts/rq1_watchdog_status.py` reports pending review counts
   and the review dispatch queue.
+
+## v85 - Theory recovery dispatch and NOT_CERTIFIED CE fallback
+
+Current hard status observed by `rq1_mandatory_status.py`:
+
+- Countdown remaining: about 14.34 h from the persisted deadline.
+- Actual RQ1: 501 subjects, 309 valid, 263 PUT, 208 R1/R2.
+- Net no-valid theory: 0/204.  Provisional reviewed-minus-feedback value:
+  14/204.  Do not report the old 187/204 as credible theory progress.
+- Active subagents: 0/5.  This must trigger
+  `HARD_ALERT=ACTIVE_SUBAGENTS_BELOW_MIN`.
+- Running cases: local 3, remote 0.  Remote is not maximized.
+- Dispatch queue: 24 assignments, min target 12, 8 write owners, 16
+  readonly-root-cause slices.
+- Review queue: 11 assignments.  Pending review patches must not count toward
+  net theory.
+
+New hard constraints:
+
+- A failure/weak worker result must trigger repair dispatch immediately; do not
+  wait for a worker batch to finish.
+- If active subagents are below 5, every status report must print the hard
+  alert and the missing count.
+- Theory recovery dispatch must expose at least 10 assignments when enough
+  weak/no-valid cases exist.
+- Multiple agents must not write the same files concurrently.  The first
+  exact write scope is `mode=write`; duplicate scopes are
+  `mode=readonly_root_cause` and may only return findings/patch plans.
+- Subagent quality is not trusted by default.  Pending review keeps theory at
+  zero unless an independent review accepts the patch id.
+
+Hard-coded implementation:
+
+- `notes/coverage/scripts/rq1_repair_dispatcher.py` splits assignments by
+  scope, category, failure family, dataset band, and shard.  It reports
+  `assignment_count`, `min_assignment_target`, `write_owner_count`, and
+  `readonly_root_cause_count`.
+- `notes/coverage/scripts/rq1_watchdog_status.py` includes dispatch min target,
+  write-owner/read-only counts, below-min assignment status, and review pending
+  status.
+- `notes/coverage/scripts/rq1_mandatory_status.py` prints those dispatch fields
+  and per-assignment `mode` in the fixed report.
+- `notes/coverage/scripts/certify_all.py` now marks NOT_CERTIFIED rows that
+  already contain a usable counterexample as `concrete_fallback=true` for
+  Stage4 replay only.  This does not promote them to CERTIFIED and does not
+  claim PUT/R1/R2; Foundry replay remains the double oracle.
+
+## v86 - Patch review debt and strength derivation
+
+Current fixed-report status, 2026-08-10T20:29:24+08:00:
+
+- Countdown remaining: about 14.34 h.
+- Actual RQ1 from the hard status script: 501 subjects, 309 valid, 263 PUT,
+  208 R1/R2.
+- Net no-valid theory remains 0/204.  Provisional after feedback/review gate
+  is 14/204.  Old 187/204 claims are invalid unless re-reviewed and accepted.
+- Active subagents are reported as 0/5 by the watchdog ledger, so every report
+  must include the below-min hard alert.  This session currently has no callable
+  spawn/close/wait subagent tool; do not claim agents were actually spawned.
+- Running cases are local=3, remote=0.  Remote is not maximized.
+- Repair dispatch has 24 assignments.  Review dispatch has 11 assignments.
+
+Hard-coded implementation:
+
+- Added `notes/coverage/scripts/rq1_patch_review_summary.py`: read-only summary
+  of accepted/pending/needs-work/rejected patch ids.  Mandatory status prints
+  these counts and refuses to count non-accepted write-mode patches as net
+  theory.
+- `notes/coverage/scripts/rq1_repair_dispatcher.py` recognizes
+  `ORACLE_ACCOUNTING_METADATA_LOST` when `valid_tests` already contain valid
+  PUT R1/R2 assertions but aggregate fields lost that metadata.  Those cases
+  route to `rq1_veriput_run.py`, `put_all.py`, and `rq1_results_adopt.py`.
+- `notes/coverage/scripts/rq1_no_valid_progress.py` derives valid/PUT/R1R2
+  strength from `valid_tests` when aggregate counters are missing, avoiding
+  false no-R1/R2 debt caused only by summary metadata loss.
