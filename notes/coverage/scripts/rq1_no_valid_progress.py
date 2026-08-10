@@ -28,6 +28,7 @@ DEFAULT_SUBAGENTS = Path("/tmp/veriput_rq1_subagents.json")
 DEFAULT_EXTRA_SUBAGENTS = Path("/tmp/veriput_rq1_extra_subagents.json")
 DEFAULT_REMOTE_STATE = Path("/tmp/veriput_rq1_remote_state.json")
 DEFAULT_LOCAL_STATE = Path("/tmp/veriput_rq1_local_state.json")
+DEFAULT_REPAIR_TICKETS = Path("/tmp/veriput_rq1_repair_tickets.jsonl")
 DEFAULT_RESULTS_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 DEFAULT_PEER_DATASET_ROOT = Path(
     "/home/samson/workspace/VeriPUT/Datasets/Peer-Reviewed-Contracts")
@@ -66,6 +67,10 @@ HARD_REQUIREMENTS = (
     "review must inspect overlapping call paths and adjacent patch diffs, "
     "report conflicts or soundness risks, and either accept the theoretical "
     "coverage claim or leave the patch in pending-review status.",
+    "Theoretical coverage is provisional.  Worker validation feedback may "
+    "subtract covered subjects back out when a covered category still produces "
+    "no valid test, no PUT, or no R1/R2.  Progress reports must show both gross "
+    "and net theoretical counts.",
 )
 
 RESOURCE_PLAN = (
@@ -360,6 +365,30 @@ def load_counts(tsv_path: Path) -> Counter[str]:
             if category:
                 counts[category] += 1
     return counts
+
+
+def load_root_cause_index(tsv_path: Path) -> dict[tuple[str, str], dict]:
+    index: dict[tuple[str, str], dict] = {}
+    try:
+        stream = tsv_path.open(newline="")
+    except OSError:
+        return index
+    with stream:
+        reader = csv.DictReader(stream, delimiter="\t")
+        for row in reader:
+            bench = (row.get("bench") or row.get("dataset") or "").strip()
+            subject = (row.get("subject") or "").strip()
+            if not bench or not subject:
+                continue
+            index[(bench, subject)] = {
+                "bench": bench,
+                "subject": subject,
+                "category": (row.get("category") or "").strip(),
+                "fix_target": (row.get("fix_target") or "").strip(),
+                "subject_dir": (row.get("subject_dir") or row.get("path")
+                                or "").strip(),
+            }
+    return index
 
 
 def _utc(ts: float) -> str:
@@ -941,6 +970,237 @@ def patch_coverage(
     return min(covered, DENOMINATOR), sorted(covered_categories), details
 
 
+def _read_jsonl(path: Path) -> list[dict]:
+    rows = []
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return rows
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _as_int(obj: dict, key: str) -> int:
+    try:
+        return int(obj.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _canonical_validation_feedback_rows(
+    results_root: Path,
+    root_cause_index: dict[tuple[str, str], dict],
+) -> list[dict]:
+    rows: list[dict] = []
+    seen: dict[tuple[str, str], Path] = {}
+    for result in sorted(results_root.glob("*/subjects/*/result.json")):
+        if is_historical_result_path(result):
+            continue
+        try:
+            rel_parts = result.relative_to(results_root).parts
+        except ValueError:
+            continue
+        if len(rel_parts) < 4 or rel_parts[1] != "subjects":
+            continue
+        bench, subject = rel_parts[0], rel_parts[2]
+        key = (bench, subject)
+        previous = seen.get(key)
+        if previous is not None:
+            try:
+                if result.stat().st_mtime <= previous.stat().st_mtime:
+                    continue
+            except OSError:
+                continue
+        seen[key] = result
+    for (bench, subject), result in sorted(seen.items()):
+        try:
+            doc = json.loads(result.read_text(errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        row = doc.get("row") if isinstance(doc.get("row"), dict) else doc
+        put_doc = doc.get("put") if isinstance(doc.get("put"), dict) else {}
+        if not isinstance(row, dict):
+            continue
+        valid = max(_as_int(row, "valid"), _as_int(put_doc, "valid"))
+        put_valid = max(_as_int(row, "put_valid"), _as_int(put_doc, "put_valid"))
+        r1r2 = max(
+            _as_int(row, "valid_put_with_R1_or_R2"),
+            _as_int(put_doc, "valid_put_with_R1_or_R2"),
+        )
+        if valid > 0 and put_valid > 0 and r1r2 > 0:
+            continue
+        original = root_cause_index.get((bench, subject), {})
+        if valid <= 0:
+            category = "NO_VALID_AFTER_RUN"
+        elif put_valid <= 0:
+            category = "NO_PUT_MATERIALIZATION"
+        else:
+            category = "NO_R1R2_ORACLE"
+        rows.append({
+            "bench": bench,
+            "subject": subject,
+            "category": category,
+            "original_category": original.get("category"),
+            "root_cause_category": original.get("category"),
+            "result_file": str(result),
+            "subject_dir": str(result.parent),
+            "valid": valid,
+            "put_valid": put_valid,
+            "r1r2": r1r2,
+            "source": "canonical_result",
+        })
+    return rows
+
+
+def validation_feedback(
+    repair_tickets: Path,
+    results_root: Path,
+    root_cause_index: dict[tuple[str, str], dict],
+    covered_categories: set[str],
+    applied: set[str],
+    actual: dict,
+) -> dict:
+    """Return later worker/canonical results that invalidate repair claims."""
+    covered_micro_categories = {
+        category for patch_id, category in FIXED_MICRO_PATCH_CATEGORIES.items()
+        if patch_id in applied and category
+    }
+    claim_categories = set(covered_categories) | covered_micro_categories
+    rows = _read_jsonl(repair_tickets)
+    for row in rows:
+        bench = str(row.get("bench") or "")
+        subject = str(row.get("subject") or "")
+        original = root_cause_index.get((bench, subject), {})
+        if original and not row.get("original_category"):
+            row["original_category"] = original.get("category")
+            row["root_cause_category"] = original.get("category")
+        row.setdefault("source", "repair_ticket")
+    rows.extend(_canonical_validation_feedback_rows(results_root,
+                                                    root_cause_index))
+    no_valid: dict[tuple[str, str], dict] = {}
+    no_put: dict[tuple[str, str], dict] = {}
+    no_r1r2: dict[tuple[str, str], dict] = {}
+    for row in rows:
+        actual_category = str(row.get("category") or "")
+        original_category = str(row.get("original_category")
+                                or row.get("root_cause_category") or "")
+        result_bucket = str(row.get("result_bucket") or "")
+        claim_category = next(
+            (category for category in (
+                original_category,
+                result_bucket,
+                actual_category,
+            ) if category in claim_categories),
+            "",
+        )
+        bench = str(row.get("bench") or "")
+        subject = str(row.get("subject") or "")
+        if not bench or not subject:
+            continue
+        key = (bench, subject)
+        valid = int(row.get("valid") or 0)
+        put_valid = int(row.get("put_valid") or 0)
+        r1r2 = int(row.get("r1r2") or 0)
+        item = {
+            "bench": bench,
+            "subject": subject,
+            "category": actual_category,
+            "claim_category": claim_category,
+            "original_category": original_category,
+            "result_bucket": row.get("result_bucket"),
+            "trigger_reason": row.get("trigger_reason"),
+            "source": row.get("source"),
+            "result_file": row.get("result_file"),
+            "suggested_write_scope": row.get("suggested_write_scope") or [],
+            "ts": row.get("ts"),
+        }
+        if not valid and claim_category:
+            no_valid[key] = item
+        elif not put_valid:
+            no_put[key] = item
+        elif not r1r2:
+            no_r1r2[key] = item
+    invalidated = sorted(no_valid.values(),
+                         key=lambda item: (item["bench"], item["subject"]))
+    valid_cases = int(actual.get("valid_cases") or 0)
+    put_cases = int(actual.get("put_cases") or 0)
+    r1r2_cases = int(actual.get("r1r2_cases") or 0)
+    actual_no_put = max(0, valid_cases - put_cases)
+    actual_no_r1r2 = max(0, valid_cases - r1r2_cases)
+    quality_patch_ids = {
+        "a12-stage4-put-materialization-accounting",
+        "a13-r1-oracle-ladder-strengthening",
+        "a14-r2-ladder-fuzz-refute",
+        "a28-put-r1r2-quality",
+    }
+    quality_claimed = bool(applied & quality_patch_ids)
+    put_gross = valid_cases if quality_claimed else put_cases
+    r1r2_gross = valid_cases if quality_claimed else r1r2_cases
+    put_subtracted = actual_no_put if quality_claimed else 0
+    r1r2_subtracted = actual_no_r1r2 if quality_claimed else 0
+    return {
+        "repair_tickets": str(repair_tickets),
+        "results_root": str(results_root),
+        "claim_categories": sorted(claim_categories),
+        "no_valid_invalidated_count": len(invalidated),
+        "no_put_quality_debt_count": len(no_put),
+        "no_r1r2_quality_debt_count": len(no_r1r2),
+        "actual_valid_no_put_count": actual_no_put,
+        "actual_valid_no_r1r2_count": actual_no_r1r2,
+        "quality_patch_claimed": quality_claimed,
+        "quality_patch_ids_applied": sorted(applied & quality_patch_ids),
+        "put_theoretical_progress_gross": {
+            "numerator": put_gross,
+            "denominator": valid_cases,
+            "rule": (
+                "If a PUT quality patch is applied, gross assumes valid "
+                "subjects should be promotable to PUT until canonical results "
+                "contradict it."),
+        },
+        "put_theoretical_progress_net": {
+            "numerator": max(0, put_gross - put_subtracted),
+            "denominator": valid_cases,
+            "subtracted_by_actual_valid_no_put": put_subtracted,
+        },
+        "r1r2_theoretical_progress_gross": {
+            "numerator": r1r2_gross,
+            "denominator": valid_cases,
+            "rule": (
+                "If an R1/R2 quality patch is applied, gross assumes valid "
+                "subjects should be promotable to R1/R2 until canonical "
+                "results contradict it."),
+        },
+        "r1r2_theoretical_progress_net": {
+            "numerator": max(0, r1r2_gross - r1r2_subtracted),
+            "denominator": valid_cases,
+            "subtracted_by_actual_valid_no_r1r2": r1r2_subtracted,
+        },
+        "invalidated_subjects": invalidated[:80],
+        "quality_debt_examples": {
+            "no_put": sorted(no_put.values(),
+                             key=lambda item: (item["bench"], item["subject"]))[:40],
+            "no_r1r2": sorted(no_r1r2.values(),
+                              key=lambda item: (item["bench"], item["subject"]))[:40],
+        },
+        "rule": (
+            "Each unique covered-category subject with a later no-valid repair "
+            "ticket subtracts one from theoretical_progress until a later code "
+            "patch or validation run clears it. Canonical valid-but-no-PUT "
+            "and PUT-but-no-R1/R2 results subtract from PUT/R1R2 theoretical "
+            "quality progress immediately, so quality progress is allowed to "
+            "decrease when worker output contradicts a prior claim."),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--tsv", type=Path, default=DEFAULT_TSV)
@@ -954,6 +1214,9 @@ def main() -> int:
     parser.add_argument("--remote-state", type=Path,
                         default=DEFAULT_REMOTE_STATE)
     parser.add_argument("--local-state", type=Path, default=DEFAULT_LOCAL_STATE)
+    parser.add_argument("--repair-tickets",
+                        type=Path,
+                        default=DEFAULT_REPAIR_TICKETS)
     parser.add_argument("--remote-host", default=DEFAULT_REMOTE_HOST)
     parser.add_argument("--results-root", type=Path,
                         default=DEFAULT_RESULTS_ROOT)
@@ -1014,8 +1277,14 @@ def main() -> int:
     row_total = sum(counts.values())
     applied = {item.strip() for item in args.applied.split(",") if item.strip()}
     applied.update(applied_from_subagents(subagents))
-    covered, covered_categories, coverage_details = patch_coverage(
+    covered_gross, covered_categories, coverage_details = patch_coverage(
         counts, applied)
+    feedback = validation_feedback(args.repair_tickets, set(covered_categories),
+                                   applied, actual)
+    covered = max(
+        0,
+        covered_gross - int(feedback.get("no_valid_invalidated_count") or 0),
+    )
     schedule = schedule_status(countdown, applied)
 
     print(f"denominator={DENOMINATOR}")
@@ -1023,9 +1292,28 @@ def main() -> int:
     if row_total != DENOMINATOR:
         print(f"row_denominator_delta={row_total - DENOMINATOR}")
     print(f"applied_patch_ids={','.join(sorted(applied)) or '<none>'}")
+    print(f"theoretical_progress_gross={covered_gross}/{DENOMINATOR}")
     print(f"theoretical_progress={covered}/{DENOMINATOR}")
+    put_net = feedback["put_theoretical_progress_net"]
+    put_gross = feedback["put_theoretical_progress_gross"]
+    r1r2_net = feedback["r1r2_theoretical_progress_net"]
+    r1r2_gross = feedback["r1r2_theoretical_progress_gross"]
+    print(
+        "put_theoretical_progress_gross="
+        f"{put_gross['numerator']}/{put_gross['denominator']}")
+    print(
+        "put_theoretical_progress="
+        f"{put_net['numerator']}/{put_net['denominator']}")
+    print(
+        "r1r2_theoretical_progress_gross="
+        f"{r1r2_gross['numerator']}/{r1r2_gross['denominator']}")
+    print(
+        "r1r2_theoretical_progress="
+        f"{r1r2_net['numerator']}/{r1r2_net['denominator']}")
     print("theoretical_progress_details:")
     print(json.dumps(coverage_details, indent=2, sort_keys=True))
+    print("validation_feedback:")
+    print(json.dumps(feedback, indent=2, sort_keys=True))
     print("resource_maximization:")
     print(json.dumps(resources, indent=2, sort_keys=True))
     print("countdown:")

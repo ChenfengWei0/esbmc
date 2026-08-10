@@ -8,6 +8,59 @@ the existing run artefacts. It is not an experiment result and must not be used
 as one. The user explicitly requested this file, overriding the older work-order
 rule against creating new Markdown files.
 
+## v69 - 2026-08-10 CST - hard autonomous RQ1 control loop
+
+Current hard operating mode:
+
+- Every user-facing progress report must come from
+  `python3 notes/coverage/scripts/rq1_mandatory_status.py` or explicitly quote
+  its latest output.
+- The report must include no-valid theoretical progress, PUT theoretical
+  quality progress, R1/R2 theoretical quality progress, actual RQ1
+  valid/PUT/R1R2 counts, worker progress, countdown, local memory, remote
+  memory, subagent state, and whether resources are truly maximized.
+- Theoretical progress is non-monotonic.  Later worker results can subtract
+  covered subjects from no-valid theoretical progress, and canonical
+  valid-no-PUT / PUT-no-R1/R2 results subtract from PUT/R1R2 theoretical
+  quality progress.
+- `rq1_repair_dispatcher.py` is the hard source of autonomous repair
+  assignments.  If it emits assignments, the main agent must dispatch subagents
+  through the available tool layer.  If no spawn tool is visible, the watchdog
+  must report that blocker instead of pretending the assignment was sent.
+- Write-mode subagent patches require independent cross-review before being
+  treated as fully integrated.  The review must inspect adjacent patches,
+  shared call paths, soundness risks, and the progress-ledger claim.
+- Worker results below valid PUT/R1/R2 are not terminal success: no-valid,
+  valid-no-PUT, PUT-no-R1/R2, OOM, timeout, and schema/artifact bugs must stay
+  in the repair dispatch loop.
+
+Code enforcing this mode:
+
+- `notes/coverage/scripts/rq1_no_valid_progress.py`
+  - prints `put_theoretical_progress[_gross]` and
+    `r1r2_theoretical_progress[_gross]`;
+  - subtracts canonical quality debt from PUT/R1/R2 theoretical quality
+    progress;
+  - keeps no-valid theoretical progress net of later repair tickets.
+- `notes/coverage/scripts/rq1_watchdog_status.py`
+  - reports local/remote worker progress and RSS;
+  - reports dispatcher assignments and the explicit blocker when subagent spawn
+    is not callable from shell/Python.
+- `notes/coverage/scripts/rq1_subagent_prompt_rules.md`
+  - requires failure-artifact inspection, owning-source inspection, exclusive
+    write scopes, independent cross-review, and non-monotonic ledger updates.
+
+Current hard status snapshot at the time this entry was written:
+
+- no-valid theoretical progress: `187/204`.
+- actual RQ1: `306/500 valid`, `262 PUT`, `185 R1/R2`.
+- PUT among valid: about `85.6%`; R1/R2 among valid: about `60.5%`.
+- Local and remote RQ1 workers were both live; local available memory was about
+  `36 GiB`, remote about `18 GiB`.
+- Dispatcher had at least two assignments queued:
+  `PUT_ORACLE_QUALITY` and `CERTIFIER`.
+  They must not be silently ignored after compaction.
+
 ## v67 - 2026-08-10 CST - current no-run repair boundary
 
 Hard constraint still active:
@@ -26185,3 +26238,69 @@ Hard-coded implementation:
   write-mode agents as `review_status: pending`, reports
   `completed_write_agents_without_accepted_review` in the watchdog output, and
   provides a `review` command to record `accepted`, `rejected`, or `needs-work`.
+
+## v80 - Non-monotonic theory and worker progress watchdog
+
+New hard constraint:
+
+- Theoretical repair progress is provisional and must move both up and down.
+- `theoretical_progress_gross` records patch-claimed coverage.
+- Net `theoretical_progress` subtracts covered-category subjects that later
+  produce worker repair tickets with `valid=0`.
+- valid-but-no-PUT and PUT-but-no-R1/R2 are tracked as quality debt and must
+  drive further repair; they do not count as no-valid coverage failures.
+- Progress reports must include current worker progress, not only aggregate RQ1
+  totals.
+
+Hard-coded implementation:
+
+- `notes/coverage/scripts/rq1_no_valid_progress.py` now reads
+  `/tmp/veriput_rq1_repair_tickets.jsonl`, prints
+  `theoretical_progress_gross`, net `theoretical_progress`, and
+  `validation_feedback`.
+- `notes/coverage/scripts/rq1_watchdog_status.py` now reports tails for local
+  progress files and recent repair tickets.
+- `notes/coverage/scripts/rq1_local_pump.py` now records that repair tickets
+  can subtract from net theory when covered-category reruns still fail.
+
+## v81 - Autonomous repair dispatcher
+
+New hard constraint:
+
+- Any no-valid, valid-but-no-PUT, PUT-but-no-R1/R2, or artifact/schema anomaly
+  must feed an autonomous repair assignment.
+- The main agent must run `notes/coverage/scripts/rq1_repair_dispatcher.py`
+  after worker results or repair tickets, then spawn/reuse subagents for emitted
+  assignments.
+- If subagent spawning is blocked by capacity, completed agents must be closed
+  first and the capacity blocker must be reported.  The main agent must not
+  manually serialize all repair work while assignments exist.
+
+Hard-coded implementation:
+
+- Added `notes/coverage/scripts/rq1_repair_dispatcher.py`.
+  It reads `/tmp/veriput_rq1_repair_tickets.jsonl` plus canonical RQ1 results,
+  groups failures/weak-valid rows by owning write scope, and writes
+  `/tmp/veriput_rq1_dispatch_queue.json` with exact subagent prompts.
+- `notes/coverage/scripts/rq1_watchdog_status.py` reports the dispatch queue
+  assignment count and assignment summaries.
+- `notes/coverage/scripts/rq1_subagent_prompt_rules.md` includes the autonomous
+  dispatch requirement.
+
+## v82 - Subagent autoclose rule
+
+New hard constraint:
+
+- Completed subagents must be closed promptly and acknowledged in a durable
+  state file.  The agent must not wait until spawning fails with a thread-limit
+  error.
+
+Hard-coded implementation:
+
+- Added `notes/coverage/scripts/rq1_subagent_autoclose.py`.
+  It reports completed agents that still need `close_agent`, and records closed
+  ids after `ack --agent-id`.
+- `notes/coverage/scripts/rq1_watchdog_status.py` now reports
+  `subagent_autoclose.pending_close_count`.
+- `notes/coverage/scripts/rq1_subagent_prompt_rules.md` includes the close/ack
+  requirement.
