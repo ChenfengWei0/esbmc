@@ -6288,6 +6288,24 @@ def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins,
               esbmc_args=esbmc_args, result_only=not want_property)
     _wall = time.time() - _t0
     v = verdict(log)
+    if v in ("UNKNOWN", "UNDECIDED_TRUNCATED"):
+        # Keep the complete tool output for failed certification attempts. A
+        # generic exit code is not enough to distinguish an ESBMC frontend
+        # abort, solver failure, and a resource termination.
+        diagnostic_path = os.path.join(cwd, f"singlepoint_enc{enc}_unknown.log")
+        try:
+            with open(diagnostic_path, "w", encoding="utf-8") as stream:
+                stream.write(log)
+        except OSError as exc:
+            print(f"[certify] could not persist UNKNOWN log for enc={enc}: "
+                  f"{exc}")
+        error_lines = [
+            line.strip() for line in log.splitlines()
+            if line.lstrip().startswith("ERROR:")
+        ]
+        if error_lines:
+            print(f"[certify] enc={enc} diagnostic: "
+                  + " | ".join(error_lines[-3:]))
     write_generalise_progress(
         cwd, "certify-query-finished",
         enc=enc,
