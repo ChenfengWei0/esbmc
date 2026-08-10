@@ -1324,19 +1324,27 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                 index(child)
 
     index(ast)
-    scopes = []
+    state_scopes = []
+    definition_scopes = []
     if owner is not None:
         chain = owner.get("linearizedBaseContracts") or [owner.get("id")]
-        scopes = [by_id[c] for c in reversed(chain) if c in by_id]
-    if not scopes:
-        scopes = [ast]
+        # State layout remains inheritance-aware because the target's own
+        # function can read or write inherited storage.  Function and
+        # modifier discovery is deliberately target-owned only: inherited
+        # declarations are not separate target units for VeriPUT.
+        state_scopes = [by_id[c] for c in reversed(chain) if c in by_id]
+        definition_scopes = [owner]
+    if not state_scopes:
+        state_scopes = [ast]
+    if not definition_scopes:
+        definition_scopes = [ast]
     state_ids = {}
     constant_ids = {}
     enum_member_ids = {}
     function_nodes = []
     function_by_id = {}
     modifier_by_id = {}
-    for scope in scopes:
+    for scope in state_scopes:
         for n in (scope.get("nodes") or []):
             if (isinstance(n, dict) and
                     n.get("nodeType") == "VariableDeclaration" and
@@ -1370,6 +1378,8 @@ def source_assignment_r2_specs(ast_path, contract, unit, params, layout,
                                  else str(ordinal))
                         enum_member_ids[member["id"]] = (
                             enum_types, ordinal, label)
+    for scope in definition_scopes:
+        for n in (scope.get("nodes") or []):
             if (isinstance(n, dict) and
                     n.get("nodeType") == "FunctionDefinition"):
                 function_nodes.append(n)
@@ -6175,13 +6185,12 @@ def _decl_list(node, key):
 
 
 def _function_defs(ast_path, contract, unit):
-    """The FunctionDefinition nodes named `unit` visible in `contract`,
-    BASE-FIRST, so the LAST one is the most-derived declaration.
+    """The target contract's own FunctionDefinition nodes named ``unit``.
 
-    INHERITANCE IS NOT OPTIONAL: a unit of the contract under test is
-    routinely DECLARED on a base (`BaseEscrow.rescueFunds` under
-    `--contract EscrowSrc`).  The C3 linearisation is walked in reverse so the
-    most-derived declaration wins, exactly as the compiler resolves it.
+    A flattened source contains inherited declarations and unrelated helper
+    contracts.  VeriPUT evaluates the metadata-selected target declaration,
+    so inherited declarations must not be promoted to target units.  The
+    target contract's own override is therefore the only declaration returned.
     """
     ast = _load_ast(ast_path)
     by_id, target = {}, None
@@ -6201,12 +6210,7 @@ def _function_defs(ast_path, contract, unit):
                 index(v)
 
     index(ast)
-    scopes = []
-    if target is not None:
-        chain = target.get("linearizedBaseContracts") or [target.get("id")]
-        scopes = [by_id[c] for c in reversed(chain) if c in by_id]
-    if not scopes:
-        scopes = [ast]
+    scopes = [target] if target is not None else [ast]
 
     defs = []
     for sc in scopes:
@@ -6238,8 +6242,7 @@ def _visible_contract_scopes(ast_path, contract):
     index(ast)
     if target is None:
         return [ast]
-    chain = target.get("linearizedBaseContracts") or [target.get("id")]
-    return [by_id[c] for c in reversed(chain) if c in by_id]
+    return [target]
 
 
 def _public_state_getter_decl(ast_path, contract, unit):

@@ -2821,14 +2821,10 @@ def function_mutability(ast_path, contract=None):
         return out
 
     if contract:
-        # Every ContractDefinition by AST id, so the linearisation can be
-        # followed. INHERITANCE IS NOT OPTIONAL HERE: a unit of the contract
-        # under test is routinely DECLARED on a base -- `BaseEscrow.rescueFunds`
-        # is measured under `--contract EscrowSrc`, and the round-trip's unit
-        # list names it that way. Reading only the named contract's own
-        # functions would report those units as "mutability could not be read"
-        # and lose the pin on them, which is the same yield loss by a different
-        # route.
+        # Every ContractDefinition by AST id is indexed so the selected target
+        # can be resolved without colliding with same-named declarations in the
+        # flattened file.  Inherited declarations are not target units in this
+        # evaluation and must not supply mutability for a target declaration.
         by_id, target = {}, None
 
         def index(node):
@@ -2847,17 +2843,9 @@ def function_mutability(ast_path, contract=None):
 
         index(ast)
         if target is not None:
-            # `linearizedBaseContracts` is most-derived first, so walk it in
-            # REVERSE and let the most-derived declaration overwrite -- C3
-            # linearisation, which is what the compiler resolves an override to.
-            chain = target.get("linearizedBaseContracts") or [target.get("id")]
             out = {}
-            for cid in reversed(chain):
-                node = by_id.get(cid)
-                if node is not None:
-                    collect(node, out)
-            if out:
-                return out
+            collect(target, out)
+            return out
         # Fall through to the whole-AST read; the caller reports that it did.
     return collect(ast, {})
 
@@ -3598,8 +3586,14 @@ def unit_params(ast_path, contract, unit, declaration_id=None):
     ast = _ast_root(ast_path)
     if ast is None:
         return []
-    nodes = _chain_nodes(ast, contract) if contract else None
-    if nodes is None:
+    if contract:
+        target = next(
+            (node for node in _walk_ast(ast)
+             if node.get("nodeType") == "ContractDefinition"
+             and node.get("name") == contract),
+            None)
+        nodes = [target] if target is not None else [ast]
+    else:
         nodes = [ast]
     found = []
 
@@ -3620,8 +3614,9 @@ def unit_params(ast_path, contract, unit, declaration_id=None):
 
     for node in nodes:
         walk(node)
-    # Most-derived last, because `_chain_nodes` walks base-first and an override
-    # is what the compiler resolves the call to.
+    # The target-only unit schedule prevents inherited declarations from being
+    # passed here.  Keep the last-match behavior for callers that provide an
+    # explicit declaration id or a legacy whole-AST input.
     return found[-1] if found else []
 
 

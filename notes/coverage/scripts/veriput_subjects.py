@@ -704,11 +704,12 @@ def _classify_no_unit_reason(skipped: list[dict]) -> str:
 def enumerate_subject_units(subject: PreparedSubject) -> UnitEnumeration:
     """Named public/external function units for the target contract.
 
-    The result is target-contract scoped and includes inherited callable
-    functions through Solidity's `linearizedBaseContracts`.  Public state
-    variable getters are reported as skipped rather than invented from source
-    text; they are ABI entry points but not `--focus-function` names backed by
-    a FunctionDefinition in the AST.
+    The result is strictly scoped to declarations owned by the target
+    contract.  Inherited declarations belong to the base contract and are not
+    separate target units for this evaluation.  Public state variable getters
+    are reported as skipped rather than invented from source text; they are
+    ABI entry points but not `--focus-function` names backed by a
+    FunctionDefinition in the AST.
     """
     ast_path = Path(subject.solast)
     if not ast_path.exists():
@@ -735,7 +736,10 @@ def enumerate_subject_units(subject: PreparedSubject) -> UnitEnumeration:
             f"{ast_path}: matching AST ids {ids}")
     target = target_matches[0]
 
-    ordered_ids = target.get("linearizedBaseContracts") or [target.get("id")]
+    # The flattened AST contains the complete inheritance graph.  The target
+    # contract is the evaluation unit, so do not silently turn inherited
+    # declarations into target units or instrument their modifiers.
+    ordered_ids = [target.get("id")]
     units = []
     unit_info = []
     seen_signatures = set()
