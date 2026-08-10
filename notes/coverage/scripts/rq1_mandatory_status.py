@@ -28,6 +28,7 @@ DISPATCH_QUEUE = Path("/tmp/veriput_rq1_dispatch_queue.json")
 PATCH_REVIEW_SUMMARY = HERE / "rq1_patch_review_summary.py"
 MIN_PENDING_REPAIR_ASSIGNMENTS = 10
 RESULTS_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
+STATUS_DELTA_CACHE = Path("/tmp/veriput_rq1_mandatory_status_snapshot.json")
 
 SUMMARY_KEYS = (
     "implemented_progress_provisional_gross",
@@ -753,6 +754,121 @@ def _print_report_completeness(ledger_stdout: str,
             f"missing={','.join(missing)}")
 
 
+def _status_snapshot(ledger_stdout: str, watchdog_stdout: str) -> dict:
+    snapshot = _required_field_snapshot(ledger_stdout, watchdog_stdout)
+    feedback = _extract_json_section(ledger_stdout,
+                                     "theoretical_validation_feedback")
+    try:
+        watchdog = json.loads(watchdog_stdout)
+    except json.JSONDecodeError:
+        watchdog = {}
+    dispatch = _json_file(DISPATCH_QUEUE)
+    review_proc = subprocess.run(
+        [sys.executable, str(PATCH_REVIEW_SUMMARY)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    try:
+        review = json.loads(review_proc.stdout) if review_proc.returncode == 0 else {}
+    except json.JSONDecodeError:
+        review = {}
+    counts = review.get("counts") if isinstance(review.get("counts"), dict) else {}
+    snapshot.update({
+        "actual_no_valid_cases": _extract_json_section(
+            ledger_stdout, "actual_rq1_progress").get("no_valid_cases"),
+        "no_valid_invalidated":
+            feedback.get("no_valid_invalidated_count"),
+        "no_put_quality_debt":
+            feedback.get("no_put_quality_debt_count"),
+        "no_r1r2_quality_debt":
+            feedback.get("no_r1r2_quality_debt_count"),
+        "repair_assignment_count":
+            dispatch.get("assignment_count") or len(dispatch.get("assignments") or []),
+        "review_pending": counts.get("pending"),
+        "review_accepted": counts.get("accepted"),
+        "review_needs_work": counts.get("needs-work"),
+        "review_rejected": counts.get("rejected"),
+    })
+    local_running, remote_running, recent_done, recent_failed, recent_oom = \
+        _worker_counts(watchdog)
+    snapshot.update({
+        "local_running_case_count": local_running,
+        "remote_running_case_count": remote_running,
+        "recent_done_count_in_tail": recent_done,
+        "recent_failed_count_in_tail": recent_failed,
+        "recent_oom_count_in_tail": recent_oom,
+    })
+    return snapshot
+
+
+def _print_status_delta(ledger_stdout: str, watchdog_stdout: str) -> None:
+    current = _status_snapshot(ledger_stdout, watchdog_stdout)
+    previous = _json_file(STATUS_DELTA_CACHE)
+    changed = {
+        key: {
+            "old": previous.get(key),
+            "new": value,
+        }
+        for key, value in current.items()
+        if previous.get(key) != value
+    }
+    STATUS_DELTA_CACHE.write_text(
+        json.dumps(current, indent=2, sort_keys=True) + "\n")
+    print("mandatory_status_delta:")
+    print(f"  cache={STATUS_DELTA_CACHE}")
+    print(f"  changed_count={len(changed)}")
+    if changed:
+        print("  status_unchanged=false")
+        for key in sorted(changed):
+            print(
+                f"  changed={key} old={changed[key]['old']} "
+                f"new={changed[key]['new']}")
+    else:
+        print("  status_unchanged=true")
+        print("  full_status_suppressed=true")
+        print(
+            "  rule=do_not_repeat_fixed_status_when_no_tracked_number_changed")
+
+
+def _hard_gate_exit_code(watchdog_stdout: str) -> int:
+    """Return non-zero when mandatory resource gates are violated."""
+    try:
+        watchdog = json.loads(watchdog_stdout)
+    except json.JSONDecodeError:
+        return 3
+    subagents = watchdog.get("subagents") if isinstance(
+        watchdog.get("subagents"), dict) else {}
+    active = int(
+        subagents.get("active_count")
+        or subagents.get("active")
+        or subagents.get("active_running_or_leased")
+        or len(subagents.get("active_details") or [])
+        or 0)
+    minimum = int(subagents.get("min_active_required") or 5)
+    dispatch = _json_file(DISPATCH_QUEUE)
+    assignments = int(dispatch.get("assignment_count") or len(
+        dispatch.get("assignments") or []) or 0)
+    if active < minimum and assignments > 0:
+        print("mandatory_hard_fail:")
+        print("  exit_code=2")
+        print(
+            "  reason=ACTIVE_SUBAGENTS_BELOW_MIN_WITH_PENDING_DISPATCH;"
+            f"active={active};minimum={minimum};assignments={assignments}")
+        print(
+            "  required_action=spawn_or_reuse_subagents_before_reporting_progress")
+        return 2
+    if _count_tsv_rows(THEORY_CASES_OUT) <= 0:
+        print("mandatory_hard_fail:")
+        print("  exit_code=4")
+        print(
+            "  reason=NO_THEORY_COVERED_CASES_FOR_WORKERS;"
+            "new_workers_must_not_start=true")
+        return 4
+    return 0
+
+
 def _worker_counts(doc: dict) -> tuple[int, int, int, int, int]:
     local_worker = doc.get("local_worker") if isinstance(
         doc.get("local_worker"), dict) else {}
@@ -839,6 +955,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--applied", default="")
     parser.add_argument("--no-remote-probe", action="store_true")
+    parser.add_argument("--no-hard-fail", action="store_true")
     args = parser.parse_args()
 
     print("fixed_rq1_report_format=v2")
@@ -902,9 +1019,14 @@ def main() -> int:
     _print_theory_manifest_status()
     _print_feedback_dispatch_summary(proc.stdout, watchdog_proc.stdout)
     _print_report_completeness(proc.stdout, watchdog_proc.stdout)
+    _print_status_delta(proc.stdout, watchdog_proc.stdout)
     if proc.returncode != 0:
         return proc.returncode
-    return watchdog_proc.returncode
+    if watchdog_proc.returncode != 0:
+        return watchdog_proc.returncode
+    if args.no_hard_fail:
+        return 0
+    return _hard_gate_exit_code(watchdog_proc.stdout)
 
 
 if __name__ == "__main__":
