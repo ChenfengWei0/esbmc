@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -21,10 +23,14 @@ AUTOCLOSE = HERE / "rq1_subagent_autoclose.py"
 WATCHDOG = HERE / "rq1_subagent_orchestrator.py"
 REPAIR_DISPATCHER = HERE / "rq1_repair_dispatcher.py"
 REVIEW_DISPATCHER = HERE / "rq1_review_dispatcher.py"
+PATCH_REVIEW_SUMMARY = HERE / "rq1_patch_review_summary.py"
 THEORY_CASES = HERE / "rq1_theory_covered_cases.py"
+LEDGER = HERE / "rq1_no_valid_progress.py"
+WATCHDOG_STATUS = HERE / "rq1_watchdog_status.py"
 DEFAULT_THEORY_TSV = Path("/tmp/veriput_rq1_theory_covered_cases.tsv")
 DEFAULT_DELTA_CACHE = Path("/tmp/veriput_rq1_agent_control_snapshot.json")
-MIN_ACTIVE = 5
+MIN_ACTIVE = 10
+MAX_SPAWN = 10
 
 
 def _run_json(cmd: list[str]) -> dict:
@@ -50,6 +56,130 @@ def _count_tsv_rows(path: Path) -> int:
             return max(0, sum(1 for _line in stream) - 1)
     except OSError:
         return 0
+
+
+def _run_text(cmd: list[str]) -> tuple[int, str, str]:
+    proc = subprocess.run(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+def _extract_key_values(text: str) -> dict:
+    values = {}
+    for line in text.splitlines():
+        if not line or "=" not in line or line.startswith(" "):
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def _extract_json_section(text: str, heading: str) -> dict:
+    marker = f"{heading}:"
+    start = text.find(marker)
+    if start < 0:
+        return {}
+    brace = text.find("{", start + len(marker))
+    if brace < 0:
+        return {}
+    depth = 0
+    end = brace
+    for pos in range(brace, len(text)):
+        char = text[pos]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                end = pos + 1
+                break
+    try:
+        value = json.loads(text[brace:end])
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _meminfo() -> dict:
+    values = {}
+    try:
+        text = Path("/proc/meminfo").read_text(errors="replace")
+    except OSError:
+        text = ""
+    for line in text.splitlines():
+        match = re.match(r"^(MemTotal|MemAvailable|MemFree|Buffers|Cached):\s+(\d+)", line)
+        if match:
+            values[match.group(1)] = int(match.group(2)) / 1024 / 1024
+    cached = values.get("Cached", 0.0) + values.get("Buffers", 0.0)
+    return {
+        "total_gib": round(values.get("MemTotal", 0.0), 3),
+        "available_gib": round(values.get("MemAvailable", 0.0), 3),
+        "free_gib": round(values.get("MemFree", 0.0), 3),
+        "buffer_cache_gib": round(cached, 3),
+    }
+
+
+def _worker_process_count() -> int:
+    proc = subprocess.run(
+        ["pgrep", "-af",
+         "esbmc|rq1_veriput_run|certify_all|put_all|solidity_path_put|rq1_local_pump|rq1_remote_pump"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    rows = [
+        line for line in proc.stdout.splitlines()
+        if "pgrep -af" not in line and line.strip()
+    ]
+    return len(rows)
+
+
+def _progress_summary() -> dict:
+    _rc, stdout, stderr = _run_text(
+        [sys.executable, str(LEDGER), "--init-subagents", "--no-remote-probe"])
+    keys = _extract_key_values(stdout)
+    actual = _extract_json_section(stdout, "actual_rq1_progress")
+    resources = _extract_json_section(stdout, "resource_maximization")
+    return {
+        "ledger_stderr_tail": stderr[-1000:],
+        "actual_subjects": actual.get("subjects"),
+        "actual_valid_cases": actual.get("valid_cases"),
+        "actual_no_valid_cases": actual.get("no_valid_cases"),
+        "actual_put_cases": actual.get("put_cases"),
+        "actual_no_put_cases": actual.get("no_put_cases"),
+        "actual_r1r2_cases": actual.get("r1r2_cases"),
+        "actual_no_r1r2_cases": actual.get("no_r1r2_cases"),
+        "theoretical_progress": keys.get("theoretical_progress"),
+        "theoretical_progress_gross": keys.get("theoretical_progress_gross"),
+        "implemented_progress_provisional": keys.get(
+            "implemented_progress_provisional"),
+        "implemented_progress_provisional_gross": keys.get(
+            "implemented_progress_provisional_gross"),
+        "put_theoretical_progress": keys.get("put_theoretical_progress"),
+        "r1r2_theoretical_progress": keys.get("r1r2_theoretical_progress"),
+        "resource_maximized": resources.get("maximized"),
+        "resource_reasons": resources.get("reasons") or [],
+    }
+
+
+def _watchdog_status(min_active: int) -> dict:
+    doc = _run_json([
+        sys.executable,
+        str(WATCHDOG_STATUS),
+        "--min-active-subagents",
+        str(min_active),
+        "--progress-tail",
+        "3",
+        "--remote-progress-tail",
+        "3",
+    ])
+    return doc
 
 
 def _spawn_action(assignment: dict) -> dict:
@@ -90,6 +220,7 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int) -> dict:
     watchdog = _run_json([sys.executable, str(WATCHDOG), "watchdog"])
     repair = _run_json([sys.executable, str(REPAIR_DISPATCHER)])
     review = _run_json([sys.executable, str(REVIEW_DISPATCHER)])
+    review_summary = _run_json([sys.executable, str(PATCH_REVIEW_SUMMARY)])
     theory = _run_json(
         [sys.executable, str(THEORY_CASES), "--out", str(theory_tsv)])
 
@@ -153,6 +284,7 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int) -> dict:
         "stale_agent_count": len(stale),
         "repair_assignment_count": repair.get("assignment_count"),
         "review_assignment_count": review.get("assignment_count"),
+        "patch_review_summary": review_summary,
         "theory_manifest": str(theory_tsv),
         "theory_manifest_case_count": theory_case_count,
         "gate": gate,
@@ -161,11 +293,22 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int) -> dict:
         "rule": (
             "Consume actions in order. Do not start workers while the manifest "
             "is empty. Spawn actions must use reasoning_effort=medium and must "
-            "be recorded via rq1_subagent_orchestrator.py lease/running."),
+            "be recorded via rq1_subagent_orchestrator.py lease/running. Keep "
+            "at least 10 active subagents whenever repair/review assignments "
+            "exist."),
     }
 
 
 def _tracked_snapshot(doc: dict) -> dict:
+    review_summary = doc.get("patch_review_summary")
+    if not isinstance(review_summary, dict):
+        review_summary = {}
+    review_buckets = review_summary.get("buckets")
+    if not isinstance(review_buckets, dict):
+        review_buckets = {}
+    review_counts = review_summary.get("counts")
+    if not isinstance(review_counts, dict):
+        review_counts = {}
     return {
         "active_subagents": doc.get("active_subagents"),
         "min_active_subagents": doc.get("min_active_subagents"),
@@ -178,6 +321,22 @@ def _tracked_snapshot(doc: dict) -> dict:
         "theory_manifest_case_count": doc.get("theory_manifest_case_count"),
         "gate": doc.get("gate"),
         "hard_fail": doc.get("hard_fail"),
+        "review_counts": review_counts,
+        "review_keys": {
+            key: [
+                [
+                    item.get("slot"),
+                    item.get("task"),
+                    item.get("patch_id"),
+                    item.get("agent_id"),
+                    item.get("commit_sha"),
+                    item.get("write_scope"),
+                    item.get("note"),
+                ]
+                for item in (review_buckets.get(key) or [])
+            ]
+            for key in ("accepted", "pending", "needs-work", "rejected")
+        },
         "action_keys": [
             [
                 action.get("action"),
@@ -214,38 +373,67 @@ def _delta(doc: dict, cache: Path) -> dict:
 
 
 def _print_text(doc: dict, changed: dict | None) -> None:
-    print("rq1_agent_control_report:")
+    print("RQ1自动控制报告:")
     if changed is not None:
-        print(f"  changed_count={len(changed)}")
+        print(f"  变化项数量={len(changed)}")
         for key in sorted(changed):
-            print(f"  changed={key} old={changed[key]['old']} new={changed[key]['new']}")
+            print(f"  变化={key} old={changed[key]['old']} new={changed[key]['new']}")
         if not changed:
             return
-    print(f"  active_subagents={doc['active_subagents']}/{doc['min_active_subagents']}")
-    print(f"  pending_close_count={doc['pending_close_count']}")
-    print(f"  non_medium_active_count={doc['non_medium_active_count']}")
-    print(f"  write_conflict_count={doc['write_conflict_count']}")
-    print(f"  stale_agent_count={doc['stale_agent_count']}")
-    print(f"  repair_assignment_count={doc['repair_assignment_count']}")
-    print(f"  review_assignment_count={doc['review_assignment_count']}")
-    print(f"  theory_manifest_case_count={doc['theory_manifest_case_count']}")
-    print(f"  gate={doc['gate']}")
-    print(f"  hard_fail={str(doc['hard_fail']).lower()}")
-    print("  actions:")
+    print(f"  活跃subagent={doc['active_subagents']}/{doc['min_active_subagents']}")
+    print(f"  待关闭subagent={doc['pending_close_count']}")
+    print(f"  非medium活跃subagent={doc['non_medium_active_count']}")
+    print(f"  写冲突数量={doc['write_conflict_count']}")
+    print(f"  超时未响应subagent={doc['stale_agent_count']}")
+    print(f"  待派修复任务={doc['repair_assignment_count']}")
+    print(f"  待派review任务={doc['review_assignment_count']}")
+    print(f"  理论覆盖worker清单case数={doc['theory_manifest_case_count']}")
+    print(f"  worker门禁={doc['gate']}")
+    print(f"  硬失败={str(doc['hard_fail']).lower()}")
+    review_summary = doc.get("patch_review_summary")
+    if not isinstance(review_summary, dict):
+        review_summary = {}
+    counts = review_summary.get("counts")
+    if not isinstance(counts, dict):
+        counts = {}
+    print(
+        "  review汇总="
+        f"accepted={counts.get('accepted')}"
+        f" pending={counts.get('pending')}"
+        f" needs_work={counts.get('needs-work')}"
+        f" rejected={counts.get('rejected')}")
+    buckets = review_summary.get("buckets")
+    if not isinstance(buckets, dict):
+        buckets = {}
+    for verdict, label in (
+            ("accepted", "review通过"),
+            ("needs-work", "review不通过需返工"),
+            ("rejected", "review拒绝"),
+            ("pending", "等待review"),
+    ):
+        for item in (buckets.get(verdict) or [])[:8]:
+            print(
+                f"    {label}={item.get('slot')}/{item.get('patch_id')}"
+                f" agent={item.get('agent_id')}"
+                f" commit={item.get('commit_sha')}"
+                f" 任务={item.get('task')}"
+                f" 修改范围={','.join(item.get('write_scope') or [])}"
+                f" 结论={str(item.get('note') or '')[:180]}")
+    print("  自动动作:")
     for index, action in enumerate(doc.get("actions") or [], 1):
         print(
-            f"    {index}. action={action.get('action')}"
+            f"    {index}. 动作={action.get('action')}"
             f" bucket={action.get('bucket_key')}"
             f" effort={action.get('reasoning_effort')}"
-            f" reason={action.get('reason')}")
-    print("  rule=execute_actions_in_order_and_do_not_hand_format_status")
+            f" 原因={action.get('reason')}")
+    print("  规则=必须按自动动作顺序执行；禁止手写漂移状态")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--theory-tsv", type=Path, default=DEFAULT_THEORY_TSV)
     parser.add_argument("--min-active", type=int, default=MIN_ACTIVE)
-    parser.add_argument("--max-spawn", type=int, default=5)
+    parser.add_argument("--max-spawn", type=int, default=10)
     parser.add_argument("--format", choices=("json", "text"), default="json")
     parser.add_argument("--only-changes", action="store_true")
     parser.add_argument("--delta-cache", type=Path, default=DEFAULT_DELTA_CACHE)
