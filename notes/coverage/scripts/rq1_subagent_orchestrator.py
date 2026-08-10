@@ -10,6 +10,8 @@ the progress ledger counts only completed patch_ids.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import subprocess
 import sys
@@ -20,6 +22,7 @@ from rq1_no_valid_progress import SUBAGENT_PLAN
 
 
 DEFAULT_STATE = Path("/tmp/veriput_rq1_subagents.json")
+DEFAULT_LOCK = Path("/tmp/veriput_rq1_subagents.lock")
 DEFAULT_MAX_AGENTS = 24
 DEFAULT_STALE_MINUTES = 20.0
 REQUIRED_REASONING_EFFORT = "medium"
@@ -64,6 +67,17 @@ def load_state(path: Path) -> dict:
 
 def save_state(path: Path, state: dict) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
+
+
+@contextlib.contextmanager
+def locked_state(path: Path, lock_path: Path):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("w") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        state = load_state(path)
+        yield state
+        save_state(path, state)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
 
 def pending_close_count() -> int:
@@ -112,6 +126,15 @@ def lease_slot(state: dict, slot: str, agent_id: str, mode: str,
         raise SystemExit(f"unknown slot {slot}")
     if mode not in ("write", "readonly"):
         raise SystemExit("--mode must be write or readonly")
+    for existing in state.get("agents") or []:
+        if existing.get("agent_id") != agent_id:
+            continue
+        status = existing.get("status")
+        if status in ("leased", "running", "completed"):
+            raise SystemExit(
+                "duplicate agent_id lease refused: "
+                f"agent_id={agent_id} existing_status={status} "
+                f"slot={existing.get('slot')}")
     lease = dict(plan[slot])
     lease.update({
         "agent_id": agent_id,
@@ -329,6 +352,7 @@ def watchdog_report(state: dict, stale_minutes: float) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
+    parser.add_argument("--lock", type=Path, default=DEFAULT_LOCK)
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("plan")
     sub.add_parser("available")
@@ -356,6 +380,21 @@ def main() -> int:
     review.add_argument("--commit-sha", default="")
     args = parser.parse_args()
 
+    if args.cmd in {"lease", "running", "complete", "review"}:
+        with locked_state(args.state, args.lock) as state:
+            if args.cmd == "lease":
+                result = lease_slot(state, args.slot, args.agent_id, args.mode,
+                                    args.allow_pending_close)
+            elif args.cmd == "running":
+                result = mark_running(state, args.agent_id)
+            elif args.cmd == "complete":
+                result = complete_agent(state, args.agent_id, args.patch_id)
+            else:
+                result = review_agent(state, args.agent_id, args.reviewer_id,
+                                      args.verdict, args.note, args.commit_sha)
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return 0
+
     state = load_state(args.state)
     if args.cmd == "plan":
         print(json.dumps({
@@ -369,26 +408,6 @@ def main() -> int:
         print(json.dumps(watchdog_report(state, args.stale_minutes),
                          indent=2,
                          sort_keys=True))
-    elif args.cmd == "lease":
-        print(json.dumps(lease_slot(state, args.slot, args.agent_id, args.mode,
-                                    args.allow_pending_close),
-                         indent=2, sort_keys=True))
-        save_state(args.state, state)
-    elif args.cmd == "running":
-        print(json.dumps(mark_running(state, args.agent_id),
-                         indent=2, sort_keys=True))
-        save_state(args.state, state)
-    elif args.cmd == "complete":
-        print(json.dumps(complete_agent(state, args.agent_id, args.patch_id),
-                         indent=2, sort_keys=True))
-        save_state(args.state, state)
-    elif args.cmd == "review":
-        print(json.dumps(
-            review_agent(state, args.agent_id, args.reviewer_id, args.verdict,
-                         args.note, args.commit_sha),
-            indent=2,
-            sort_keys=True))
-        save_state(args.state, state)
     return 0
 
 

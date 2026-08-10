@@ -15,6 +15,14 @@ from pathlib import Path
 
 DEFAULT_SUBAGENTS = Path("/tmp/veriput_rq1_subagents.json")
 DEFAULT_EXTRA_SUBAGENTS = Path("/tmp/veriput_rq1_extra_subagents.json")
+MANDATORY_REVIEW_FIELDS = (
+    "changed_code",
+    "prior_failure",
+    "correctness_argument",
+    "verdict",
+    "theory_delta",
+    "next_action",
+)
 
 
 def _json(path: Path) -> dict:
@@ -48,6 +56,7 @@ def build_summary(paths: list[Path]) -> dict:
         if not patch_id:
             continue
         mode = str(agent.get("mode") or "write")
+        missing_fields: list[str] = []
         if mode == "readonly":
             verdict = "readonly"
         else:
@@ -60,16 +69,27 @@ def build_summary(paths: list[Path]) -> dict:
             ).strip()
             if verdict == "accepted" and not commit_sha:
                 verdict = "pending"
+            note = str(agent.get("review_note") or agent.get("note", ""))
+            missing_fields = [
+                field for field in MANDATORY_REVIEW_FIELDS
+                if f"{field}=" not in note and f"{field}:" not in note
+            ]
+            if verdict in {"accepted", "needs-work", "rejected"} and \
+                    missing_fields:
+                verdict = "pending"
         buckets[verdict].append({
             "slot": agent.get("slot"),
+            "task": agent.get("task"),
             "patch_id": patch_id,
             "agent_id": agent.get("agent_id"),
             "source": str(path),
+            "write_scope": agent.get("write_scope") or [],
             "commit_sha": str(
                 agent.get("review_commit") or agent.get("commit_sha")
                 or agent.get("commit") or agent.get("patch_commit") or ""
             ).strip(),
-            "note": agent.get("note", ""),
+            "note": agent.get("review_note") or agent.get("note", ""),
+            "missing_review_fields": missing_fields if mode != "readonly" else [],
         })
     return {
         "schema": "veriput-rq1-patch-review-summary/v1",

@@ -884,7 +884,7 @@ def _hard_gate_exit_code(watchdog_stdout: str) -> int:
         or subagents.get("active_running_or_leased")
         or len(subagents.get("active_details") or [])
         or 0)
-    minimum = int(subagents.get("min_active_required") or 5)
+    minimum = int(subagents.get("min_active_required") or 10)
     close_plan = _autoclose_plan()
     pending_close = int(close_plan.get("pending_close_count") or 0)
     if pending_close > 0:
@@ -951,7 +951,7 @@ def _print_watchdog_hard_alerts(stdout: str) -> None:
         or subagents.get("active_running_or_leased")
         or len(subagents.get("active_details") or [])
         or 0)
-    minimum = int(subagents.get("min_active_required") or 5)
+    minimum = int(subagents.get("min_active_required") or 10)
     local_running, remote_running, recent_done_count, recent_failed_count, \
         recent_oom_count = _worker_counts(doc)
     total_running = max(local_running, 0) + max(remote_running, 0)

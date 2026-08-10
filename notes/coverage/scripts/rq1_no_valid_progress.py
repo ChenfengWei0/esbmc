@@ -29,13 +29,14 @@ DEFAULT_EXTRA_SUBAGENTS = Path("/tmp/veriput_rq1_extra_subagents.json")
 DEFAULT_REMOTE_STATE = Path("/tmp/veriput_rq1_remote_state.json")
 DEFAULT_LOCAL_STATE = Path("/tmp/veriput_rq1_local_state.json")
 DEFAULT_REPAIR_TICKETS = Path("/tmp/veriput_rq1_repair_tickets.jsonl")
+DEFAULT_CASE_THEORY_CLAIMS = Path("/tmp/veriput_rq1_case_theory_claims.jsonl")
 DEFAULT_RESULTS_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 DEFAULT_PEER_DATASET_ROOT = Path(
     "/home/samson/workspace/VeriPUT/Datasets/Peer-Reviewed-Contracts")
 DEFAULT_DEADLINE_HOURS = 16.0
 DEFAULT_REMOTE_HOST = "invmut-w2"
 DEFAULT_REQUIRED_SUBAGENTS = 24
-DEFAULT_MIN_ACTIVE_SUBAGENTS = 5
+DEFAULT_MIN_ACTIVE_SUBAGENTS = 10
 DEFAULT_SUBAGENT_REASONING_EFFORT = "medium"
 
 HARD_REQUIREMENTS = (
@@ -47,7 +48,7 @@ HARD_REQUIREMENTS = (
     "the persisted deadline state, subagent status, remote host status, "
     "theoretical repair N/204, and actual RQ1 valid/PUT/R1R2 progress.",
     "Every user-facing progress update must warn and trigger repair dispatch "
-    "when active spawned subagents are below 5.",
+    "when active spawned subagents are below 10.",
     "Local machine role: edit ESBMC/VeriPUT code and coordinate subagents.",
     "Remote invmut-w2 role: continuously run ESBMC/RQ1 validation jobs after "
     "code sync and update RQ1 artifacts; the local agent must not wait idle for "
@@ -496,6 +497,36 @@ def load_json_file(path: Path, default):
         return default
 
 
+def accepted_case_theory_claims(path: Path) -> list[dict]:
+    claims = []
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return claims
+    seen: set[tuple[str, str, str]] = set()
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("review_status") or "") != "accepted":
+            continue
+        commit = str(row.get("commit_sha") or row.get("review_commit") or "")
+        patch_id = str(row.get("patch_id") or "")
+        bench = str(row.get("bench") or "")
+        subject = str(row.get("subject") or "")
+        if not commit.strip() or not patch_id or not bench or not subject:
+            continue
+        key = (bench, subject, patch_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        claims.append(row)
+    return claims
+
+
 def _subagent_template() -> list[dict]:
     agents = []
     for agent_id, task, write_scope, coverage in SUBAGENT_PLAN:
@@ -709,7 +740,7 @@ def subagent_summary(subagents: dict) -> dict:
         "active_subagents_to_spawn_now": max(
             0, DEFAULT_MIN_ACTIVE_SUBAGENTS - len(active_agents)),
         "dispatch_warning": (
-            "ACTIVE_SUBAGENTS_BELOW_5: spawn or reuse repair subagents now"
+            "ACTIVE_SUBAGENTS_BELOW_MIN: spawn or reuse repair subagents now"
             if len(active_agents) < DEFAULT_MIN_ACTIVE_SUBAGENTS else ""),
         "active_details": [{
             "slot": agent.get("slot"),
@@ -1035,7 +1066,7 @@ def resource_maximization(
         reasons.append("subagent_slots_not_fully_accounted")
     if sub_summary.get("active_below_required_min"):
         reasons.append(
-            "active_subagents_below_5:"
+            "active_subagents_below_min:"
             f"{sub_summary.get('active_running_or_leased', 0)}/"
             f"{DEFAULT_MIN_ACTIVE_SUBAGENTS};dispatch_required_now")
     elif sub_summary.get("active_running_or_leased", 0) \
@@ -1574,6 +1605,9 @@ def main() -> int:
     parser.add_argument("--repair-tickets",
                         type=Path,
                         default=DEFAULT_REPAIR_TICKETS)
+    parser.add_argument("--case-theory-claims",
+                        type=Path,
+                        default=DEFAULT_CASE_THEORY_CLAIMS)
     parser.add_argument("--remote-host", default=DEFAULT_REMOTE_HOST)
     parser.add_argument("--results-root", type=Path,
                         default=DEFAULT_RESULTS_ROOT)
@@ -1650,6 +1684,28 @@ def main() -> int:
         counts, applied)
     implemented_gross, implemented_categories, implemented_details = patch_coverage(
         counts, implemented)
+    case_claims = accepted_case_theory_claims(args.case_theory_claims)
+    case_claim_count = len({
+        (str(claim.get("bench") or ""), str(claim.get("subject") or ""))
+        for claim in case_claims
+    })
+    if case_claim_count:
+        covered_gross = min(DENOMINATOR, covered_gross + case_claim_count)
+        implemented_gross = min(DENOMINATOR,
+                                implemented_gross + case_claim_count)
+        case_rows = [
+            {
+                "patch_id": claim.get("patch_id"),
+                "bench": claim.get("bench"),
+                "subject": claim.get("subject"),
+                "category": claim.get("category"),
+                "commit_sha": claim.get("commit_sha")
+                or claim.get("review_commit"),
+            }
+            for claim in case_claims
+        ]
+        coverage_details.setdefault("case_contributions", case_rows)
+        implemented_details.setdefault("case_contributions", case_rows)
     feedback = validation_feedback(args.repair_tickets, args.results_root,
                                    root_cause_index, set(covered_categories),
                                    applied, actual,
