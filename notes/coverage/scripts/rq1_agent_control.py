@@ -151,6 +151,10 @@ def _worker_process_count() -> int:
             continue
         comm = parts[0]
         args = parts[1] if len(parts) > 1 else ""
+        if comm in {"ps", "rg", "grep", "bash", "sh", "zsh"}:
+            continue
+        if "ps -eo" in args or "pgrep -af" in args:
+            continue
         if comm in {"esbmc", "forge", "anvil"}:
             rows.append(line)
         elif "/build/src/esbmc/esbmc" in args or "/release/bin/esbmc" in args:
@@ -318,7 +322,7 @@ def build_actions(theory_tsv: Path, min_active: int, max_spawn: int,
         gate = "open"
 
     if gate == "open" and active < min_active:
-        needed = min(max_spawn, min_active - active)
+        needed = max_spawn
         review_assignments = review.get("assignments") or []
         repair_assignments = repair.get("assignments") or []
         spawn_from = review_assignments + repair_assignments

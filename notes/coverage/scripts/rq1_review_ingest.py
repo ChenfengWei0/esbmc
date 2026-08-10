@@ -169,6 +169,7 @@ def main() -> int:
     parser.add_argument("--commit-message", default="")
     parser.add_argument("--auto-commit", action="store_true")
     parser.add_argument("--event-only-if-missing", action="store_true")
+    parser.add_argument("--record-invalid", action="store_true")
     args = parser.parse_args()
 
     doc = _read_json_stdin()
@@ -176,6 +177,32 @@ def main() -> int:
     values = {name: _field(text, name) for name in REQUIRED_FIELDS}
     missing = [name for name, value in values.items() if not value]
     if missing:
+        if args.record_invalid:
+            reviewer_id = _reviewer_id(doc, args)
+            event = {
+                "event": "invalid-review",
+                "agent_id": args.reviewed_agent_id
+                or str(doc.get("reviewed_agent_id") or doc.get("target_agent_id") or ""),
+                "reviewer_id": reviewer_id,
+                "patch_id": args.patch_id,
+                "missing_fields": missing,
+                "note": text[:4000],
+                "theory_delta": 0,
+                "next_action": (
+                    "重新派 review；如果 review 已经指出代码缺陷，则派 repair "
+                    "agent，净理论覆盖保持 0"
+                ),
+            }
+            with DEFAULT_REVIEW_EVENTS.open("a") as stream:
+                stream.write(json.dumps(event, sort_keys=True) + "\n")
+            print("RQ1 review无效报告:")
+            print(f"  被review_agent={event['agent_id'] or '<缺失>'}")
+            print(f"  reviewer={reviewer_id}")
+            print(f"  patch_id={args.patch_id}")
+            print(f"  缺字段={','.join(missing)}")
+            print("  verdict=invalid")
+            print("  理论delta=0")
+            print(f"  下一步={event['next_action']}")
         raise SystemExit("review 通知缺字段，禁止入账: " + ",".join(missing))
 
     verdict = _verdict(text)
