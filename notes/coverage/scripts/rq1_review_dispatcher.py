@@ -294,6 +294,8 @@ def build_review_queue(subagents: Path, extra_subagents: Path,
         if review_status == "accepted":
             continue
         patch_id = str(agent.get("patch_id") or "")
+        if patch_id in PUT_REVIEW_PATCH_IDS:
+            continue
         dedupe_key = (patch_id, _scope_key(agent))
         if patch_id and dedupe_key in seen_review_keys:
             continue

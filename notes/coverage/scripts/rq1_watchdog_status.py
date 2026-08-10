@@ -21,6 +21,8 @@ DEFAULT_PROGRESS_GLOBS = (
     "/tmp/veriput_local_progress.jsonl",
     "/tmp/veriput_local_extra_progress.jsonl",
     "/tmp/veriput_local_extra*_progress.jsonl",
+    "/tmp/veriput_local_oom_progress.jsonl",
+    "/tmp/veriput_remote_progress.jsonl",
 )
 DEFAULT_REPAIR_TICKETS = Path("/tmp/veriput_rq1_repair_tickets.jsonl")
 DEFAULT_DISPATCH_QUEUE = Path("/tmp/veriput_rq1_dispatch_queue.json")
@@ -127,12 +129,25 @@ def _esbmc_rss_summary(rows: list[dict], rss_limit_gib: int) -> dict:
     }
 
 
-def _remote_probe(host: str) -> dict:
+def _remote_probe(host: str, progress_tail: int) -> dict:
     script = r'''
 set -u
 echo '{"kind":"host","hostname":"'"$(hostname)"'","mem_available_mib":'$(awk '/MemAvailable/{printf "%d", $2/1024}' /proc/meminfo)',"nproc":'$(nproc)'}'
+if [ -s /tmp/veriput_remote_worker.pid ]; then
+  worker_pid="$(cat /tmp/veriput_remote_worker.pid 2>/dev/null || true)"
+  if [ -n "$worker_pid" ] && kill -0 "$worker_pid" 2>/dev/null; then
+    echo '{"kind":"remote_worker_pid","pid":"'"$worker_pid"'","alive":true}'
+  else
+    echo '{"kind":"remote_worker_pid","pid":"'"$worker_pid"'","alive":false}'
+  fi
+else
+  echo '{"kind":"remote_worker_pid","pid":null,"alive":false}'
+fi
 ps -eo pid=,ppid=,etimes=,rss=,comm=,args= | awk '
-  $5 ~ /esbmc/ || $0 ~ /rq1_veriput_run.py|certify_all.py|put_all.py|solidity_path_put.py|rq1_remote_worker/ {
+  $5 !~ /^(bash|sh|awk|pgrep|tail|ps)$/ &&
+  ($5 ~ /^esbmc$/ ||
+   $0 ~ /python[0-9.]* .*\/(rq1_veriput_run|certify_all|put_all|solidity_path_put|solidity_path_generalise)\.py/ ||
+   $0 ~ /python[0-9.]* .*\/rq1_remote_pump\.py/) {
     gsub(/\\/,"\\\\",$0);
     gsub(/"/,"\\\"",$0);
     printf("{\"kind\":\"process\",\"line\":\"%s\"}\n", $0);
@@ -145,8 +160,48 @@ if [ -f /tmp/veriput_remote_build.pid ]; then
     echo '{"kind":"remote_build","pid":"'"$build_pid"'","alive":false}'
   fi
 fi
-tail -5 /tmp/veriput_remote_progress.jsonl 2>/dev/null | sed 's/^/{"kind":"progress","raw":/' | sed 's/$/}/'
-'''
+python3 - <<'PY'
+import json
+import time
+from pathlib import Path
+
+root = Path("/tmp/veriput_rq1_case_leases.d")
+counts = {}
+stale_running = []
+now = time.time()
+for lease in root.iterdir() if root.exists() else []:
+    if not lease.is_dir():
+        continue
+    state = {}
+    try:
+        state = json.loads((lease / "state.json").read_text())
+    except Exception:
+        state = {}
+    status = str(state.get("status") or "unknown")
+    counts[status] = counts.get(status, 0) + 1
+    try:
+        updated = float((lease / "updated_ts").read_text().strip())
+    except Exception:
+        updated = float(state.get("updated_ts") or lease.stat().st_mtime)
+    age = max(0.0, now - updated)
+    if status == "running" and age >= 1200:
+        stale_running.append({
+            "lease": lease.name,
+            "age_s": round(age, 3),
+            "bench": state.get("bench"),
+            "subject": state.get("subject"),
+        })
+print(json.dumps({
+    "kind": "remote_leases",
+    "lease_dir": str(root),
+    "total": sum(counts.values()),
+    "counts": counts,
+    "stale_running_count": len(stale_running),
+    "stale_running_tail": stale_running[-20:],
+}, sort_keys=True))
+PY
+tail -__REMOTE_PROGRESS_TAIL__ /tmp/veriput_remote_progress.jsonl 2>/dev/null | sed 's/^/{"kind":"progress","raw":/' | sed 's/$/}/'
+'''.replace("__REMOTE_PROGRESS_TAIL__", str(max(1, int(progress_tail))))
     return _run([
         "ssh",
         "-o",
@@ -175,7 +230,122 @@ def _jsonl_tail(path: Path, limit: int) -> list[dict]:
     return rows
 
 
-def _progress_report(globs: tuple[str, ...], tail_limit: int) -> dict:
+def _case_progress_key(row: dict) -> str:
+    return f"{row.get('bench', '')}/{row.get('subject', '')}"
+
+
+def _progress_item(path: str, row: dict) -> dict:
+    return {
+        "progress_file": path,
+        "bench": row.get("bench"),
+        "subject": row.get("subject"),
+        "category": row.get("category"),
+        "status": row.get("status"),
+        "rc": row.get("rc"),
+        "ts": row.get("ts"),
+        "bucket": row.get("bucket"),
+        "valid": row.get("valid"),
+        "put_valid": row.get("put_valid"),
+        "r1r2": row.get("r1r2"),
+        "note": row.get("note"),
+    }
+
+
+def _summarize_progress_rows(rows_by_path: list[tuple[str, list[dict]]],
+                             stuck_after_s: float) -> dict:
+    latest_by_case: dict[str, dict] = {}
+    recent_done: list[dict] = []
+    recent_failed: list[dict] = []
+    recent_oom: list[dict] = []
+    recent_weak: list[dict] = []
+    recent_unknown_done: list[dict] = []
+    now = time.time()
+    newest_ts = 0.0
+    status_counts: dict[str, int] = {}
+    for path, rows in rows_by_path:
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            status = str(row.get("status") or "")
+            if status:
+                status_counts[status] = status_counts.get(status, 0) + 1
+            item = _progress_item(path, row)
+            key = _case_progress_key(row)
+            if key != "/":
+                latest_by_case[key] = item
+            ts_raw = row.get("ts")
+            ts_epoch = _parse_ts_epoch(ts_raw)
+            if ts_epoch:
+                newest_ts = max(newest_ts, ts_epoch)
+            if status == "done":
+                recent_done.append(item)
+                has_quality_fields = any(
+                    key in row for key in ("valid", "put_valid", "r1r2",
+                                           "bucket"))
+                if not has_quality_fields:
+                    recent_unknown_done.append(item)
+                    continue
+                valid = int(row.get("valid") or 0)
+                put_valid = int(row.get("put_valid") or 0)
+                r1r2 = int(row.get("r1r2") or 0)
+                if not (valid and put_valid and r1r2):
+                    recent_weak.append(item)
+            elif status in {"killed-over-rss", "OOM_OR_MEMORY_PRESSURE"}:
+                recent_oom.append(item)
+                recent_failed.append(item)
+            elif status and status not in {"running", "done"}:
+                recent_failed.append(item)
+    running = [
+        item for item in latest_by_case.values()
+        if str(item.get("status") or "") == "running"
+    ]
+    seconds_since_progress = None
+    if newest_ts:
+        seconds_since_progress = max(0.0, now - newest_ts)
+    idle_or_stuck = bool(
+        not running and seconds_since_progress is not None
+        and seconds_since_progress >= stuck_after_s)
+    return {
+        "currently_running_count": len(running),
+        "currently_running_cases": sorted(
+            running,
+            key=lambda item: str(item.get("progress_file") or ""))[:40],
+        "recent_done_count_in_tail": len(recent_done),
+        "recent_unknown_done_count_in_tail": len(recent_unknown_done),
+        "recent_failed_count_in_tail": len(recent_failed),
+        "recent_oom_count_in_tail": len(recent_oom),
+        "recent_weak_or_failed_count_in_tail": len(recent_failed) +
+        len(recent_weak),
+        "recent_done_tail": recent_done[-20:],
+        "recent_unknown_done_tail": recent_unknown_done[-20:],
+        "recent_failed_tail": recent_failed[-20:],
+        "recent_oom_tail": recent_oom[-20:],
+        "recent_weak_tail": recent_weak[-20:],
+        "status_counts_in_tail": status_counts,
+        "latest_result_by_case_tail": sorted(
+            latest_by_case.values(),
+            key=lambda item: f"{item.get('progress_file')}:{item.get('ts')}"
+        )[-40:],
+        "seconds_since_last_progress": (
+            round(seconds_since_progress, 3)
+            if seconds_since_progress is not None else None),
+        "idle_or_stuck": idle_or_stuck,
+        "stuck_after_s": stuck_after_s,
+    }
+
+
+def _parse_ts_epoch(value: object) -> float:
+    if not isinstance(value, str) or not value:
+        return 0.0
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
+
+
+def _progress_report(globs: tuple[str, ...], tail_limit: int,
+                     stuck_after_s: float) -> dict:
     paths: list[Path] = []
     seen = set()
     for pattern in globs:
@@ -185,9 +355,7 @@ def _progress_report(globs: tuple[str, ...], tail_limit: int) -> dict:
             seen.add(path)
             paths.append(path)
     workers = []
-    running = []
-    recent_done = []
-    recent_failed = []
+    rows_by_path: list[tuple[str, list[dict]]] = []
     for path in paths:
         rows = _jsonl_tail(path, tail_limit)
         last = rows[-1] if rows else {}
@@ -197,29 +365,12 @@ def _progress_report(globs: tuple[str, ...], tail_limit: int) -> dict:
             "last": last,
         }
         workers.append(worker)
-        for row in rows:
-            status = str(row.get("status") or "")
-            item = {
-                "progress_file": str(path),
-                "bench": row.get("bench"),
-                "subject": row.get("subject"),
-                "category": row.get("category"),
-                "status": status,
-                "rc": row.get("rc"),
-                "ts": row.get("ts"),
-            }
-            if status == "running":
-                running.append(item)
-            elif status == "done":
-                recent_done.append(item)
-            elif status and status not in {"running", "done"}:
-                recent_failed.append(item)
+        rows_by_path.append((str(path), rows))
+    summary = _summarize_progress_rows(rows_by_path, stuck_after_s)
     return {
         "worker_progress_files": [str(path) for path in paths],
         "workers": workers,
-        "running_tail": running[-20:],
-        "recent_done_tail": recent_done[-20:],
-        "recent_failed_or_skipped_tail": recent_failed[-20:],
+        **summary,
     }
 
 
@@ -231,7 +382,39 @@ def _tsv_count(path: Path) -> int:
     return max(0, len([line for line in lines if line.strip()]) - 1)
 
 
-def _subagent_report(state: dict, extra_state: dict, stale_s: float) -> dict:
+def _local_lease_report(path: Path, stale_s: float) -> dict:
+    doc = _json(path)
+    leases = doc.get("leases") if isinstance(doc.get("leases"), dict) else {}
+    counts: dict[str, int] = {}
+    stale_running = []
+    now = time.time()
+    for key, lease in leases.items():
+        if not isinstance(lease, dict):
+            continue
+        status = str(lease.get("status") or "unknown")
+        counts[status] = counts.get(status, 0) + 1
+        updated = float(lease.get("updated_ts") or lease.get("ts") or 0)
+        age = max(0.0, now - updated) if updated else 0.0
+        if status == "running" and updated and age >= stale_s:
+            stale_running.append({
+                "key": key,
+                "age_s": round(age, 3),
+                "bench": lease.get("bench"),
+                "subject": lease.get("subject"),
+                "worker_id": lease.get("worker_id"),
+            })
+    return {
+        "lease_file": str(path),
+        "total": sum(counts.values()),
+        "counts": counts,
+        "stale_s": stale_s,
+        "stale_running_count": len(stale_running),
+        "stale_running_tail": stale_running[-20:],
+    }
+
+
+def _subagent_report(state: dict, extra_state: dict, stale_s: float,
+                     min_active: int) -> dict:
     now = time.time()
     agents = list(state.get("agents") or [])
     agents.extend(extra_state.get("agents") or [])
@@ -263,10 +446,21 @@ def _subagent_report(state: dict, extra_state: dict, stale_s: float) -> dict:
             "runtime_s": round(max(0.0, now - started), 3),
             "expected_coverage": agent.get("expected_coverage"),
         })
+    def is_write_patch(agent: dict) -> bool:
+        if agent.get("status") != "completed":
+            return False
+        mode = str(agent.get("mode") or "").strip().lower()
+        if mode == "readonly":
+            return False
+        if mode == "write":
+            return True
+        return bool(str(agent.get("patch_id") or "").strip()
+                    and (agent.get("write_scope") or []))
+
     pending_review = []
     rejected_or_needs_work = []
     for agent in agents:
-        if agent.get("status") != "completed" or agent.get("mode") != "write":
+        if not is_write_patch(agent):
             continue
         review = str(agent.get("review_status") or "pending")
         row = {
@@ -284,6 +478,13 @@ def _subagent_report(state: dict, extra_state: dict, stale_s: float) -> dict:
     return {
         "active": len(active),
         "active_details": active_details,
+        "min_active_required": min_active,
+        "below_min_active": len(active) < min_active,
+        "below_min_active_warning": (
+            f"ACTIVE_SUBAGENTS_BELOW_{min_active}: dispatch or reuse repair "
+            "subagents immediately after closing completed agents."
+            if len(active) < min_active else ""),
+        "dispatch_more_subagents_required": len(active) < min_active,
         "completed": sum(1 for a in agents if a.get("status") == "completed"),
         "queued": sum(1 for a in agents if a.get("status") == "queued"),
         "stale": stale,
@@ -292,13 +493,56 @@ def _subagent_report(state: dict, extra_state: dict, stale_s: float) -> dict:
         "rejected_or_needs_work_count": len(rejected_or_needs_work),
         "rejected_or_needs_work_tail": rejected_or_needs_work[-12:],
         "review_rule": (
-            "Completed write-mode patches remain provisional until an "
+            "Completed write-mode patches, including legacy records with "
+            "patch_id+write_scope but missing mode, remain provisional until an "
             "independent review marks review_status=accepted; rejected or "
             "needs-work patches must not justify net theoretical coverage."),
         "active_report_rule": (
             "Every progress report must include active subagent count and "
             "active_details; running AUTO repair agents count as active even "
             "before they have a patch_id."),
+    }
+
+
+def _remote_probe_summary(remote_stdout: str, stuck_after_s: float) -> dict:
+    process_rows = []
+    progress_rows = []
+    host = {}
+    leases = {}
+    worker_pid = {}
+    for line in remote_stdout.splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("kind") == "host":
+            host = row
+        elif row.get("kind") == "remote_worker_pid":
+            worker_pid = row
+        elif row.get("kind") == "process":
+            process_rows.append(row)
+        elif row.get("kind") == "remote_leases":
+            leases = row
+        elif row.get("kind") == "progress":
+            raw = row.get("raw")
+            if isinstance(raw, dict):
+                progress_rows.append(raw)
+            elif isinstance(raw, str):
+                try:
+                    decoded = json.loads(raw)
+                except json.JSONDecodeError:
+                    decoded = {}
+                if isinstance(decoded, dict):
+                    progress_rows.append(decoded)
+    progress_summary = _summarize_progress_rows(
+        [("/tmp/veriput_remote_progress.jsonl", progress_rows)], stuck_after_s)
+    return {
+        "host": host,
+        "worker_pid": worker_pid,
+        "process_count": len(process_rows),
+        "process_tail": process_rows[-30:],
+        "leases": leases,
+        "progress": progress_summary,
     }
 
 
@@ -345,11 +589,24 @@ def build_report(args: argparse.Namespace) -> dict:
     local_rows = _local_process_rows()
     local_rss_limit = int(local_state.get("esbmc_rss_limit_gib")
                           or DEFAULT_ESBMC_RSS_LIMIT_GIB)
-    remote = _remote_probe(args.remote_host)
+    local_lease_file = Path(
+        str(local_state.get("lease_file") or "/tmp/veriput_rq1_case_leases.json"))
+    local_lease_stale_s = float(local_state.get("lease_stale_s") or 1200)
+    remote = _remote_probe(args.remote_host, args.remote_progress_tail)
+    remote_summary = _remote_probe_summary(remote["stdout"],
+                                           args.worker_stuck_after_s)
     assignments = dispatch_queue.get("assignments") or []
     assignment_count = int(dispatch_queue.get("assignment_count") or 0)
     subagent_dispatch_status = {
         "assignment_count": assignment_count,
+        "min_assignment_target": int(
+            dispatch_queue.get("min_assignment_target") or 12),
+        "write_owner_count": int(dispatch_queue.get("write_owner_count") or 0),
+        "readonly_root_cause_count": int(
+            dispatch_queue.get("readonly_root_cause_count") or 0),
+        "below_min_assignment_target":
+            assignment_count < int(dispatch_queue.get("min_assignment_target")
+                                   or 12),
         "pending_bucket_keys": [
             item.get("bucket_key") for item in assignments[:8]
         ],
@@ -362,6 +619,9 @@ def build_report(args: argparse.Namespace) -> dict:
             "it must report that this is not fully autonomous."
         ),
         "review_required_after_patch": True,
+        "quality_review_pending_count": int(
+            (review_queue.get("assignment_count") or 0)
+            if isinstance(review_queue, dict) else 0),
         "non_monotonic_progress_rule": (
             "If a dispatched patch's claimed coverage is contradicted by a "
             "later worker result, rq1_no_valid_progress.py must subtract the "
@@ -371,7 +631,8 @@ def build_report(args: argparse.Namespace) -> dict:
         "schema": "veriput-rq1-watchdog-status/v1",
         "ts": time.time(),
         "subagents": _subagent_report(subagent_state, extra_subagent_state,
-                                      args.stale_subagent_s),
+                                      args.stale_subagent_s,
+                                      args.min_active_subagents),
         "subagent_autoclose": _autoclose_report(subagent_state,
                                                 extra_subagent_state,
                                                 close_state),
@@ -386,8 +647,15 @@ def build_report(args: argparse.Namespace) -> dict:
             "memory_watchdog": bool(local_state.get("memory_watchdog")),
             "process_watchdog": bool(local_state.get("process_watchdog")),
             "progress_watchdog": bool(local_state.get("progress_watchdog")),
+            "lease_watchdog": bool(local_state.get("lease_file")),
             "case_parallel": local_state.get("case_parallel"),
+            "running_case_count": _progress_report(tuple(args.progress_glob),
+                                                   args.progress_tail,
+                                                   args.worker_stuck_after_s)[
+                                                       "currently_running_count"],
         },
+        "local_leases": _local_lease_report(local_lease_file,
+                                            local_lease_stale_s),
         "extra_local_workers": [
             {
                 "state_file": str(path),
@@ -404,12 +672,18 @@ def build_report(args: argparse.Namespace) -> dict:
         ],
         "local_esbmc_memory": _esbmc_rss_summary(local_rows, local_rss_limit),
         "worker_progress": _progress_report(tuple(args.progress_glob),
-                                            args.progress_tail),
+                                            args.progress_tail,
+                                            args.worker_stuck_after_s),
         "repair_tickets_tail": _jsonl_tail(args.repair_tickets,
                                            args.repair_ticket_tail),
         "repair_dispatch": {
             "queue_file": str(args.dispatch_queue),
             "assignment_count": assignment_count,
+            "min_assignment_target":
+                dispatch_queue.get("min_assignment_target"),
+            "write_owner_count": dispatch_queue.get("write_owner_count"),
+            "readonly_root_cause_count":
+                dispatch_queue.get("readonly_root_cause_count"),
             "assignments": assignments[:8],
             "rule": dispatch_queue.get("rule"),
             "dispatch_status": subagent_dispatch_status,
@@ -417,6 +691,8 @@ def build_report(args: argparse.Namespace) -> dict:
         "review_dispatch": {
             "queue_file": str(args.review_queue),
             "assignment_count": int(review_queue.get("assignment_count") or 0),
+            "max_patches_per_assignment":
+                review_queue.get("max_patches_per_assignment"),
             "assignments": (review_queue.get("assignments") or [])[:8],
             "rule": review_queue.get("rule"),
         },
@@ -432,19 +708,52 @@ def build_report(args: argparse.Namespace) -> dict:
             "state_file": str(args.remote_state),
             "host": args.remote_host,
             "worker_pid": (remote_state.get("worker") or {}).get("pid"),
+            "worker_pid_probe": remote_summary.get("worker_pid") or {},
+            "worker_alive_by_pid_file": bool(
+                (remote_summary.get("worker_pid") or {}).get("alive")),
             "memory_watchdog": bool((remote_state.get("worker") or {}).get(
                 "memory_watchdog")),
             "process_watchdog": bool((remote_state.get("worker") or {}).get(
                 "remote_watchdog")),
             "progress_watchdog": bool((remote_state.get("worker") or {}).get(
                 "progress_watchdog")),
+            "lease_watchdog": bool((remote_state.get("worker") or {}).get(
+                "lease_watchdog")),
+            "case_count": (remote_state.get("worker") or {}).get("case_count"),
             "case_parallel": (remote_state.get("worker") or {}).get(
                 "case_parallel"),
+            "remote_lease_dir": (remote_state.get("worker") or {}).get(
+                "remote_lease_dir"),
+            "remote_lease_stale_s": (remote_state.get("worker") or {}).get(
+                "remote_lease_stale_s"),
+            "remote_lease_refresh_s": (remote_state.get("worker") or {}).get(
+                "remote_lease_refresh_s"),
+            "leases": remote_summary.get("leases") or {},
+            "terminal_case_count": sum(
+                int((remote_summary.get("leases") or {}).get("counts", {}).get(
+                    status, 0) or 0)
+                for status in ("done", "failed", "killed-over-rss")),
+            "running_case_count": remote_summary["progress"][
+                "currently_running_count"],
+            "running_cases": remote_summary["progress"][
+                "currently_running_cases"],
+            "recent_done_count_in_tail": remote_summary["progress"][
+                "recent_done_count_in_tail"],
+            "recent_unknown_done_count_in_tail": remote_summary["progress"][
+                "recent_unknown_done_count_in_tail"],
+            "recent_failed_count_in_tail": remote_summary["progress"][
+                "recent_failed_count_in_tail"],
+            "recent_oom_count_in_tail": remote_summary["progress"][
+                "recent_oom_count_in_tail"],
+            "seconds_since_last_progress": remote_summary["progress"][
+                "seconds_since_last_progress"],
+            "idle_or_stuck": remote_summary["progress"]["idle_or_stuck"],
         },
         "remote_probe": {
             "returncode": remote["returncode"],
             "stdout_tail": remote["stdout"].splitlines()[-80:],
             "stderr": remote["stderr"][-1000:],
+            "parsed": remote_summary,
         },
     }
 
@@ -463,10 +772,13 @@ def main() -> int:
     parser.add_argument("--remote-state", type=Path, default=DEFAULT_REMOTE_STATE)
     parser.add_argument("--remote-host", default=DEFAULT_REMOTE_HOST)
     parser.add_argument("--stale-subagent-s", type=float, default=1200.0)
+    parser.add_argument("--min-active-subagents", type=int, default=5)
+    parser.add_argument("--worker-stuck-after-s", type=float, default=900.0)
     parser.add_argument("--progress-glob",
                         action="append",
                         default=list(DEFAULT_PROGRESS_GLOBS))
     parser.add_argument("--progress-tail", type=int, default=12)
+    parser.add_argument("--remote-progress-tail", type=int, default=80)
     parser.add_argument("--repair-tickets",
                         type=Path,
                         default=DEFAULT_REPAIR_TICKETS)

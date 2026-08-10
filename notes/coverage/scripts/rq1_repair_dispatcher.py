@@ -209,6 +209,44 @@ def _default_scopes(category: str) -> list[str]:
             "notes/coverage/scripts/certify_all.py"]
 
 
+def _repair_scopes(row: dict) -> list[str]:
+    """Choose repair ownership from current evidence, not stale ticket scope."""
+    category = str(row.get("category") or row.get("result_bucket") or "")
+    original = str(row.get("original_category")
+                   or row.get("root_cause_category") or "")
+    root = str(row.get("root_cause") or row.get("fix_target") or "").lower()
+    if category == "NO_PUT_MATERIALIZATION":
+        return ["notes/coverage/scripts/put_all.py",
+                "scripts/solidity_path_put.py"]
+    if category == "NO_R1R2_ORACLE":
+        return ["scripts/solidity_path_put.py",
+                "scripts/solidity_ast_dependencies.py"]
+    evidence = " ".join((category, original, root))
+    if "ESBMC_" in evidence or "frontend" in root or "cov-report" in root:
+        return ["src/solidity-frontend/*.cpp",
+                "src/goto-programs/goto_coverage.cpp"]
+    if "RUNNER_" in evidence or "STAGE" in evidence or "budget" in root \
+            or "early" in root or "materialization" in root:
+        return ["notes/coverage/scripts/rq1_veriput_run.py",
+                "notes/coverage/scripts/unit_schedule.py"]
+    if "SCHEDULE_" in evidence or "target" in root or "subject" in root:
+        return ["notes/coverage/scripts/unit_schedule.py",
+                "notes/coverage/scripts/unit_campaign_plan.py",
+                "notes/coverage/scripts/veriput_subjects.py"]
+    if "NO_COORDINATE" in evidence or "getter" in root \
+            or "dependency" in root:
+        return ["scripts/solidity_ast_dependencies.py",
+                "notes/coverage/scripts/put_all.py"]
+    if "NOT_CERTIFIED" in evidence or "NO_PATH" in evidence \
+            or "PATH_COV" in evidence or "certify" in root \
+            or "region" in root:
+        return ["scripts/solidity_path_generalise.py"]
+    explicit = row.get("suggested_write_scope")
+    if explicit:
+        return list(explicit)
+    return _default_scopes(category)
+
+
 def _stable_group_key(scopes: list[str], category: str) -> str:
     return f"{_scope_key(scopes, category)}::{category or 'UNKNOWN'}"
 
@@ -422,7 +460,7 @@ def build_dispatch(repair_tickets: Path, results_root: Path, no_valid_tsv: Path,
     grouped: OrderedDict[str, dict] = OrderedDict()
     for row in rows:
         category = str(row.get("category") or "")
-        scopes = list(row.get("suggested_write_scope") or _default_scopes(category))
+        scopes = _repair_scopes(row)
         key = _repair_group_key(scopes, category, row)
         group = grouped.setdefault(key, {
             "bucket_key": key,

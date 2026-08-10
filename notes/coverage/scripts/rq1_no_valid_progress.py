@@ -35,6 +35,7 @@ DEFAULT_PEER_DATASET_ROOT = Path(
 DEFAULT_DEADLINE_HOURS = 16.0
 DEFAULT_REMOTE_HOST = "invmut-w2"
 DEFAULT_REQUIRED_SUBAGENTS = 24
+DEFAULT_MIN_ACTIVE_SUBAGENTS = 5
 
 HARD_REQUIREMENTS = (
     "Do not report N/204 from memory; run this script or quote its last output.",
@@ -44,6 +45,8 @@ HARD_REQUIREMENTS = (
     "Every user-facing progress update must include an accurate countdown from "
     "the persisted deadline state, subagent status, remote host status, "
     "theoretical repair N/204, and actual RQ1 valid/PUT/R1R2 progress.",
+    "Every user-facing progress update must warn and trigger repair dispatch "
+    "when active spawned subagents are below 5.",
     "Local machine role: edit ESBMC/VeriPUT code and coordinate subagents.",
     "Remote invmut-w2 role: continuously run ESBMC/RQ1 validation jobs after "
     "code sync and update RQ1 artifacts; the local agent must not wait idle for "
@@ -71,6 +74,8 @@ HARD_REQUIREMENTS = (
     "subtract covered subjects back out when a covered category still produces "
     "no valid test, no PUT, or no R1/R2.  Progress reports must show both gross "
     "and net theoretical counts.",
+    "Current canonical result.json files written after the persisted progress "
+    "start time are treated as actual worker feedback, not stale history.",
 )
 
 RESOURCE_PLAN = (
@@ -547,6 +552,7 @@ def record_subagent(
     patch_id: str,
     agent_id: str,
     note: str,
+    review_status: str = "",
 ) -> dict:
     doc = init_subagent_state(path)
     now = time.time()
@@ -560,6 +566,14 @@ def record_subagent(
             agent["agent_id"] = agent_id
         if note:
             agent["note"] = note
+        if review_status:
+            if review_status not in {"pending", "accepted", "rejected",
+                                     "needs-work"}:
+                raise SystemExit(
+                    "--record-subagent-review-status must be one of "
+                    "pending, accepted, rejected, needs-work")
+            agent["review_status"] = review_status
+            agent["reviewed_ts"] = now
         if status == "completed":
             agent["completed_ts"] = now
         else:
@@ -583,7 +597,7 @@ def subagent_patch_review_sets(subagents: dict) -> dict[str, set[str]]:
         patch_id = str(agent.get("patch_id") or "").strip()
         if not patch_id:
             continue
-        mode = str(agent.get("mode") or "write")
+        mode = str(agent.get("mode") or "").strip().lower()
         if mode != "readonly":
             review_status = str(agent.get("review_status") or "pending")
             if review_status == "accepted":
@@ -619,15 +633,49 @@ def subagent_summary(subagents: dict) -> dict:
         if isinstance(agent, dict)
     ]
     by_status = Counter(str(agent.get("status") or "unknown") for agent in agents)
+    active_agents = [
+        agent for agent in agents
+        if agent.get("status") in {"leased", "running"}
+    ]
     dispatch_pending = [
         agent for agent in agents
         if str(agent.get("slot") or "").startswith("AUTO-")
         and agent.get("status") in {"leased", "running"}
         and not str(agent.get("patch_id") or "").strip()
     ]
+    write_patch_agents = []
+    pending_review = []
+    for agent in agents:
+        if agent.get("status") != "completed":
+            continue
+        mode = str(agent.get("mode") or "").strip().lower()
+        if mode == "readonly":
+            continue
+        if mode == "write" or (
+                str(agent.get("patch_id") or "").strip()
+                and (agent.get("write_scope") or [])):
+            write_patch_agents.append(agent)
+            if str(agent.get("review_status") or "pending") != "accepted":
+                pending_review.append(agent)
     return {
         "required_slots": DEFAULT_REQUIRED_SUBAGENTS,
+        "min_active_required": DEFAULT_MIN_ACTIVE_SUBAGENTS,
         "defined_slots": len(agents),
+        "active_running_or_leased": len(active_agents),
+        "active_below_required_min":
+            len(active_agents) < DEFAULT_MIN_ACTIVE_SUBAGENTS,
+        "active_subagents_to_spawn_now": max(
+            0, DEFAULT_MIN_ACTIVE_SUBAGENTS - len(active_agents)),
+        "dispatch_warning": (
+            "ACTIVE_SUBAGENTS_BELOW_5: spawn or reuse repair subagents now"
+            if len(active_agents) < DEFAULT_MIN_ACTIVE_SUBAGENTS else ""),
+        "active_details": [{
+            "slot": agent.get("slot"),
+            "agent_id": agent.get("agent_id"),
+            "task": agent.get("task"),
+            "mode": agent.get("mode") or "unknown",
+            "write_scope": agent.get("write_scope") or [],
+        } for agent in active_agents],
         "active_or_completed": sum(
             1 for agent in agents
             if agent.get("status") in {"running", "completed"}
@@ -637,6 +685,11 @@ def subagent_summary(subagents: dict) -> dict:
         "dispatch_pending_not_spawned": len(dispatch_pending),
         "dispatch_pending_slots": [
             agent.get("slot") for agent in dispatch_pending
+        ],
+        "completed_write_patches_requiring_review": len(write_patch_agents),
+        "pending_review_count": len(pending_review),
+        "pending_review_patch_ids": [
+            agent.get("patch_id") for agent in pending_review[-20:]
         ],
         "queued": by_status.get("queued", 0),
         "by_status": dict(sorted(by_status.items())),
@@ -656,7 +709,10 @@ def remote_probe(host: str, timeout_s: int = 5) -> dict:
         (
             "hostname; nproc; "
             "free -m | awk 'NR==2{print $7}'; "
-            "pgrep -af 'rq1_veriput_run.py|certify_all.py|put_all.py|esbmc' "
+            "pgrep -af '[r]q1_veriput_run.py|[c]ertify_all.py|"
+            "[p]ut_all.py|[s]olidity_path_put.py|"
+            "[s]olidity_path_generalise.py|[b]uild/src/esbmc/esbmc|"
+            "[e]sbmc( |$)|[v]eriput_remote_worker' "
             "| head -20 || true"
         ),
     ]
@@ -891,11 +947,21 @@ def resource_maximization(
     if sub_summary["running"] + sub_summary["queued"] + sub_summary[
             "completed"] < DEFAULT_REQUIRED_SUBAGENTS:
         reasons.append("subagent_slots_not_fully_accounted")
+    if sub_summary.get("active_below_required_min"):
+        reasons.append(
+            "active_subagents_below_5:"
+            f"{sub_summary.get('active_running_or_leased', 0)}/"
+            f"{DEFAULT_MIN_ACTIVE_SUBAGENTS};dispatch_required_now")
+    elif sub_summary.get("active_running_or_leased", 0) \
+            <= DEFAULT_MIN_ACTIVE_SUBAGENTS:
+        reasons.append(
+            "active_subagents_at_minimum_margin:"
+            f"{sub_summary.get('active_running_or_leased', 0)}/"
+            f"{DEFAULT_MIN_ACTIVE_SUBAGENTS};prepare_dispatch_now")
     if sub_summary.get("dispatch_pending_not_spawned"):
         reasons.append(
             "subagent_dispatch_pending_not_spawned:"
             f"{sub_summary['dispatch_pending_not_spawned']}")
-
     worker = remote_state.get("worker") or {}
     worker_watchdog = worker.get("remote_watchdog") or {}
     if not worker.get("started"):
@@ -950,6 +1016,10 @@ def resource_maximization(
         "remote_process_watchdog": bool(worker_watchdog),
         "remote_mem_available_gib": remote_mem_available_gib(remote_live),
         "remote_mem_available_mb": remote_live.get("mem_available_mb"),
+        "active_subagents": sub_summary["active_running_or_leased"],
+        "min_active_subagents": DEFAULT_MIN_ACTIVE_SUBAGENTS,
+        "subagents_to_spawn_now": sub_summary[
+            "active_subagents_to_spawn_now"],
         "local_worker_started": bool(local_state.get("started")),
         "local_case_parallel": int(local_state.get("case_parallel") or 0),
         "local_memory_watchdog": bool(local_state.get("memory_watchdog")),
@@ -1036,6 +1106,7 @@ def _as_int(obj: dict, key: str) -> int:
 def _canonical_validation_feedback_rows(
     results_root: Path,
     root_cause_index: dict[tuple[str, str], dict],
+    no_valid_since_ts: float | None = None,
 ) -> list[dict]:
     rows: list[dict] = []
     seen: dict[tuple[str, str], Path] = {}
@@ -1060,6 +1131,10 @@ def _canonical_validation_feedback_rows(
         seen[key] = result
     for (bench, subject), result in sorted(seen.items()):
         try:
+            result_mtime = result.stat().st_mtime
+        except OSError:
+            result_mtime = 0.0
+        try:
             doc = json.loads(result.read_text(errors="replace"))
         except (OSError, json.JSONDecodeError):
             continue
@@ -1076,6 +1151,10 @@ def _canonical_validation_feedback_rows(
         if valid > 0 and put_valid > 0 and r1r2 > 0:
             continue
         original = root_cause_index.get((bench, subject), {})
+        include_no_valid = (
+            no_valid_since_ts is not None and result_mtime >= no_valid_since_ts)
+        if valid <= 0 and not include_no_valid:
+            continue
         if valid <= 0:
             category = "NO_VALID_AFTER_RUN"
         elif put_valid <= 0:
@@ -1093,9 +1172,140 @@ def _canonical_validation_feedback_rows(
             "valid": valid,
             "put_valid": put_valid,
             "r1r2": r1r2,
+            "result_mtime": result_mtime,
+            "result_mtime_utc": _utc(result_mtime) if result_mtime else "",
             "source": "canonical_result",
         })
     return rows
+
+
+def _canonical_latest_status(results_root: Path) -> dict[tuple[str, str], dict]:
+    latest: dict[tuple[str, str], dict] = {}
+    seen: dict[tuple[str, str], Path] = {}
+    for result in sorted(results_root.glob("*/subjects/*/result.json")):
+        if is_historical_result_path(result):
+            continue
+        try:
+            rel_parts = result.relative_to(results_root).parts
+        except ValueError:
+            continue
+        if len(rel_parts) < 4 or rel_parts[1] != "subjects":
+            continue
+        bench, subject = rel_parts[0], rel_parts[2]
+        key = (bench, subject)
+        previous = seen.get(key)
+        if previous is not None:
+            try:
+                if result.stat().st_mtime <= previous.stat().st_mtime:
+                    continue
+            except OSError:
+                continue
+        seen[key] = result
+    for (bench, subject), result in seen.items():
+        try:
+            result_mtime = result.stat().st_mtime
+            doc = json.loads(result.read_text(errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        row = doc.get("row") if isinstance(doc.get("row"), dict) else doc
+        put_doc = doc.get("put") if isinstance(doc.get("put"), dict) else {}
+        if not isinstance(row, dict):
+            continue
+        latest[(bench, subject)] = {
+            "bench": bench,
+            "subject": subject,
+            "valid": max(_as_int(row, "valid"), _as_int(put_doc, "valid")),
+            "put_valid": max(_as_int(row, "put_valid"),
+                             _as_int(put_doc, "put_valid")),
+            "r1r2": max(
+                _as_int(row, "valid_put_with_R1_or_R2"),
+                _as_int(put_doc, "valid_put_with_R1_or_R2"),
+            ),
+            "result_file": str(result),
+            "result_mtime": result_mtime,
+            "result_mtime_utc": _utc(result_mtime),
+        }
+    return latest
+
+
+def _feedback_ticket_key(row: dict) -> tuple[str, str, str, str]:
+    return (
+        str(row.get("bench") or ""),
+        str(row.get("subject") or ""),
+        str(row.get("category") or row.get("result_bucket") or ""),
+        str(row.get("result_file") or ""),
+    )
+
+
+def _feedback_suggested_scope(row: dict) -> list[str]:
+    bucket = str(row.get("category") or row.get("result_bucket") or "")
+    original = str(row.get("original_category")
+                   or row.get("root_cause_category") or "")
+    if bucket in {"NO_PUT_MATERIALIZATION", "NO_R1R2_ORACLE"}:
+        return ["scripts/solidity_path_put.py", "notes/coverage/scripts/put_all.py"]
+    if original.startswith("ESBMC_") or bucket.startswith("ESBMC_"):
+        return [
+            "src/solidity-frontend/*.cpp",
+            "src/goto-programs/goto_coverage.cpp",
+        ]
+    if bucket == "UNCLASSIFIED_RESULT_SCHEMA_OR_ARTIFACT_MISSING":
+        return ["notes/coverage/scripts/rq1_veriput_run.py"]
+    return ["notes/coverage/scripts/certify_all.py"]
+
+
+def sync_feedback_repair_tickets(path: Path, rows: list[dict]) -> int:
+    existing = set()
+    for row in _read_jsonl(path):
+        existing.add(_feedback_ticket_key(row))
+    tickets = []
+    for row in rows:
+        if int(row.get("valid") or 0) and int(row.get("put_valid") or 0) \
+                and int(row.get("r1r2") or 0):
+            continue
+        ticket = {
+            "schema": "veriput-rq1-repair-ticket/v1",
+            "ts": time.time(),
+            "bench": row.get("bench"),
+            "subject": row.get("subject"),
+            "category": row.get("original_category")
+            or row.get("root_cause_category") or row.get("category"),
+            "result_bucket": row.get("category"),
+            "valid": int(row.get("valid") or 0),
+            "put_valid": int(row.get("put_valid") or 0),
+            "r1r2": int(row.get("r1r2") or 0),
+            "priority": "high" if str(row.get("category") or "").startswith(
+                "ESBMC_") else "normal",
+            "trigger_reason": (
+                "canonical-result-below-valid-put-r1r2-after-progress-start"),
+            "subject_dir": row.get("subject_dir"),
+            "result_file": row.get("result_file"),
+            "logs": [
+                str(Path(str(row.get("subject_dir") or "")) / "driver.log"),
+                str(Path(str(row.get("subject_dir") or "")) / "result.json"),
+                str(Path(str(row.get("subject_dir") or "")) / "put.json"),
+            ],
+            "suggested_write_scope": _feedback_suggested_scope(row),
+            "theoretical_progress_effect": (
+                "If this case belongs to an already-covered category and is "
+                "no-valid, it subtracts from net theoretical/provisional "
+                "coverage. valid-no-PUT and PUT-no-R1/R2 subtract from "
+                "quality progress."),
+            "subagent_rule": (
+                "Inspect listed failure records and owning source code before "
+                "editing; do not run ESBMC/RQ1 as root-cause discovery."),
+        }
+        key = _feedback_ticket_key(ticket)
+        if key in existing:
+            continue
+        existing.add(key)
+        tickets.append(ticket)
+    if not tickets:
+        return 0
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as stream:
+        for ticket in tickets:
+            stream.write(json.dumps(ticket, sort_keys=True) + "\n")
+    return len(tickets)
 
 
 def validation_feedback(
@@ -1105,6 +1315,8 @@ def validation_feedback(
     covered_categories: set[str],
     applied: set[str],
     actual: dict,
+    no_valid_since_ts: float | None = None,
+    sync_tickets: bool = False,
 ) -> dict:
     """Return later worker/canonical results that invalidate repair claims."""
     covered_micro_categories = {
@@ -1121,15 +1333,17 @@ def validation_feedback(
             row["original_category"] = original.get("category")
             row["root_cause_category"] = original.get("category")
         row.setdefault("source", "repair_ticket")
-    # Canonical result.json files are useful for quality debt and dispatch, but
-    # a canonical no-valid row may be an old pre-patch result.  Only explicit
-    # repair tickets represent a later worker contradiction of no-valid repair
-    # coverage.  Otherwise the gross no-valid theory would be zeroed by stale
-    # historical outputs immediately after a code patch.
-    rows.extend(
-        row for row in _canonical_validation_feedback_rows(results_root,
-                                                           root_cause_index)
-        if int(row.get("valid") or 0) > 0)
+    # Canonical result.json files are useful for quality debt.  Canonical
+    # no-valid rows written after the persisted progress start are also actual
+    # worker feedback and invalidate covered no-valid repair claims.  Older
+    # canonical no-valid rows are ignored to avoid subtracting stale history.
+    canonical_rows = _canonical_validation_feedback_rows(
+        results_root, root_cause_index, no_valid_since_ts)
+    latest_status = _canonical_latest_status(results_root)
+    tickets_written = (
+        sync_feedback_repair_tickets(repair_tickets, canonical_rows)
+        if sync_tickets else 0)
+    rows.extend(canonical_rows)
     no_valid: dict[tuple[str, str], dict] = {}
     no_put: dict[tuple[str, str], dict] = {}
     no_r1r2: dict[tuple[str, str], dict] = {}
@@ -1154,6 +1368,14 @@ def validation_feedback(
         valid = int(row.get("valid") or 0)
         put_valid = int(row.get("put_valid") or 0)
         r1r2 = int(row.get("r1r2") or 0)
+        latest = latest_status.get(key) or {}
+        if row.get("source") == "repair_ticket":
+            if not valid and int(latest.get("valid") or 0) > 0:
+                continue
+            if valid and not put_valid and int(latest.get("put_valid") or 0) > 0:
+                continue
+            if put_valid and not r1r2 and int(latest.get("r1r2") or 0) > 0:
+                continue
         item = {
             "bench": bench,
             "subject": subject,
@@ -1166,6 +1388,7 @@ def validation_feedback(
             "result_file": row.get("result_file"),
             "suggested_write_scope": row.get("suggested_write_scope") or [],
             "ts": row.get("ts"),
+            "latest_canonical_result": latest,
         }
         if not valid and claim_category:
             no_valid[key] = item
@@ -1202,6 +1425,14 @@ def validation_feedback(
         "actual_valid_no_r1r2_count": actual_no_r1r2,
         "quality_patch_claimed": quality_claimed,
         "quality_patch_ids_applied": sorted(applied & quality_patch_ids),
+        "canonical_feedback_ticket_sync": {
+            "enabled": sync_tickets,
+            "tickets_written": tickets_written,
+            "rule": (
+                "Canonical result.json rows below valid PUT R1/R2 and written "
+                "after progress start are emitted as repair tickets unless an "
+                "identical bench/subject/bucket/result_file ticket exists."),
+        },
         "put_theoretical_progress_gross": {
             "numerator": put_gross,
             "denominator": valid_cases,
@@ -1272,6 +1503,7 @@ def main() -> int:
     parser.add_argument("--record-subagent-patch-id", default="")
     parser.add_argument("--record-subagent-agent-id", default="")
     parser.add_argument("--record-subagent-note", default="")
+    parser.add_argument("--record-subagent-review-status", default="")
     parser.add_argument(
         "--applied",
         default="",
@@ -1291,6 +1523,7 @@ def main() -> int:
             args.record_subagent_patch_id,
             args.record_subagent_agent_id,
             args.record_subagent_note,
+            args.record_subagent_review_status,
         )
 
     counts = load_counts(args.tsv)
@@ -1333,7 +1566,9 @@ def main() -> int:
         counts, implemented)
     feedback = validation_feedback(args.repair_tickets, args.results_root,
                                    root_cause_index, set(covered_categories),
-                                   applied, actual)
+                                   applied, actual,
+                                   float(state.get("start_ts") or 0.0),
+                                   True)
     implemented_feedback = validation_feedback(
         args.repair_tickets,
         args.results_root,
@@ -1341,6 +1576,8 @@ def main() -> int:
         set(implemented_categories),
         implemented,
         actual,
+        float(state.get("start_ts") or 0.0),
+        True,
     )
     covered = max(
         0,

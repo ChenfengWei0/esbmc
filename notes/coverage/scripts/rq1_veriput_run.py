@@ -2069,6 +2069,8 @@ def _merge_oracle_metadata(*sources: dict) -> tuple[list[str], dict, list[str], 
         if not isinstance(source, dict):
             continue
         source_details = source.get("assertion_oracles") or []
+        detail_labels = Counter()
+        detail_combos = Counter()
         for detail in source_details:
             if not isinstance(detail, dict):
                 continue
@@ -2077,27 +2079,43 @@ def _merge_oracle_metadata(*sources: dict) -> tuple[list[str], dict, list[str], 
             if not classes:
                 continue
             for label in classes:
-                labels[label] += 1
-            combos["+".join(classes)] += 1
+                detail_labels[label] += 1
+            detail_combos["+".join(classes)] += 1
+        labels.update(detail_labels)
+        combos.update(detail_combos)
         for label in source.get("oracle_classes") or source.get(
                 "oracle_tags") or []:
             labels[str(label)] += 0
         class_counts = source.get("oracle_class_counts") or {}
         if isinstance(class_counts, dict):
+            # `oracle_class_counts` is often the aggregate form of
+            # `assertion_oracles` from the same source.  Use it only to fill
+            # labels that were not already counted from the detailed oracle
+            # records, otherwise R1/R2 metadata is double counted in summaries.
             for label, count in class_counts.items():
+                label_s = str(label)
                 try:
-                    labels[str(label)] += int(count)
+                    count_i = int(count)
                 except (TypeError, ValueError):
-                    labels[str(label)] += 0
+                    count_i = 0
+                if detail_labels.get(label_s):
+                    labels[label_s] += 0
+                else:
+                    labels[label_s] += count_i
         for combo in source.get("oracle_class_combinations") or []:
             combos[str(combo)] += 0
         combo_counts = source.get("oracle_class_combo_counts") or {}
         if isinstance(combo_counts, dict):
             for combo, count in combo_counts.items():
+                combo_s = str(combo)
                 try:
-                    combos[str(combo)] += int(count)
+                    count_i = int(count)
                 except (TypeError, ValueError):
-                    combos[str(combo)] += 0
+                    count_i = 0
+                if detail_combos.get(combo_s):
+                    combos[combo_s] += 0
+                else:
+                    combos[combo_s] += count_i
     return (
         sorted(labels),
         dict(sorted(labels.items())),

@@ -397,6 +397,9 @@ def _print_feedback_dispatch_summary(ledger_stdout: str,
     print(
         "  repair_dispatch="
         f"assignment_count={repair_assignment_count}"
+        f" min_target={dispatch.get('min_assignment_target')}"
+        f" write_owners={dispatch.get('write_owner_count')}"
+        f" readonly_root_cause={dispatch.get('readonly_root_cause_count')}"
         f" total_weak_subjects={dispatch.get('total_weak_subjects')}"
         f" assigned_subject_capacity={dispatch.get('assigned_subject_capacity')}"
         f" base_bucket_count={dispatch.get('base_bucket_count')}"
@@ -446,6 +449,7 @@ def _print_feedback_dispatch_summary(ledger_stdout: str,
                 f" subjects={assignment.get('subject_count')}"
                 f"/{assignment.get('bucket_subject_total')}"
                 f" patches={assignment.get('patch_count')}"
+                f" mode={assignment.get('mode')}"
                 f" priority={assignment.get('priority')}"
                 f" scope={','.join(assignment.get('write_scope') or [])}")
     for ticket in tickets[-5:]:
