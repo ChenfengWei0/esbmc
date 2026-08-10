@@ -8312,6 +8312,11 @@ def main():
         if args.path_function else None
     coord_types = dict(unit_params(args.ast, args.contract, args.unit,
                                    declaration_id=declaration_id))
+    parameter_type_ranges = {
+        name: tr for name, type_string in coord_types.items()
+        for tr in (elementary_type_range(type_string),)
+        if tr is not None
+    }
     constants = literal_state_constants(args.ast, args.contract)
     state_store_names_for_ranges, _state_store_range_evidence = \
         contract_state_esbmc_store_names(args.ast, args.contract)
@@ -8505,7 +8510,11 @@ def main():
     # Learned from the tool, round by round, and never guessed. Empty until a
     # round has published one, so the FIRST ladder falls back to the full 256-bit
     # range exactly as before -- there is nothing to know it from yet.
-    type_ranges = dict(state_type_ranges)
+    # ABI coordinates have a source-level domain before ESBMC publishes any
+    # TYPE RANGE line. Seed it here so the first geometric round cannot probe
+    # values that the Solidity parameter cannot represent (notably bytesN).
+    type_ranges = dict(parameter_type_ranges)
+    type_ranges.update(state_type_ranges)
     type_ranges.update(static_slot_type_ranges)
     # Coordinates whose level-0 point rests on a ONE-VALUE candidate list, i.e.
     # the ones the round's own warning says cannot be told apart from a vacuous
