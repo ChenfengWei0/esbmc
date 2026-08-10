@@ -7294,6 +7294,43 @@ def _source_function_decls(chunk, fname):
             _source_function_decl_infos(chunk, fname)]
 
 
+def source_inherited_function_params(source, contract, unit, arity=None):
+    """Read a unit's parameters from the target's source inheritance chain.
+
+    The AST cache can omit an inherited declaration even though the emitted
+    replay contains the correct call.  Stage 4 still needs the declaration to
+    repair an unsupported concrete skeleton; source parsing is a conservative
+    fallback because it selects only declarations reachable through the
+    target's constructor base chain and, when known, the emitted call arity.
+    """
+    if not source or not contract or not unit:
+        return None
+    visited = set()
+
+    def visit(name):
+        if name in visited:
+            return None
+        chunk = _source_contract_chunk(source, name)
+        if not chunk:
+            return None
+        visited.add(name)
+        defs = _source_function_decls(chunk, unit)
+        if defs:
+            if arity is not None:
+                matching = [params for params, _body in defs
+                            if len(params) == arity]
+                if matching:
+                    return matching[-1]
+            return defs[-1][0]
+        for base_name, _args in _constructor_initializer_calls(chunk):
+            result = visit(base_name)
+            if result is not None:
+                return result
+        return None
+
+    return visit(contract)
+
+
 def _source_function_header_is_readonly(header_tail):
     return bool(re.search(r"\b(?:view|pure)\b", header_tail or ""))
 
@@ -7630,28 +7667,88 @@ def apply_constructor_param_nonempty_args(lines, contract, specs):
 
 def constructor_param_dynarray_min_lengths(source, contract):
     """Minimum lengths for constructor dynamic-array params read by index."""
-    chunk = _source_contract_chunk(source, contract)
-    if not source or not chunk:
-        return {}
-    params = _source_constructor_params_from_source(source, contract)
-    body = _constructor_body_text(chunk)
-    if not params or not body:
-        return {}
     out = {}
-    for idx, (pname, ptype) in enumerate(params):
-        if not _norm_ty(ptype).endswith("[]"):
-            continue
-        max_idx = None
-        rx = re.compile(r"\b" + re.escape(pname) + r"\s*\[\s*(\d+)\s*\]")
-        for m in rx.finditer(body):
-            value = int(m.group(1))
-            max_idx = value if max_idx is None else max(max_idx, value)
-        if max_idx is not None:
-            out[idx] = {
-                "param_name": pname,
-                "param_type": ptype,
-                "min_len": max_idx + 1,
-            }
+    if not source or not contract:
+        return out
+
+    def resolve_binding(expr, bindings):
+        text = (expr or "").strip()
+        if text in bindings:
+            return bindings[text]
+        matches = []
+        for local_name, binding in bindings.items():
+            if re.search(r"\b" + re.escape(local_name) + r"\b", text):
+                matches.append(binding)
+        return matches[0] if len(matches) == 1 else None
+
+    def scan(name, bindings, visited):
+        if name in visited:
+            return
+        chunk = _source_contract_chunk(source, name)
+        if not chunk:
+            return
+        visited.add(name)
+        params = _source_constructor_params_from_source(source, name)
+        body = _constructor_body_text(chunk)
+        for pname, ptype in params:
+            binding = bindings.get(pname)
+            if binding is None or not _norm_ty(ptype).endswith("[]"):
+                continue
+            max_idx = None
+            rx = re.compile(r"\b" + re.escape(pname)
+                            + r"\s*\[\s*(\d+)\s*\]")
+            for match in rx.finditer(body):
+                value = int(match.group(1))
+                # Accesses under ``if (totalTokens > N)`` do not impose a
+                # deployment minimum of N+1 elements: the condition is
+                # precisely the guard that makes that slot optional.
+                guarded = False
+                for guard in re.finditer(
+                        r"\bif\s*\([^{};]*>\s*(\d+)\s*\)\s*\{"
+                        r"(.*?)\}", body, re.S):
+                    if not guard.start() < match.start() < guard.end():
+                        continue
+                    guarded_index = int(guard.group(1))
+                    guarded = guarded_index == value
+                    if guarded:
+                        break
+                if guarded:
+                    continue
+                max_idx = (value if max_idx is None else
+                           max(max_idx, value))
+            if max_idx is None:
+                continue
+            idx, target_name, target_type = binding
+            current = out.get(idx)
+            minimum = max_idx + 1
+            if current is None or minimum > current["min_len"]:
+                out[idx] = {
+                    "param_name": target_name,
+                    "param_type": target_type,
+                    "min_len": minimum,
+                }
+
+        for base_name, init_args in _constructor_initializer_calls(chunk):
+            base_params = _source_constructor_params_from_source(
+                source, base_name)
+            if not base_params:
+                continue
+            next_bindings = {}
+            for arg_idx, (base_pname, _base_ptype) in enumerate(base_params):
+                if arg_idx >= len(init_args):
+                    continue
+                binding = resolve_binding(init_args[arg_idx], bindings)
+                if binding is not None:
+                    next_bindings[base_pname] = binding
+            if next_bindings:
+                scan(base_name, next_bindings, visited)
+
+    params = _source_constructor_params_from_source(source, contract)
+    initial = {
+        name: (idx, name, ptype)
+        for idx, (name, ptype) in enumerate(params)
+    }
+    scan(contract, initial, set())
     return out
 
 
@@ -12557,9 +12654,16 @@ def _called_methods_on_var(source, var):
         source)))
 
 
-def _unique_function_choice(choices):
+def _unique_function_choice(choices, arity=None):
     if not choices:
         return None
+    if arity is not None:
+        choices = [choice for choice in choices
+                   if len(split_top_level(
+                       choice[0][choice[0].find("(") + 1:-1]))
+                   == arity]
+        if not choices:
+            return None
     first = choices[0]
     if all(choice == first for choice in choices):
         return first
@@ -12580,7 +12684,7 @@ def _mock_lines_for_interface_calls(source, iface_vars, indent, *,
             f"{indent}// ESBMC runtime fixture: local Foundry has no code at "
             f"{addr}.",
             f"{indent}address {mock_name} = address({addr});",
-            f"{indent}vm.etch({mock_name}, hex\"00\");",
+            f"{indent}vm.etch({mock_name}, hex\"60006000f3\");",
         ]
         added = 0
         for fname in called:
@@ -12723,7 +12827,7 @@ def constructor_param_interface_mock_specs(forge_project, contract):
                 r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
                 r"\s*\)?\s*\.\s*([A-Za-z_]\w*)\s*(?:\{[^}]*\})?\s*\(",
                 scan_body):
-            if cast_name != spec_pname:
+            if cast_name != spec_pname or iface in ("address", "payable"):
                 continue
             choice = _unique_function_choice(functions.get(fname) or [])
             if choice is None:
@@ -12739,6 +12843,38 @@ def constructor_param_interface_mock_specs(forge_project, contract):
                 "interface": iface,
                 "signature": signature,
                 "returns": returns,
+                "param_type": by_name.get(ctor_pname, (None, None))[1],
+                "nonzero_address_returns":
+                    returns == ["address"] and
+                    _interface_call_result_has_nonzero_guard(
+                        scan_body, iface, spec_pname, fname),
+            })
+        # A common constructor form casts an interface parameter through
+        # ``address`` before calling it, e.g.
+        # ``IERC20Metadata(address(pool)).symbol()``.  The inner cast is
+        # still the original constructor argument and must be mocked before
+        # deployment.
+        cast_rx = re.compile(
+            r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*address\s*\(\s*"
+            + re.escape(spec_pname)
+            + r"\s*\)\s*\)\s*\.\s*"
+            r"([A-Za-z_]\w*)\s*(?:\{[^}]*\})?\s*\(")
+        for iface, fname in cast_rx.findall(scan_body):
+            choice = _unique_function_choice(functions.get(fname) or [])
+            if choice is None:
+                continue
+            signature, returns = choice
+            key = (idx, iface, signature)
+            if key in seen:
+                continue
+            seen.add(key)
+            specs.append({
+                "param_index": idx,
+                "param_name": ctor_pname,
+                "interface": iface,
+                "signature": signature,
+                "returns": returns,
+                "param_type": by_name.get(ctor_pname, (None, None))[1],
                 "nonzero_address_returns":
                     returns == ["address"] and
                     _interface_call_result_has_nonzero_guard(
@@ -12747,6 +12883,8 @@ def constructor_param_interface_mock_specs(forge_project, contract):
 
     def contract_like_type(ptype):
         norm = _norm_ty(ptype)
+        if norm.endswith("[]"):
+            norm = norm[:-2].strip()
         if norm in ("address", "address payable"):
             return True
         return bool(re.fullmatch(r"[A-Za-z_]\w*", norm or ""))
@@ -12788,10 +12926,25 @@ def constructor_param_interface_mock_specs(forge_project, contract):
             continue
         interface_aliases.setdefault(pname, (idx, pname, ptype))
 
+    # A constructor may copy an interface argument into an immutable/state
+    # slot before using it through an address cast.  Keep the mock tied to the
+    # original argument so it is installed before deployment, e.g.
+    # ``pool = pool_; IERC20Metadata(address(pool)).symbol()``.
+    for state_name, source_name in re.findall(
+            r"\b([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;", body):
+        found = by_name.get(source_name)
+        if found is None:
+            continue
+        idx, ptype = found
+        if not contract_like_type(ptype):
+            continue
+        interface_aliases.setdefault(state_name, (idx, source_name, ptype))
+        add_cast_calls(body, source_name, state_name, idx)
+
     def add_alias_method(alias_name, alias_info, iface, fname,
-                         mock_address=None):
+                         mock_address=None, array_element=False, arity=None):
         idx, ctor_pname, alias_type = alias_info
-        choice = _unique_function_choice(functions.get(fname) or [])
+        choice = _unique_function_choice(functions.get(fname) or [], arity)
         if choice is None:
             return
         signature, returns = choice
@@ -12811,6 +12964,8 @@ def constructor_param_interface_mock_specs(forge_project, contract):
         }
         if mock_address is not None:
             spec["mock_address"] = mock_address
+        if array_element:
+            spec["array_element"] = True
         specs.append(spec)
 
     nested_return_aliases = set()
@@ -12828,23 +12983,89 @@ def constructor_param_interface_mock_specs(forge_project, contract):
             alias_info = aliases.get(param_name)
             if alias_info is None:
                 continue
-            interface_aliases[alias_name] = (
+            aliases[alias_name] = (
                 alias_info[0], alias_info[1], outer_iface)
             nested_return_aliases.add(alias_name)
             add_alias_method(param_name, alias_info, alias_info[2], first_name)
 
     def add_member_methods(scan_body, aliases):
+        def call_arities(alias_name, fname):
+            rx = re.compile(r"\b" + re.escape(alias_name)
+                            + r"\s*\.\s*" + re.escape(fname)
+                            + r"\s*\(")
+            arities = []
+            for match in rx.finditer(scan_body):
+                depth, pos = 1, match.end()
+                while pos < len(scan_body) and depth:
+                    if scan_body[pos] == "(":
+                        depth += 1
+                    elif scan_body[pos] == ")":
+                        depth -= 1
+                    pos += 1
+                if depth:
+                    continue
+                args = split_top_level(scan_body[match.end():pos - 1])
+                arities.append(0 if len(args) == 1 and not args[0] else
+                               len(args))
+            return sorted(set(arities))
+
         for alias_name, alias_info in list(aliases.items()):
             for fname in sorted(set(re.findall(
                     r"\b" + re.escape(alias_name)
                     + r"\s*\.\s*([A-Za-z_]\w*)\s*\(", scan_body))):
-                add_alias_method(alias_name, alias_info,
-                                 alias_info[2], fname,
-                                 "address(0)" if alias_name in
-                                 nested_return_aliases else None)
+                arities = call_arities(alias_name, fname) or [None]
+                for arity in arities:
+                    add_alias_method(alias_name, alias_info,
+                                     alias_info[2], fname,
+                                     "address(0)" if alias_name in
+                                     nested_return_aliases else None,
+                                     arity=arity)
+
+    def add_array_element_methods(scan_body, aliases, scan_chunk=None):
+        for alias_name, alias_info in list(aliases.items()):
+            _idx, _ctor_name, alias_type = alias_info
+            norm = _norm_ty(alias_type)
+            if not norm.endswith("[]"):
+                continue
+            iface = norm[:-2].strip()
+            if not re.fullmatch(r"[A-Za-z_]\w*", iface or ""):
+                continue
+            for fname in sorted(set(re.findall(
+                    r"\b" + re.escape(alias_name)
+                    + r"\s*\[\s*\d+\s*\]\s*\.\s*"
+                    r"([A-Za-z_]\w*)\s*\(", scan_body))):
+                add_alias_method(alias_name, alias_info, iface, fname,
+                                 "address(0)", array_element=True)
+            # Constructor bodies often pass an array element to an internal
+            # helper before the helper makes the external interface call:
+            # ``_scale(feeds[0])`` followed by ``feed.decimals()``.  Follow
+            # that one-hop data flow so the zero-address array element gets
+            # the same pre-deployment mock as a direct call.
+            if scan_chunk is None:
+                continue
+            passed_rx = re.compile(
+                r"\b([A-Za-z_]\w*)\s*\(\s*"
+                + re.escape(alias_name)
+                + r"\s*\[\s*\d+\s*\]\s*\)")
+            for callee in sorted(set(passed_rx.findall(scan_body))):
+                for fn_params, fn_body in _source_function_decls(
+                        scan_chunk, callee):
+                    if len(fn_params) != 1:
+                        continue
+                    param_name, param_type = fn_params[0]
+                    if not contract_like_type(param_type):
+                        continue
+                    iface = _norm_ty(param_type)
+                    for fname in sorted(set(re.findall(
+                            r"\b" + re.escape(param_name)
+                            + r"\s*\.\s*([A-Za-z_]\w*)\s*\(",
+                            fn_body))):
+                        add_alias_method(alias_name, alias_info, iface, fname,
+                                         "address(0)", array_element=True)
 
     add_nested_aliases(body, interface_aliases)
     add_member_methods(body, interface_aliases)
+    add_array_element_methods(body, interface_aliases)
 
     # If an aliased call returns an address which is immediately cast to
     # another interface, the second call is made at that returned address,
@@ -12991,9 +13212,92 @@ def constructor_param_interface_mock_specs(forge_project, contract):
                 base_body,
                 {base_pname: (idx, arg.strip(), base_ptype)})
             add_member_methods(base_body, interface_aliases)
+            add_array_element_methods(base_body, interface_aliases, base_chunk)
             add_chained_methods(
                 base_body,
                 {base_pname: (idx, arg.strip(), base_ptype)})
+
+    # Base constructors may themselves delegate to another base constructor.
+    # Walk that chain while carrying the original target parameter index.  A
+    # one-level scan misses calls such as DynamicWeightedLPOracle ->
+    # WeightedLPOracle -> LPOracleBase, which leaves a valid replay reverting
+    # during deployment even though each call is mockable from the source.
+    def resolve_binding(expr, bindings):
+        text = (expr or "").strip()
+        if text in bindings:
+            return bindings[text]
+        matches = []
+        for local_name, binding in bindings.items():
+            if re.search(r"\b" + re.escape(local_name) + r"\b", text):
+                matches.append(binding)
+        return matches[0] if len(matches) == 1 else None
+
+    def scan_base_chain(base_name, bindings, visited):
+        if base_name in visited:
+            return
+        base_chunk = _source_contract_chunk(source, base_name)
+        if not base_chunk:
+            return
+        visited.add(base_name)
+        base_body = _constructor_body_text(base_chunk)
+        base_params = _source_constructor_params_from_source(source,
+                                                              base_name)
+        local_aliases = {}
+        for local_name, local_type in base_params:
+            binding = bindings.get(local_name)
+            if binding is None:
+                continue
+            idx, target_name, _target_type = binding
+            if contract_like_type(local_type):
+                local_aliases[local_name] = (idx, target_name, local_type)
+            add_cast_calls(base_body, target_name, local_name, idx)
+        for state_name, source_name in re.findall(
+                r"\b([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;",
+                base_body):
+            binding = bindings.get(source_name)
+            if binding is None:
+                continue
+            idx, target_name, target_type = binding
+            local_aliases.setdefault(state_name,
+                                     (idx, target_name, target_type))
+            add_cast_calls(base_body, target_name, state_name, idx)
+        add_nested_aliases(base_body, local_aliases)
+        add_member_methods(base_body, local_aliases)
+        add_array_element_methods(base_body, local_aliases, base_chunk)
+        add_chained_methods(base_body, local_aliases)
+        for child_name, init_args in _constructor_initializer_calls(base_chunk):
+            child_params = _source_constructor_params_from_source(
+                source, child_name)
+            if not child_params:
+                continue
+            child_bindings = {}
+            for arg_idx, (child_pname, _child_ptype) in enumerate(
+                    child_params):
+                if arg_idx >= len(init_args):
+                    continue
+                binding = resolve_binding(init_args[arg_idx], bindings)
+                if binding is not None:
+                    child_bindings[child_pname] = binding
+            if child_bindings:
+                scan_base_chain(child_name, child_bindings, visited)
+
+    target_bindings = {
+        name: (idx, name, ptype)
+        for idx, (name, ptype) in enumerate(params)
+    }
+    for base_name, init_args in _constructor_initializer_calls(chunk):
+        base_params = _source_constructor_params_from_source(source, base_name)
+        if not base_params:
+            continue
+        base_bindings = {}
+        for arg_idx, (base_pname, _base_ptype) in enumerate(base_params):
+            if arg_idx >= len(init_args):
+                continue
+            binding = resolve_binding(init_args[arg_idx], target_bindings)
+            if binding is not None:
+                base_bindings[base_pname] = binding
+        if base_bindings:
+            scan_base_chain(base_name, base_bindings, set())
 
     for iface, pname, fname in re.findall(
             r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
@@ -13029,50 +13333,107 @@ def constructor_param_interface_mock_specs(forge_project, contract):
 def constructor_param_runtime_interface_mock_specs(forge_project, contract):
     """Runtime interface calls through state copied from constructor params."""
     source = _flat_source_for_project(forge_project)
-    chunk = _source_contract_chunk(source, contract)
-    if not source or not chunk:
+    if not source or not _source_contract_chunk(source, contract):
         return []
-    params = source_constructor_params(forge_project, contract)
-    by_name = {name: (idx, typ) for idx, (name, typ) in enumerate(params)}
-    body = _constructor_body_text(chunk)
+
+    def contract_like_type(ptype):
+        norm = _norm_ty(ptype)
+        if norm.endswith("[]"):
+            norm = norm[:-2].strip()
+        return (norm in ("address", "address payable") or
+                bool(re.fullmatch(r"[A-Za-z_]\w*", norm or "")))
+
+    def resolve_binding(expr, bindings):
+        text = (expr or "").strip()
+        if text in bindings:
+            return bindings[text]
+        matches = []
+        for local_name, binding in bindings.items():
+            if re.search(r"\b" + re.escape(local_name) + r"\b", text):
+                matches.append(binding)
+        return matches[0] if len(matches) == 1 else None
+
     assigned = {}
-    for lhs, rhs in re.findall(r"\b([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;",
-                               body):
-        found = by_name.get(rhs)
-        if found is None:
-            continue
-        idx, ptype = found
-        if _norm_ty(ptype) in ("address", "address payable"):
-            assigned[lhs] = (idx, rhs)
+    chunks = []
+
+    def collect(name, bindings, visited):
+        if name in visited:
+            return
+        chunk = _source_contract_chunk(source, name)
+        if not chunk:
+            return
+        visited.add(name)
+        chunks.append(chunk)
+        body = _constructor_body_text(chunk)
+        for lhs, rhs in re.findall(
+                r"\b([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;", body):
+            binding = bindings.get(rhs)
+            if binding is None:
+                continue
+            idx, target_name, target_type = binding
+            if contract_like_type(target_type):
+                assigned[lhs] = (idx, target_name)
+        for base_name, init_args in _constructor_initializer_calls(chunk):
+            base_params = _source_constructor_params_from_source(
+                source, base_name)
+            if not base_params:
+                continue
+            next_bindings = {}
+            for arg_idx, (base_pname, _base_ptype) in enumerate(base_params):
+                if arg_idx >= len(init_args):
+                    continue
+                binding = resolve_binding(init_args[arg_idx], bindings)
+                if binding is not None:
+                    next_bindings[base_pname] = binding
+            if next_bindings:
+                collect(base_name, next_bindings, visited)
+
+    params = source_constructor_params(forge_project, contract)
+    initial = {
+        name: (idx, name, ptype)
+        for idx, (name, ptype) in enumerate(params)
+    }
+    collect(contract, initial, set())
     if not assigned:
         return []
 
     functions = _source_function_abis(source)
     specs, seen = [], set()
-    for iface, state_var, fname in re.findall(
-            r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
-            r"\s*\)?\s*\.\s*([A-Za-z_]\w*)\s*(?:\{[^}]*\})?\s*\(",
-            chunk):
-        found = assigned.get(state_var)
-        if found is None:
-            continue
-        choice = _unique_function_choice(functions.get(fname) or [])
-        if choice is None:
-            continue
-        idx, pname = found
-        signature, returns = choice
-        key = (idx, state_var, iface, signature)
-        if key in seen:
-            continue
-        seen.add(key)
-        specs.append({
-            "param_index": idx,
-            "param_name": pname,
-            "state_var": state_var,
-            "interface": iface,
-            "signature": signature,
-            "returns": returns,
-        })
+    patterns = [
+        re.compile(
+            r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*"
+            r"([A-Za-z_]\w*)\s*\)\s*\)?\s*\.\s*"
+            r"([A-Za-z_]\w*)\s*(?:\{[^}]*\})?\s*\("),
+        re.compile(
+            r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*address\s*\(\s*"
+            r"([A-Za-z_]\w*)\s*\)\s*\)\s*\.\s*"
+            r"([A-Za-z_]\w*)\s*(?:\{[^}]*\})?\s*\("),
+    ]
+    for chunk in chunks:
+        for pattern in patterns:
+            for iface, state_var, fname in pattern.findall(chunk):
+                if iface in ("address", "payable"):
+                    continue
+                found = assigned.get(state_var)
+                if found is None:
+                    continue
+                choice = _unique_function_choice(functions.get(fname) or [])
+                if choice is None:
+                    continue
+                idx, pname = found
+                signature, returns = choice
+                key = (idx, state_var, iface, signature)
+                if key in seen:
+                    continue
+                seen.add(key)
+                specs.append({
+                    "param_index": idx,
+                    "param_name": pname,
+                    "state_var": state_var,
+                    "interface": iface,
+                    "signature": signature,
+                    "returns": returns,
+                })
     return specs
 
 
@@ -13140,7 +13501,7 @@ def apply_constructor_param_hascode_mocks(lines, contract, specs, indent="    ")
                 f"{indent}// ESBMC constructor fixture: local Foundry has no "
                 f"code at constructor argument `{spec['param_name']}`.",
                 f"{indent}address {mock_name} = {addr_expr};",
-                f"{indent}vm.etch({mock_name}, hex\"00\");",
+                f"{indent}vm.etch({mock_name}, hex\"60006000f3\");",
             ]
         if local:
             out.extend(local)
@@ -13224,7 +13585,7 @@ def apply_constructor_param_interface_mocks(lines, contract, specs, source,
                         exprs.append(f"address(uint160({3000 + ret_idx}))")
                     else:
                         exprs.append(_abi_mock_expr_for_type(
-                            source, typ, "", {}))
+                            source, typ, "", {}, dynamic_len=2))
                 exprs = ", ".join(exprs)
                 ret = f"abi.encode({exprs})"
             else:
@@ -13233,6 +13594,15 @@ def apply_constructor_param_interface_mocks(lines, contract, specs, source,
                 f"{indent}// ESBMC constructor fixture: local Foundry has no "
                 f"code at constructor argument `{spec['param_name']}`.",
             ]
+            if spec.get("array_element"):
+                # The synthesized constructor argument is a memory array
+                # whose default elements are address(0).  Mocking that
+                # element address is sufficient and avoids trying to cast the
+                # whole ``new IFace[](N)`` expression to an address.
+                local.append(
+                    f"{indent}vm.mockCall({target_expr}, "
+                    f"abi.encodeWithSignature(\"{signature}\"), {ret});")
+                continue
             if target_expr == addr_expr:
                 param_type = _norm_ty(spec.get("param_type") or "address")
                 mock_source = addr_expr
@@ -13241,7 +13611,7 @@ def apply_constructor_param_interface_mocks(lines, contract, specs, source,
                 local.append(
                     f"{indent}address {mock_name} = {mock_source};")
                 if not _is_precompile_address_expr(addr_expr):
-                    local.append(f"{indent}vm.etch({mock_name}, hex\"00\");")
+                    local.append(f"{indent}vm.etch({mock_name}, hex\"60006000f3\");")
                 target_expr = mock_name
             local.append(
                 f"{indent}vm.mockCall({target_expr}, "
@@ -13304,10 +13674,20 @@ def apply_constructor_param_runtime_interface_mocks(lines, contract, specs,
             local += [
                 f"{indent}// ESBMC runtime fixture: constructor argument "
                 f"`{spec['param_name']}` is stored in `{spec['state_var']}`.",
-                f"{indent}address {mock_name} = {addr_expr};",
             ]
+            param_type = spec.get("param_type")
+            if param_type is None:
+                ctor_params = _source_constructor_params_from_source(
+                    source, contract)
+                if idx < len(ctor_params):
+                    param_type = ctor_params[idx][1]
+            mock_source = addr_expr
+            if _norm_ty(param_type or "address") not in (
+                    "address", "address payable"):
+                mock_source = f"address({addr_expr})"
+            local.append(f"{indent}address {mock_name} = {mock_source};")
             if not _is_precompile_address_expr(addr_expr):
-                local.append(f"{indent}vm.etch({mock_name}, hex\"00\");")
+                local.append(f"{indent}vm.etch({mock_name}, hex\"60006000f3\");")
             local.append(
                 f"{indent}vm.mockCall({mock_name}, "
                 f"abi.encodeWithSignature(\"{signature}\"), {ret});")
@@ -13391,10 +13771,10 @@ def _derive_sz_decimals(entry_storage):
 
 def _abi_mock_expr_for_type(source, typ, field_name, entry_storage,
                             prefer_true_bool=False,
-                            prefer_zero_numeric=False):
+                            prefer_zero_numeric=False, dynamic_len=0):
     typ = typ.strip()
     if typ.endswith("[]"):
-        return f"new {typ[:-2].strip()}[](0)"
+        return f"new {typ[:-2].strip()}[]({int(dynamic_len)})"
     if typ == "string":
         return '""'
     if typ == "bytes":
@@ -13680,6 +14060,16 @@ def assemble_put_source(emitted, case, puts, new_contract, fixture=None,
         lines, _abstract_helper_unsupported = \
             drop_abstract_helper_unsupported_markers(lines)
     source = "\n".join(lines) + "\n"
+    mock_return_symbols = set()
+    for mock_spec_group in (constructor_param_mocks or [],
+                            constructor_param_runtime_mocks or []):
+        for mock_spec in mock_spec_group:
+            for mock_type in mock_spec.get("returns", []):
+                symbol = _source_custom_type_symbol(mock_type)
+                if symbol:
+                    mock_return_symbols.add(symbol)
+    lines = add_flat_import_symbols(lines, sorted(mock_return_symbols))
+    source = "\n".join(lines) + "\n"
     source = complete_esbmc_interface_mocks(source, flat_source or "")
     source = source.replace(
         f"contract {cname} is Test", f"contract {new_contract} is Test")
@@ -13774,6 +14164,16 @@ def assemble_concrete_source(emitted, case, new_contract, fixture=None,
             lines, target_contract=contract)
         lines, _abstract_helper_unsupported = \
             drop_abstract_helper_unsupported_markers(lines)
+    source = "\n".join(lines) + "\n"
+    mock_return_symbols = set()
+    for mock_spec_group in (constructor_param_mocks or [],
+                            constructor_param_runtime_mocks or []):
+        for mock_spec in mock_spec_group:
+            for mock_type in mock_spec.get("returns", []):
+                symbol = _source_custom_type_symbol(mock_type)
+                if symbol:
+                    mock_return_symbols.add(symbol)
+    lines = add_flat_import_symbols(lines, sorted(mock_return_symbols))
     source = "\n".join(lines) + "\n"
     source = complete_esbmc_interface_mocks(source, flat_source or "")
     source = source.replace(
@@ -14620,6 +15020,9 @@ def main():
             concrete_arity = len(args0) if args0 is not None else None
         concrete_params = function_params(
             a.ast, a.contract, a.unit, concrete_arity, ast_declaration_id)
+        if concrete_params is None:
+            concrete_params = source_inherited_function_params(
+                flat_source, a.contract, a.unit, concrete_arity)
     getter_signature = (
         public_state_getter_signature(a.ast, a.contract, a.unit)
         if getter_only and a.ast else None)
@@ -14924,6 +15327,9 @@ def main():
             arity = len(args0) if args0 is not None else None
         params = function_params(a.ast, a.contract, a.unit, arity,
                                  ast_declaration_id)
+        if params is None:
+            params = source_inherited_function_params(
+                flat_source, a.contract, a.unit, arity)
         rettypes = function_returns(a.ast, a.contract, a.unit, arity,
                                     ast_declaration_id)
         unit_mutability = function_state_mutability(
