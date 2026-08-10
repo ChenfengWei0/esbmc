@@ -386,6 +386,70 @@ def unit_state_dependencies(ast_path, contract, unit, arity=None, declaration_id
     return ordered, evidence
 
 
+def unit_contains_inline_assembly(ast_path, contract, unit, arity=None,
+                                  declaration_id=None):
+    """Return whether the target unit closure contains inline assembly.
+
+    Source-level state dependency filtering is sound only when the dependency
+    walk can see every state read. Inline assembly can read storage without a
+    referencedDeclaration edge, so callers must fail closed for that closure.
+    """
+    ast = _ast_root(ast_path)
+    if ast is None:
+        return True, ["assembly check unavailable: AST is absent or unreadable"]
+    nodes = _chain_nodes(ast, contract)
+    if nodes is None:
+        return True, [
+            f"assembly check unavailable: contract {contract!r} was not found"
+        ]
+    by_id = _indexed_ast(ast)
+    targets = _unit_targets(nodes, unit, arity, declaration_id)
+    if not targets:
+        getter = _public_state_getter(nodes, unit, arity, declaration_id)
+        targets = [getter] if getter is not None else []
+    if not targets:
+        return True, [
+            f"assembly check unavailable: target {contract}.{unit} was not found"
+        ]
+    callables = _callables(by_id)
+    seen = set()
+
+    def visit(node):
+        if not isinstance(node, dict):
+            return False
+        node_id = node.get("id")
+        if node_id in seen:
+            return False
+        seen.add(node_id)
+        if node.get("nodeType") == "InlineAssembly":
+            return True
+        next_calls = []
+
+        def scan(value):
+            if isinstance(value, dict):
+                if value.get("nodeType") == "InlineAssembly":
+                    return True
+                ref = value.get("referencedDeclaration")
+                if ref in callables and ref != node_id:
+                    next_calls.append(callables[ref])
+                for child in value.values():
+                    if scan(child):
+                        return True
+            elif isinstance(value, list):
+                for child in value:
+                    if scan(child):
+                        return True
+            return False
+
+        if scan(node.get("modifiers") or []) or scan(node.get("body")):
+            return True
+        return any(visit(callee) for callee in next_calls)
+
+    found = any(visit(target) for target in targets)
+    return found, (["inline assembly is present in the target call closure"]
+                   if found else [])
+
+
 def unit_env_dependencies(ast_path, contract, unit, arity=None, declaration_id=None):
     """Return environment quantities read by a target-contract unit closure."""
     ast = _ast_root(ast_path)

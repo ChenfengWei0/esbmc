@@ -74,7 +74,7 @@ from solidity_path_put import (ESTABLISHABLE_ENV_COORDS,  # noqa: E402,F401
 from solidity_ast_dependencies import (  # noqa: E402,F401
     SLOT_DEPENDENCY_POLICY, contract_state_esbmc_store_names,
     path_function_declaration_id, unit_mapping_slot_accesses,
-    unit_state_dependencies)
+    unit_contains_inline_assembly, unit_state_dependencies)
 
 UINT256_MAX = (1 << 256) - 1
 ADDRESS_MAX = (1 << 160) - 1
@@ -3600,6 +3600,24 @@ def state_coord_type_ranges(ast_path, contract, coords, state_store_names=None):
             if coord in wanted:
                 out[coord] = tr
     return out
+
+
+def filter_unreferenced_state_coords(coords, dependencies):
+    """Drop state coordinates outside a complete source dependency closure."""
+    if dependencies is None:
+        return list(coords or []), []
+    live = {str(name) for name in dependencies}
+    kept, dropped = [], []
+    for coord in coords or []:
+        if not str(coord).startswith("state."):
+            kept.append(coord)
+            continue
+        source_name = str(coord)[len("state."):].split("$", 1)[0]
+        if source_name in live:
+            kept.append(coord)
+        else:
+            dropped.append(str(coord))
+    return kept, sorted(dropped)
 
 
 def unit_params(ast_path, contract, unit, declaration_id=None):
@@ -7911,6 +7929,43 @@ def main():
               + ". The path did not read these caller inputs; it did not prove "
               "that they are fixed")
 
+    # State pins for unrelated fields can dominate the outer-box formula on a
+    # flattened contract.  Widening over those fields is sound when the source
+    # dependency closure is complete and contains no inline assembly, because
+    # the target cannot read them.  Assembly is a fail-closed escape hatch: its
+    # storage reads do not necessarily have AST declaration edges.
+    state_dependency_filter = {
+        "mode": "disabled",
+        "live": [],
+        "dropped": [],
+        "evidence": [],
+    }
+    state_deps, state_dep_evidence = unit_state_dependencies(
+        args.ast, args.contract, args.unit, declaration_id=declaration_id)
+    has_assembly, assembly_evidence = unit_contains_inline_assembly(
+        args.ast, args.contract, args.unit, declaration_id=declaration_id)
+    if state_deps is not None and not has_assembly:
+        coords, dropped_state_coords = filter_unreferenced_state_coords(
+            coords, state_deps)
+        state_dependency_filter = {
+            "mode": "source-closure-no-inline-assembly",
+            "live": sorted(str(name) for name in state_deps),
+            "dropped": dropped_state_coords,
+            "evidence": list(state_dep_evidence),
+        }
+        if dropped_state_coords:
+            print("[coords] DROPPED unrelated state coordinate(s) outside "
+                  "the target dependency closure: "
+                  + ", ".join(dropped_state_coords)
+                  + ". The certified region is widened over these fields; "
+                  "the source closure contains no inline assembly")
+    else:
+        state_dependency_filter["evidence"] = list(state_dep_evidence or [])
+        state_dependency_filter["evidence"].extend(assembly_evidence or [])
+        if has_assembly:
+            print("[coords] state dependency filtering disabled: inline "
+                  "assembly is present in the target closure")
+
     # ---- Drop coordinates NO generated test can set ----
     #
     # An `immutable` is fixed at construction, a `constant` is in the code; the
@@ -8402,6 +8457,7 @@ def main():
         pins={n: str(v) for n, v in sorted(pins.items())},
         nonquery_pins=[],
         unsettable_query_pins=sorted(unsettable_query_pins),
+        state_dependency_filter=state_dependency_filter,
     )
     declaration_id = path_function_declaration_id(args.path_function) \
         if args.path_function else None
@@ -10214,6 +10270,7 @@ def main():
         # The slice every region below is a statement ABOUT. A region quoted
         # without its pins is a region quoted wrong.
         "pins": {n: str(v) for n, v in sorted(pins.items())},
+        "state_dependency_filter": state_dependency_filter,
         "path_decisions": {
             str(enc): {"abi_gate_class": abi_gate_class(decisions),
                        "decisions": decisions}
