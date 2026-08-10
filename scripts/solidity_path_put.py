@@ -12699,7 +12699,13 @@ def unit_param_interface_mock_specs(source, contract, unit):
 
 
 def constructor_param_interface_mock_specs(forge_project, contract):
-    """Interface calls made through address constructor parameters."""
+    """Interface calls made through constructor parameters.
+
+    A constructor parameter may already have an interface/contract type, so
+    there is no source-level ``IFace(param)`` cast to discover.  This matters
+    for inherited constructors such as ``ReverseClaimer(ENS ens, ...)``:
+    deployment calls ``ens.owner(...)`` before the target unit can run.
+    """
     source = _flat_source_for_project(forge_project)
     chunk = _source_contract_chunk(source, contract)
     if not source or not chunk:
@@ -12737,8 +12743,14 @@ def constructor_param_interface_mock_specs(forge_project, contract):
                         scan_body, iface, spec_pname, fname),
             })
 
+    def contract_like_type(ptype):
+        norm = _norm_ty(ptype)
+        if norm in ("address", "address payable"):
+            return True
+        return bool(re.fullmatch(r"[A-Za-z_]\w*", norm or ""))
+
     for pname, (idx, ptype) in by_name.items():
-        if _norm_ty(ptype) not in ("address", "address payable"):
+        if not contract_like_type(ptype):
             continue
         add_cast_calls(body, pname, pname, idx)
 
@@ -12761,12 +12773,22 @@ def constructor_param_interface_mock_specs(forge_project, contract):
         if found is None:
             continue
         idx, ptype = found
-        if _norm_ty(ptype) not in ("address", "address payable"):
+        if not contract_like_type(ptype):
             continue
         interface_aliases[alias_name] = (idx, param_name, _alias_type)
 
-    def add_alias_method(alias_name, alias_info, iface, fname):
-        idx, ctor_pname, _alias_type = alias_info
+    # A parameter declared as `ENS ens` is already an interface value.  Treat
+    # its direct member calls as the same mockable alias as `ENS(ens).owner()`.
+    # The call matcher is deliberately limited to the constructor body, while
+    # the base-constructor pass below handles inherited deployment calls.
+    for pname, (idx, ptype) in by_name.items():
+        if not contract_like_type(ptype):
+            continue
+        interface_aliases.setdefault(pname, (idx, pname, ptype))
+
+    def add_alias_method(alias_name, alias_info, iface, fname,
+                         mock_address=None):
+        idx, ctor_pname, alias_type = alias_info
         choice = _unique_function_choice(functions.get(fname) or [])
         if choice is None:
             return
@@ -12775,22 +12797,52 @@ def constructor_param_interface_mock_specs(forge_project, contract):
         if key in seen:
             return
         seen.add(key)
-        specs.append({
+        spec = {
             "param_index": idx,
             "param_name": ctor_pname,
             "interface": iface,
             "signature": signature,
             "returns": returns,
+            "param_type": alias_type,
             "via_alias": alias_name,
             "nonzero_address_returns": False,
-        })
+        }
+        if mock_address is not None:
+            spec["mock_address"] = mock_address
+        specs.append(spec)
 
-    for alias_name, alias_info in interface_aliases.items():
-        for fname in sorted(set(re.findall(
-                r"\b" + re.escape(alias_name)
-                + r"\s*\.\s*([A-Za-z_]\w*)\s*\(", body))):
-            add_alias_method(alias_name, alias_info,
-                             alias_info[2], fname)
+    nested_return_aliases = set()
+
+    def add_nested_aliases(scan_body, aliases):
+        # Capture `IOut out = IOut(input.first(...));`.  The constructor then
+        # often calls `out.second(...)`, so the first mock belongs on `input`
+        # while the second belongs on the deterministic returned address.
+        nested_rx = re.compile(
+            r"\b([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*=\s*"
+            r"([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\.\s*"
+            r"([A-Za-z_]\w*)\s*\([^)]*\)\s*\)\s*;")
+        for outer_iface, alias_name, cast_type, param_name, first_name in \
+                nested_rx.findall(scan_body):
+            alias_info = aliases.get(param_name)
+            if alias_info is None:
+                continue
+            interface_aliases[alias_name] = (
+                alias_info[0], alias_info[1], outer_iface)
+            nested_return_aliases.add(alias_name)
+            add_alias_method(param_name, alias_info, alias_info[2], first_name)
+
+    def add_member_methods(scan_body, aliases):
+        for alias_name, alias_info in list(aliases.items()):
+            for fname in sorted(set(re.findall(
+                    r"\b" + re.escape(alias_name)
+                    + r"\s*\.\s*([A-Za-z_]\w*)\s*\(", scan_body))):
+                add_alias_method(alias_name, alias_info,
+                                 alias_info[2], fname,
+                                 "address(0)" if alias_name in
+                                 nested_return_aliases else None)
+
+    add_nested_aliases(body, interface_aliases)
+    add_member_methods(body, interface_aliases)
 
     # If an aliased call returns an address which is immediately cast to
     # another interface, the second call is made at that returned address,
@@ -12803,32 +12855,36 @@ def constructor_param_interface_mock_specs(forge_project, contract):
         r"\b([A-Za-z_]\w*)\s*\(\s*"
         r"([A-Za-z_]\w*)\s*\.\s*([A-Za-z_]\w*)\s*\([^)]*\)\s*\)"
         r"\s*\.\s*([A-Za-z_]\w*)\s*\(")
-    for outer_iface, alias_name, first_name, second_name in chained_rx.findall(
-            body):
-        alias_info = interface_aliases.get(alias_name)
-        if alias_info is None:
-            continue
-        add_alias_method(alias_name, alias_info, alias_info[2], first_name)
-        choice = _unique_function_choice(functions.get(second_name) or [])
-        if choice is None:
-            continue
-        signature, returns = choice
-        idx, ctor_pname, _alias_type = alias_info
-        key = (idx, outer_iface, signature, "address(0)")
-        if key in seen:
-            continue
-        seen.add(key)
-        specs.append({
-            "param_index": idx,
-            "param_name": ctor_pname,
-            "interface": outer_iface,
-            "signature": signature,
-            "returns": returns,
-            "via_alias": alias_name,
-            "via_chain": first_name,
-            "mock_address": "address(0)",
-            "nonzero_address_returns": False,
-        })
+    def add_chained_methods(scan_body, aliases):
+        for outer_iface, alias_name, first_name, second_name in \
+                chained_rx.findall(scan_body):
+            alias_info = aliases.get(alias_name)
+            if alias_info is None:
+                continue
+            add_alias_method(alias_name, alias_info, alias_info[2], first_name)
+            choice = _unique_function_choice(functions.get(second_name) or [])
+            if choice is None:
+                continue
+            signature, returns = choice
+            idx, ctor_pname, alias_type = alias_info
+            key = (idx, outer_iface, signature, "address(0)")
+            if key in seen:
+                continue
+            seen.add(key)
+            specs.append({
+                "param_index": idx,
+                "param_name": ctor_pname,
+                "interface": outer_iface,
+                "signature": signature,
+                "returns": returns,
+                "param_type": alias_type,
+                "via_alias": alias_name,
+                "via_chain": first_name,
+                "mock_address": "address(0)",
+                "nonzero_address_returns": False,
+            })
+
+    add_chained_methods(body, interface_aliases)
 
     getter_cast_rx = re.compile(
         r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\(\s*\)"
@@ -12885,7 +12941,7 @@ def constructor_param_interface_mock_specs(forge_project, contract):
             if found is None:
                 continue
             idx, ptype = found
-            if _norm_ty(ptype) not in ("address", "address payable"):
+            if not contract_like_type(ptype):
                 continue
             for params2, body2 in _source_function_decls(chunk, m.group(1)):
                 if arg_idx >= len(params2):
@@ -12923,12 +12979,19 @@ def constructor_param_interface_mock_specs(forge_project, contract):
             if found is None:
                 continue
             idx, ptype = found
-            if _norm_ty(ptype) not in ("address", "address payable"):
+            if not contract_like_type(ptype):
                 continue
             base_pname, base_ptype = base_params[arg_idx]
-            if _norm_ty(base_ptype) not in ("address", "address payable"):
+            if not contract_like_type(base_ptype):
                 continue
             add_cast_calls(base_body, arg.strip(), base_pname, idx)
+            add_nested_aliases(
+                base_body,
+                {base_pname: (idx, arg.strip(), base_ptype)})
+            add_member_methods(base_body, interface_aliases)
+            add_chained_methods(
+                base_body,
+                {base_pname: (idx, arg.strip(), base_ptype)})
 
     for iface, pname, fname in re.findall(
             r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
@@ -12937,7 +13000,7 @@ def constructor_param_interface_mock_specs(forge_project, contract):
         if found is None:
             continue
         idx, ptype = found
-        if _norm_ty(ptype) not in ("address", "address payable"):
+        if not contract_like_type(ptype):
             continue
         choice = _unique_function_choice(functions.get(fname) or [])
         if choice is None:
