@@ -274,6 +274,31 @@ check("bytes32-aggregate-param-becomes-raw-coordinate",
 check("bytes32-aggregate-param-not-refused-when-typed",
       bytes_refused, [])
 
+bytes4_padded_ce, bytes4_padded_refused = coord_values({
+    "inputs": {
+        "interfaceId": "{ .data = { 0xff, 0xff, 0xff, 0xfe, "
+        "0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "
+        "0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "
+        "0, 0, 0, 0 }, .length=4 }",
+    },
+}, param_types={"interfaceId": "bytes4"})
+check("bytes4-padded-aggregate-param-becomes-raw-coordinate",
+      bytes4_padded_ce.get("interfaceId"), 0xfffffffe)
+check("bytes4-padded-aggregate-param-not-refused",
+      bytes4_padded_refused, [])
+
+bytes4_bad_padding, bytes4_bad_padding_refused = coord_values({
+    "inputs": {
+        "interfaceId": "{ .data = { 0x12, 0x34, 0x56, 0x78, 0x01 }, "
+        ".length=4 }",
+    },
+}, param_types={"interfaceId": "bytes4"})
+check("bytes4-nonzero-padding-is-refused",
+      bytes4_bad_padding.get("interfaceId"), None)
+check("bytes4-nonzero-padding-refusal-is-named",
+      any("interfaceId (bytes4" in item for item in bytes4_bad_padding_refused),
+      True)
+
 untyped_bytes_ce, untyped_bytes_refused = coord_values({
     "inputs": {
         "assertionId": "{ .data = { 0x12, 0x34 }, .length=32 }",

@@ -829,8 +829,15 @@ def bytes_static_value_from_ce(type_string, raw_value):
             if b < 0 or b > 255:
                 return None
             data.append(b)
+        # ESBMC renders a fixed BytesStatic value through its 32-byte backing
+        # buffer.  For bytesN, only the first N bytes are the source value;
+        # zero padding after that is representation detail, not an unknown
+        # input.  Do not discard non-zero data outside the declared width:
+        # accepting it would silently reinterpret a malformed CE.
         if len(data) > n:
-            return None
+            if any(data[n:]):
+                return None
+            data = data[:n]
         data += [0] * (n - len(data))
         value = 0
         for b in data:
