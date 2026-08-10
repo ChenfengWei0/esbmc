@@ -8516,6 +8516,21 @@ def main():
     type_ranges = dict(parameter_type_ranges)
     type_ranges.update(state_type_ranges)
     type_ranges.update(static_slot_type_ranges)
+
+    def merge_type_ranges(measured):
+        """Keep measured ranges inside the source-level coordinate domain."""
+        for name, measured_range in (measured or {}).items():
+            previous = type_ranges.get(name)
+            if previous is None:
+                type_ranges[name] = measured_range
+                continue
+            lo = max(previous[0], measured_range[0])
+            hi = min(previous[1], measured_range[1])
+            if lo <= hi:
+                type_ranges[name] = (lo, hi)
+            else:
+                print(f"[types] ignoring contradictory measured range for "
+                      f"{name}: source={previous}, measured={measured_range}")
     # Coordinates whose level-0 point rests on a ONE-VALUE candidate list, i.e.
     # the ones the round's own warning says cannot be told apart from a vacuous
     # antecedent. Union across paths, because the candidate list is laid per
@@ -8562,7 +8577,7 @@ def main():
         # range -- so the geometric bracket that follows can be bounded by the
         # type instead of by 2^256. That ordering is why the fix costs no extra
         # run: the information is already on the way past.
-        type_ranges.update(tr_new)
+        merge_type_ranges(tr_new)
         if l0_failure:
             # Not "no equality coordinates". Say which it was, here, where it is
             # known -- the same rule the rest of this file follows.
@@ -8715,7 +8730,7 @@ def main():
                     args.probes, args.max_tx, args.timeout, cwd,
                     values_by_coord=cand2, ast=args.ast, focus=focus,
                     memlimit=args.memlimit, esbmc_args=args.esbmc_arg)
-                type_ranges.update(tr2)
+                merge_type_ranges(tr2)
                 unresolvable.update(unres2)
                 drop_unresolvable_query_pins("level0b", unres2)
                 if f2:
@@ -9001,7 +9016,7 @@ def main():
                 claim_budget=args.claim_budget, esbmc_args=args.esbmc_arg,
                 prune_inside=prune if args.probe_witnesses else None,
                 path_values=path_ladders)
-            type_ranges.update(tr_new)
+            merge_type_ranges(tr_new)
             unresolvable.update(unres)
             drop_unresolvable_query_pins("bracket", unres)
             print(f"[bracket] {brackets}")
@@ -9038,7 +9053,7 @@ def main():
                 spans=spans, ast=args.ast, focus=focus, memlimit=args.memlimit,
                 values_by_coord=eq_values, extra_values=probe_extra,
                 type_ranges=type_ranges, esbmc_args=args.esbmc_arg)
-            type_ranges.update(tr_new)
+            merge_type_ranges(tr_new)
             unresolvable.update(unres)
             drop_unresolvable_query_pins(f"refine {r + 1}", unres)
             last_failure = round_failure or last_failure
