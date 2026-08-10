@@ -1753,11 +1753,18 @@ bool solidity_convertert::get_sol_builtin_ref(
             ref_id = expr["expression"]["referencedDeclaration"].get<int>();
           const nlohmann::json &func_ref = find_decl_ref(ref_id);
 
-          if (!func_ref.empty() && func_ref.contains("functionSelector"))
+          if (
+            !func_ref.empty() &&
+            (func_ref.contains("functionSelector") ||
+             func_ref.contains("errorSelector")))
           {
-            // Parse the hex selector string to a numeric value
-            std::string sel_hex =
-              func_ref["functionSelector"].get<std::string>();
+            // Functions and custom errors expose the same `.selector`
+            // surface, but solc stores their metadata under different keys.
+            const char *selector_key =
+              func_ref.contains("functionSelector") ? "functionSelector"
+                                                       : "errorSelector";
+            // Parse the hex selector string to a numeric value.
+            std::string sel_hex = func_ref[selector_key].get<std::string>();
             BigInt sel_val = string2integer(sel_hex, 16);
             selector_word = constant_exprt(
               integer2binary(sel_val, 32), sel_hex, unsignedbv_typet(32));
