@@ -1,0 +1,52 @@
+{
+  "bucket_counts": {
+    "ESBMC_NO_COV_REPORT_FRONTEND_OR_COVERAGE": 1
+  },
+  "count": 1,
+  "repair_ticket_candidates": [
+    {
+      "bench": "bugfix124",
+      "category": "ESBMC_NO_COV_REPORT_FRONTEND_OR_COVERAGE",
+      "logs": [
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/driver.log",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/put.json"
+      ],
+      "priority": "high",
+      "put_valid": 0,
+      "r1r2": 0,
+      "result_bucket": "ESBMC_NO_COV_REPORT_FRONTEND_OR_COVERAGE",
+      "result_file": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+      "schema": "veriput-rq1-repair-ticket/v1",
+      "subagent_rule": "Inspect listed failure records and owning source code before editing; do not run ESBMC/RQ1 as root-cause discovery.",
+      "subject": "acfix_fixlink_MStableYieldSource",
+      "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource",
+      "suggested_write_scope": [
+        "src/solidity-frontend/*.cpp",
+        "src/goto-programs/goto_coverage.cpp"
+      ],
+      "theoretical_progress_effect": "If this case is in a covered category and remains no-valid after the current progress deadline, rq1_no_valid_progress.py subtracts it from net theoretical/provisional coverage. valid-no-PUT and PUT-no-R1/R2 subtract from quality progress.",
+      "trigger_reason": "interpreted-actual-result-below-valid-put-r1r2",
+      "ts": 1786417763.3071182,
+      "valid": 0
+    }
+  ],
+  "results_root": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT",
+  "rows": [
+    {
+      "bench": "bugfix124",
+      "bucket": "ESBMC_NO_COV_REPORT_FRONTEND_OR_COVERAGE",
+      "has_put_json": false,
+      "has_result_json": true,
+      "put_valid": 0,
+      "r1r2": 0,
+      "recovered_valid_tests": [],
+      "relocated_summary_paths": [],
+      "result_file": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+      "subject": "acfix_fixlink_MStableYieldSource",
+      "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource",
+      "valid": 0
+    }
+  ],
+  "schema": "veriput-rq1-esbmc-result-interpret/v1"
+}

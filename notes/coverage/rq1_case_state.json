@@ -204,15 +204,97 @@
       },
       "ground_truth_source": "manual-source-log-schedule-read-2026-08-11",
       "ground_truth_updated_ts": 1786417230.3528643,
-      "history": [],
+      "history": [
+        {
+          "batch_id": "manual-005-012-novalid",
+          "from": "NO_VALID",
+          "put_valid": 0,
+          "r1r2": 0,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+          "to": "NO_VALID",
+          "ts": 1786417774.5935023,
+          "valid": 0
+        }
+      ],
       "inventory_primary_reason": "bucket=NOT-CERTIFIED; driver_log=/usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/Results/BugFix124/subjects/acfix_fixlink_MStableYieldSource/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_MStableYieldSource/flat.sol.solast --contract MStableYieldSource --unit supplyTokenTo --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 599 --memlimit 12g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/cert/work/certify-results/bugfix124__acfix_fixlink_MStableYieldSource/supplyTokenTo --max-holes 1 --max-region-pieces 1 --level0 --level0-perturb --probe-witnesses 8 --probe-ladder --probe-ladder-budget 4 --static-uncontrolled-ins",
       "inventory_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+      "last_batch_id": "manual-005-012-novalid",
+      "last_oracle_details": [
+        {
+          "assertion_oracles": [],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {},
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/put/bugfix124__acfix_fixlink_MStableYieldSource__balanceOfToken/put-summary.json"
+        },
+        {
+          "assertion_oracles": [],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {},
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/put/bugfix124__acfix_fixlink_MStableYieldSource__depositToken/put-summary.json"
+        },
+        {
+          "assertion_oracles": [],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {},
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/put/final_deploy_concrete_fallback/put-summary.json"
+        }
+      ],
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
       "last_result_subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource",
       "last_result_sync_ts": 1786417122.107356,
+      "last_scheduler_preflight": {
+        "bad_contract_jobs": [],
+        "exists": true,
+        "expected_contract": "MStableYieldSource",
+        "expected_units": [
+          "supplyTokenTo",
+          "redeemToken",
+          "approveMax",
+          "balanceOfToken",
+          "depositToken"
+        ],
+        "internal_target_wrappers": [],
+        "job_count": 6,
+        "ok": true,
+        "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/unit-schedule.json",
+        "schedule_contract": null,
+        "scheduled_units": [
+          "approveMax",
+          "redeemToken",
+          "supplyTokenTo",
+          "depositToken",
+          "balanceOfToken",
+          "imBalances"
+        ],
+        "target_unit_hits": [
+          "supplyTokenTo",
+          "redeemToken",
+          "approveMax",
+          "balanceOfToken",
+          "depositToken"
+        ]
+      },
+      "last_settled_ts": 1786417774.5934875,
       "last_valid": 0,
+      "repair_tickets": [
+        {
+          "bench": "bugfix124",
+          "category": "manual006_manual-005-012-novalid",
+          "put_valid": 0,
+          "r1r2": 0,
+          "reason": "batch settlement below VALID_PUT_R1R2",
+          "result_bucket": "NO_VALID",
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+          "rule": "no-valid/no-PUT/no-R1R2 must return to static investigation and code repair",
+          "schema": "veriput-rq1-repair-ticket/v1",
+          "subject": "acfix_fixlink_MStableYieldSource",
+          "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource",
+          "ts": 1786417774.5935092,
+          "valid": 0
+        }
+      ],
       "state": "NO_VALID",
       "subject": "acfix_fixlink_MStableYieldSource"
     },
@@ -458,15 +540,539 @@
       },
       "ground_truth_source": "manual-source-log-schedule-read-2026-08-11",
       "ground_truth_updated_ts": 1786417230.3528643,
-      "history": [],
+      "history": [
+        {
+          "batch_id": "manual-005-012-novalid",
+          "from": "NO_VALID",
+          "put_valid": 0,
+          "r1r2": 0,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/result.json",
+          "to": "NO_VALID",
+          "ts": 1786417774.5954719,
+          "valid": 0
+        }
+      ],
       "inventory_primary_reason": "bucket=KILLED; diagnostic=esbmc-no-cov-report: ESBMC exited before producing cov-report.json exit=None; driver_log=/usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/Results/BugFix124/subjects/ct_5_Proposals_can_be_cancelled/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__ct_5_Proposals_can_be_cancelled/flat.sol.solast --contract DAO --unit cancelProposal --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 120 --memlimit 12g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/cert/work/certify-results/bugfix124__ct_5_Proposals_can_be_cancelled/cancelProposal --max-holes 1 --max-region-pieces 1 --level0 --level0-perturb --probe-witnesses 8 --probe-ladder --probe-ladder-budget 4 --static-uncontrolled-inseparable --skip-b",
       "inventory_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/result.json",
+      "last_batch_id": "manual-005-012-novalid",
+      "last_oracle_details": [
+        {
+          "assertion_oracles": [
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMajority_path15",
+              "text": "post == pre",
+              "var": "VAULT",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMajority_path15",
+              "text": "post == pre",
+              "var": "mapPID_votes$34[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMajority_path15",
+              "text": "post == pre",
+              "var": "mapPID_votes[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMajority_path15",
+              "text": "post >= pre",
+              "var": "VAULT",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMajority_path15",
+              "text": "post <= pre",
+              "var": "VAULT",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMajority_path15",
+              "text": "post >= pre",
+              "var": "mapPID_votes$34[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMajority_path15",
+              "text": "post <= pre",
+              "var": "mapPID_votes$34[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMajority_path15",
+              "text": "post >= pre",
+              "var": "mapPID_votes[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMajority_path15",
+              "text": "post <= pre",
+              "var": "mapPID_votes[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R0",
+              "classes": [
+                "R0"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMajority_path15",
+              "text": "path exits through revert",
+              "var": "exit",
+              "verdict": "HOLDS"
+            }
+          ],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {
+            "R0": 2,
+            "R1": 10
+          },
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMajority/put-summary.json"
+        },
+        {
+          "assertion_oracles": [
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMinority_path15",
+              "text": "post == pre",
+              "var": "VAULT",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMinority_path15",
+              "text": "post == pre",
+              "var": "mapPID_votes$34[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMinority_path15",
+              "text": "post == pre",
+              "var": "mapPID_votes[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMinority_path15",
+              "text": "post >= pre",
+              "var": "VAULT",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMinority_path15",
+              "text": "post <= pre",
+              "var": "VAULT",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMinority_path15",
+              "text": "post >= pre",
+              "var": "mapPID_votes$34[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMinority_path15",
+              "text": "post <= pre",
+              "var": "mapPID_votes$34[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMinority_path15",
+              "text": "post >= pre",
+              "var": "mapPID_votes[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMinority_path15",
+              "text": "post <= pre",
+              "var": "mapPID_votes[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R0",
+              "classes": [
+                "R0"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasMinority_path15",
+              "text": "path exits through revert",
+              "var": "exit",
+              "verdict": "HOLDS"
+            }
+          ],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {
+            "R0": 2,
+            "R1": 10
+          },
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMinority/put-summary.json"
+        },
+        {
+          "assertion_oracles": [
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasQuorum_path15",
+              "text": "post == pre",
+              "var": "VAULT",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasQuorum_path15",
+              "text": "post == pre",
+              "var": "mapPID_votes$34[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasQuorum_path15",
+              "text": "post == pre",
+              "var": "mapPID_votes[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasQuorum_path15",
+              "text": "post >= pre",
+              "var": "VAULT",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasQuorum_path15",
+              "text": "post <= pre",
+              "var": "VAULT",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasQuorum_path15",
+              "text": "post >= pre",
+              "var": "mapPID_votes$34[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasQuorum_path15",
+              "text": "post <= pre",
+              "var": "mapPID_votes$34[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasQuorum_path15",
+              "text": "post >= pre",
+              "var": "mapPID_votes[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R1",
+              "classes": [
+                "R1"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasQuorum_path15",
+              "text": "post <= pre",
+              "var": "mapPID_votes[_proposalID]",
+              "verdict": "HOLDS"
+            },
+            {
+              "class_combo": "R0",
+              "classes": [
+                "R0"
+              ],
+              "coordinate_classes": [],
+              "coordinates": [],
+              "emitted_in_test": true,
+              "kind": "put",
+              "test": "test_put_DAO_hasQuorum_path15",
+              "text": "path exits through revert",
+              "var": "exit",
+              "verdict": "HOLDS"
+            }
+          ],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {
+            "R0": 2,
+            "R1": 10
+          },
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasQuorum/put-summary.json"
+        },
+        {
+          "assertion_oracles": [],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {},
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__newGrantProposal/put-summary.json"
+        }
+      ],
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/result.json",
       "last_result_subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled",
       "last_result_sync_ts": 1786417122.1173193,
+      "last_scheduler_preflight": {
+        "bad_contract_jobs": [],
+        "exists": true,
+        "expected_contract": "DAO",
+        "expected_units": [
+          "cancelProposal"
+        ],
+        "internal_target_wrappers": [],
+        "job_count": 18,
+        "ok": true,
+        "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/unit-schedule.json",
+        "schedule_contract": null,
+        "scheduled_units": [
+          "cancelProposal",
+          "finaliseProposal",
+          "voteProposal",
+          "newGrantProposal",
+          "newAddressProposal",
+          "hasMajority",
+          "hasQuorum",
+          "hasMinority",
+          "mapPID_grant",
+          "mapPID_address",
+          "mapPID_type",
+          "mapPID_votes",
+          "mapPID_timeStart",
+          "mapPID_finalising",
+          "mapPID_finalised",
+          "isEqual",
+          "mapPIDMember_votes",
+          "init"
+        ],
+        "target_unit_hits": [
+          "cancelProposal"
+        ]
+      },
+      "last_settled_ts": 1786417774.5954635,
       "last_valid": 0,
+      "repair_tickets": [
+        {
+          "bench": "bugfix124",
+          "category": "manual010_manual-005-012-novalid",
+          "put_valid": 0,
+          "r1r2": 0,
+          "reason": "batch settlement below VALID_PUT_R1R2",
+          "result_bucket": "NO_VALID",
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/result.json",
+          "rule": "no-valid/no-PUT/no-R1R2 must return to static investigation and code repair",
+          "schema": "veriput-rq1-repair-ticket/v1",
+          "subject": "ct_5_Proposals_can_be_cancelled",
+          "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled",
+          "ts": 1786417774.595477,
+          "valid": 0
+        }
+      ],
       "state": "NO_VALID",
       "subject": "ct_5_Proposals_can_be_cancelled"
     },
@@ -502,15 +1108,61 @@
       },
       "ground_truth_source": "manual-source-log-schedule-read-2026-08-11",
       "ground_truth_updated_ts": 1786417230.3528643,
-      "history": [],
+      "history": [
+        {
+          "batch_id": "manual-005-012-novalid",
+          "from": "NO_VALID",
+          "put_valid": 0,
+          "r1r2": 0,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+          "to": "NO_VALID",
+          "ts": 1786417774.5956683,
+          "valid": 0
+        }
+      ],
       "inventory_primary_reason": "completion_status=no-units; certification={\"bucket_counts\": {}, \"certified_regions\": 0, \"driver_refusal_tags\": {}, \"exit_counts\": {}, \"not_certified_regions\": 0, \"oom_units\": [], \"rows\": 0, \"timed_out_units\": [], \"witness_counts\": {}}; put={\"put_raw\": 0, \"put_valid\": 0, \"quality_bucket\": null, \"raw\": 0, \"valid\": 0}",
       "inventory_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+      "last_batch_id": "manual-005-012-novalid",
+      "last_oracle_details": [],
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
       "last_result_subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall",
       "last_result_sync_ts": 1786417122.1191475,
+      "last_scheduler_preflight": {
+        "bad_contract_jobs": [],
+        "exists": true,
+        "expected_contract": "Multicall",
+        "expected_units": [
+          "multicall"
+        ],
+        "internal_target_wrappers": [],
+        "job_count": 0,
+        "ok": false,
+        "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/unit-schedule.json",
+        "schedule_contract": null,
+        "scheduled_units": [],
+        "target_unit_hits": []
+      },
+      "last_settled_ts": 1786417774.5956635,
       "last_valid": 0,
+      "repair_tickets": [
+        {
+          "bench": "bugfix124",
+          "category": "manual011_manual-005-012-novalid",
+          "put_valid": 0,
+          "r1r2": 0,
+          "reason": "batch settlement below VALID_PUT_R1R2",
+          "result_bucket": "NO_VALID",
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+          "rule": "no-valid/no-PUT/no-R1R2 must return to static investigation and code repair",
+          "schema": "veriput-rq1-repair-ticket/v1",
+          "subject": "pop_001_Multicall",
+          "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall",
+          "ts": 1786417774.5956724,
+          "valid": 0
+        }
+      ],
       "state": "NO_VALID",
       "subject": "pop_001_Multicall"
     },
@@ -561,15 +1213,130 @@
       },
       "ground_truth_source": "manual-source-log-schedule-read-2026-08-11",
       "ground_truth_updated_ts": 1786417230.3528643,
-      "history": [],
+      "history": [
+        {
+          "batch_id": "manual-005-012-novalid",
+          "from": "NO_VALID",
+          "put_valid": 0,
+          "r1r2": 0,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json",
+          "to": "NO_VALID",
+          "ts": 1786417774.5966098,
+          "valid": 0
+        }
+      ],
       "inventory_primary_reason": "bucket=NO-WITNESS-UNKNOWN; diagnostic=esbmc-no-cov-report: --path-cov-probe: unit 'sol:@C@PrivatePool@F@buy#5456' needs 360000 probe claims (36 branch arms x 10000 physical exits), exceeding --path-cov-max-goals 10000. Refusing instead of truncating the probe universe exit=-6; driver_log=[enumerate] ESBMC produced no cov-report.json. Its output was: | WARNING: Solidity harness: transaction sequence bounded to 1 tx (default). A VERIFICATION SUCCESSFUL result is bounded -- it means no violation within 1 transaction(s), NOT an unbounded proof; bugs requiring more transactions are not explored. Use --solidity-precise (or --solidity-max-tx 0) for an unbounded proof. | Adding Solidity complete-path coverage assertions... | WARNING: --solidity-path-coverage: DEGRADED unit 'sol:@C@PrivatePool@F@buy#5456' — fully expanded it enumerates more paths than the per-unit budget (10000), so 13 call point(s) were WITHDRAWN from its path identity and are now treated as black boxes: sol:@C@FixedPointMathLib@F@mulDivUp#1088 at file /home/samson/workspace/VeriPUT/Results/BugFix124/subjects/pop_009_PrivatePool/flat.sol line 2532 function buyQuote; sol:@C@MerkleProofLib@F@verifyMultiProof#2236",
       "inventory_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json",
+      "last_batch_id": "manual-005-012-novalid",
+      "last_oracle_details": [
+        {
+          "assertion_oracles": [],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {},
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/flashFee/put-summary.json"
+        },
+        {
+          "assertion_oracles": [],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {},
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/flashFeeAndProtocolFee/put-summary.json"
+        },
+        {
+          "assertion_oracles": [],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {},
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/setFeeRate/put-summary.json"
+        },
+        {
+          "assertion_oracles": [],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {},
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/setMerkleRoot/put-summary.json"
+        }
+      ],
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json",
       "last_result_subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool",
       "last_result_sync_ts": 1786417122.1211636,
+      "last_scheduler_preflight": {
+        "bad_contract_jobs": [
+          {
+            "contract": "ERC721TokenReceiver",
+            "unit": "onERC721Received"
+          }
+        ],
+        "exists": true,
+        "expected_contract": "PrivatePool",
+        "expected_units": [
+          "buy",
+          "sell",
+          "execute",
+          "flashFeeAndProtocolFee",
+          "flashFee",
+          "setFeeRate",
+          "setMerkleRoot"
+        ],
+        "internal_target_wrappers": [],
+        "job_count": 24,
+        "ok": false,
+        "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/unit-schedule.json",
+        "schedule_contract": null,
+        "scheduled_units": [
+          "flashFeeAndProtocolFee",
+          "flashFee",
+          "setMerkleRoot",
+          "setFeeRate",
+          "setUseStolenNftOracle",
+          "setPayRoyalties",
+          "setVirtualReserves",
+          "setAllParameters",
+          "onERC721Received",
+          "sell",
+          "withdraw",
+          "execute",
+          "buy",
+          "flashLoan",
+          "deposit",
+          "change",
+          "price",
+          "flashFeeToken",
+          "changeFeeQuote",
+          "buyQuote",
+          "sellQuote",
+          "availableForFlashLoan",
+          "sumWeightsAndValidateProof",
+          "initialize"
+        ],
+        "target_unit_hits": [
+          "buy",
+          "sell",
+          "execute",
+          "flashFeeAndProtocolFee",
+          "flashFee",
+          "setFeeRate",
+          "setMerkleRoot"
+        ]
+      },
+      "last_settled_ts": 1786417774.5966034,
       "last_valid": 0,
+      "repair_tickets": [
+        {
+          "bench": "bugfix124",
+          "category": "manual012_manual-005-012-novalid",
+          "put_valid": 0,
+          "r1r2": 0,
+          "reason": "batch settlement below VALID_PUT_R1R2",
+          "result_bucket": "NO_VALID",
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json",
+          "rule": "no-valid/no-PUT/no-R1R2 must return to static investigation and code repair",
+          "schema": "veriput-rq1-repair-ticket/v1",
+          "subject": "pop_009_PrivatePool",
+          "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool",
+          "ts": 1786417774.5966141,
+          "valid": 0
+        }
+      ],
       "state": "NO_VALID",
       "subject": "pop_009_PrivatePool"
     },
@@ -3280,5 +4047,5 @@
   "inventory": "notes/coverage/rq1_no_valid_each_case.json",
   "last_results_sync_ts": 1786417122.5140843,
   "schema": "veriput-rq1-case-state/v1",
-  "updated_ts": 1786417122.5140858
+  "updated_ts": 1786417774.597189
 }

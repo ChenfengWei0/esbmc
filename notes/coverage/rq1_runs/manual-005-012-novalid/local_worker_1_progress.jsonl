@@ -1,0 +1,2 @@
+{"bench": "bugfix124", "category": "manual006_manual-005-012-novalid", "lease_status": "running", "mem_available_gib": 37, "rc": 126, "status": "skipped-lease-held", "subject": "acfix_fixlink_MStableYieldSource", "ts": "2026-08-11T11:04:27+0800"}
+{"bench": "bugfix124", "category": "manual010_manual-005-012-novalid", "mem_available_gib": 37, "rc": 0, "status": "running", "subject": "ct_5_Proposals_can_be_cancelled", "ts": "2026-08-11T11:04:27+0800"}

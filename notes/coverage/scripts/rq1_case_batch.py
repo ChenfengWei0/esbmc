@@ -840,10 +840,19 @@ def stop(args: argparse.Namespace) -> dict:
     # Best-effort cleanup for child processes that survived process-group TERM.
     state = read_json(state_path(args))
     pids = []
+    scope = str(run_dir(args))
     for worker in state.get("workers") or []:
         pid = worker.get("pid")
-        if isinstance(pid, int) and Path(f"/proc/{pid}").exists():
-            pids.append(pid)
+        if not isinstance(pid, int) or not Path(f"/proc/{pid}").exists():
+            continue
+        try:
+            cmdline = Path(f"/proc/{pid}/cmdline").read_text(errors="replace")
+        except OSError:
+            cmdline = ""
+        if scope and scope not in cmdline.replace("\x00", " "):
+            result.setdefault("skipped_out_of_scope_pids", []).append(pid)
+            continue
+        pids.append(pid)
     for pid in pids:
         try:
             os.kill(pid, signal.SIGTERM)

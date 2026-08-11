@@ -613,3 +613,23 @@ The code-level blocker is rollback/migrate handling for a complex `require` cond
 1. `src/util/migrate.cpp`: handle the code/ifthenelse/rollback expression shape emitted for Solidity revert rollback, rather than aborting with `migrate expr failed`.
 2. Solidity path coverage insertion: when focus is a simple unit (`setFee`, getter), avoid migrating unrelated `fillOrder` rollback-save code if it is outside the focused dispatcher slice.
 3. `solidity_path_generalise.py`: cache `migrate expr failed` as a subject-level frontend blocker and do not spend per-unit retries until the ESBMC migrate fix lands.
+
+<!-- RQ1_BATCH_SETTLEMENT_BEGIN manual-005-012-novalid -->
+
+## Batch settlement: manual-005-012-novalid
+
+- case_count: 4
+- new valid: 0
+- new PUT: 0
+- new R1/R2: 0
+- bucket_counts: {"NO_VALID": 4, "put": 0, "r1r2": 0, "valid": 0}
+
+- `bugfix124/acfix_fixlink_MStableYieldSource`: NO_VALID valid=0 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json
+- `bugfix124/ct_5_Proposals_can_be_cancelled`: NO_VALID valid=0 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/result.json
+  - oracle_tags: {"R0": 2, "R1": 10}
+  - oracle_tags: {"R0": 2, "R1": 10}
+  - oracle_tags: {"R0": 2, "R1": 10}
+- `bugfix124/pop_001_Multicall`: NO_VALID valid=0 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json
+- `bugfix124/pop_009_PrivatePool`: NO_VALID valid=0 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json
+
+<!-- RQ1_BATCH_SETTLEMENT_END manual-005-012-novalid -->

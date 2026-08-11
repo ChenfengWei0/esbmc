@@ -1,0 +1,17 @@
+{
+  "case_count": 4,
+  "local_case_count": 2,
+  "local_manifest": "notes/coverage/rq1_runs/manual-005-012-novalid/manifest.local.tsv",
+  "local_parallel": 5,
+  "manifest": "notes/coverage/rq1_runs/manual-005-012-novalid/manifest.tsv",
+  "remote_case_count": 2,
+  "remote_manifest": "notes/coverage/rq1_runs/manual-005-012-novalid/manifest.remote.tsv",
+  "remote_parallel": 3,
+  "schema": "veriput-rq1-worker-supervisor/v1",
+  "started_ts": 1786417467.3362668,
+  "stopped_pids": [
+    2661418
+  ],
+  "stopped_ts": 1786417788.684647,
+  "workers": []
+}
