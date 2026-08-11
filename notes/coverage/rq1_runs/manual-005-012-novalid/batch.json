@@ -1,0 +1,113 @@
+{
+  "batch_id": "manual-005-012-novalid",
+  "case_count": 4,
+  "end_index": 12,
+  "ground_truth_gate": {
+    "case_count": 8,
+    "case_state": "notes/coverage/rq1_case_state.json",
+    "cases": [
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "VALID_PUT_R1R2",
+        "subject": "acfix_fixlink_DnGmxBatchingManager"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "acfix_fixlink_MStableYieldSource"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "VALID_NO_PUT",
+        "subject": "acfix_fixlink_Product"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "VALID_NO_PUT",
+        "subject": "acfix_fixlink_Product2"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "VALID_PUT_NO_R1R2",
+        "subject": "acfix_real_FlashGovernanceArbiter"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "ct_5_Proposals_can_be_cancelled"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "pop_001_Multicall"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "pop_009_PrivatePool"
+      }
+    ],
+    "manual_md": "notes/coverage/rq1_no_valid_manual_root_causes.md",
+    "ok": true,
+    "required_fields": [
+      "target_contract",
+      "target_functions",
+      "expected_units",
+      "expected_path",
+      "expected_region",
+      "expected_oracle",
+      "expected_r1r2",
+      "root_cause",
+      "fix_targets",
+      "source_files_read",
+      "evidence_files_read"
+    ],
+    "schema": "veriput-rq1-ground-truth-gate/v1"
+  },
+  "inventory": "notes/coverage/rq1_no_valid_each_case.json",
+  "lease_file": "notes/coverage/rq1_runs/manual-005-012-novalid/leases.json",
+  "local_parallel": 5,
+  "manifest": "notes/coverage/rq1_runs/manual-005-012-novalid/manifest.tsv",
+  "prepared_ts": 1786417433.8107433,
+  "remote_parallel": 3,
+  "run_dir": "notes/coverage/rq1_runs/manual-005-012-novalid",
+  "run_state_filter": [
+    "NO_VALID"
+  ],
+  "schema": "veriput-rq1-case-batch/v1",
+  "selected_case_count": 8,
+  "start_index": 5,
+  "state": "notes/coverage/rq1_runs/manual-005-012-novalid/supervisor.json"
+}

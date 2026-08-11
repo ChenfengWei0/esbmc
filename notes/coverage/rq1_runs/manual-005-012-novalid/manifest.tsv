@@ -1,0 +1,5 @@
+bench	subject	category	theory_patch_id	state_before_run
+bugfix124	acfix_fixlink_MStableYieldSource	manual006_manual-005-012-novalid	manual-005-012-novalid	NO_VALID
+bugfix124	ct_5_Proposals_can_be_cancelled	manual010_manual-005-012-novalid	manual-005-012-novalid	NO_VALID
+bugfix124	pop_001_Multicall	manual011_manual-005-012-novalid	manual-005-012-novalid	NO_VALID
+bugfix124	pop_009_PrivatePool	manual012_manual-005-012-novalid	manual-005-012-novalid	NO_VALID

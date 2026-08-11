@@ -386,6 +386,7 @@ def _audit_base_args(args: argparse.Namespace, tmp: Path) -> SimpleNamespace:
         end_index=8,
         batch_size=8,
         require_batch_size=True,
+        run_state=[],
         local_parallel=5,
         remote_parallel=3,
         remote_host="audit-host",
@@ -678,6 +679,25 @@ def gate(args: argparse.Namespace) -> dict:
     return ground_truth_status(args, inventory_rows(args))
 
 
+def _row_state(args: argparse.Namespace, row: dict) -> str:
+    state_doc = load_case_state(args)
+    key = case_key(str(row.get("bench") or ""), str(row.get("subject") or ""))
+    state_row = state_doc.get("cases", {}).get(key) or {}
+    return str(state_row.get("state") or "NO_VALID")
+
+
+def runnable_rows(args: argparse.Namespace, rows: list[dict]) -> list[tuple[int, dict, str]]:
+    allowed = set(args.run_state or [])
+    out = []
+    for absolute_index, row in zip(range(args.start_index, args.end_index + 1),
+                                   rows):
+        state = _row_state(args, row)
+        if allowed and state not in allowed:
+            continue
+        out.append((absolute_index, row, state))
+    return out
+
+
 def prepare(args: argparse.Namespace) -> dict:
     selected = inventory_rows(args)
     gt = ground_truth_status(args, selected)
@@ -691,17 +711,19 @@ def prepare(args: argparse.Namespace) -> dict:
     with out.open("w", newline="") as stream:
         writer = csv.DictWriter(
             stream,
-            fieldnames=("bench", "subject", "category", "theory_patch_id"),
+            fieldnames=("bench", "subject", "category", "theory_patch_id",
+                        "state_before_run"),
             delimiter="\t",
         )
         writer.writeheader()
-        for absolute_index, row in zip(range(args.start_index, args.end_index + 1),
-                                       selected):
+        runnable = runnable_rows(args, selected)
+        for absolute_index, row, state in runnable:
             writer.writerow({
                 "bench": row.get("bench"),
                 "subject": row.get("subject"),
                 "category": f"manual{absolute_index:03d}_{args.batch_id}",
                 "theory_patch_id": args.batch_id,
+                "state_before_run": state,
             })
     meta = {
         "schema": "veriput-rq1-case-batch/v1",
@@ -709,7 +731,9 @@ def prepare(args: argparse.Namespace) -> dict:
         "inventory": str(args.inventory),
         "start_index": args.start_index,
         "end_index": args.end_index,
-        "case_count": len(selected),
+        "selected_case_count": len(selected),
+        "case_count": len(runnable),
+        "run_state_filter": list(args.run_state or []),
         "local_parallel": args.local_parallel,
         "remote_parallel": args.remote_parallel,
         "manifest": str(out),
@@ -1567,6 +1591,13 @@ def print_chinese(doc: dict) -> None:
         for case in doc.get("cases") or []:
             print(f"- {case.get('bench')}/{case.get('subject')} ok={case.get('ok')} missing={case.get('missing')}")
         return
+    if doc.get("schema") == "veriput-rq1-case-batch/v1":
+        print(f"批次准备：{doc.get('batch_id')}")
+        print(f"selected_case_count：{doc.get('selected_case_count')}")
+        print(f"run_case_count：{doc.get('case_count')}")
+        print(f"run_state_filter：{doc.get('run_state_filter')}")
+        print(f"manifest：{doc.get('manifest')}")
+        return
     if doc.get("schema") == "veriput-rq1-batch-settlement/v1":
         print(f"批次结算：{doc.get('batch_id')}")
         print(f"case_count：{doc.get('case_count')}")
@@ -1662,6 +1693,13 @@ def main() -> int:
     parser.add_argument("--require-ground-truth",
                         action=argparse.BooleanOptionalAction,
                         default=True)
+    parser.add_argument("--run-state",
+                        action="append",
+                        default=[],
+                        choices=sorted(STATE_ORDER),
+                        help="only put selected cases in these current states "
+                             "into the worker manifest; gate still checks the "
+                             "full fixed batch")
     parser.add_argument("--stop-on-hard-decision",
                         action=argparse.BooleanOptionalAction,
                         default=False)
