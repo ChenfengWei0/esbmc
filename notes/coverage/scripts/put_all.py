@@ -154,6 +154,7 @@ CONCRETE_FALLBACK_WITNESS_CHECKS = {
     "COMPLETE-WITNESS-NO-COORDINATE",
     "PIN-EXCLUDED-NO-COORDINATE",
     "NOT-CERTIFIED-CE-FALLBACK",
+    "UNKNOWN",
 }
 CONCRETE_ONLY_STAGE2_SOURCES = {
     "cleared-concrete-fallback": "cleared_not_certified_fallback",
@@ -369,9 +370,9 @@ def widen_structural_getter_sender_region(row_subject, unit, path_function,
 def cleared_concrete_fallback_rows(record):
     """Stage-2 NOT_CERTIFIED paths whose concrete replay is authenticated.
 
-    This is intentionally narrower than `concrete_fallback=true`: the replay is
-    usable only when the single-point witness check returned SUCCESSFUL.  UNKNOWN
-    is not proof and FAILED is a refutation of the concrete point.
+    This is intentionally narrower than `concrete_fallback=true`: FAILED
+    witnesses are still rejected.  UNKNOWN is accepted only as concrete replay
+    evidence; it never becomes a PUT or a certified region.
     """
     rows = []
     not_certified = record.get("not_certified") or {}
@@ -986,6 +987,16 @@ def stage4_selector_matches(only, key, unit, path_function=None):
     if "." in only or "@" in only or ":path:" in only:
         return False
     return bool(row_key and only in row_key)
+
+
+def stage2_cell_derivation(record, base=None):
+    """Carry the Stage-2 invocation cell into Stage 4 without changing rows."""
+    deriv = dict(base or {})
+    if record.get("scope") is not None:
+        deriv["scope"] = record.get("scope")
+    if record.get("max_tx") is not None:
+        deriv["max_tx"] = record.get("max_tx")
+    return deriv
 
 
 def _not_certified_detail(record, enc):
@@ -2315,7 +2326,8 @@ def main():
             selected_static_pure = True
             fb_detail = fb.get("detail") or {}
             rows.append((key, is_poc, r["unit"], path_function,
-                         enc_i, None, None, [], False, {}, None, 0,
+                         enc_i, None, None, [], False,
+                         stage2_cell_derivation(r), None, 0,
                          row_subject, fb["stage2_source"], fb["region"], {},
                          fb["pins"], fb_detail.get("witness_check"),
                          fb.get("stage4_kind"),
@@ -2336,7 +2348,8 @@ def main():
                     continue
                 fb_detail = fb.get("detail") or {}
                 rows.append((key, is_poc, r["unit"], path_function,
-                             enc_i, None, None, [], False, {}, None, 0,
+                             enc_i, None, None, [], False,
+                             stage2_cell_derivation(r), None, 0,
                              row_subject, fb["stage2_source"],
                              fb["region"], {}, fb["pins"],
                              fb_detail.get("witness_check"),
@@ -2373,7 +2386,8 @@ def main():
                     if pin_excluded
                     else "cleared-concrete-fallback")
                 rows.append((key, is_poc, r["unit"], path_function,
-                             enc_i, None, None, [], False, {}, exit_kind, None,
+                             enc_i, None, None, [], False,
+                             stage2_cell_derivation(r), exit_kind, None,
                              row_subject, fallback_source,
                              fb["region"], {}, fb["pins"],
                              fb_detail.get("witness_check"),
@@ -2397,7 +2411,8 @@ def main():
                     r.get("enumeration_report"), path_function, enc_i)
                 fb_detail = fb.get("detail") or {}
                 rows.append((key, is_poc, r["unit"], path_function,
-                             enc_i, None, None, [], False, {}, exit_kind, None,
+                             enc_i, None, None, [], False,
+                             stage2_cell_derivation(r), exit_kind, None,
                              row_subject, "timeout-concrete-fallback",
                              fb["region"], {}, fb["pins"],
                              fb_detail.get("witness_check"),
@@ -2422,7 +2437,8 @@ def main():
                     r.get("enumeration_report"), path_function, enc_i)
                 fb_detail = fb.get("detail") or {}
                 rows.append((key, is_poc, r["unit"], path_function,
-                             enc_i, None, None, [], False, {}, exit_kind, None,
+                             enc_i, None, None, [], False,
+                             stage2_cell_derivation(r), exit_kind, None,
                              row_subject, "partial-journal-concrete-fallback",
                              fb["region"], {}, fb["pins"],
                              fb_detail.get("witness_check"),
@@ -2447,7 +2463,8 @@ def main():
                     r.get("enumeration_report"), path_function, enc_i)
                 fb_detail = fb.get("detail") or {}
                 rows.append((key, is_poc, r["unit"], path_function,
-                             enc_i, None, None, [], False, {}, exit_kind, None,
+                             enc_i, None, None, [], False,
+                             stage2_cell_derivation(r), exit_kind, None,
                              row_subject, "no-coordinate-concrete-fallback",
                              fb["region"], {}, fb["pins"],
                              fb_detail.get("witness_check"),
@@ -2482,7 +2499,8 @@ def main():
                     r.get("enumeration_report"), path_function, enc_i)
                 fb_detail = fb.get("detail") or {}
                 rows.append((key, is_poc, r["unit"], path_function,
-                             enc_i, None, None, [], False, {}, exit_kind, None,
+                             enc_i, None, None, [], False,
+                             stage2_cell_derivation(r), exit_kind, None,
                              row_subject, "no-coordinate-concrete-fallback",
                              fb["region"], {}, fb["pins"],
                              fb_detail.get("witness_check"),
@@ -2556,7 +2574,7 @@ def main():
                       "claim_budget",
                       "shrink_rounds", "refine_rounds", "skip_bracket",
                       "cut_policy", "max_region_pieces", "max_holes",
-                      "esbmc_args")
+                      "esbmc_args", "scope", "max_tx")
                      if r.get(k) is not None}
             (detail_region, detail_holes, detail_pins,
              region_derivation) = widen_structural_getter_sender_region(
@@ -2796,6 +2814,8 @@ def main():
         wd = os.path.join(
             OUT, "_wd", f"{bench}__{unit}{pf_label}__{enc}{plabel}{arm}")
         os.makedirs(wd, exist_ok=True)
+        stage4_scope = str(deriv.get("scope") or args.scope)
+        stage4_max_tx = int(deriv.get("max_tx") or args.max_tx)
         base_cmd = [
             sys.executable, PUT, "--esbmc", args.esbmc, "--sol", flat,
             "--ast", ast, "--contract", contract, "--unit", unit,
@@ -2809,7 +2829,7 @@ def main():
             # this sweep. INVOCATION_DECISIONS.md prints two command lines
             # and forbids quoting one into the other's table, so it is an
             # argument here and it is printed with the result.
-            "--scope", args.scope, "--max-tx", str(args.max_tx),
+            "--scope", stage4_scope, "--max-tx", str(stage4_max_tx),
             "--auto-unwind", str(args.auto_unwind),
             "--derived-by", json.dumps(deriv),
         ]

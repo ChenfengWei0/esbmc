@@ -59,6 +59,7 @@ CONCRETE_FALLBACK_WITNESS_CHECKS = {
     "COMPLETE-WITNESS-NO-COORDINATE",
     "PIN-EXCLUDED-NO-COORDINATE",
     "NOT-CERTIFIED-CE-FALLBACK",
+    "UNKNOWN",
 }
 CE_REPLAY_MANIFEST_SCHEMA = "veriput-ce-replay-manifest/1"
 CE_REPLAY_CANDIDATE_SCHEMA = "veriput-ce-replay-candidate/1"
@@ -3123,6 +3124,11 @@ def _no_candidate_counts_against_stop(cert_row: dict | None) -> bool:
             return False
     bucket = str(cert_row.get("bucket") or "").upper()
     if bucket in ("CRASHED", "KILLED", "UNWIND-TRUNCATED"):
+        return False
+    if (bucket == "NO-WITNESS-UNDECIDED"
+            and cert_row.get("empty_witness_verdict") == "REFUSED"
+            and "named-obstacle" in str(
+                cert_row.get("empty_witness_reason") or "")):
         return False
     return True
 

@@ -80,6 +80,11 @@ EXPENSIVE_UNIT_NAME_FRAGMENTS = (
     "upgrade",
     "withdraw",
 )
+INTERNAL_TARGET_WRAPPER_UNIT_NAMES = {
+    "execute",
+    "executeBatch",
+    "executeTransaction",
+}
 
 # These routes are scheduling hints for the initial NO-PATH observations only.
 # They never grant theory credit: each replacement still needs a CE and normal
@@ -267,10 +272,27 @@ def _region_strategy(unit_info: dict | None) -> dict:
     }
 
 
+def _sequence_strategy(unit: str, target_hints: set[str]) -> dict:
+    if _is_internal_target_wrapper(unit, target_hints):
+        return {
+            "scope": "whole",
+            "max_tx": 2,
+            "reason": (
+                "internal/private target hint needs a public wrapper sequence "
+                "to establish predecessor state before the target wrapper"),
+        }
+    return {
+        "scope": "focus",
+        "max_tx": 1,
+        "reason": "single focused unit call",
+    }
+
+
 def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path: str | None,
                   dry_run: bool, *, timeout_s: int, run_timeout_s: int,
                   memlimit_gib: int, workdir: str,
-                  unit_info: dict | None = None) -> list[str]:
+                  unit_info: dict | None = None,
+                  target_hints: set[str] | None = None) -> list[str]:
     argv = [
         sys.executable,
         str(CERTIFY_ALL),
@@ -286,6 +308,11 @@ def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path
     if out_path:
         argv.extend(["--out", out_path])
     argv.extend(strong_certify_args())
+    sequence = _sequence_strategy(unit, target_hints or set())
+    if sequence["scope"] != "focus":
+        argv.extend(["--scope", sequence["scope"]])
+    if int(sequence["max_tx"]) != 1:
+        argv.extend(["--max-tx", str(sequence["max_tx"])])
     for coord in _region_strategy(unit_info)["env_coords"]:
         argv.extend(["--env-coord", coord])
     argv = budgeted_certify_argv(argv,
@@ -298,6 +325,18 @@ def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path
     return argv
 
 
+def _has_internal_target_hint(target_hints: set[str]) -> bool:
+    return any(str(name).startswith("_") for name in target_hints)
+
+
+def _is_internal_target_wrapper(unit: str, target_hints: set[str]) -> bool:
+    if not _has_internal_target_hint(target_hints):
+        return False
+    lower = unit.lower()
+    return (unit in INTERNAL_TARGET_WRAPPER_UNIT_NAMES
+            or lower.startswith("execute"))
+
+
 def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None,
                    static_obstacles: list[dict] | None = None) -> tuple[int, str]:
     if static_obstacles:
@@ -307,6 +346,8 @@ def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None,
                 and _unit_cost_rank(unit, unit_info)[0] >= 70):
             return 1, "expensive-target-hint"
         return 0, "target-hint"
+    if _is_internal_target_wrapper(unit, hinted):
+        return 0, "internal-target-wrapper"
     if not unit_info:
         return 2, "enumerated"
     mutability = unit_info.get("state_mutability") or ""
@@ -369,9 +410,12 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
                   workdir: str) -> dict:
     subject = dict(row["subject"])
     subject["unit"] = unit
-    hinted = set((row.get("unit_hints") or {}).get("hinted_units") or [])
+    unit_hints = row.get("unit_hints") or {}
+    hinted = set(unit_hints.get("hinted_units") or [])
+    target_hints = hinted | set(unit_hints.get("missing_unit_hints") or [])
     static_obstacles = _static_obstacles_for_unit(row, subject, unit)
-    priority, reason = _unit_priority(unit, hinted, unit_info, static_obstacles)
+    priority, reason = _unit_priority(unit, target_hints, unit_info,
+                                      static_obstacles)
     return {
         "schema": "veriput-unit-job/v1",
         "job_id": (f"{subject.get('benchmark_key') or subject['subject_id']}__"
@@ -392,6 +436,7 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
         "unit_hints": row.get("unit_hints"),
         "unit_info": unit_info,
         "region_strategy": _region_strategy(unit_info),
+        "sequence_strategy": _sequence_strategy(unit, target_hints),
         "static_obstacles": static_obstacles,
         "certification_budget": {
             "timeout_s": timeout_s or None,
@@ -408,7 +453,8 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
                                       run_timeout_s=run_timeout_s,
                                       memlimit_gib=memlimit_gib,
                                       workdir=workdir,
-                                      unit_info=unit_info),
+                                      unit_info=unit_info,
+                                      target_hints=target_hints),
         "dry_run_argv": _certify_argv(subject,
                                       unit,
                                       ast_cache_root,
@@ -418,7 +464,8 @@ def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None
                                       run_timeout_s=run_timeout_s,
                                       memlimit_gib=memlimit_gib,
                                       workdir=workdir,
-                                      unit_info=unit_info),
+                                      unit_info=unit_info,
+                                      target_hints=target_hints),
     }
 
 
@@ -528,7 +575,8 @@ def build_schedule(manifest: dict,
         rest = tuple(rank[1:])
         hinted_tie = (
             0 if item.get("priority_reason") in
-            ("target-hint", "expensive-target-hint") else 1)
+            ("target-hint", "internal-target-wrapper",
+             "expensive-target-hint") else 1)
         return (item["priority"], tier, hinted_tie, rest, item["ordinal"])
 
     jobs.sort(key=_job_sort_key)
