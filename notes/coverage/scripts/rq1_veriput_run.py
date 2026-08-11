@@ -35,6 +35,10 @@ sys.path.insert(0, str(REPO / "scripts"))
 import subject_unit_manifest  # noqa: E402
 import target_manifest  # noqa: E402
 import unit_schedule  # noqa: E402
+from rq1_window_guard import (  # noqa: E402
+    WindowGuardError,
+    enforce_rows_in_window,
+)
 from solidity_path_put import (  # noqa: E402
     _source_constructor_params_from_source,
     _source_custom_type_symbol,
@@ -5418,6 +5422,7 @@ def write_dataset_manifest(root: Path, dataset_label: str, journal: Path) -> Non
 def build_dry_run(args) -> dict:
     dataset_label, rows = target_rows(Path(args.veriput_root), args.benchmark,
                                       args.subject_id, args.limit, args.order)
+    enforce_rows_in_window(rows, getattr(args, "active_window", ""))
     doc = {
         "schema": "veriput-rq1-dry-run/v1",
         "generated_at": _utc_now(),
@@ -5488,6 +5493,11 @@ def main(argv=None) -> int:
                     default="fast-first",
                     help="subject order before --limit. fast-first sorts by "
                          "prepared flat.sol size to get early throughput")
+    ap.add_argument("--active-window", default=os.environ.get(
+        "VERIPUT_RQ1_ACTIVE_WINDOW", ""),
+                    help="JSON/TSV active rolling-window file. When set, "
+                         "every selected subject must appear in that window; "
+                         "otherwise the run is refused before dry-run or ESBMC")
     ap.add_argument("--result-root", default=str(DEFAULT_RESULT_ROOT))
     ap.add_argument("--ast-cache-root", default=str(DEFAULT_AST_CACHE_ROOT))
     ap.add_argument("--ce-collection-only", action="store_true",
@@ -5713,6 +5723,7 @@ def main(argv=None) -> int:
 
         dataset_label, rows = target_rows(veriput_root, args.benchmark,
                                           args.subject_id, args.limit, args.order)
+        enforce_rows_in_window(rows, args.active_window)
         journal_name = ("ce-collection-results.jsonl"
                         if args.ce_collection_only else "results.jsonl")
         journal = result_root / dataset_label / journal_name
@@ -5738,7 +5749,7 @@ def main(argv=None) -> int:
         if attempted == 0:
             write_dataset_manifest(result_root, dataset_label, journal)
         return 0
-    except (OSError, RQ1RunError) as exc:
+    except (OSError, RQ1RunError, WindowGuardError) as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 1
 

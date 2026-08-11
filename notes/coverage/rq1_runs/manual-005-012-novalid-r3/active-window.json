@@ -1,0 +1,38 @@
+{
+  "schema": "veriput-rq1-active-window/v1",
+  "batch_id": "manual-005-012-novalid-r3",
+  "entries": [
+    {
+      "bench": "bugfix124",
+      "subject": "acfix_fixlink_MStableYieldSource"
+    },
+    {
+      "bench": "bugfix124",
+      "subject": "pop_001_Multicall"
+    },
+    {
+      "bench": "bugfix124",
+      "subject": "pop_009_PrivatePool"
+    },
+    {
+      "bench": "bugfix124",
+      "subject": "pop_018_PrivatePool"
+    },
+    {
+      "bench": "bugfix124",
+      "subject": "pop_032_PuttyV2"
+    },
+    {
+      "bench": "bugfix124",
+      "subject": "pop_033_PrivatePool"
+    },
+    {
+      "bench": "bugfix124",
+      "subject": "pop_042_VaultAdapter"
+    },
+    {
+      "bench": "bugfix124",
+      "subject": "pop_046_CVXStaker"
+    }
+  ]
+}
