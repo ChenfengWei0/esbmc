@@ -20,6 +20,8 @@ REMOTE = HERE / "rq1_remote_pump.py"
 DEFAULT_STATE = Path("/tmp/veriput_rq1_worker_supervisor.json")
 DEFAULT_MANIFEST = Path("/tmp/veriput_rq1_theory_covered_cases.tsv")
 DEFAULT_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
+DEFAULT_RUN_DIR = Path("/tmp/veriput_rq1_worker_supervisor.d")
+DEFAULT_LEASE_FILE = Path("/tmp/veriput_rq1_case_leases.json")
 
 
 def _write(path: Path, doc: dict) -> None:
@@ -81,13 +83,33 @@ def _alive(pid: object) -> bool:
         return False
 
 
+def _terminate_matching_children(pattern: str) -> list[int]:
+    proc = subprocess.run(["pgrep", "-f", pattern], stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, text=True, check=False)
+    killed = []
+    for line in proc.stdout.splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        if pid == os.getpid():
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            continue
+        killed.append(pid)
+    return killed
+
+
 def _base_local_args(args: argparse.Namespace, index: int, manifest: Path) -> list[str]:
-    stem = f"/tmp/veriput_rq1_local_worker_{index}"
+    stem = args.run_dir / f"local_worker_{index}"
     return [
         sys.executable, str(LOCAL), "--tsv", str(manifest),
         "--state", f"{stem}_state.json", "--progress", f"{stem}_progress.jsonl",
         "--interpret-out", f"{stem}_interpret.json", "--adopt-out",
-        f"{stem}_adopt.json", "--lease-file", "/tmp/veriput_rq1_case_leases.json",
+        f"{stem}_adopt.json", "--log", f"{stem}.log",
+        "--lease-file", str(args.lease_file),
         "--result-root", str(args.results_root), "--limit", "0", "--loop",
         "--timeout", str(args.timeout_s), "--esbmc-run-timeout", str(args.timeout_s),
         "--memlimit-gib", str(args.local_memlimit_gib), "--jobs", "1",
@@ -96,6 +118,7 @@ def _base_local_args(args: argparse.Namespace, index: int, manifest: Path) -> li
 
 
 def start(args: argparse.Namespace, action: dict | None = None) -> dict:
+    args.run_dir.mkdir(parents=True, exist_ok=True)
     if action:
         args.manifest = Path(action.get("tsv") or args.manifest)
     count = _manifest_count(args.manifest,
@@ -123,7 +146,7 @@ def start(args: argparse.Namespace, action: dict | None = None) -> dict:
     for index in range(min(args.local_parallel, local_cases)):
         if index in live_local_indices:
             continue
-        log = Path(f"/tmp/veriput_rq1_local_worker_{index}.log")
+        log = args.run_dir / f"local_worker_{index}.supervisor.log"
         log_stream = log.open("ab")
         command = _base_local_args(args, index, local_manifest)
         proc = subprocess.Popen(command, stdout=log_stream,
@@ -134,19 +157,32 @@ def start(args: argparse.Namespace, action: dict | None = None) -> dict:
     remote_cmd = [
         sys.executable, str(REMOTE), "--tsv", str(remote_manifest),
         "--host", args.remote_host, "--limit", "0", "--loop",
+        "--remote-esbmc", "/home/administrator/veriput_esbmc_remote",
+        "--remote-veriput", "/home/administrator/veriput_VeriPUT_remote",
         "--timeout", str(args.timeout_s), "--esbmc-run-timeout", str(args.timeout_s),
         "--case-parallel", str(args.remote_parallel),
         "--max-case-parallel", str(args.remote_parallel),
         "--memlimit-gib", str(args.remote_memlimit_gib),
         "--esbmc-rss-limit-gib", str(args.remote_rss_limit_gib),
+        "--remote-build-command",
+        "cmake -E rm -rf build && "
+        "cmake -S . -B build -G 'Unix Makefiles' "
+        "-DDOWNLOAD_DEPENDENCIES=ON "
+        "-DENABLE_SOLIDITY_FRONTEND=ON "
+        "-DENABLE_BITWUZLA=ON "
+        "-DENABLE_BOOLECTOR=ON "
+        "-DENABLE_YICES=OFF "
+        "-DCMAKE_POLICY_VERSION_MINIMUM=3.5 "
+        "-DCMAKE_INSTALL_PREFIX=$PWD/release && "
+        "cmake --build build --target esbmc -- -j2",
         "--sync-code", "--sync-veriput", "--remote-build",
-        "--sync-results-back", "--start-pull-loop",
+        "--sync-results-back", "--start-pull-loop", "--stop-existing",
     ]
     if args.ce_collection_only:
         remote_cmd.append("--ce-collection-only")
     remote_alive = any(row.get("kind") == "remote" for row in live_workers)
     if remote_cases and not remote_alive:
-        log = Path("/tmp/veriput_rq1_remote_worker_supervisor.log")
+        log = args.run_dir / "remote_worker_supervisor.log"
         log_stream = log.open("ab")
         proc = subprocess.Popen(remote_cmd, stdout=log_stream, stderr=subprocess.STDOUT,
                                 start_new_session=True)
@@ -174,6 +210,10 @@ def stop(args: argparse.Namespace) -> dict:
             except (OSError, ValueError):
                 pass
             stopped.append(pid)
+    child_pattern = (
+        "rq1_local_pump.py|rq1_veriput_run.py|certify_all.py|"
+        "solidity_path_generalise.py|solidity_path_put.py|build/src/esbmc/esbmc")
+    stopped.extend(_terminate_matching_children(child_pattern))
     state["stopped_ts"] = time.time()
     state["stopped_pids"] = stopped
     state["workers"] = []
@@ -195,6 +235,8 @@ def main() -> int:
     parser.add_argument("command", choices=("start", "stop", "status"))
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
+    parser.add_argument("--run-dir", type=Path, default=DEFAULT_RUN_DIR)
+    parser.add_argument("--lease-file", type=Path, default=DEFAULT_LEASE_FILE)
     parser.add_argument("--results-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--remote-host", default="invmut-w2")
     parser.add_argument("--local-parallel", type=int, default=3)

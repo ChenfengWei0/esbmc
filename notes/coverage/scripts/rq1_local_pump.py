@@ -24,6 +24,7 @@ DEFAULT_ESBMC = Path("/home/samson/workspace/esbmc/build/src/esbmc/esbmc")
 DEFAULT_PROGRESS = Path("/tmp/veriput_local_progress.jsonl")
 DEFAULT_INTERPRET_OUT = Path("/tmp/veriput_local_interpret.json")
 DEFAULT_ADOPT_OUT = Path("/tmp/veriput_local_adopt.json")
+DEFAULT_LOG = Path("/tmp/veriput_local_worker.log")
 DEFAULT_LEASES = Path("/tmp/veriput_rq1_case_leases.json")
 DEFAULT_LEASE_STALE_S = 1200
 DEFAULT_LEASE_REFRESH_S = 30
@@ -420,8 +421,8 @@ def run_case(args, case: dict) -> int:
     ]
     if args.ce_collection_only:
         cmd.append("--ce-collection-only")
-    log = Path("/tmp/veriput_local_worker.log")
-    with log.open("a") as stream:
+    args.log.parent.mkdir(parents=True, exist_ok=True)
+    with args.log.open("a") as stream:
         stream.write("[local-rq1] " + shell_join(cmd) + "\n")
         proc = subprocess.Popen(
             cmd,
@@ -496,6 +497,7 @@ def main() -> int:
     parser.add_argument("--progress", type=Path, default=DEFAULT_PROGRESS)
     parser.add_argument("--interpret-out", type=Path, default=DEFAULT_INTERPRET_OUT)
     parser.add_argument("--adopt-out", type=Path, default=DEFAULT_ADOPT_OUT)
+    parser.add_argument("--log", type=Path, default=DEFAULT_LOG)
     parser.add_argument("--lease-file", type=Path, default=DEFAULT_LEASES)
     parser.add_argument("--lease-stale-s", type=int, default=DEFAULT_LEASE_STALE_S)
     parser.add_argument("--lease-refresh-s",
