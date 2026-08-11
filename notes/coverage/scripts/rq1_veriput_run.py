@@ -1169,6 +1169,30 @@ def _contract_decl_kind(source: str, contract: str) -> tuple[str | None, bool]:
     return match.group(2), bool(match.group(1))
 
 
+def _contract_source_block(source: str, contract: str) -> str | None:
+    if not contract:
+        return None
+    rx = re.compile(
+        r"\b(?:(?:abstract)\s+)?(?:contract|interface|library)\s+"
+        + re.escape(contract) + r"\b")
+    match = rx.search(source or "")
+    if not match:
+        return None
+    brace = (source or "").find("{", match.end())
+    if brace < 0:
+        return None
+    depth = 0
+    for pos in range(brace, len(source)):
+        ch = source[pos]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return source[brace + 1:pos]
+    return None
+
+
 def _ensure_foundry_tools_on_path():
     path = os.environ.get("PATH", "")
     dirs = path.split(os.pathsep) if path else []
@@ -1381,10 +1405,14 @@ def _no_unit_library_internal_test_source(
     unit = subject.unit or (hints[0] if hints else "")
     if not unit:
         return None, "library-internal fallback cannot identify target unit"
+    library_body = _contract_source_block(source, subject.contract)
+    if library_body is None:
+        return None, (
+            f"library-internal fallback cannot isolate `{subject.contract}` body")
     signature = re.search(
         r"\bfunction\s+" + re.escape(unit) +
         r"\s*\((?P<params>.*?)\)\s*internal\b(?P<tail>[^{;]*)\{",
-        source,
+        library_body,
         flags=re.DOTALL)
     if signature is None:
         return None, (
