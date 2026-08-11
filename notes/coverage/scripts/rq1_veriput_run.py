@@ -3526,6 +3526,22 @@ def _is_internal_target_wrapper_job(job: dict) -> bool:
     return job.get("priority_reason") == "internal-target-wrapper"
 
 
+def _has_later_internal_target_wrapper_job(jobs: list[dict],
+                                           next_index: int) -> bool:
+    """Return true when this wrapper must leave budget for another wrapper."""
+    return any(_is_internal_target_wrapper_job(job) for job in jobs[next_index:])
+
+
+def _stage4_reserve_for_stage2_job(job: dict, jobs: list[dict],
+                                   next_index: int, args) -> int:
+    reserve_s = _stage4_reserve_s(args)
+    if not _is_internal_target_wrapper_job(job):
+        return reserve_s
+    if _has_later_internal_target_wrapper_job(jobs, next_index):
+        return reserve_s
+    return 0
+
+
 WEAK_STAGE2_BUCKETS = {
     "KILLED",
     "NO-COORDINATE",
@@ -3975,8 +3991,11 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             stages.append(fallback_stage)
 
     for idx, job in enumerate(jobs, 1):
+        unit = job["unit"]
+        path_function = job.get("path_function")
         remaining_before_stage2 = _remaining(deadline)
-        stage2_stage4_reserve_s = _stage4_reserve_s(args)
+        stage2_stage4_reserve_s = _stage4_reserve_for_stage2_job(
+            job, jobs, idx, args)
         if _stage2_reserve_boundary_reached(
                 remaining_before_stage2, stage2_stage4_reserve_s):
             result_status = "budget-exhausted"
@@ -3988,8 +4007,6 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             result_status = "budget-exhausted"
             failure_reason = "case budget exhausted before remaining units"
             break
-        unit = job["unit"]
-        path_function = job.get("path_function")
         units_attempted.append(unit)
         mem_wait = wait_for_mem_budget(
             args.memlimit_gib,
