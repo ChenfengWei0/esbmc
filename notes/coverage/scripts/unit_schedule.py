@@ -573,11 +573,15 @@ def build_schedule(manifest: dict,
         rank = item.get("schedule_rank", {}).get("cheap_first") or [50, 0, 0]
         tier = rank[0] if rank else 50
         rest = tuple(rank[1:])
+        target_wrapper = (
+            0 if item.get("priority_reason") == "internal-target-wrapper"
+            else 1)
         hinted_tie = (
             0 if item.get("priority_reason") in
             ("target-hint", "internal-target-wrapper",
              "expensive-target-hint") else 1)
-        return (item["priority"], tier, hinted_tie, rest, item["ordinal"])
+        return (item["priority"], target_wrapper, tier, hinted_tie, rest,
+                item["ordinal"])
 
     jobs.sort(key=_job_sort_key)
     jobs = _select_jobs(jobs, selection_strategy)

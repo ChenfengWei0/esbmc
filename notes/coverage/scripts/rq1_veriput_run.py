@@ -3522,6 +3522,10 @@ def _job_cost_tier(job: dict) -> int:
         return 50
 
 
+def _is_internal_target_wrapper_job(job: dict) -> bool:
+    return job.get("priority_reason") == "internal-target-wrapper"
+
+
 WEAK_STAGE2_BUCKETS = {
     "KILLED",
     "NO-COORDINATE",
@@ -3609,6 +3613,8 @@ def _effective_stage2_unit_timeout_cap_s(job: dict,
     explicit = int(args.stage2_unit_timeout_cap_s or 0)
     if explicit > 0:
         return explicit
+    if _is_internal_target_wrapper_job(job):
+        return 0
     adaptive = int(args.adaptive_stage2_unit_timeout_cap_s or 0)
     if adaptive <= 0:
         return 0
@@ -3634,6 +3640,14 @@ def _stage2_unit_timeout_cap_reason(args, effective_cap_s: int) -> str:
     if effective_cap_s > 0:
         return "adaptive"
     return "uncapped"
+
+
+def _stage2_unit_timeout_cap_reason_for_job(job: dict, args,
+                                            effective_cap_s: int) -> str:
+    if (effective_cap_s == 0 and int(args.stage2_unit_timeout_cap_s or 0) == 0
+            and _is_internal_target_wrapper_job(job)):
+        return "target-wrapper-uncapped"
+    return _stage2_unit_timeout_cap_reason(args, effective_cap_s)
 
 
 def _stage2_wrapper_timeout_s(remaining_s: float,
@@ -3710,11 +3724,13 @@ def annotate_stage2_runtime_policy(schedule: dict, args) -> dict:
             "unit_cost_tier": _job_cost_tier(job),
             "initial_effective_unit_timeout_cap_s": initial_cap,
             "initial_cap_reason":
-                _stage2_unit_timeout_cap_reason(args, initial_cap),
+                _stage2_unit_timeout_cap_reason_for_job(
+                    job, args, initial_cap),
             "after_no_candidate_effective_unit_timeout_cap_s":
                 after_no_candidate_cap,
             "after_no_candidate_cap_reason":
-                _stage2_unit_timeout_cap_reason(args, after_no_candidate_cap),
+                _stage2_unit_timeout_cap_reason_for_job(
+                    job, args, after_no_candidate_cap),
         }
     return schedule
 
@@ -4044,7 +4060,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             "stage2_reserve_boundary_enforced": True,
             "stage2_unit_timeout_cap_s_effective": effective_stage2_cap_s,
             "stage2_unit_timeout_cap_reason": (
-                _stage2_unit_timeout_cap_reason(args, effective_stage2_cap_s)),
+                _stage2_unit_timeout_cap_reason_for_job(
+                    job, args, effective_stage2_cap_s)),
             "unit_cost_tier": _job_cost_tier(job),
         })
         merge_result = _merge_jsonl_records(cert_path, cert_shard_path)
