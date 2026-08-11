@@ -1035,6 +1035,94 @@ def latest_put_summaries(subject_dir: Path, limit: int = 3) -> list[dict]:
     return out
 
 
+def put_summary_numbers(put_summaries: list[dict]) -> dict:
+    """Promote Stage4 PUT summaries into the same boolean counters as result.json.
+
+    `rq1_veriput_run.py` can finish Stage4 work before result.json reflects the
+    strongest rows.  The supervisor and settlement code use this as evidence,
+    while successful workers are still allowed to finish normally.
+    """
+    valid = 0
+    put = 0
+    r1r2 = 0
+    for row in put_summaries:
+        valid += int(row.get("valid_reference_rows") or 0)
+        put += int(row.get("put_rows") or 0)
+        r1r2 += int(row.get("r1r2_rows") or 0)
+    return {
+        "valid": valid,
+        "put": put,
+        "r1r2": r1r2,
+    }
+
+
+def merge_numbers(result_nums: dict, summary_nums: dict) -> dict:
+    merged = dict(result_nums)
+    for key in ("valid", "put", "r1r2"):
+        merged[key] = max(int(result_nums.get(key) or 0),
+                          int(summary_nums.get(key) or 0))
+    if not merged.get("quality_bucket"):
+        merged["quality_bucket"] = quality_bucket(
+            merged["valid"],
+            merged["put"],
+            merged["r1r2"],
+        )
+    return merged
+
+
+def recover_result_from_stage4_summary(subject_dir: Path, nums: dict,
+                                       put_summaries: list[dict]) -> bool:
+    if not nums.get("valid"):
+        return False
+    result_path = subject_dir / "result.json"
+    result = read_json(result_path)
+    current = result_numbers(result)
+    if (current.get("valid") >= nums.get("valid")
+            and current.get("put") >= nums.get("put")
+            and current.get("r1r2") >= nums.get("r1r2")):
+        return False
+    bucket = quality_bucket(nums["valid"], nums["put"], nums["r1r2"])
+    result.setdefault("schema", "veriput-rq1-result/v1")
+    result.setdefault("status", "ok")
+    result["valid"] = max(int(result.get("valid") or 0), int(nums["valid"] > 0))
+    result["put_valid"] = max(int(result.get("put_valid") or 0),
+                              int(nums["put"] > 0))
+    result["r1r2"] = max(int(result.get("r1r2") or 0),
+                         int(nums["r1r2"] > 0))
+    result["bucket"] = bucket
+    result["adoption"] = {
+        "valid": int(nums["valid"] > 0),
+        "put_valid": int(nums["put"] > 0),
+        "valid_put_with_R1_or_R2": int(nums["r1r2"] > 0),
+        "quality_bucket": bucket,
+        "source": "rq1_case_batch.stage4_summary_recovery",
+        "recovered_ts": time.time(),
+    }
+    put = result.setdefault("put", {})
+    if isinstance(put, dict):
+        put["quality_bucket"] = bucket
+        artifact_counts = put.setdefault("artifact_counts", {})
+        if isinstance(artifact_counts, dict):
+            artifact_counts["valid"] = max(int(artifact_counts.get("valid") or 0),
+                                           int(nums["valid"] > 0))
+            artifact_counts["put_valid"] = max(
+                int(artifact_counts.get("put_valid") or 0),
+                int(nums["put"] > 0),
+            )
+            artifact_counts["valid_put_with_R1_or_R2"] = max(
+                int(artifact_counts.get("valid_put_with_R1_or_R2") or 0),
+                int(nums["r1r2"] > 0),
+            )
+        put["stage4_summary_recovery"] = {
+            "valid_reference_rows": nums["valid"],
+            "put_rows": nums["put"],
+            "r1r2_rows": nums["r1r2"],
+            "summaries": put_summaries,
+        }
+    write_json(result_path, result)
+    return True
+
+
 def oracle_detail_from_summary(path: Path) -> dict:
     doc = read_json(path)
     deliverable = doc.get("deliverable_b") if isinstance(doc.get("deliverable_b"), dict) else {}
@@ -1141,7 +1229,7 @@ def schedule_preflight(subject_dir: Path, ground_truth: dict) -> dict:
 
 def infer_stage(result: dict, cert_path: Path, put_summaries: list[dict],
                 active: list[str]) -> str:
-    nums = result_numbers(result)
+    nums = merge_numbers(result_numbers(result), put_summary_numbers(put_summaries))
     if nums["valid"]:
         return "final/adopted"
     if put_summaries:
@@ -1157,6 +1245,8 @@ def infer_stage(result: dict, cert_path: Path, put_summaries: list[dict],
 def monitor_decision(nums: dict, cert_summary: dict, put_summaries: list[dict],
                      active: list[str]) -> tuple[str, str]:
     if nums["valid"] and nums["put"] and nums["r1r2"]:
+        if active:
+            return "继续跑", "已产出 valid PUT/R1/R2，等待 worker 正常落盘"
         return "已完成", "valid+PUT+R1/R2 已满足"
     if nums["valid"] and nums["put"]:
         return "转代码修复", "已有 valid PUT，但缺 R1/R2；继续跑同轮收益低"
@@ -1166,8 +1256,18 @@ def monitor_decision(nums: dict, cert_summary: dict, put_summaries: list[dict],
         return "转代码修复", "进程已结束且 no-valid"
     killed = int((cert_summary.get("bucket_counts") or {}).get("KILLED") or 0)
     certified = int(cert_summary.get("certified_regions") or 0)
-    if put_summaries and any((row.get("put_rows") or 0) > 0 for row in put_summaries):
-        return "继续跑", "Stage4 已有 PUT 候选，等待最终 adopt/result"
+    if put_summaries:
+        stage4_nums = put_summary_numbers(put_summaries)
+        if stage4_nums["valid"] and stage4_nums["put"] and stage4_nums["r1r2"]:
+            if active:
+                return "继续跑", "Stage4 已有 valid PUT/R1R2 候选，等待 worker 正常落盘"
+            return "已完成", "Stage4 valid PUT/R1R2 候选已落入结算视图"
+        if stage4_nums["valid"] and stage4_nums["put"]:
+            return "转代码修复", "Stage4 已有 valid PUT 但缺 R1/R2"
+        if stage4_nums["valid"]:
+            return "转代码修复", "Stage4 只能产生 concrete valid，需修 PUT 泛化"
+        if not active:
+            return "转代码修复", "Stage4 已结束但所有候选 valid_rows=0"
     if killed >= 3 and certified == 0:
         return "建议停止", "Stage2 多个 KILLED 且无 certified region，继续跑大概率浪费"
     if active:
@@ -1176,13 +1276,11 @@ def monitor_decision(nums: dict, cert_summary: dict, put_summaries: list[dict],
 
 
 def hard_stop_required(case: dict) -> bool:
-    if case.get("active_processes", 0) <= 0:
-        return False
     decision = str(case.get("decision") or "")
     if decision == "建议停止":
         return True
     if decision == "转代码修复":
-        return True
+        return case.get("active_processes", 0) > 0
     return False
 
 
@@ -1195,7 +1293,9 @@ def monitor(args: argparse.Namespace) -> dict:
         subject = row["subject"]
         subject_dir = args.results_root / bench / "subjects" / subject
         result = read_json(subject_dir / "result.json")
-        nums = result_numbers(result)
+        put_summaries = latest_put_summaries(subject_dir)
+        nums = merge_numbers(result_numbers(result),
+                             put_summary_numbers(put_summaries))
         cert = result.get("certification") if isinstance(result.get("certification"), dict) else {}
         cert_path = subject_dir / "cert/certify-results.jsonl"
         cert_tail = read_jsonl_tail(cert_path, limit=3)
@@ -1205,7 +1305,6 @@ def monitor(args: argparse.Namespace) -> dict:
                 "rows_seen_tail": len(cert_tail),
                 "bucket_counts_tail": dict(buckets),
             }
-        put_summaries = latest_put_summaries(subject_dir)
         state_row = case_state_row(args, bench, subject)
         gt = state_row.get("ground_truth") if isinstance(
             state_row.get("ground_truth"), dict) else {}
@@ -1241,6 +1340,9 @@ def monitor(args: argparse.Namespace) -> dict:
                 for item in cert_tail
             ],
             "put_summaries": put_summaries,
+            "stage4_valid_rows": put_summary_numbers(put_summaries)["valid"],
+            "stage4_put_rows": put_summary_numbers(put_summaries)["put"],
+            "stage4_r1r2_rows": put_summary_numbers(put_summaries)["r1r2"],
             "scheduler_preflight": preflight,
             "ground_truth_ready": not [
                 field for field in GROUND_TRUTH_REQUIRED_FIELDS
@@ -1349,7 +1451,11 @@ def settle(args: argparse.Namespace) -> dict:
         key = case_key(bench, subject)
         subject_dir = args.results_root / bench / "subjects" / subject
         result = read_json(subject_dir / "result.json")
-        nums = result_numbers(result)
+        put_summaries = latest_put_summaries(subject_dir, limit=100)
+        nums = merge_numbers(result_numbers(result),
+                             put_summary_numbers(put_summaries))
+        recovered = recover_result_from_stage4_summary(
+            subject_dir, nums, put_summaries)
         bucket = quality_bucket(nums["valid"], nums["put"], nums["r1r2"])
         counters[bucket] += 1
         counters["valid"] += int(nums["valid"] > 0)
@@ -1375,7 +1481,8 @@ def settle(args: argparse.Namespace) -> dict:
             "r1r2": nums["r1r2"],
             "bucket": bucket,
             "result_json": str(subject_dir / "result.json"),
-            "put_summaries": latest_put_summaries(subject_dir, limit=10),
+            "put_summaries": put_summaries[-10:],
+            "recovered_from_stage4_summary": recovered,
             "oracle_details": oracle,
             "scheduler_preflight": preflight,
         }
@@ -1403,6 +1510,7 @@ def settle(args: argparse.Namespace) -> dict:
             "put_valid": nums["put"],
             "r1r2": nums["r1r2"],
             "result_json": str(subject_dir / "result.json"),
+            "recovered_from_stage4_summary": recovered,
         })
         if bucket != "VALID_PUT_R1R2":
             ticket = {
@@ -1449,28 +1557,73 @@ def settle(args: argparse.Namespace) -> dict:
     return doc
 
 
+def supervise_intervention_event(iteration: int, doc: dict) -> dict:
+    return {
+        "schema": "veriput-rq1-supervise-intervention/v1",
+        "iteration": iteration,
+        "ts": time.time(),
+        "batch_id": doc.get("batch_id"),
+        "hard_stop_required": doc.get("hard_stop_required"),
+        "hard_stop_cases": doc.get("hard_stop_cases") or [],
+        "local_resources": doc.get("local_resources") or {},
+        "cases": [
+            {
+                "bench": case.get("bench"),
+                "subject": case.get("subject"),
+                "stage": case.get("stage"),
+                "valid": case.get("valid"),
+                "put": case.get("put"),
+                "r1r2": case.get("r1r2"),
+                "quality_bucket": case.get("quality_bucket"),
+                "active_processes": case.get("active_processes"),
+                "certified_regions": case.get("certified_regions"),
+                "cert_bucket_counts": case.get("cert_bucket_counts"),
+                "stage4_valid_rows": case.get("stage4_valid_rows"),
+                "stage4_put_rows": case.get("stage4_put_rows"),
+                "stage4_r1r2_rows": case.get("stage4_r1r2_rows"),
+                "decision": case.get("decision"),
+                "decision_reason": case.get("decision_reason"),
+            }
+            for case in doc.get("cases") or []
+        ],
+    }
+
+
+def print_supervise_intervention(event: dict) -> None:
+    resources = event.get("local_resources") or {}
+    print(
+        f"[监督介入 #{event.get('iteration')}] "
+        f"内存可用GiB={resources.get('mem_available_gib')} "
+        f"相关进程={resources.get('matching_process_count')} "
+        f"硬早停={event.get('hard_stop_required')}",
+        flush=True,
+    )
+    for case in event.get("cases") or []:
+        print(
+            f"- {case.get('subject')} "
+            f"stage={case.get('stage')} "
+            f"active={case.get('active_processes')} "
+            f"valid/PUT/R1R2={case.get('valid')}/{case.get('put')}/{case.get('r1r2')} "
+            f"stage4={case.get('stage4_valid_rows')}/"
+            f"{case.get('stage4_put_rows')}/{case.get('stage4_r1r2_rows')} "
+            f"decision={case.get('decision')} "
+            f"reason={case.get('decision_reason')}",
+            flush=True,
+        )
+
+
 def supervise(args: argparse.Namespace) -> dict:
     events = []
+    intervention_path = run_dir(args) / "supervise_interventions.jsonl"
     deadline = time.time() + max(1, args.supervise_timeout_s)
+    iteration = 0
     while time.time() < deadline:
+        iteration += 1
         doc = monitor(args)
-        events.append({
-            "ts": time.time(),
-            "hard_stop_required": doc.get("hard_stop_required"),
-            "hard_stop_cases": doc.get("hard_stop_cases") or [],
-            "case_states": [
-                {
-                    "bench": case.get("bench"),
-                    "subject": case.get("subject"),
-                    "stage": case.get("stage"),
-                    "valid": case.get("valid"),
-                    "put": case.get("put"),
-                    "r1r2": case.get("r1r2"),
-                    "decision": case.get("decision"),
-                }
-                for case in doc.get("cases") or []
-            ],
-        })
+        event = supervise_intervention_event(iteration, doc)
+        append_jsonl(intervention_path, event)
+        print_supervise_intervention(event)
+        events.append(event)
         if doc.get("hard_stop_required"):
             stop_result = stop(args)
             settlement = settle(args) if args.settle_after_supervise_stop else {}
@@ -1500,7 +1653,7 @@ def supervise(args: argparse.Namespace) -> dict:
             }
             write_json(run_dir(args) / "supervise.json", result)
             return result
-        time.sleep(max(1, args.supervise_interval_s))
+        time.sleep(30)
     result = {
         "schema": "veriput-rq1-case-batch-supervise/v1",
         "batch_id": args.batch_id,

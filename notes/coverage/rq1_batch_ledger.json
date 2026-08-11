@@ -1,0 +1,1816 @@
+{
+  "batches": {
+    "manual-005-012-novalid": {
+      "batch_id": "manual-005-012-novalid",
+      "bucket_counts": {
+        "NO_VALID": 4,
+        "put": 0,
+        "r1r2": 0,
+        "valid": 0
+      },
+      "case_count": 4,
+      "cases": [
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/put/bugfix124__acfix_fixlink_MStableYieldSource__balanceOfToken/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/put/bugfix124__acfix_fixlink_MStableYieldSource__depositToken/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/put/final_deploy_concrete_fallback/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__acfix_fixlink_MStableYieldSource__depositToken",
+              "valid_reference_rows": 0
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__acfix_fixlink_MStableYieldSource__balanceOfToken",
+              "valid_reference_rows": 0
+            },
+            {
+              "b": null,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "final_deploy_concrete_fallback",
+              "valid_reference_rows": null
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "MStableYieldSource",
+            "expected_units": [
+              "supplyTokenTo",
+              "redeemToken",
+              "approveMax",
+              "balanceOfToken",
+              "depositToken"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 6,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "approveMax",
+              "redeemToken",
+              "supplyTokenTo",
+              "depositToken",
+              "balanceOfToken",
+              "imBalances"
+            ],
+            "target_unit_hits": [
+              "supplyTokenTo",
+              "redeemToken",
+              "approveMax",
+              "balanceOfToken",
+              "depositToken"
+            ]
+          },
+          "subject": "acfix_fixlink_MStableYieldSource",
+          "valid": 0
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [
+            {
+              "assertion_oracles": [
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post == pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post >= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post <= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R0",
+                  "classes": [
+                    "R0"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "path exits through revert",
+                  "var": "exit",
+                  "verdict": "HOLDS"
+                }
+              ],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {
+                "R0": 2,
+                "R1": 10
+              },
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMajority/put-summary.json"
+            },
+            {
+              "assertion_oracles": [
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post == pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post >= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post <= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R0",
+                  "classes": [
+                    "R0"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "path exits through revert",
+                  "var": "exit",
+                  "verdict": "HOLDS"
+                }
+              ],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {
+                "R0": 2,
+                "R1": 10
+              },
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMinority/put-summary.json"
+            },
+            {
+              "assertion_oracles": [
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post == pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post >= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post <= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R0",
+                  "classes": [
+                    "R0"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "path exits through revert",
+                  "var": "exit",
+                  "verdict": "HOLDS"
+                }
+              ],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {
+                "R0": 2,
+                "R1": 10
+              },
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasQuorum/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__newGrantProposal/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 1,
+              "put_rows": 1,
+              "r1r2_rows": 1,
+              "unit": "bugfix124__ct_5_Proposals_can_be_cancelled__hasMajority",
+              "valid_reference_rows": 2
+            },
+            {
+              "b": 1,
+              "put_rows": 1,
+              "r1r2_rows": 1,
+              "unit": "bugfix124__ct_5_Proposals_can_be_cancelled__hasQuorum",
+              "valid_reference_rows": 2
+            },
+            {
+              "b": 1,
+              "put_rows": 1,
+              "r1r2_rows": 1,
+              "unit": "bugfix124__ct_5_Proposals_can_be_cancelled__hasMinority",
+              "valid_reference_rows": 2
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__ct_5_Proposals_can_be_cancelled__newGrantProposal",
+              "valid_reference_rows": 1
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "DAO",
+            "expected_units": [
+              "cancelProposal"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 18,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "cancelProposal",
+              "finaliseProposal",
+              "voteProposal",
+              "newGrantProposal",
+              "newAddressProposal",
+              "hasMajority",
+              "hasQuorum",
+              "hasMinority",
+              "mapPID_grant",
+              "mapPID_address",
+              "mapPID_type",
+              "mapPID_votes",
+              "mapPID_timeStart",
+              "mapPID_finalising",
+              "mapPID_finalised",
+              "isEqual",
+              "mapPIDMember_votes",
+              "init"
+            ],
+            "target_unit_hits": [
+              "cancelProposal"
+            ]
+          },
+          "subject": "ct_5_Proposals_can_be_cancelled",
+          "valid": 0
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [],
+          "put_summaries": [],
+          "put_valid": 0,
+          "r1r2": 0,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "Multicall",
+            "expected_units": [
+              "multicall"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 0,
+            "ok": false,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [],
+            "target_unit_hits": []
+          },
+          "subject": "pop_001_Multicall",
+          "valid": 0
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/flashFee/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/flashFeeAndProtocolFee/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/setFeeRate/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/setMerkleRoot/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 0,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "flashFeeAndProtocolFee",
+              "valid_reference_rows": null
+            },
+            {
+              "b": 0,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "flashFee",
+              "valid_reference_rows": null
+            },
+            {
+              "b": 0,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "setMerkleRoot",
+              "valid_reference_rows": null
+            },
+            {
+              "b": 0,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "setFeeRate",
+              "valid_reference_rows": null
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [
+              {
+                "contract": "ERC721TokenReceiver",
+                "unit": "onERC721Received"
+              }
+            ],
+            "exists": true,
+            "expected_contract": "PrivatePool",
+            "expected_units": [
+              "buy",
+              "sell",
+              "execute",
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 24,
+            "ok": false,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setMerkleRoot",
+              "setFeeRate",
+              "setUseStolenNftOracle",
+              "setPayRoyalties",
+              "setVirtualReserves",
+              "setAllParameters",
+              "onERC721Received",
+              "sell",
+              "withdraw",
+              "execute",
+              "buy",
+              "flashLoan",
+              "deposit",
+              "change",
+              "price",
+              "flashFeeToken",
+              "changeFeeQuote",
+              "buyQuote",
+              "sellQuote",
+              "availableForFlashLoan",
+              "sumWeightsAndValidateProof",
+              "initialize"
+            ],
+            "target_unit_hits": [
+              "buy",
+              "sell",
+              "execute",
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot"
+            ]
+          },
+          "subject": "pop_009_PrivatePool",
+          "valid": 0
+        }
+      ],
+      "end_index": 12,
+      "inventory": "notes/coverage/rq1_no_valid_each_case.json",
+      "new_put": 0,
+      "new_r1r2": 0,
+      "new_valid": 0,
+      "schema": "veriput-rq1-batch-settlement/v1",
+      "settled_ts": 1786417774.5966568,
+      "start_index": 5
+    },
+    "manual-005-012-novalid-r2": {
+      "batch_id": "manual-005-012-novalid-r2",
+      "bucket_counts": {
+        "NO_VALID": 3,
+        "VALID_PUT_R1R2": 1,
+        "put": 1,
+        "r1r2": 1,
+        "valid": 1
+      },
+      "case_count": 4,
+      "cases": [
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/put/bugfix124__acfix_fixlink_MStableYieldSource__balanceOfToken/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/put/bugfix124__acfix_fixlink_MStableYieldSource__depositToken/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/put/final_deploy_concrete_fallback/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__acfix_fixlink_MStableYieldSource__depositToken",
+              "valid_reference_rows": 0
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__acfix_fixlink_MStableYieldSource__balanceOfToken",
+              "valid_reference_rows": 0
+            },
+            {
+              "b": null,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "final_deploy_concrete_fallback",
+              "valid_reference_rows": null
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "MStableYieldSource",
+            "expected_units": [
+              "supplyTokenTo",
+              "redeemToken",
+              "approveMax",
+              "balanceOfToken",
+              "depositToken"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 6,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "approveMax",
+              "redeemToken",
+              "supplyTokenTo",
+              "depositToken",
+              "balanceOfToken",
+              "imBalances"
+            ],
+            "target_unit_hits": [
+              "supplyTokenTo",
+              "redeemToken",
+              "approveMax",
+              "balanceOfToken",
+              "depositToken"
+            ]
+          },
+          "subject": "acfix_fixlink_MStableYieldSource",
+          "valid": 0
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "VALID_PUT_R1R2",
+          "oracle_details": [
+            {
+              "assertion_oracles": [
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post == pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post >= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post <= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R0",
+                  "classes": [
+                    "R0"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMajority_path15",
+                  "text": "path exits through revert",
+                  "var": "exit",
+                  "verdict": "HOLDS"
+                }
+              ],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {
+                "R0": 2,
+                "R1": 10
+              },
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMajority/put-summary.json"
+            },
+            {
+              "assertion_oracles": [
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post == pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post >= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post <= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R0",
+                  "classes": [
+                    "R0"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasMinority_path15",
+                  "text": "path exits through revert",
+                  "var": "exit",
+                  "verdict": "HOLDS"
+                }
+              ],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {
+                "R0": 2,
+                "R1": 10
+              },
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMinority/put-summary.json"
+            },
+            {
+              "assertion_oracles": [
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post == pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post == pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post >= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post <= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes$34[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post >= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "post <= pre",
+                  "var": "mapPID_votes[_proposalID]",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R0",
+                  "classes": [
+                    "R0"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_hasQuorum_path15",
+                  "text": "path exits through revert",
+                  "var": "exit",
+                  "verdict": "HOLDS"
+                }
+              ],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {
+                "R0": 2,
+                "R1": 10
+              },
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasQuorum/put-summary.json"
+            },
+            {
+              "assertion_oracles": [
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_init_path7",
+                  "text": "post != pre",
+                  "var": "inited",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_init_path7",
+                  "text": "post >= pre",
+                  "var": "VADER",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_init_path7",
+                  "text": "post >= pre",
+                  "var": "USDV",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_init_path7",
+                  "text": "post >= pre",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R1",
+                  "classes": [
+                    "R1"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_init_path7",
+                  "text": "post > pre",
+                  "var": "coolOffPeriod",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R2",
+                  "classes": [
+                    "R2"
+                  ],
+                  "coordinate_classes": [
+                    "calldata"
+                  ],
+                  "coordinates": [
+                    {
+                      "class": "calldata",
+                      "name": "true"
+                    }
+                  ],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_init_path7",
+                  "text": "post == true",
+                  "var": "inited",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R2",
+                  "classes": [
+                    "R2"
+                  ],
+                  "coordinate_classes": [
+                    "calldata"
+                  ],
+                  "coordinates": [
+                    {
+                      "class": "calldata",
+                      "name": "_vader"
+                    }
+                  ],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_init_path7",
+                  "text": "post == _vader",
+                  "var": "VADER",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R2",
+                  "classes": [
+                    "R2"
+                  ],
+                  "coordinate_classes": [
+                    "calldata"
+                  ],
+                  "coordinates": [
+                    {
+                      "class": "calldata",
+                      "name": "_usdv"
+                    }
+                  ],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_init_path7",
+                  "text": "post == _usdv",
+                  "var": "USDV",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R2",
+                  "classes": [
+                    "R2"
+                  ],
+                  "coordinate_classes": [
+                    "calldata"
+                  ],
+                  "coordinates": [
+                    {
+                      "class": "calldata",
+                      "name": "_vault"
+                    }
+                  ],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_init_path7",
+                  "text": "post == _vault",
+                  "var": "VAULT",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R2",
+                  "classes": [
+                    "R2"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_init_path7",
+                  "text": "post == 1",
+                  "var": "coolOffPeriod",
+                  "verdict": "HOLDS"
+                },
+                {
+                  "class_combo": "R0",
+                  "classes": [
+                    "R0"
+                  ],
+                  "coordinate_classes": [],
+                  "coordinates": [],
+                  "emitted_in_test": true,
+                  "kind": "put",
+                  "test": "test_put_DAO_init_path7",
+                  "text": "path exits normally",
+                  "var": "exit",
+                  "verdict": "HOLDS"
+                }
+              ],
+              "coordinate_counts": {
+                "_usdv": 1,
+                "_vader": 1,
+                "_vault": 1,
+                "true": 1
+              },
+              "oracle_tag_counts": {
+                "R0": 2,
+                "R1": 6,
+                "R2": 6
+              },
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__init/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__isEqual/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__newAddressProposal/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__newGrantProposal/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 1,
+              "put_rows": 1,
+              "r1r2_rows": 1,
+              "unit": "bugfix124__ct_5_Proposals_can_be_cancelled__hasMajority",
+              "valid_reference_rows": 2
+            },
+            {
+              "b": 1,
+              "put_rows": 1,
+              "r1r2_rows": 1,
+              "unit": "bugfix124__ct_5_Proposals_can_be_cancelled__hasQuorum",
+              "valid_reference_rows": 2
+            },
+            {
+              "b": 1,
+              "put_rows": 1,
+              "r1r2_rows": 1,
+              "unit": "bugfix124__ct_5_Proposals_can_be_cancelled__hasMinority",
+              "valid_reference_rows": 2
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__ct_5_Proposals_can_be_cancelled__isEqual",
+              "valid_reference_rows": 4
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__ct_5_Proposals_can_be_cancelled__newGrantProposal",
+              "valid_reference_rows": 1
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__ct_5_Proposals_can_be_cancelled__newAddressProposal",
+              "valid_reference_rows": 1
+            },
+            {
+              "b": 1,
+              "put_rows": 1,
+              "r1r2_rows": 1,
+              "unit": "bugfix124__ct_5_Proposals_can_be_cancelled__init",
+              "valid_reference_rows": 2
+            }
+          ],
+          "put_valid": 4,
+          "r1r2": 4,
+          "recovered_from_stage4_summary": true,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "DAO",
+            "expected_units": [
+              "cancelProposal"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 18,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "cancelProposal",
+              "finaliseProposal",
+              "voteProposal",
+              "newGrantProposal",
+              "newAddressProposal",
+              "hasMajority",
+              "hasQuorum",
+              "hasMinority",
+              "mapPID_grant",
+              "mapPID_address",
+              "mapPID_type",
+              "mapPID_votes",
+              "mapPID_timeStart",
+              "mapPID_finalising",
+              "mapPID_finalised",
+              "isEqual",
+              "mapPIDMember_votes",
+              "init"
+            ],
+            "target_unit_hits": [
+              "cancelProposal"
+            ]
+          },
+          "subject": "ct_5_Proposals_can_be_cancelled",
+          "valid": 14
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [],
+          "put_summaries": [],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "Multicall",
+            "expected_units": [
+              "multicall"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 0,
+            "ok": false,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [],
+            "target_unit_hits": []
+          },
+          "subject": "pop_001_Multicall",
+          "valid": 0
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/flashFee/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/flashFeeAndProtocolFee/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/setFeeRate/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/setMerkleRoot/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 0,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "flashFeeAndProtocolFee",
+              "valid_reference_rows": null
+            },
+            {
+              "b": 0,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "flashFee",
+              "valid_reference_rows": null
+            },
+            {
+              "b": 0,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "setMerkleRoot",
+              "valid_reference_rows": null
+            },
+            {
+              "b": 0,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "setFeeRate",
+              "valid_reference_rows": null
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [
+              {
+                "contract": "ERC721TokenReceiver",
+                "unit": "onERC721Received"
+              }
+            ],
+            "exists": true,
+            "expected_contract": "PrivatePool",
+            "expected_units": [
+              "buy",
+              "sell",
+              "execute",
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 24,
+            "ok": false,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setMerkleRoot",
+              "setFeeRate",
+              "setUseStolenNftOracle",
+              "setPayRoyalties",
+              "setVirtualReserves",
+              "setAllParameters",
+              "onERC721Received",
+              "sell",
+              "withdraw",
+              "execute",
+              "buy",
+              "flashLoan",
+              "deposit",
+              "change",
+              "price",
+              "flashFeeToken",
+              "changeFeeQuote",
+              "buyQuote",
+              "sellQuote",
+              "availableForFlashLoan",
+              "sumWeightsAndValidateProof",
+              "initialize"
+            ],
+            "target_unit_hits": [
+              "buy",
+              "sell",
+              "execute",
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot"
+            ]
+          },
+          "subject": "pop_009_PrivatePool",
+          "valid": 0
+        }
+      ],
+      "end_index": 12,
+      "inventory": "notes/coverage/rq1_no_valid_each_case.json",
+      "new_put": 1,
+      "new_r1r2": 1,
+      "new_valid": 1,
+      "schema": "veriput-rq1-batch-settlement/v1",
+      "settled_ts": 1786418389.5161498,
+      "start_index": 5
+    }
+  },
+  "schema": "veriput-rq1-batch-ledger/v1",
+  "updated_ts": 1786418389.5217679
+}
