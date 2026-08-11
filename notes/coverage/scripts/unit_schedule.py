@@ -520,6 +520,7 @@ def build_schedule(manifest: dict,
     skipped_rows = []
     duplicate_jobs = []
     no_path_routes = []
+    no_unit_rows = []
     seen_jobs = set()
     for row_pos, row in enumerate(manifest.get("subjects") or []):
         status = row.get("status")
@@ -534,6 +535,22 @@ def build_schedule(manifest: dict,
             continue
         subject = row.get("subject") or {}
         units = list((row.get("units") or {}).get("units") or [])
+        if not units:
+            unit_hints = row.get("unit_hints") or {}
+            no_unit_rows.append({
+                "row": row_pos,
+                "status": "no-units",
+                "reason": (
+                    "target contract has no schedulable public/external units"),
+                "subject": subject,
+                "target": row.get("target"),
+                "unit_hints": unit_hints,
+                "pending_unit_hints":
+                    list(unit_hints.get("pending_unit_hints") or []),
+                "missing_unit_hints":
+                    list(unit_hints.get("missing_unit_hints") or []),
+            })
+            continue
         infos = {
             item.get("name"): item
             for item in (row.get("units") or {}).get("unit_info") or []
@@ -631,9 +648,11 @@ def build_schedule(manifest: dict,
             "no_path_routes": no_path_routes,
             "skipped_rows": len(skipped_rows),
             "skipped_by_status": dict(sorted(skipped_by_status.items())),
+            "no_unit_rows": len(no_unit_rows),
             "duplicate_jobs": len(duplicate_jobs),
         },
         "skipped_rows": skipped_rows,
+        "no_unit_rows": no_unit_rows,
         "duplicate_jobs": duplicate_jobs,
         "jobs": jobs,
     }
