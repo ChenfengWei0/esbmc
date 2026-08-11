@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 
@@ -19,6 +20,7 @@ SUPERVISOR = HERE / "rq1_worker_supervisor.py"
 DEFAULT_INVENTORY = Path("notes/coverage/rq1_no_valid_each_case.json")
 DEFAULT_RUN_ROOT = Path("notes/coverage/rq1_runs")
 DEFAULT_REMOTE_HOST = "invmut-w2"
+DEFAULT_RESULTS_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 
 
 def read_json(path: Path) -> dict:
@@ -136,6 +138,17 @@ def command_json(cmd: list[str]) -> dict:
     return payload
 
 
+def manifest_rows(args: argparse.Namespace) -> list[dict]:
+    path = manifest_path(args)
+    if not path.exists():
+        return []
+    with path.open(newline="") as stream:
+        return [
+            row for row in csv.DictReader(stream, delimiter="\t")
+            if row.get("bench") and row.get("subject")
+        ]
+
+
 def start(args: argparse.Namespace) -> dict:
     if not manifest_path(args).exists():
         prepare(args)
@@ -228,6 +241,173 @@ def status(args: argparse.Namespace) -> dict:
     }
 
 
+def active_process_lines() -> list[str]:
+    proc = subprocess.run(
+        [
+            "pgrep",
+            "-af",
+            (
+                "rq1_local_pump.py|rq1_remote_pump.py|rq1_veriput_run.py|"
+                "certify_all.py|put_all.py|solidity_path_generalise.py|"
+                "solidity_path_put.py|build/src/esbmc/esbmc"
+            ),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    return [line for line in proc.stdout.splitlines() if "pgrep -af" not in line]
+
+
+def read_jsonl_tail(path: Path, limit: int = 5) -> list[dict]:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+    rows = []
+    for line in lines[-limit:]:
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            rows.append({"raw": line[:500]})
+    return rows
+
+
+def result_numbers(result: dict) -> dict:
+    adoption = result.get("adoption") if isinstance(result.get("adoption"), dict) else {}
+    put = result.get("put") if isinstance(result.get("put"), dict) else {}
+    artifact_counts = (put.get("artifact_counts")
+                       if isinstance(put.get("artifact_counts"), dict) else {})
+    return {
+        "valid": int(adoption.get("valid") or result.get("valid") or
+                     artifact_counts.get("valid") or put.get("valid") or 0),
+        "put": int(adoption.get("put_valid") or result.get("put_valid") or
+                   artifact_counts.get("put_valid") or put.get("put_valid") or 0),
+        "r1r2": int(adoption.get("valid_put_with_R1_or_R2") or
+                    result.get("r1r2") or
+                    artifact_counts.get("valid_put_with_R1_or_R2") or
+                    put.get("valid_put_with_R1_or_R2") or 0),
+        "quality_bucket": put.get("quality_bucket") or result.get("bucket"),
+    }
+
+
+def latest_put_summaries(subject_dir: Path, limit: int = 3) -> list[dict]:
+    out = []
+    paths = sorted((subject_dir / "put").glob("*/put-summary.json"),
+                   key=lambda path: path.stat().st_mtime if path.exists() else 0)
+    for path in paths[-limit:]:
+        doc = read_json(path)
+        deliverable = doc.get("deliverable_b") if isinstance(doc.get("deliverable_b"), dict) else {}
+        quality = deliverable.get("quality") if isinstance(deliverable.get("quality"), dict) else {}
+        out.append({
+            "unit": path.parent.name,
+            "b": deliverable.get("b"),
+            "valid_reference_rows": quality.get("valid_reference_rows"),
+            "put_rows": quality.get("put_rows"),
+            "r1r2_rows": quality.get("r1r2_rows"),
+        })
+    return out
+
+
+def infer_stage(result: dict, cert_path: Path, put_summaries: list[dict],
+                active: list[str]) -> str:
+    nums = result_numbers(result)
+    if nums["valid"]:
+        return "final/adopted"
+    if put_summaries:
+        return "Stage4/PUT"
+    cert_rows = read_jsonl_tail(cert_path, limit=1)
+    if cert_rows:
+        return "Stage2/certify"
+    if active:
+        return "Stage1/wrapper"
+    return "not-running/no-final-result"
+
+
+def monitor_decision(nums: dict, cert_summary: dict, put_summaries: list[dict],
+                     active: list[str]) -> tuple[str, str]:
+    if nums["valid"] and nums["put"] and nums["r1r2"]:
+        return "已完成", "valid+PUT+R1/R2 已满足"
+    if nums["valid"] and nums["put"]:
+        return "转代码修复", "已有 valid PUT，但缺 R1/R2；继续跑同轮收益低"
+    if nums["valid"]:
+        return "转代码修复", "已有 valid 但不是 PUT；继续跑同轮不解决泛化"
+    if not active and not nums["valid"]:
+        return "转代码修复", "进程已结束且 no-valid"
+    killed = int((cert_summary.get("bucket_counts") or {}).get("KILLED") or 0)
+    certified = int(cert_summary.get("certified_regions") or 0)
+    if put_summaries and any((row.get("put_rows") or 0) > 0 for row in put_summaries):
+        return "继续跑", "Stage4 已有 PUT 候选，等待最终 adopt/result"
+    if killed >= 3 and certified == 0:
+        return "建议停止", "Stage2 多个 KILLED 且无 certified region，继续跑大概率浪费"
+    if active:
+        return "继续跑", "仍有活进程且尚未出现终局失败信号"
+    return "观察", "证据不足"
+
+
+def monitor(args: argparse.Namespace) -> dict:
+    rows = manifest_rows(args)
+    processes = active_process_lines()
+    cases = []
+    for row in rows:
+        bench = row["bench"]
+        subject = row["subject"]
+        subject_dir = args.results_root / bench / "subjects" / subject
+        result = read_json(subject_dir / "result.json")
+        nums = result_numbers(result)
+        cert = result.get("certification") if isinstance(result.get("certification"), dict) else {}
+        cert_path = subject_dir / "cert/certify-results.jsonl"
+        cert_tail = read_jsonl_tail(cert_path, limit=3)
+        if not cert and cert_tail:
+            buckets = Counter(str(item.get("bucket") or "UNKNOWN") for item in cert_tail)
+            cert = {
+                "rows_seen_tail": len(cert_tail),
+                "bucket_counts_tail": dict(buckets),
+            }
+        put_summaries = latest_put_summaries(subject_dir)
+        active = [line for line in processes if subject in line]
+        stage = infer_stage(result, cert_path, put_summaries, active)
+        decision, reason = monitor_decision(nums, cert, put_summaries, active)
+        cases.append({
+            "bench": bench,
+            "subject": subject,
+            "stage": stage,
+            "valid": nums["valid"],
+            "put": nums["put"],
+            "r1r2": nums["r1r2"],
+            "quality_bucket": nums["quality_bucket"],
+            "cert_rows": cert.get("rows"),
+            "certified_regions": cert.get("certified_regions"),
+            "cert_bucket_counts": cert.get("bucket_counts") or
+                                  cert.get("bucket_counts_tail") or {},
+            "timed_out_units": cert.get("timed_out_units") or [],
+            "latest_cert": [
+                {
+                    "unit": item.get("unit"),
+                    "bucket": item.get("bucket"),
+                    "exit": item.get("exit"),
+                    "progress": ((item.get("driver_diagnostic") or {}).get(
+                        "progress_stage") if isinstance(item.get("driver_diagnostic"),
+                                                        dict) else None),
+                }
+                for item in cert_tail
+            ],
+            "put_summaries": put_summaries,
+            "active_processes": len(active),
+            "decision": decision,
+            "decision_reason": reason,
+        })
+    return {
+        "schema": "veriput-rq1-case-batch-monitor/v1",
+        "batch_id": args.batch_id,
+        "run_dir": str(run_dir(args)),
+        "case_count": len(cases),
+        "local_resources": local_resource_snapshot(),
+        "cases": cases,
+    }
+
+
 def print_chinese(doc: dict) -> None:
     if doc.get("schema") == "veriput-rq1-case-batch-status/v1":
         sup = doc.get("supervisor") or {}
@@ -243,12 +423,34 @@ def print_chinese(doc: dict) -> None:
         for row in doc.get("local_progress") or []:
             print(f"进度文件：{row.get('path')} events={row.get('events')} last={row.get('last')}")
         return
+    if doc.get("schema") == "veriput-rq1-case-batch-monitor/v1":
+        local = doc.get("local_resources") or {}
+        print(f"批次：{doc.get('batch_id')}")
+        print(f"运行目录：{doc.get('run_dir')}")
+        print(f"本机可用内存 GiB：{local.get('mem_available_gib')}")
+        print(f"本机相关进程数：{local.get('matching_process_count')}")
+        for case in doc.get("cases") or []:
+            print(f"- {case.get('subject')}")
+            print(f"  阶段：{case.get('stage')}")
+            print(f"  valid/PUT/R1R2：{case.get('valid')}/{case.get('put')}/{case.get('r1r2')}")
+            print(f"  quality：{case.get('quality_bucket')}")
+            print(f"  Stage2：rows={case.get('cert_rows')} certified={case.get('certified_regions')} buckets={case.get('cert_bucket_counts')}")
+            if case.get("timed_out_units"):
+                print(f"  timeout units：{', '.join(case.get('timed_out_units'))}")
+            for item in case.get("latest_cert") or []:
+                print(f"  latest cert：unit={item.get('unit')} bucket={item.get('bucket')} exit={item.get('exit')} progress={item.get('progress')}")
+            for item in case.get("put_summaries") or []:
+                print(f"  Stage4：unit={item.get('unit')} b={item.get('b')} valid_rows={item.get('valid_reference_rows')} put_rows={item.get('put_rows')} r1r2={item.get('r1r2_rows')}")
+            print(f"  活进程：{case.get('active_processes')}")
+            print(f"  决策：{case.get('decision')}，原因：{case.get('decision_reason')}")
+        return
     print(json.dumps(doc, ensure_ascii=False, indent=2, sort_keys=True))
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("prepare", "start", "status", "stop"))
+    parser.add_argument("command", choices=("prepare", "start", "status", "monitor",
+                                            "stop"))
     parser.add_argument("--batch-id", default="manual-005-012")
     parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     parser.add_argument("--run-root", type=Path, default=DEFAULT_RUN_ROOT)
@@ -262,6 +464,7 @@ def main() -> int:
     parser.add_argument("--remote-memlimit-gib", type=float, default=5.5)
     parser.add_argument("--local-rss-limit-gib", type=int, default=18)
     parser.add_argument("--remote-rss-limit-gib", type=float, default=9.0)
+    parser.add_argument("--results-root", type=Path, default=DEFAULT_RESULTS_ROOT)
     parser.add_argument("--reset-leases",
                         action=argparse.BooleanOptionalAction,
                         default=True)
@@ -272,6 +475,8 @@ def main() -> int:
         result = start(args)
     elif args.command == "stop":
         result = stop(args)
+    elif args.command == "monitor":
+        result = monitor(args)
     else:
         result = status(args)
     print_chinese(result)
