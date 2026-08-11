@@ -343,7 +343,7 @@ def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None,
         return 4, "static-obstacle"
     if unit in hinted:
         if (unit_info and unit not in INITIALIZER_LIKE_UNITS
-                and _unit_cost_rank(unit, unit_info)[0] >= 70):
+                and _unit_cost_rank(unit, unit_info)[0] >= 40):
             return 1, "expensive-target-hint"
         return 0, "target-hint"
     if _is_internal_target_wrapper(unit, hinted):

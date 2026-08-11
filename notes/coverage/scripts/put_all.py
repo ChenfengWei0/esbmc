@@ -154,6 +154,7 @@ CONCRETE_FALLBACK_WITNESS_CHECKS = {
     "COMPLETE-WITNESS-NO-COORDINATE",
     "PIN-EXCLUDED-NO-COORDINATE",
     "NOT-CERTIFIED-CE-FALLBACK",
+    "PARTIAL-WITNESS-JOURNAL-CE",
     "UNKNOWN",
 }
 CONCRETE_ONLY_STAGE2_SOURCES = {
@@ -400,19 +401,20 @@ def cleared_concrete_fallback_rows(record):
         if detail.get("concrete_fallback") is not True:
             continue
         witness_check = detail.get("witness_check")
+        pin_excluded = (
+            witness_check == "PIN-EXCLUDED-NO-COORDINATE"
+            or "EXCLUDED FROM THE SLICE by the pins" in str(reason)
+            or "EXCLUDED FROM THE SLICE by the pins" in str(
+                detail.get("reason") or ""))
         if witness_check not in CONCRETE_FALLBACK_WITNESS_CHECKS:
-            continue
+            if not (witness_check is None and pin_excluded):
+                continue
         ce = parse_concrete_ce(detail.get("ce") or {})
         if ce is None:
             continue
         # A pin-excluded witness is intentionally outside the generalized
         # slice. Its row pin is the rejected slice boundary, not the concrete
         # replay state, so let the CE supply the environment pins.
-        pin_excluded = (
-            witness_check == "PIN-EXCLUDED-NO-COORDINATE"
-            or "EXCLUDED FROM THE SLICE by the pins" in str(reason)
-            or "EXCLUDED FROM THE SLICE by the pins" in str(
-                detail.get("reason") or ""))
         if pin_excluded:
             fallback_pins = {}
         else:
@@ -599,7 +601,10 @@ def partial_journal_concrete_fallback_rows(record):
         diagnostic_tag = (
             diagnostic.get("tag") if isinstance(diagnostic, dict) else None)
         if (source_stage != "partial-witness-journal"
-                and diagnostic_tag != "path-coverage-partial-journal-no-report"):
+                and diagnostic_tag not in {
+                    "path-coverage-partial-journal-no-report",
+                    "path-coverage-partial-journal-only",
+                }):
             return []
     row_pins = parse_pins(record.get("pins"))
     occupied = occupied_stage2_path_ids(record)
@@ -669,7 +674,11 @@ def no_coordinate_concrete_fallback_rows(record):
     if bucket == "CERTIFIED" and journal.get(
             "source_stage") != "certified-no-coordinate":
         return []
-    if journal.get("complete") is not True:
+    partial_no_coordinate = (
+        bucket == "NO-COORDINATE"
+        and journal.get("partial") is True
+        and journal.get("source_stage") == "no-generalizable-coordinate")
+    if journal.get("complete") is not True and not partial_no_coordinate:
         return []
     try:
         witness_count = int(journal.get("witness_count") or 0)
@@ -704,12 +713,16 @@ def no_coordinate_concrete_fallback_rows(record):
                 record.get("no_coordinate_reason")
                 or "Stage-2 complete witness has no generalizable coordinate"),
             "detail": {
-                "witness_check": "COMPLETE-WITNESS-NO-COORDINATE",
+                "witness_check": (
+                    "PARTIAL-WITNESS-JOURNAL-CE"
+                    if partial_no_coordinate
+                    else "COMPLETE-WITNESS-NO-COORDINATE"),
                 "source_stage": journal.get("source_stage"),
                 "source_context": journal.get("source_context"),
                 "claims_decided": journal.get("claims_decided"),
                 "claims_total": journal.get("claims_total"),
                 "complete": journal.get("complete"),
+                "partial": journal.get("partial"),
             },
         })
     return rows
