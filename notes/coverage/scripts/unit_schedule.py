@@ -521,6 +521,7 @@ def build_schedule(manifest: dict,
     duplicate_jobs = []
     no_path_routes = []
     no_unit_rows = []
+    non_target_unit_rows = []
     seen_jobs = set()
     for row_pos, row in enumerate(manifest.get("subjects") or []):
         status = row.get("status")
@@ -566,6 +567,20 @@ def build_schedule(manifest: dict,
         if route is not None:
             no_path_routes.append({"subject": subject, **route})
         for unit in units:
+            unit_info = infos.get(unit)
+            owner = str((unit_info or {}).get("contract") or "")
+            target_contract = str(subject.get("contract") or "")
+            if owner and target_contract and owner != target_contract:
+                non_target_unit_rows.append({
+                    "row": row_pos,
+                    "unit": unit,
+                    "unit_contract": owner,
+                    "target_contract": target_contract,
+                    "reason": "unit is not defined on the target contract",
+                    "subject": subject,
+                    "target": row.get("target"),
+                })
+                continue
             key = (subject.get("benchmark"), subject.get("subject_id"), unit)
             if key in seen_jobs:
                 duplicate_jobs.append({
@@ -578,7 +593,7 @@ def build_schedule(manifest: dict,
                 continue
             seen_jobs.add(key)
             jobs.append(_job_for_unit(row, unit, len(jobs), ast_cache_root,
-                                      cert_out or None, infos.get(unit),
+                                      cert_out or None, unit_info,
                                       timeout_s=timeout_s,
                                       run_timeout_s=run_timeout_s,
                                       memlimit_gib=memlimit_gib,
@@ -649,10 +664,12 @@ def build_schedule(manifest: dict,
             "skipped_rows": len(skipped_rows),
             "skipped_by_status": dict(sorted(skipped_by_status.items())),
             "no_unit_rows": len(no_unit_rows),
+            "non_target_unit_rows": len(non_target_unit_rows),
             "duplicate_jobs": len(duplicate_jobs),
         },
         "skipped_rows": skipped_rows,
         "no_unit_rows": no_unit_rows,
+        "non_target_unit_rows": non_target_unit_rows,
         "duplicate_jobs": duplicate_jobs,
         "jobs": jobs,
     }
