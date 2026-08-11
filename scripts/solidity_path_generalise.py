@@ -915,6 +915,8 @@ def witnessed_raw_inputs(cwd, unit, paths, path_function=None):
 
 def path_cov_probe_goal_cap(log):
     text = log or ""
+    if "Sampling " in text and "instead of refusing" in text:
+        return False
     return (
         ("--path-cov-probe:" in text and
          "exceeding --path-cov-max-goals" in text) or

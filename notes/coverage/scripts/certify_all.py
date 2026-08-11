@@ -1615,6 +1615,16 @@ def mark_not_certified_ce_concrete_fallbacks(not_certified_details, *,
             continue
         if detail.get("concrete_fallback") is True:
             continue
+        witness_check = detail.get("witness_check")
+        detail_reason = str(detail.get("reason") or "")
+        if (
+            witness_check == "FAILED"
+            or "NO TEST IS EMITTED" in detail_reason
+            or "REFUTED at the single point" in detail_reason
+            or "single-point check" in detail_reason
+            and "REFUTED" in detail_reason
+        ):
+            continue
         ce = detail.get("ce")
         if not isinstance(ce, dict) or not ce:
             continue
@@ -2326,6 +2336,19 @@ def result_driver_diagnostic(out):
         }
     m = RE_PATH_COV_PROBE_GOAL_CAP.search(out)
     if m:
+        if "Sampling " in out and "instead of refusing" in out:
+            return {
+                "tag": "path-coverage-probe-sampled",
+                "reason": (
+                    "path coverage probe universe exceeded the full budget, "
+                    "but ESBMC sampled physical exits instead of refusing; "
+                    "fired goals remain usable refutation witnesses"),
+                "unit_id": m.group(1),
+                "probe_claims": int(m.group(2)),
+                "branch_arms": int(m.group(3)),
+                "physical_exits": int(m.group(4)),
+                "path_cov_max_goals": int(m.group(5)),
+            }
         return {
             "tag": "path-coverage-probe-goal-cap",
             "reason": (

@@ -187,6 +187,14 @@
           "notes/coverage/scripts/rq1_veriput_run.py",
           "notes/coverage/scripts/certify_all.py"
         ],
+        "last_failure": "manual-005-012-novalid-r2 reached Stage4 for depositToken/balanceOfToken but both put-summary rows had valid_rows=0; supplyTokenTo/redeemToken/approveMax timed out or did not yield adopted artifacts.",
+        "prevention_code_change": "rq1_case_batch readiness now requires prevention files to be read and supervise reports Stage4 valid/PUT/R1R2 rows every 30s; put_all/certify/rq1 runner fallback logic was reviewed before rerun.",
+        "prevention_files_read": [
+          "notes/coverage/scripts/put_all.py",
+          "scripts/solidity_path_put.py",
+          "notes/coverage/scripts/rq1_veriput_run.py",
+          "notes/coverage/scripts/certify_all.py"
+        ],
         "root_cause": "Stage2 produced retained raw/PUT candidates but foundry replay did not validate; supplyTokenTo had value-gate/not-certified fallback bookkeeping and redeemToken timed out. Needs concrete fallback filtering and partial Stage4 adoption fixes.",
         "source_files_read": [
           "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_MStableYieldSource/flat.sol",
@@ -200,7 +208,8 @@
           "approveMax",
           "balanceOfToken",
           "depositToken"
-        ]
+        ],
+        "why_static_missed": "The earlier static review noted concrete fallback/adoption risk, but did not inspect the Stage4 put-summary rows before rerun; the failure was visible only after comparing certified/not-certified evidence with generated Foundry replay validity."
       },
       "ground_truth_source": "manual-source-log-schedule-read-2026-08-11",
       "ground_truth_updated_ts": 1786417230.3528643,
@@ -260,6 +269,7 @@
           "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/put/final_deploy_concrete_fallback/put-summary.json"
         }
       ],
+      "last_pre_run_readiness_update_ts": 1786419522.1045275,
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
@@ -1377,6 +1387,13 @@
           "notes/coverage/scripts/unit_schedule.py",
           "notes/coverage/scripts/rq1_veriput_run.py"
         ],
+        "last_failure": "Rerun remained no-valid with completion_status=no-units: unit-schedule had zero jobs because target Multicall.multicall is an internal library function with State storage parameter.",
+        "prevention_code_change": "readiness blocks rerun until subject_unit_manifest/unit_schedule/rq1 runner internal-library wrapper paths are read; current code review confirms deploy-only fallback supports only concrete contracts, not libraries.",
+        "prevention_files_read": [
+          "notes/coverage/scripts/subject_unit_manifest.py",
+          "notes/coverage/scripts/unit_schedule.py",
+          "notes/coverage/scripts/rq1_veriput_run.py"
+        ],
         "root_cause": "No schedulable public/external units because target is an internal library function; runner needs generated harness instead of treating no-units as terminal.",
         "source_files_read": [
           "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_001_Multicall/flat.sol",
@@ -1386,7 +1403,8 @@
         "target_contract": "Multicall",
         "target_functions": [
           "multicall"
-        ]
+        ],
+        "why_static_missed": "The original review identified no public/external ABI unit, but the runner still treated the library target like ordinary no-units instead of requiring a generated wrapper before scheduling."
       },
       "ground_truth_source": "manual-source-log-schedule-read-2026-08-11",
       "ground_truth_updated_ts": 1786417230.3528643,
@@ -1427,6 +1445,7 @@
       "inventory_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
       "last_batch_id": "manual-005-012-novalid-r2",
       "last_oracle_details": [],
+      "last_pre_run_readiness_update_ts": 1786419522.1045294,
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
@@ -1527,6 +1546,14 @@
           "notes/coverage/scripts/certify_all.py",
           "notes/coverage/scripts/rq1_veriput_run.py"
         ],
+        "last_failure": "Rerun remained no-valid: buy/sell path-cov probe universe exceeded the historical max-goal strategy, execute witness was refuted, and old schedule evidence included a wrong-contract ERC721TokenReceiver unit before target filtering.",
+        "prevention_code_change": "certify_all.py and solidity_path_generalise.py now distinguish ESBMC probe sampling from hard goal-cap refusal; readiness checks scheduler artifacts for wrong-target units before start.",
+        "prevention_files_read": [
+          "scripts/solidity_path_generalise.py",
+          "src/goto-programs/goto_coverage.cpp",
+          "notes/coverage/scripts/certify_all.py",
+          "notes/coverage/scripts/rq1_veriput_run.py"
+        ],
         "root_cause": "Previous target buy/sell exceeded path-cov max goals and execute witness was refuted; later schedule includes cheaper target-hint units but no valid adoption yet. Need max-goal fallback/sharding and refuted-fallback filtering.",
         "source_files_read": [
           "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_009_PrivatePool/flat.sol",
@@ -1542,7 +1569,8 @@
           "flashFee",
           "setFeeRate",
           "setMerkleRoot"
-        ]
+        ],
+        "why_static_missed": "The earlier review saw path-cov explosion but did not verify the outer diagnostic parser against the newer ESBMC sampling behavior; it also did not force scheduler preflight to reject wrong-contract artifacts before run."
       },
       "ground_truth_source": "manual-source-log-schedule-read-2026-08-11",
       "ground_truth_updated_ts": 1786417230.3528643,
@@ -1608,6 +1636,7 @@
           "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/setMerkleRoot/put-summary.json"
         }
       ],
+      "last_pre_run_readiness_update_ts": 1786419522.1045303,
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json",
@@ -1726,9 +1755,57 @@
     },
     "bugfix124/pop_018_PrivatePool": {
       "bench": "bugfix124",
+      "ground_truth": {
+        "evidence_files_read": [
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/result.json",
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/cert/certify-results.jsonl",
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/unit-schedule.json"
+        ],
+        "expected_oracle": "R0 revert/normal-exit concrete replay for admissible witness; if cheap state units certify, assert fee/owner/merkleRoot state relation.",
+        "expected_path": "Prefer initialize/cheap state or fee units first; execute low-level-call path is only usable if the single-point witness is not refuted.",
+        "expected_r1r2": "R1 over call target/data/value or fee input; R2 over owner/fee/merkleRoot state if a non-refuted region is found.",
+        "expected_region": "owner/target/data/msg.value for execute; initializer and fee state for cheaper units; avoid adopting refuted low-level-call witness.",
+        "expected_units": [
+          "execute",
+          "initialize",
+          "flashFee",
+          "setFeeRate",
+          "setMerkleRoot"
+        ],
+        "fix_targets": [
+          "notes/coverage/scripts/certify_all.py",
+          "scripts/solidity_path_generalise.py",
+          "notes/coverage/scripts/unit_schedule.py",
+          "notes/coverage/scripts/rq1_veriput_run.py"
+        ],
+        "last_failure": "Previous evidence had execute bucket=NOT-CERTIFIED with witness_check=FAILED and no valid Stage4 artifact.",
+        "prevention_code_change": "certify_all/put_all fallback filters were read; FAILED or NO TEST IS EMITTED rows are not admissible concrete fallback, so rerun must seek other units.",
+        "prevention_files_read": [
+          "notes/coverage/scripts/certify_all.py",
+          "scripts/solidity_path_generalise.py",
+          "notes/coverage/scripts/unit_schedule.py",
+          "notes/coverage/scripts/rq1_veriput_run.py"
+        ],
+        "root_cause": "Only execute produced a witnessed path and certification refuted the single point; JSON had advertised concrete_fallback despite NO TEST IS EMITTED. Need reject FAILED fallback and reschedule cheaper units.",
+        "source_files_read": [
+          "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_018_PrivatePool/flat.sol"
+        ],
+        "target_contract": "PrivatePool",
+        "target_functions": [
+          "execute",
+          "initialize",
+          "buy",
+          "sell",
+          "flashFee",
+          "setFeeRate",
+          "setMerkleRoot"
+        ],
+        "why_static_missed": "The failure can be recognized statically from certify-results, but previous runner logic did not require reading/refusing FAILED fallback before rerun."
+      },
       "history": [],
       "inventory_primary_reason": "bucket=NOT-CERTIFIED; driver_log=/usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/Results/BugFix124/subjects/pop_018_PrivatePool/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__pop_018_PrivatePool/flat.sol.solast --contract PrivatePool --unit execute --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 120 --memlimit 12g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/cert/work/certify-results/bugfix124__pop_018_PrivatePool/execute --max-holes 1 --max-region-pieces 1 --level0 --level0-perturb --probe-witnesses 8 --probe-ladder --probe-ladder-budget 4 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-establishabl",
       "inventory_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/result.json",
+      "last_pre_run_readiness_update_ts": 1786419522.104531,
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/result.json",
@@ -1740,9 +1817,53 @@
     },
     "bugfix124/pop_032_PuttyV2": {
       "bench": "bugfix124",
+      "ground_truth": {
+        "evidence_files_read": [
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_032_PuttyV2/result.json",
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_032_PuttyV2/cert/certify-results.jsonl",
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_032_PuttyV2/unit-schedule.json"
+        ],
+        "expected_oracle": "Concrete replay for no-coordinate setter; PUT oracle over fee/baseURI or order cancellation/payment state if certified.",
+        "expected_path": "Run cheap setters first for concrete valid artifacts; fillOrder/exercise require sampled/sharded probe because signature/EIP712/transfer branches explode.",
+        "expected_r1r2": "R1 over setter/order inputs; R2 over fee/baseURI/cancelled mapping or ownership/payment state.",
+        "expected_region": "baseURI/fee setter inputs; order signature, nonce/cancelled mapping, whitelist/payment/NFT transfer state for fillOrder/exercise.",
+        "expected_units": [
+          "setBaseURI",
+          "setFee",
+          "fillOrder",
+          "exercise"
+        ],
+        "fix_targets": [
+          "scripts/solidity_path_generalise.py",
+          "src/goto-programs/goto_coverage.cpp",
+          "notes/coverage/scripts/put_all.py",
+          "notes/coverage/scripts/rq1_veriput_run.py"
+        ],
+        "last_failure": "Historical result DRIVER-REFUSED on fillOrder and no valid adoption from setBaseURI no-coordinate evidence.",
+        "prevention_code_change": "probe sampling misclassification fixed in certify/generalise; put_all/rq1 runner no-coordinate concrete fallback paths were read before rerun.",
+        "prevention_files_read": [
+          "scripts/solidity_path_generalise.py",
+          "src/goto-programs/goto_coverage.cpp",
+          "notes/coverage/scripts/put_all.py",
+          "notes/coverage/scripts/rq1_veriput_run.py"
+        ],
+        "root_cause": "fillOrder hit path-cov probe goal-cap family; setBaseURI had no-coordinate witnessed path that should materialize concrete; setFee timed out.",
+        "source_files_read": [
+          "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_032_PuttyV2/flat.sol"
+        ],
+        "target_contract": "PuttyV2",
+        "target_functions": [
+          "fillOrder",
+          "exercise",
+          "setBaseURI",
+          "setFee"
+        ],
+        "why_static_missed": "Static review focused on fillOrder explosion, but readiness did not require checking whether cheaper no-coordinate rows could be materialized before rerun."
+      },
       "history": [],
       "inventory_primary_reason": "bucket=DRIVER-REFUSED; diagnostic=path-coverage-probe-goal-cap: path coverage probe universe exceeded --path-cov-max-goals before any cov-report.json could be emitted exit=None; driver_log=Adding Solidity complete-path coverage assertions... | WARNING: --solidity-path-coverage: DEGRADED unit 'sol:@C@PuttyV2@F@fillOrder#3211' — fully expanded it enumerates more paths than the per-unit budget (10000), so 25 call point(s) were WITHDRAWN from its path identity and are now treated as black boxes: sol:@C@ECDSA@F@tryRecover#1851 at file /home/samson/workspace/VeriPUT/Results/BugFix124/subjects/pop_032_PuttyV2/flat.sol line 603 function tryRecover; sol:@C@PuttyV2@F@_buildDomainSeparator#2391 at file /home/samson/workspace/VeriPUT/Results/BugFix124/subjects/pop_032_PuttyV2/flat.sol line 854 function _domainSeparatorV4; sol:@C@ECDSA@F@toTypedDataHash#1939 at file /home/samson/workspace/VeriPUT/Results/BugFix124/subjects/pop_032_PuttyV2/flat.sol line 867 function _hashTypedDataV4; sol:@C@ECDSA@F@tryRecover#1742 at file /home/samson/workspace/VeriPUT/Results/BugFix124/subjects/pop_032",
       "inventory_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_032_PuttyV2/result.json",
+      "last_pre_run_readiness_update_ts": 1786419522.1045318,
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_032_PuttyV2/result.json",
@@ -1754,9 +1875,55 @@
     },
     "bugfix124/pop_033_PrivatePool": {
       "bench": "bugfix124",
+      "ground_truth": {
+        "evidence_files_read": [
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/result.json",
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/cert/certify-results.jsonl",
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/unit-schedule.json"
+        ],
+        "expected_oracle": "Concrete replay for ABI value gate/no-coordinate; PUT oracle over fee/merkle/initializer state if certified.",
+        "expected_path": "Use initialize and cheap fee/merkle units before expensive buy/sell; ABI value-gate pin-excluded rows are concrete-only candidates.",
+        "expected_r1r2": "R1 over initializer/fee/flash inputs; R2 over initialized owner/fee/merkle state.",
+        "expected_region": "initializer args/state, msg.value ABI gate, fee/merkleRoot state, flashFee inputs.",
+        "expected_units": [
+          "initialize",
+          "flashFee",
+          "setFeeRate",
+          "setMerkleRoot",
+          "execute"
+        ],
+        "fix_targets": [
+          "notes/coverage/scripts/put_all.py",
+          "notes/coverage/scripts/rq1_veriput_run.py",
+          "notes/coverage/scripts/certify_all.py",
+          "scripts/solidity_path_put.py"
+        ],
+        "last_failure": "Historical result no-valid despite initialize concrete_fallback and flashFee NO-COORDINATE evidence.",
+        "prevention_code_change": "put_all authenticated pin-excluded fallback and no-coordinate materialization paths were read; readiness blocks rerun without these files.",
+        "prevention_files_read": [
+          "notes/coverage/scripts/put_all.py",
+          "notes/coverage/scripts/rq1_veriput_run.py",
+          "notes/coverage/scripts/certify_all.py",
+          "scripts/solidity_path_put.py"
+        ],
+        "root_cause": "initialize had pin-excluded concrete fallback evidence and flashFee no-coordinate evidence but no Stage4 valid artifact was adopted.",
+        "source_files_read": [
+          "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_033_PrivatePool/flat.sol"
+        ],
+        "target_contract": "PrivatePool",
+        "target_functions": [
+          "initialize",
+          "flashFee",
+          "buy",
+          "sell",
+          "execute"
+        ],
+        "why_static_missed": "Earlier static pass did not enforce that pin-excluded/no-coordinate evidence be consumed before moving to unrelated expensive units."
+      },
       "history": [],
       "inventory_primary_reason": "bucket=NOT-CERTIFIED; driver_log=/usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/Results/BugFix124/subjects/pop_033_PrivatePool/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__pop_033_PrivatePool/flat.sol.solast --contract PrivatePool --unit initialize --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 120 --memlimit 12g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/cert/work/certify-results/bugfix124__pop_033_PrivatePool/initialize --max-holes 1 --max-region-pieces 1 --level0 --level0-perturb --probe-witnesses 8 --probe-ladder --probe-ladder-budget 4 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-establ",
       "inventory_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/result.json",
+      "last_pre_run_readiness_update_ts": 1786419522.1045322,
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/result.json",
@@ -1768,9 +1935,53 @@
     },
     "bugfix124/pop_042_VaultAdapter": {
       "bench": "bugfix124",
+      "ground_truth": {
+        "evidence_files_read": [
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_042_VaultAdapter/result.json",
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_042_VaultAdapter/cert/certify-results.jsonl",
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_042_VaultAdapter/unit-schedule.json"
+        ],
+        "expected_oracle": "R0 frontend-success concrete replay first; PUT oracle over slope/limit state if selector modifier path certifies.",
+        "expected_path": "Any target unit should get past frontend/path coverage insertion; setSlopes/setLimits exercise checkAccess(this.f.selector).",
+        "expected_r1r2": "R1 over selector-adjacent function inputs; R2 over slope/limit state.",
+        "expected_region": "selector bytes4 modifier argument, slope/limit inputs and initialized adapter state.",
+        "expected_units": [
+          "initialize",
+          "rate",
+          "setSlopes",
+          "setLimits"
+        ],
+        "fix_targets": [
+          "src/solidity-frontend/solidity_convert_modifier.cpp",
+          "src/solidity-frontend/solidity_convert_ref.cpp",
+          "src/solidity-frontend/solidity_convert_call.cpp",
+          "scripts/solidity_path_generalise.py"
+        ],
+        "last_failure": "All units failed with function call argument _selector type mismatch before coverage report generation.",
+        "prevention_code_change": "selector packing and modifier formal coercion code was read; future run is allowed only after confirming these paths are present.",
+        "prevention_files_read": [
+          "src/solidity-frontend/solidity_convert_modifier.cpp",
+          "src/solidity-frontend/solidity_convert_ref.cpp",
+          "src/solidity-frontend/solidity_convert_call.cpp",
+          "scripts/solidity_path_generalise.py"
+        ],
+        "root_cause": "ESBMC path coverage aborted before cov-report because modifier wrapper argument for checkAccess selector had scalar/struct type mismatch.",
+        "source_files_read": [
+          "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_042_VaultAdapter/flat.sol"
+        ],
+        "target_contract": "VaultAdapter",
+        "target_functions": [
+          "initialize",
+          "rate",
+          "setSlopes",
+          "setLimits"
+        ],
+        "why_static_missed": "The issue is subject-level frontend lowering; previous static pass did not require reading selector/member-access and modifier wrapper conversion code before rerun."
+      },
       "history": [],
       "inventory_primary_reason": "bucket=NO-WITNESS-UNKNOWN; diagnostic=esbmc-no-cov-report: function call: argument `sol:@C@VaultAdapter@F@setSlopes_checkAccess@_selector#1836' type mismatch: got unsigned int, expected struct exit=-6; driver_log=/usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/Results/BugFix124/subjects/pop_042_VaultAdapter/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__pop_042_VaultAdapter/flat.sol.solast --contract VaultAdapter --unit initialize --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 120 --memlimit 12g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_042_VaultAdapter/cert/work/certify-results/bugfix124__pop_042_VaultAdapter/initialize --max-holes 1 --max-region-pieces 1 --level0 --level0-perturb --probe-witnesses 8 --probe-ladder --probe-ladder-budget 4 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-e",
       "inventory_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_042_VaultAdapter/result.json",
+      "last_pre_run_readiness_update_ts": 1786419522.104534,
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_042_VaultAdapter/result.json",
@@ -1782,9 +1993,47 @@
     },
     "bugfix124/pop_046_CVXStaker": {
       "bench": "bugfix124",
+      "ground_truth": {
+        "evidence_files_read": [
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/result.json",
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/cert/certify-results.jsonl",
+          "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/unit-schedule.json"
+        ],
+        "expected_oracle": "Concrete replay for witnessed no-coordinate path; PUT oracle over rewards/token state if struct-field coordinate expansion succeeds.",
+        "expected_path": "getReward witnessed path through cvxPoolInfo/rewards should at least produce concrete replay; PUT requires struct-field coordinates.",
+        "expected_r1r2": "R1 over claimExtras; R2 over cvxPoolInfo.token/rewards and reward token state.",
+        "expected_region": "claimExtras input and cvxPoolInfo struct fields such as token/rewards/pId plus rewardTokens state.",
+        "expected_units": [
+          "getReward"
+        ],
+        "fix_targets": [
+          "notes/coverage/scripts/put_all.py",
+          "notes/coverage/scripts/rq1_veriput_run.py",
+          "scripts/solidity_path_put.py",
+          "notes/coverage/scripts/certify_all.py"
+        ],
+        "last_failure": "Historical NO-COORDINATE result with no valid artifact despite complete witnessed path.",
+        "prevention_code_change": "put_all no-coordinate concrete fallback and rq1 runner complete-witness counting paths were read; struct-coordinate work remains quality improvement.",
+        "prevention_files_read": [
+          "notes/coverage/scripts/put_all.py",
+          "notes/coverage/scripts/rq1_veriput_run.py",
+          "scripts/solidity_path_put.py",
+          "notes/coverage/scripts/certify_all.py"
+        ],
+        "root_cause": "Stage2 witnessed getReward but refused aggregate state.cvxPoolInfo as unsupported coordinate; concrete no-coordinate fallback was not materialized/adopted.",
+        "source_files_read": [
+          "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_046_CVXStaker/flat.sol"
+        ],
+        "target_contract": "CVXStaker",
+        "target_functions": [
+          "getReward"
+        ],
+        "why_static_missed": "The prior pass saw unsupported aggregate coordinate but did not gate on reading no-coordinate concrete fallback materialization code before rerun."
+      },
       "history": [],
       "inventory_primary_reason": "bucket=NO-COORDINATE; no_coordinate_reason=1 name(s) were refused as UNSUPPORTED because the coordinate kinds cannot express them (struct, mapping, non-scalar): state.cvxPoolInfo (aggregate; 1 scalar field(s) used instead: token). This is a COORDINATE-KIND result, not a search result: the paths were witnessed and their region is a point, so each falls back to its concrete counterexample test. Widening the ladder or the shrink budget cannot change it; driver_log=/usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/Results/BugFix124/subjects/pop_046_CVXStaker/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__pop_046_CVXStaker/flat.sol.solast --contract CVXStaker --unit getReward --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 120 --memlimit 12g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/cert/work/certify-results/bugfix124__pop_046_CVXStaker/getReward --max-holes 1 --max-region-pieces 1 --level0 --level0-perturb --probe-witnesses 8 --probe-ladder --probe-ladder-budget 4 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env",
       "inventory_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/result.json",
+      "last_pre_run_readiness_update_ts": 1786419522.1045346,
       "last_put_valid": 0,
       "last_r1r2": 0,
       "last_result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/result.json",

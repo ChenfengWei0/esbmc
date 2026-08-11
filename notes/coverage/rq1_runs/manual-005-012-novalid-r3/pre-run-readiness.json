@@ -1,0 +1,71 @@
+{
+  "batch_id": "manual-005-012-novalid-r3",
+  "case_count": 8,
+  "checks": [
+    {
+      "evidence": {
+        "batch_size": 8,
+        "inventory_error": "",
+        "manifest_rows": 8
+      },
+      "name": "rolling batch has exactly eight runnable cases",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "missing": []
+      },
+      "name": "structured ground truth and failure postmortem complete",
+      "ok": true
+    },
+    {
+      "evidence": [],
+      "name": "all prevention files from MD/state were read before rerun",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "local_memlimit_gib": 12,
+        "local_parallel": 5,
+        "remote_memlimit_gib": 6.0,
+        "remote_parallel": 3,
+        "remote_reserve_mem_gib": 2.0
+      },
+      "name": "local/remote resource policy fixed",
+      "ok": true
+    },
+    {
+      "evidence": [],
+      "name": "existing scheduler artifacts do not show wrong-target units",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "supervise_interval_s": 30
+      },
+      "name": "30 second intervention supervision configured",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "host": "invmut-w2",
+        "ready": true,
+        "remote_esbmc": "/home/administrator/veriput_esbmc/repo",
+        "remote_memlimit_gib": 6.0,
+        "remote_parallel": 3,
+        "remote_reserve_mem_gib": 2.0,
+        "remote_veriput": "/home/administrator/VeriPUT",
+        "required_mem_gib": 20.0,
+        "returncode": 0,
+        "stderr": "",
+        "stdout": "remote-preflight-ok MemAvailable=20.672GiB required=20.000GiB"
+      },
+      "name": "remote ESBMC/VeriPUT/memory preflight ready",
+      "ok": true
+    }
+  ],
+  "manifest": "notes/coverage/rq1_runs/manual-005-012-novalid-r3/manifest.tsv",
+  "ok": true,
+  "run_dir": "notes/coverage/rq1_runs/manual-005-012-novalid-r3",
+  "schema": "veriput-rq1-pre-run-readiness/v1"
+}

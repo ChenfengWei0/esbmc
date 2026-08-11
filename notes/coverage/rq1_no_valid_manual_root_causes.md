@@ -655,3 +655,84 @@ The code-level blocker is rollback/migrate handling for a complex `require` cond
 - `bugfix124/pop_009_PrivatePool`: NO_VALID valid=0 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json
 
 <!-- RQ1_BATCH_SETTLEMENT_END manual-005-012-novalid-r2 -->
+
+<!-- RQ1_PRE_RUN_READINESS_BEGIN manual-005-012-novalid-r3 -->
+
+## Pre-run readiness: manual-005-012-novalid-r3
+
+Rolling batch now selects these 8 current `NO_VALID` cases: 006
+`acfix_fixlink_MStableYieldSource`, 011 `pop_001_Multicall`, 012
+`pop_009_PrivatePool`, 013 `pop_018_PrivatePool`, 014 `pop_032_PuttyV2`,
+015 `pop_033_PrivatePool`, 016 `pop_042_VaultAdapter`, and 017
+`pop_046_CVXStaker`.
+
+Before any rerun, the following historical-prevention files have been read and
+recorded in `rq1_case_state.json`:
+
+- Concrete fallback / Stage4 adoption:
+  `notes/coverage/scripts/put_all.py`,
+  `scripts/solidity_path_put.py`,
+  `notes/coverage/scripts/rq1_veriput_run.py`,
+  `notes/coverage/scripts/certify_all.py`.
+- Internal-library/no-unit scheduling:
+  `notes/coverage/scripts/subject_unit_manifest.py`,
+  `notes/coverage/scripts/unit_schedule.py`,
+  `notes/coverage/scripts/rq1_veriput_run.py`.
+- Path-coverage goal-cap / sampling:
+  `scripts/solidity_path_generalise.py`,
+  `src/goto-programs/goto_coverage.cpp`,
+  `notes/coverage/scripts/certify_all.py`.
+- Modifier selector type mismatch:
+  `src/solidity-frontend/solidity_convert_modifier.cpp`,
+  `src/solidity-frontend/solidity_convert_ref.cpp`,
+  `src/solidity-frontend/solidity_convert_call.cpp`.
+
+Code-level prevention already applied before this readiness pass:
+
+- `certify_all.py` and `solidity_path_generalise.py` no longer classify the
+  newer ESBMC message `Sampling ... instead of refusing` as the old hard
+  `path-coverage-probe-goal-cap` refusal.  This prevents `PrivatePool` /
+  `PuttyV2` runs from being marked no-cov-report when ESBMC actually sampled
+  the exit universe and can still provide refutation witnesses.
+- `rq1_case_batch.py` readiness now refuses to start unless every case lists
+  `last_failure`, `why_static_missed`, `prevention_code_change`, and
+  `prevention_files_read`; every `fix_targets` entry must appear in
+  `prevention_files_read` and exist on disk.
+- `rq1_case_batch.py` rolling mode skips already-fixed cases and fills forward
+  to exactly 8 `NO_VALID` cases before any worker can start.
+- Remote readiness uses the same ESBMC/VeriPUT paths and `LD_LIBRARY_PATH` as
+  the remote worker and checks the 3 x 6 GiB + 2 GiB memory budget before
+  launch.
+
+Per-case rerun prevention summary:
+
+- `acfix_fixlink_MStableYieldSource`: last rerun reached Stage4 for two units
+  but both had `valid_rows=0`; this was missed because the previous gate did
+  not force inspection of Stage4 summaries before rerun.  Prevention is the
+  Stage4-row monitor/readiness plus rereading concrete fallback adoption code.
+- `pop_001_Multicall`: no-units is caused by an internal library target with a
+  `State storage` parameter; this was missed because no-units was still treated
+  like an ordinary terminal schedule.  Prevention is explicit review of
+  manifest/scheduler/no-unit fallback code before any rerun.
+- `pop_009_PrivatePool`: path-cov explosion and a refuted `execute` witness
+  were known, but the outer diagnostic parser did not distinguish new ESBMC
+  sampling from old hard refusal.  Prevention is the sampling diagnostic fix
+  plus scheduler wrong-target preflight.
+- `pop_018_PrivatePool`: `execute` had `witness_check=FAILED`, so any
+  `concrete_fallback=true` sidecar is inadmissible; rerun must seek another
+  unit.  Prevention is rejecting FAILED / `NO TEST IS EMITTED` fallback rows.
+- `pop_032_PuttyV2`: `fillOrder` is path-cov expensive, but `setBaseURI`
+  already had no-coordinate concrete evidence.  Prevention is sampling
+  diagnostic handling plus no-coordinate concrete fallback materialization.
+- `pop_033_PrivatePool`: `initialize` had pin-excluded concrete fallback and
+  `flashFee` no-coordinate evidence, but Stage4 did not adopt it.  Prevention
+  is authenticated pin-excluded/no-coordinate fallback review before rerun.
+- `pop_042_VaultAdapter`: frontend/path-coverage insertion failed on selector
+  modifier argument type mismatch.  Prevention is checking selector packing and
+  modifier formal coercion paths before rerun.
+- `pop_046_CVXStaker`: witnessed `getReward` path was no-coordinate due to an
+  aggregate `cvxPoolInfo` state dependency; rerun should first materialize
+  concrete fallback, while struct-field coordinate expansion remains PUT/R1R2
+  quality work.
+
+<!-- RQ1_PRE_RUN_READINESS_END manual-005-012-novalid-r3 -->
