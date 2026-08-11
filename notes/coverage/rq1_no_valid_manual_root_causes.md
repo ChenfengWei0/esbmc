@@ -633,3 +633,25 @@ The code-level blocker is rollback/migrate handling for a complex `require` cond
 - `bugfix124/pop_009_PrivatePool`: NO_VALID valid=0 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json
 
 <!-- RQ1_BATCH_SETTLEMENT_END manual-005-012-novalid -->
+
+<!-- RQ1_BATCH_SETTLEMENT_BEGIN manual-005-012-novalid-r2 -->
+
+## Batch settlement: manual-005-012-novalid-r2
+
+- case_count: 4
+- new valid: 1
+- new PUT: 1
+- new R1/R2: 1
+- bucket_counts: {"NO_VALID": 3, "VALID_PUT_R1R2": 1, "put": 1, "r1r2": 1, "valid": 1}
+
+- `bugfix124/acfix_fixlink_MStableYieldSource`: NO_VALID valid=0 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json
+- `bugfix124/ct_5_Proposals_can_be_cancelled`: VALID_PUT_R1R2 valid=14 put=4 r1r2=4 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/result.json
+  - oracle_tags: {"R0": 2, "R1": 10}
+  - oracle_tags: {"R0": 2, "R1": 10}
+  - oracle_tags: {"R0": 2, "R1": 10}
+  - oracle_tags: {"R0": 2, "R1": 6, "R2": 6}
+  - coordinates: {"_usdv": 1, "_vader": 1, "_vault": 1, "true": 1}
+- `bugfix124/pop_001_Multicall`: NO_VALID valid=0 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json
+- `bugfix124/pop_009_PrivatePool`: NO_VALID valid=0 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json
+
+<!-- RQ1_BATCH_SETTLEMENT_END manual-005-012-novalid-r2 -->
