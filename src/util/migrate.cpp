@@ -949,6 +949,19 @@ void migrate_expr(const exprt &expr, expr2tc &new_expr_ref)
     migrate_expr(expr.op1(), true_val);
     migrate_expr(expr.op2(), false_val);
 
+    // The legacy expression tree may carry source-compatible scalar branch
+    // types whose irep2 type ids differ. if2t requires both arms to have the
+    // declared result type; normalize only scalar arms here so aggregate shape
+    // mismatches keep failing visibly.
+    if (
+      true_val->type->type_id != type->type_id && is_scalar_type(type) &&
+      is_scalar_type(true_val->type))
+      true_val = typecast2tc(type, true_val);
+    if (
+      false_val->type->type_id != type->type_id && is_scalar_type(type) &&
+      is_scalar_type(false_val->type))
+      false_val = typecast2tc(type, false_val);
+
     new_expr_ref = if2tc(type, cond, true_val, false_val);
     return;
   }
