@@ -23,8 +23,12 @@ DEFAULT_TSV = Path("/tmp/veriput_no_valid_root_causes.tsv")
 THEORY_TSV_MARKER = "theory_patch_id"
 CE_TSV_MARKER = "ce_collection_id"
 DEFAULT_REMOTE_HOST = "invmut-w2"
-DEFAULT_REMOTE_ESBMC = Path("/tmp/veriput_esbmc_remote")
-DEFAULT_REMOTE_VERIPUT = Path("/tmp/veriput_Ver iPUT_remote".replace(" ", ""))
+DEFAULT_REMOTE_ESBMC = Path("/home/administrator/veriput_esbmc/repo")
+DEFAULT_REMOTE_VERIPUT = Path("/home/administrator/VeriPUT")
+DEFAULT_REMOTE_LD_LIBRARY_PATH = (
+    "/home/administrator/veriput_esbmc/local-libs:"
+    "/home/administrator/veriput_esbmc/lib"
+)
 DEFAULT_REMOTE_STATE = Path("/tmp/veriput_rq1_remote_state.json")
 DEFAULT_LOCAL_RESULTS = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 DEFAULT_LOCAL_VERIPUT = Path("/home/samson/workspace/VeriPUT")
@@ -731,13 +735,27 @@ echo "[remote-build] $(date -Is) done"
 
 def remote_preflight(args) -> dict:
     """Require the synced trees and executable before acquiring any case lease."""
+    effective_parallel = args.case_parallel if args.case_parallel > 0 else args.max_case_parallel
+    required_mem_gib = (
+        float(max(1, effective_parallel)) * float(args.memlimit_gib)
+        + float(args.reserve_mem_gib)
+    )
     script = f"""
 set -euo pipefail
+if [ {1 if args.stop_existing else 0} -ne 1 ]; then
+  echo "remote preflight requires --stop-existing before every run" >&2
+  exit 20
+fi
+export LD_LIBRARY_PATH={shlex.quote(DEFAULT_REMOTE_LD_LIBRARY_PATH)}:${{LD_LIBRARY_PATH:-}}
 test -d {shlex.quote(str(args.remote_esbmc))}
 test -d {shlex.quote(str(args.remote_veriput))}
 test -f {shlex.quote(str(args.remote_esbmc / 'notes/coverage/scripts/rq1_veriput_run.py'))}
 test -f {shlex.quote(str(args.remote_esbmc / 'notes/coverage/scripts/rq1_esbmc_result_interpret.py'))}
 test -x {shlex.quote(str(args.remote_esbmc / 'build/src/esbmc/esbmc'))}
+{shlex.quote(str(args.remote_esbmc / 'build/src/esbmc/esbmc'))} --version >/dev/null
+available=$(awk '/MemAvailable/{{printf "%.3f", $2/1024/1024}}' /proc/meminfo)
+python3 -c 'available=float("'"$available"'"); required=float("{required_mem_gib:.3f}"); minimum=float("{float(args.remote_min_mem_gib):.3f}"); import sys; sys.exit(0 if available >= minimum and available >= required else 1)'
+echo "remote-preflight-ok MemAvailable=${{available}}GiB required={required_mem_gib:.3f}GiB"
 """
     proc = subprocess.run(
         ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", args.host,
@@ -794,7 +812,7 @@ def main() -> int:
     parser.add_argument(
         "--reserve-mem-gib",
         type=float,
-        default=4.0,
+        default=2.0,
         help="remote memory GiB to leave free when auto-computing case parallelism")
     parser.add_argument(
         "--max-case-parallel",

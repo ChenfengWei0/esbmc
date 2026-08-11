@@ -22,6 +22,8 @@ DEFAULT_MANIFEST = Path("/tmp/veriput_rq1_theory_covered_cases.tsv")
 DEFAULT_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 DEFAULT_RUN_DIR = Path("/tmp/veriput_rq1_worker_supervisor.d")
 DEFAULT_LEASE_FILE = Path("/tmp/veriput_rq1_case_leases.json")
+DEFAULT_REMOTE_ESBMC = Path("/home/administrator/veriput_esbmc/repo")
+DEFAULT_REMOTE_VERIPUT = Path("/home/administrator/VeriPUT")
 
 
 def _write(path: Path, doc: dict) -> None:
@@ -157,12 +159,13 @@ def start(args: argparse.Namespace, action: dict | None = None) -> dict:
     remote_cmd = [
         sys.executable, str(REMOTE), "--tsv", str(remote_manifest),
         "--host", args.remote_host, "--limit", "0", "--loop",
-        "--remote-esbmc", "/home/administrator/veriput_esbmc_remote",
-        "--remote-veriput", "/home/administrator/veriput_VeriPUT_remote",
+        "--remote-esbmc", str(args.remote_esbmc),
+        "--remote-veriput", str(args.remote_veriput),
         "--timeout", str(args.timeout_s), "--esbmc-run-timeout", str(args.timeout_s),
         "--case-parallel", str(args.remote_parallel),
         "--max-case-parallel", str(args.remote_parallel),
         "--memlimit-gib", str(args.remote_memlimit_gib),
+        "--reserve-mem-gib", str(args.remote_reserve_mem_gib),
         "--esbmc-rss-limit-gib", str(args.remote_rss_limit_gib),
         "--remote-build-command",
         "cmake -E rm -rf build && "
@@ -240,11 +243,14 @@ def main() -> int:
     parser.add_argument("--results-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--remote-host", default="invmut-w2")
     parser.add_argument("--local-parallel", type=int, default=3)
-    parser.add_argument("--remote-parallel", type=int, default=2)
+    parser.add_argument("--remote-parallel", type=int, default=3)
+    parser.add_argument("--remote-esbmc", type=Path, default=DEFAULT_REMOTE_ESBMC)
+    parser.add_argument("--remote-veriput", type=Path, default=DEFAULT_REMOTE_VERIPUT)
     parser.add_argument("--ce-collection-only", action="store_true")
     parser.add_argument("--timeout-s", type=int, default=60)
     parser.add_argument("--local-memlimit-gib", type=int, default=8)
-    parser.add_argument("--remote-memlimit-gib", type=float, default=5.5)
+    parser.add_argument("--remote-memlimit-gib", type=float, default=6.0)
+    parser.add_argument("--remote-reserve-mem-gib", type=float, default=2.0)
     parser.add_argument("--local-rss-limit-gib", type=int, default=12)
     parser.add_argument("--remote-rss-limit-gib", type=float, default=10.0)
     parser.add_argument("--action-stdin", action="store_true")

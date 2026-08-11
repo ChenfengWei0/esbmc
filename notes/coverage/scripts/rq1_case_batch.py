@@ -9,6 +9,7 @@ import json
 import os
 import re
 import signal
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,12 @@ DEFAULT_MANUAL_MD = Path("notes/coverage/rq1_no_valid_manual_root_causes.md")
 DEFAULT_LEDGER = Path("notes/coverage/rq1_batch_ledger.json")
 DEFAULT_CASE_STATE = Path("notes/coverage/rq1_case_state.json")
 DEFAULT_REPAIR_TICKETS = Path("/tmp/veriput_rq1_repair_tickets.jsonl")
+DEFAULT_REMOTE_ESBMC = Path("/home/administrator/veriput_esbmc/repo")
+DEFAULT_REMOTE_VERIPUT = Path("/home/administrator/VeriPUT")
+DEFAULT_REMOTE_LD_LIBRARY_PATH = (
+    "/home/administrator/veriput_esbmc/local-libs:"
+    "/home/administrator/veriput_esbmc/lib"
+)
 HISTORICAL_RESULT_SUFFIX_RE = re.compile(
     r"(?P<canonical>.+?)(?P<suffix>\.redo\..+|\.superseded\..+|"
     r"\.adopted_from_.+|\.incomplete\..+)$")
@@ -48,6 +55,10 @@ GROUND_TRUTH_REQUIRED_FIELDS = (
     "expected_oracle",
     "expected_r1r2",
     "root_cause",
+    "last_failure",
+    "why_static_missed",
+    "prevention_code_change",
+    "prevention_files_read",
     "fix_targets",
     "source_files_read",
     "evidence_files_read",
@@ -216,6 +227,10 @@ def seed_ground_truth(args: argparse.Namespace) -> dict:
         gt.setdefault("expected_oracle", "")
         gt.setdefault("expected_r1r2", "")
         gt.setdefault("root_cause", "")
+        gt.setdefault("last_failure", "")
+        gt.setdefault("why_static_missed", "")
+        gt.setdefault("prevention_code_change", "")
+        gt.setdefault("prevention_files_read", [])
         gt.setdefault("fix_targets", [])
         gt.setdefault("source_files_read", [])
         gt.setdefault("evidence_files_read", [])
@@ -371,6 +386,10 @@ def _full_ground_truth() -> dict:
         "expected_oracle": "post-state equality oracle",
         "expected_r1r2": "R1 over argument coordinate, R2 over state coordinate",
         "root_cause": "synthetic audit fixture",
+        "last_failure": "previous run reached Stage4 but produced no valid row",
+        "why_static_missed": "audit fixture models evidence only visible in PUT summary",
+        "prevention_code_change": "monitor reads Stage4 summary and gate requires postmortem fields",
+        "prevention_files_read": ["notes/coverage/scripts/rq1_case_batch.py"],
         "fix_targets": ["notes/coverage/scripts/rq1_case_batch.py"],
         "source_files_read": ["src/Target.sol"],
         "evidence_files_read": ["result.json", "driver.log"],
@@ -392,7 +411,7 @@ def _audit_base_args(args: argparse.Namespace, tmp: Path) -> SimpleNamespace:
         remote_host="audit-host",
         timeout_s=600,
         local_memlimit_gib=12,
-        remote_memlimit_gib=5.5,
+        remote_memlimit_gib=6.0,
         local_rss_limit_gib=18,
         remote_rss_limit_gib=9.0,
         results_root=tmp / "results",
@@ -561,6 +580,29 @@ def _audit_settle_side_effects(tmp: Path) -> tuple[bool, str]:
     return True, "settle writes state/ledger/MD once and repair tickets for quality debt"
 
 
+def _audit_rolling_fill(tmp: Path) -> tuple[bool, str]:
+    audit_args = _audit_base_args(argparse.Namespace(), tmp)
+    audit_args.run_state = ["NO_VALID"]
+    rows = _audit_write_inventory(audit_args.inventory, 13)
+    init_state(audit_args)
+    state = load_case_state(audit_args)
+    for idx, row in enumerate(rows, start=1):
+        key = case_key(row["bench"], row["subject"])
+        state["cases"][key]["ground_truth"] = _full_ground_truth()
+        if idx <= 5:
+            state["cases"][key]["state"] = "VALID_PUT_R1R2"
+    write_case_state(audit_args, state)
+    selected = inventory_rows(audit_args)
+    selected_subjects = [row["subject"] for row in selected]
+    expected = [f"audit_subject_{idx:03d}" for idx in range(6, 14)]
+    if selected_subjects != expected:
+        return False, f"rolling selected {selected_subjects}, expected {expected}"
+    prepared = prepare(audit_args)
+    if prepared["case_count"] != 8:
+        return False, f"prepare wrote {prepared['case_count']} cases, expected 8"
+    return True, "run-state rolling fill skips already-fixed rows and prepares exactly 8"
+
+
 def _audit_behavior() -> dict:
     checks = []
     with tempfile.TemporaryDirectory(prefix="rq1_case_batch_audit_") as tmp_s:
@@ -572,6 +614,8 @@ def _audit_behavior() -> dict:
              _audit_preflight_and_oracle),
             (17, "behavior: settlement state ledger tickets upsert",
              _audit_settle_side_effects),
+            (18, "behavior: rolling run-state fill",
+             _audit_rolling_fill),
         ):
             try:
                 ok, evidence = fn(tmp / f"check_{item}")
@@ -615,12 +659,18 @@ def audit(args: argparse.Namespace) -> dict:
     add(4, "code repair before run enforced by gate",
         args.require_ground_truth,
         f"start refuses when ground_truth gate fails: require_ground_truth={args.require_ground_truth}")
+    add(4.1, "prevention files must be read before rerun",
+        "prevention_files_read" in GROUND_TRUTH_REQUIRED_FIELDS,
+        "readiness requires prevention_files_read to exist, be readable, and cover fix_targets")
     add(5, "scheduler preflight",
         callable(schedule_preflight),
         "schedule_preflight checks expected contract, expected units, wrong-contract jobs")
     add(6, "local5 remote3 execution",
         args.local_parallel == 5 and args.remote_parallel == 3,
         f"local_parallel={args.local_parallel} remote_parallel={args.remote_parallel}")
+    add(6.1, "remote3 memory cap",
+        args.remote_parallel == 3 and float(args.remote_memlimit_gib) == 6.0,
+        f"remote_parallel={args.remote_parallel} remote_memlimit_gib={args.remote_memlimit_gib}")
     add(7, "continuous supervision",
         callable(monitor) and callable(supervise),
         "monitor/supervise report stage, cert tail, PUT summaries, preflight, memory")
@@ -651,7 +701,7 @@ def audit(args: argparse.Namespace) -> dict:
     add(14, "forbidden actions gated",
         args.require_ground_truth and args.require_batch_size
         and not args.stop_on_hard_decision,
-        "default start requires ground truth and batch size; monitor stop is explicit")
+        "default start requires readiness, ground truth, batch size; monitor stop is explicit")
     behavior = _audit_behavior()
     checks.extend(behavior["checks"])
 
@@ -665,7 +715,30 @@ def audit(args: argparse.Namespace) -> dict:
 def inventory_rows(args: argparse.Namespace) -> list[dict]:
     inventory = read_json(args.inventory)
     rows = inventory.get("rows") if isinstance(inventory.get("rows"), list) else []
-    selected = rows[args.start_index - 1:args.end_index]
+    selected = []
+    if args.run_state and args.require_batch_size:
+        allowed = set(args.run_state or [])
+        for absolute_index, row in enumerate(rows[args.start_index - 1:],
+                                             args.start_index):
+            row_copy = dict(row)
+            row_copy["_absolute_index"] = absolute_index
+            if _row_state(args, row_copy) not in allowed:
+                continue
+            selected.append(row_copy)
+            if len(selected) >= args.batch_size:
+                break
+        if len(selected) != args.batch_size:
+            raise SystemExit(
+                f"rolling batch gate failed: found {len(selected)} "
+                f"{sorted(allowed)} cases from index {args.start_index}, "
+                f"expected {args.batch_size}")
+        return selected
+    selected = []
+    for absolute_index, row in enumerate(rows[args.start_index - 1:args.end_index],
+                                         args.start_index):
+        row_copy = dict(row)
+        row_copy["_absolute_index"] = absolute_index
+        selected.append(row_copy)
     if len(selected) != args.end_index - args.start_index + 1:
         raise SystemExit("inventory range is incomplete")
     if args.require_batch_size and len(selected) != args.batch_size:
@@ -689,8 +762,9 @@ def _row_state(args: argparse.Namespace, row: dict) -> str:
 def runnable_rows(args: argparse.Namespace, rows: list[dict]) -> list[tuple[int, dict, str]]:
     allowed = set(args.run_state or [])
     out = []
-    for absolute_index, row in zip(range(args.start_index, args.end_index + 1),
-                                   rows):
+    for fallback_index, row in zip(range(args.start_index,
+                                         args.start_index + len(rows)), rows):
+        absolute_index = int(row.get("_absolute_index") or fallback_index)
         state = _row_state(args, row)
         if allowed and state not in allowed:
             continue
@@ -762,6 +836,10 @@ def supervisor_cmd(args: argparse.Namespace, command: str) -> list[str]:
         str(lease_path(args)),
         "--remote-host",
         args.remote_host,
+        "--remote-esbmc",
+        str(args.remote_esbmc),
+        "--remote-veriput",
+        str(args.remote_veriput),
         "--local-parallel",
         str(args.local_parallel),
         "--remote-parallel",
@@ -772,6 +850,8 @@ def supervisor_cmd(args: argparse.Namespace, command: str) -> list[str]:
         str(args.local_memlimit_gib),
         "--remote-memlimit-gib",
         str(args.remote_memlimit_gib),
+        "--remote-reserve-mem-gib",
+        str(args.remote_reserve_mem_gib),
         "--local-rss-limit-gib",
         str(args.local_rss_limit_gib),
         "--remote-rss-limit-gib",
@@ -790,6 +870,166 @@ def command_json(cmd: list[str]) -> dict:
     return payload
 
 
+def remote_preflight_snapshot(args: argparse.Namespace) -> dict:
+    required_mem_gib = (
+        float(args.remote_parallel) * float(args.remote_memlimit_gib)
+        + float(args.remote_reserve_mem_gib)
+    )
+    script = f"""
+set -euo pipefail
+export LD_LIBRARY_PATH={shlex.quote(DEFAULT_REMOTE_LD_LIBRARY_PATH)}:${{LD_LIBRARY_PATH:-}}
+test -d {shlex.quote(str(args.remote_esbmc))}
+test -d {shlex.quote(str(args.remote_veriput))}
+test -f {shlex.quote(str(args.remote_esbmc / 'notes/coverage/scripts/rq1_veriput_run.py'))}
+test -f {shlex.quote(str(args.remote_esbmc / 'notes/coverage/scripts/rq1_esbmc_result_interpret.py'))}
+test -x {shlex.quote(str(args.remote_esbmc / 'build/src/esbmc/esbmc'))}
+{shlex.quote(str(args.remote_esbmc / 'build/src/esbmc/esbmc'))} --version >/dev/null
+available=$(awk '/MemAvailable/{{printf "%.3f", $2/1024/1024}}' /proc/meminfo)
+python3 -c 'available=float("'"$available"'"); required=float("{required_mem_gib:.3f}"); import sys; sys.exit(0 if available >= required else 1)'
+echo "remote-preflight-ok MemAvailable=${{available}}GiB required={required_mem_gib:.3f}GiB"
+"""
+    proc = subprocess.run(
+        [
+            "ssh",
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "ConnectTimeout=5",
+            args.remote_host,
+            f"bash -lc {shlex.quote(script)}",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        check=False,
+    )
+    return {
+        "host": args.remote_host,
+        "remote_esbmc": str(args.remote_esbmc),
+        "remote_veriput": str(args.remote_veriput),
+        "remote_parallel": args.remote_parallel,
+        "remote_memlimit_gib": args.remote_memlimit_gib,
+        "remote_reserve_mem_gib": args.remote_reserve_mem_gib,
+        "required_mem_gib": round(required_mem_gib, 3),
+        "returncode": proc.returncode,
+        "stdout": proc.stdout.strip(),
+        "stderr": proc.stderr.strip(),
+        "ready": proc.returncode == 0,
+    }
+
+
+def pre_run_readiness(args: argparse.Namespace) -> dict:
+    inventory_error = ""
+    if manifest_path(args).exists():
+        rows = manifest_rows(args)
+    else:
+        try:
+            selected = inventory_rows(args)
+            rows = [
+                {
+                    "bench": row.get("bench"),
+                    "subject": row.get("subject"),
+                    "category": f"manual{int(row.get('_absolute_index') or 0):03d}_{args.batch_id}",
+                    "theory_patch_id": args.batch_id,
+                    "state_before_run": _row_state(args, row),
+                }
+                for _, row, _ in runnable_rows(args, selected)
+            ]
+        except SystemExit as exc:
+            rows = []
+            inventory_error = str(exc)
+    gt = ground_truth_status(args, rows) if rows else {
+        "ok": False,
+        "cases": [],
+        "error": inventory_error,
+    }
+    monitor_doc = monitor(args)
+    checks = []
+
+    def add(name: str, ok: bool, evidence: object) -> None:
+        checks.append({"name": name, "ok": bool(ok), "evidence": evidence})
+
+    add("rolling batch has exactly eight runnable cases",
+        len(rows) == args.batch_size == 8 and not inventory_error,
+        {
+            "manifest_rows": len(rows),
+            "batch_size": args.batch_size,
+            "inventory_error": inventory_error,
+        })
+    add("structured ground truth and failure postmortem complete",
+        bool(gt.get("ok")),
+        {"missing": [
+            case for case in gt.get("cases") or [] if not case.get("ok")
+        ]})
+    state_doc = load_case_state(args)
+    prevention_failures = []
+    for row in rows:
+        key = case_key(row["bench"], row["subject"])
+        gt_row = ((state_doc.get("cases") or {}).get(key) or {}).get("ground_truth")
+        if not isinstance(gt_row, dict):
+            gt_row = {}
+        prevention_files = [str(path) for path in gt_row.get("prevention_files_read") or []]
+        fix_targets = [str(path) for path in gt_row.get("fix_targets") or []]
+        missing_paths = [
+            path for path in prevention_files
+            if not Path(path).exists()
+        ]
+        uncovered_targets = [
+            path for path in fix_targets
+            if path not in prevention_files
+        ]
+        if not prevention_files or missing_paths or uncovered_targets:
+            prevention_failures.append({
+                "case": key,
+                "prevention_files_read": prevention_files,
+                "fix_targets": fix_targets,
+                "missing_paths": missing_paths,
+                "fix_targets_not_read": uncovered_targets,
+            })
+    add("all prevention files from MD/state were read before rerun",
+        not prevention_failures,
+        prevention_failures)
+    add("local/remote resource policy fixed",
+        args.local_parallel == 5 and args.remote_parallel == 3
+        and int(args.local_memlimit_gib) == 12
+        and float(args.remote_memlimit_gib) == 6.0
+        and float(args.remote_reserve_mem_gib) == 2.0,
+        {
+            "local_parallel": args.local_parallel,
+            "remote_parallel": args.remote_parallel,
+            "local_memlimit_gib": args.local_memlimit_gib,
+            "remote_memlimit_gib": args.remote_memlimit_gib,
+            "remote_reserve_mem_gib": args.remote_reserve_mem_gib,
+        })
+    bad_preflight = []
+    for case in monitor_doc.get("cases") or []:
+        preflight = case.get("scheduler_preflight") or {}
+        if preflight.get("exists") and not preflight.get("ok"):
+            bad_preflight.append({
+                "subject": case.get("subject"),
+                "preflight": preflight,
+            })
+    add("existing scheduler artifacts do not show wrong-target units",
+        not bad_preflight,
+        bad_preflight)
+    add("30 second intervention supervision configured",
+        args.supervise_interval_s == 30 and callable(supervise),
+        {"supervise_interval_s": args.supervise_interval_s})
+    remote = remote_preflight_snapshot(args)
+    add("remote ESBMC/VeriPUT/memory preflight ready", remote["ready"], remote)
+    doc = {
+        "schema": "veriput-rq1-pre-run-readiness/v1",
+        "batch_id": args.batch_id,
+        "manifest": str(manifest_path(args)),
+        "run_dir": str(run_dir(args)),
+        "case_count": len(rows),
+        "checks": checks,
+        "ok": all(row["ok"] for row in checks),
+    }
+    write_json(run_dir(args) / "pre-run-readiness.json", doc)
+    return doc
+
+
 def manifest_rows(args: argparse.Namespace) -> list[dict]:
     path = manifest_path(args)
     if not path.exists():
@@ -802,18 +1042,13 @@ def manifest_rows(args: argparse.Namespace) -> list[dict]:
 
 
 def start(args: argparse.Namespace) -> dict:
-    if not manifest_path(args).exists():
-        prepare(args)
-    if args.require_ground_truth:
-        rows = manifest_rows(args)
-        gt = ground_truth_status(args, rows)
-        write_json(run_dir(args) / "ground-truth-gate.json", gt)
-        if not gt["ok"]:
-            return {
-                "started": False,
-                "reason": "ground-truth-gate-failed",
-                "gate": gt,
-            }
+    readiness = pre_run_readiness(args)
+    if not readiness["ok"]:
+        return {
+            "started": False,
+            "reason": "pre-run-readiness-failed",
+            "readiness": readiness,
+        }
     state = read_json(state_path(args))
     live_workers = [
         row for row in state.get("workers") or []
@@ -1760,6 +1995,12 @@ def print_chinese(doc: dict) -> None:
         print(f"run_state_filter：{doc.get('run_state_filter')}")
         print(f"manifest：{doc.get('manifest')}")
         return
+    if doc.get("schema") == "veriput-rq1-pre-run-readiness/v1":
+        print(f"跑前最大努力门禁：{'通过' if doc.get('ok') else '失败'}")
+        print(f"批次：{doc.get('batch_id')} case_count={doc.get('case_count')}")
+        for row in doc.get("checks") or []:
+            print(f"- {'PASS' if row.get('ok') else 'FAIL'} {row.get('name')} evidence={row.get('evidence')}")
+        return
     if doc.get("schema") == "veriput-rq1-batch-settlement/v1":
         print(f"批次结算：{doc.get('batch_id')}")
         print(f"case_count：{doc.get('case_count')}")
@@ -1826,9 +2067,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("prepare", "gate", "audit", "init-state",
                                             "seed-ground-truth", "state",
-                                            "sync-results", "start", "status",
-                                            "monitor", "supervise", "settle",
-                                            "stop"))
+                                            "sync-results", "readiness", "start",
+                                            "status", "monitor", "supervise",
+                                            "settle", "stop"))
     parser.add_argument("--batch-id", default="manual-005-012")
     parser.add_argument("--inventory", type=Path, default=DEFAULT_INVENTORY)
     parser.add_argument("--run-root", type=Path, default=DEFAULT_RUN_ROOT)
@@ -1841,9 +2082,12 @@ def main() -> int:
     parser.add_argument("--local-parallel", type=int, default=5)
     parser.add_argument("--remote-parallel", type=int, default=3)
     parser.add_argument("--remote-host", default=DEFAULT_REMOTE_HOST)
+    parser.add_argument("--remote-esbmc", type=Path, default=DEFAULT_REMOTE_ESBMC)
+    parser.add_argument("--remote-veriput", type=Path, default=DEFAULT_REMOTE_VERIPUT)
     parser.add_argument("--timeout-s", type=int, default=600)
     parser.add_argument("--local-memlimit-gib", type=int, default=12)
-    parser.add_argument("--remote-memlimit-gib", type=float, default=5.5)
+    parser.add_argument("--remote-memlimit-gib", type=float, default=6.0)
+    parser.add_argument("--remote-reserve-mem-gib", type=float, default=2.0)
     parser.add_argument("--local-rss-limit-gib", type=int, default=18)
     parser.add_argument("--remote-rss-limit-gib", type=float, default=9.0)
     parser.add_argument("--results-root", type=Path, default=DEFAULT_RESULTS_ROOT)
@@ -1891,6 +2135,8 @@ def main() -> int:
         result = state_summary(args)
     elif args.command == "sync-results":
         result = sync_state_from_results(args)
+    elif args.command == "readiness":
+        result = pre_run_readiness(args)
     elif args.command == "start":
         result = start(args)
     elif args.command == "stop":
