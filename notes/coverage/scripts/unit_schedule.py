@@ -21,6 +21,7 @@ CERTIFY_ALL = SCRIPT_DIR / "certify_all.py"
 sys.path.insert(0, str(SCRIPT_DIR))
 sys.path.insert(0, str(ROOT / "scripts"))
 from solidity_path_generalise import direct_recursive_helpers_in_unit_closure  # noqa: E402
+from solidity_ast_dependencies import path_function_artifact_suffix  # noqa: E402
 from veriput_path_guard import ensure_path_not_protected  # noqa: E402
 from veriput_recipe import STRONG_RECIPE_VERSION, strong_certify_args  # noqa: E402
 
@@ -35,6 +36,7 @@ INITIALIZER_LIKE_UNITS = {
     "setUp",
 }
 CHEAP_STATE_UNIT_NAMES = {
+    "transferOwnership",
 }
 ADMIN_ZERO_INTERFACE_UNIT_NAMES = {
     "acceptOwnership",
@@ -90,12 +92,21 @@ INTERNAL_TARGET_WRAPPER_UNIT_NAMES = {
 # They never grant theory credit: each replacement still needs a CE and normal
 # certification before it can become a valid test or PUT.
 NO_PATH_STATIC_ROUTES = {
-    ("bugfix124", "acfix_032_CVE_2021_39167"):
-    {"failed_unit": "isOperation", "replacement": "execute", "target": "_afterCall"},
-    ("bugfix124", "acfix_033_CVE_2021_39168"):
-    {"failed_unit": "isOperation", "replacement": "execute", "target": "_afterCall"},
-    ("bugfix124", "acfix_3_5_101_ANCHToken"):
-    {"failed_unit": "balanceOf", "replacement": "transfer", "target": "_transfer"},
+    ("bugfix124", "acfix_032_CVE_2021_39167"): {
+        "failed_unit": "isOperation",
+        "replacement": "execute",
+        "target": "_afterCall"
+    },
+    ("bugfix124", "acfix_033_CVE_2021_39168"): {
+        "failed_unit": "isOperation",
+        "replacement": "execute",
+        "target": "_afterCall"
+    },
+    ("bugfix124", "acfix_3_5_101_ANCHToken"): {
+        "failed_unit": "balanceOf",
+        "replacement": "transfer",
+        "target": "_transfer"
+    },
 }
 
 BUDGET_VALUE_FLAGS = {
@@ -175,7 +186,7 @@ def _select_jobs(jobs: list[dict], selection_strategy: str) -> list[dict]:
     grouped = {}
     for job in jobs:
         if selection_strategy == "round-robin-benchmark":
-            key = (job.get("benchmark") or "<unknown>",)
+            key = (job.get("benchmark") or "<unknown>", )
         else:
             key = (
                 job.get("benchmark") or "<unknown>",
@@ -220,8 +231,7 @@ def default_workdir_root(cert_out: str,
     if attempt:
         suffix = f"a{attempt}_{suffix}"
     if cert_out:
-        return str(Path(cert_out).expanduser().resolve().parent /
-                   f"certify-work-{suffix}")
+        return str(Path(cert_out).expanduser().resolve().parent / f"certify-work-{suffix}")
     recipe = STRONG_RECIPE_VERSION.replace("/", "_")
     return f"/tmp/certify_all/{recipe}/{suffix}"
 
@@ -265,7 +275,8 @@ def _zero_interface_sender_arm(unit_info: dict | None) -> bool:
 def _region_strategy(unit_info: dict | None) -> dict:
     sender_arm = _zero_interface_sender_arm(unit_info)
     return {
-        "zero_interface_sender_arm": sender_arm,
+        "zero_interface_sender_arm":
+        sender_arm,
         "env_coords": ["msg.sender"] if sender_arm else [],
         "reason": ("state-changing unit has no ABI parameter coordinate"
                    if sender_arm else "shared strong recipe"),
@@ -275,11 +286,12 @@ def _region_strategy(unit_info: dict | None) -> dict:
 def _sequence_strategy(unit: str, target_hints: set[str]) -> dict:
     if _is_internal_target_wrapper(unit, target_hints):
         return {
-            "scope": "whole",
-            "max_tx": 2,
-            "reason": (
-                "internal/private target hint needs a public wrapper sequence "
-                "to establish predecessor state before the target wrapper"),
+            "scope":
+            "whole",
+            "max_tx":
+            2,
+            "reason": ("internal/private target hint needs a public wrapper sequence "
+                       "to establish predecessor state before the target wrapper"),
         }
     return {
         "scope": "focus",
@@ -288,9 +300,16 @@ def _sequence_strategy(unit: str, target_hints: set[str]) -> dict:
     }
 
 
-def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path: str | None,
-                  dry_run: bool, *, timeout_s: int, run_timeout_s: int,
-                  memlimit_gib: int, workdir: str,
+def _certify_argv(subject: dict,
+                  unit: str,
+                  ast_cache_root: str | None,
+                  out_path: str | None,
+                  dry_run: bool,
+                  *,
+                  timeout_s: int,
+                  run_timeout_s: int,
+                  memlimit_gib: int,
+                  workdir: str,
                   unit_info: dict | None = None,
                   target_hints: set[str] | None = None) -> list[str]:
     argv = [
@@ -307,6 +326,9 @@ def _certify_argv(subject: dict, unit: str, ast_cache_root: str | None, out_path
         argv.extend(["--ast-cache-root", ast_cache_root])
     if out_path:
         argv.extend(["--out", out_path])
+    path_function = str((unit_info or {}).get("path_function") or "")
+    if path_function:
+        argv.extend(["--path-function", path_function])
     argv.extend(strong_certify_args())
     sequence = _sequence_strategy(unit, target_hints or set())
     if sequence["scope"] != "focus":
@@ -333,16 +355,19 @@ def _is_internal_target_wrapper(unit: str, target_hints: set[str]) -> bool:
     if not _has_internal_target_hint(target_hints):
         return False
     lower = unit.lower()
-    return (unit in INTERNAL_TARGET_WRAPPER_UNIT_NAMES
-            or lower.startswith("execute"))
+    return (unit in INTERNAL_TARGET_WRAPPER_UNIT_NAMES or lower.startswith("execute"))
 
 
-def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None,
+def _unit_priority(unit: str,
+                   hinted: set[str],
+                   unit_info: dict | None,
                    static_obstacles: list[dict] | None = None) -> tuple[int, str]:
     if static_obstacles:
         return 4, "static-obstacle"
     if unit in hinted:
         if (unit_info and unit not in INITIALIZER_LIKE_UNITS
+                and unit not in ADMIN_ZERO_INTERFACE_UNIT_NAMES
+                and unit not in ADMIN_SETTER_UNIT_NAMES
                 and _unit_cost_rank(unit, unit_info)[0] >= 40):
             return 1, "expensive-target-hint"
         return 0, "target-hint"
@@ -353,15 +378,17 @@ def _unit_priority(unit: str, hinted: set[str], unit_info: dict | None,
     mutability = unit_info.get("state_mutability") or ""
     params = int(unit_info.get("parameter_count") or 0)
     returns = int(unit_info.get("return_count") or 0)
-    if mutability not in ("view", "pure"):
-        if unit in INITIALIZER_LIKE_UNITS:
-            return 2, "initializer-like"
-        if params == 0 and returns == 0:
-            return 1, "zero-interface-state-changing"
+    if mutability in ("view", "pure"):
+        return 1, "cheap-pure/view-getter"
+    if unit in INITIALIZER_LIKE_UNITS:
+        return 3, "initializer-like"
+    if (unit in CHEAP_STATE_UNIT_NAMES
+            or (unit.lower().startswith("set")
+                and unit not in ADMIN_SETTER_UNIT_NAMES)):
         return 1, "state-changing"
-    if params or returns:
-        return 2, "pure/view-with-interface"
-    return 3, "zero-arg-view"
+    if params == 0 and returns == 0:
+        return 2, "zero-interface-state-changing"
+    return 2, "state-changing"
 
 
 def _unit_cost_rank(unit: str, unit_info: dict | None) -> tuple[int, int, int]:
@@ -389,6 +416,8 @@ def _unit_cost_rank(unit: str, unit_info: dict | None) -> tuple[int, int, int]:
         tier = 65
     elif unit in ACCESS_CONTROL_MUTATOR_UNIT_NAMES:
         tier = 68
+    elif unit == "transferOwnership":
+        tier = 8
     elif unit in MODERATE_STATE_UNIT_NAMES:
         tier = 45
     elif unit in CHEAP_STATE_UNIT_NAMES or lower.startswith("set"):
@@ -399,93 +428,220 @@ def _unit_cost_rank(unit: str, unit_info: dict | None) -> tuple[int, int, int]:
         tier = 70
     else:
         tier = 30
+    if unit_info.get("delegating_wrapper"):
+        # A one-line `return f(...)` entry pays for both its own ABI/path gates
+        # and the callee closure.  For overload sets, try the direct body first:
+        # it is both cheaper and more likely to expose the state mutation that
+        # Stage 4 needs before the subject budget expires.
+        tier += 20
     if mutability == "payable":
         tier += 10
     return (tier, params, returns)
 
 
 def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None,
-                  out_path: str | None, unit_info: dict | None, *,
-                  timeout_s: int, run_timeout_s: int, memlimit_gib: int,
-                  workdir: str) -> dict:
+                  out_path: str | None, unit_info: dict | None, *, timeout_s: int,
+                  run_timeout_s: int, memlimit_gib: int, workdir: str) -> dict:
     subject = dict(row["subject"])
     subject["unit"] = unit
     unit_hints = row.get("unit_hints") or {}
     hinted = set(unit_hints.get("hinted_units") or [])
     target_hints = hinted | set(unit_hints.get("missing_unit_hints") or [])
     static_obstacles = _static_obstacles_for_unit(row, subject, unit)
-    priority, reason = _unit_priority(unit, target_hints, unit_info,
-                                      static_obstacles)
-    return {
-        "schema": "veriput-unit-job/v1",
-        "job_id": (f"{subject.get('benchmark_key') or subject['subject_id']}__"
-                   f"{unit}"),
-        "priority": priority,
-        "priority_reason": reason,
+    priority, reason = _unit_priority(unit, target_hints, unit_info, static_obstacles)
+    job = {
+        "schema":
+        "veriput-unit-job/v1",
+        "job_id":
+        (f"{subject.get('benchmark_key') or subject['subject_id']}__"
+         f"{unit}"
+         f"{path_function_artifact_suffix(str((unit_info or {}).get('path_function') or ''))}"),
+        "priority":
+        priority,
+        "priority_reason":
+        reason,
         "schedule_rank": {
             "cheap_first": list(_unit_cost_rank(unit, unit_info)),
             "ordinal": ordinal,
         },
-        "ordinal": ordinal,
-        "benchmark": subject["benchmark"],
-        "subject_id": subject["subject_id"],
-        "contract": subject["contract"],
-        "unit": unit,
-        "subject": subject,
-        "target": row.get("target"),
-        "unit_hints": row.get("unit_hints"),
-        "unit_info": unit_info,
-        "region_strategy": _region_strategy(unit_info),
-        "sequence_strategy": _sequence_strategy(unit, target_hints),
-        "static_obstacles": static_obstacles,
+        "ordinal":
+        ordinal,
+        "benchmark":
+        subject["benchmark"],
+        "subject_id":
+        subject["subject_id"],
+        "contract":
+        subject["contract"],
+        "unit":
+        unit,
+        "subject":
+        subject,
+        "target":
+        row.get("target"),
+        "unit_hints":
+        row.get("unit_hints"),
+        "unit_info":
+        unit_info,
+        "region_strategy":
+        _region_strategy(unit_info),
+        "sequence_strategy":
+        _sequence_strategy(unit, target_hints),
+        "static_obstacles":
+        static_obstacles,
         "certification_budget": {
             "timeout_s": timeout_s or None,
             "run_timeout_s": run_timeout_s or None,
             "memlimit_gib": memlimit_gib or None,
             "workdir": workdir or None,
         },
-        "certify_argv": _certify_argv(subject,
-                                      unit,
-                                      ast_cache_root,
-                                      out_path,
-                                      dry_run=False,
-                                      timeout_s=timeout_s,
-                                      run_timeout_s=run_timeout_s,
-                                      memlimit_gib=memlimit_gib,
-                                      workdir=workdir,
-                                      unit_info=unit_info,
-                                      target_hints=target_hints),
-        "dry_run_argv": _certify_argv(subject,
-                                      unit,
-                                      ast_cache_root,
-                                      out_path,
-                                      dry_run=True,
-                                      timeout_s=timeout_s,
-                                      run_timeout_s=run_timeout_s,
-                                      memlimit_gib=memlimit_gib,
-                                      workdir=workdir,
-                                      unit_info=unit_info,
-                                      target_hints=target_hints),
+        "certify_argv":
+        _certify_argv(subject,
+                      unit,
+                      ast_cache_root,
+                      out_path,
+                      dry_run=False,
+                      timeout_s=timeout_s,
+                      run_timeout_s=run_timeout_s,
+                      memlimit_gib=memlimit_gib,
+                      workdir=workdir,
+                      unit_info=unit_info,
+                      target_hints=target_hints),
+        "dry_run_argv":
+        _certify_argv(subject,
+                      unit,
+                      ast_cache_root,
+                      out_path,
+                      dry_run=True,
+                      timeout_s=timeout_s,
+                      run_timeout_s=run_timeout_s,
+                      memlimit_gib=memlimit_gib,
+                      workdir=workdir,
+                      unit_info=unit_info,
+                      target_hints=target_hints),
     }
+    path_function = str((unit_info or {}).get("path_function") or "")
+    if path_function:
+        job["path_function"] = path_function
+    return job
 
 
 def _static_obstacles_for_unit(row: dict, subject: dict, unit: str) -> list[dict]:
-    ast_path = (
-        ((row.get("ast") or {}).get("path"))
-        or subject.get("solast")
-    )
+    ast_path = (((row.get("ast") or {}).get("path")) or subject.get("solast"))
     if not ast_path:
         return []
-    helpers = direct_recursive_helpers_in_unit_closure(
-        ast_path, subject.get("contract"), unit)
+    helpers = direct_recursive_helpers_in_unit_closure(ast_path, subject.get("contract"), unit)
     if not helpers:
         return []
     return [{
         "tag": "recursive-helper-preflight",
-        "reason": (
-            "target call closure reaches direct self-recursive helper wrappers"),
+        "reason": ("target call closure reaches direct self-recursive helper wrappers"),
         "helpers": helpers,
     }]
+
+
+def _is_single_return_call(declaration: dict) -> bool:
+    """Whether a public entry is only a forwarding `return callee(...)`."""
+    statements = ((declaration.get("body") or {}).get("statements") or [])
+    if len(statements) != 1 or statements[0].get("nodeType") != "Return":
+        return False
+    return (statements[0].get("expression") or {}).get("nodeType") == "FunctionCall"
+
+
+def _ast_unit_infos(row: dict, subject: dict, unit: str, templates: list[dict]) -> list[dict]:
+    """Resolve overload identities missing from prepared manifest metadata."""
+    ast_path = ((row.get("ast") or {}).get("path") or subject.get("solast"))
+    if not ast_path or not Path(ast_path).is_file():
+        return templates
+    try:
+        ast_text = Path(ast_path).read_text()
+        ast = json.loads(ast_text[ast_text.index("{"):])
+    except (OSError, ValueError):
+        return templates
+
+    contracts = {}
+    target = None
+
+    def visit(node):
+        nonlocal target
+        if isinstance(node, dict):
+            if node.get("nodeType") == "ContractDefinition":
+                if node.get("id") is not None:
+                    contracts[node["id"]] = node
+                if node.get("name") == subject.get("contract"):
+                    target = node
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+
+    visit(ast)
+    if target is None:
+        return templates
+    template_arities = {int(item.get("parameter_count") or 0) for item in templates}
+    resolved = []
+    seen_signatures = set()
+    chain = target.get("linearizedBaseContracts") or [target.get("id")]
+    for contract_id in chain:
+        owner = contracts.get(contract_id)
+        if not owner:
+            continue
+        for declaration in owner.get("nodes") or []:
+            kind = declaration.get("kind", "function")
+            declaration_name = declaration.get("name") or (
+                kind if kind in ("fallback", "receive") else "")
+            if (declaration.get("nodeType") != "FunctionDefinition"
+                    or kind not in ("function", "fallback", "receive")
+                    or declaration_name != unit
+                    or declaration.get("visibility") not in ("public", "external")
+                    or not bool(declaration.get("implemented", True))):
+                continue
+            params = ((declaration.get("parameters") or {}).get("parameters") or [])
+            if template_arities and len(params) not in template_arities:
+                continue
+            param_types = tuple(
+                str((param.get("typeDescriptions") or {}).get("typeString") or "")
+                for param in params)
+            signature = (unit, param_types)
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+            template = next(
+                (item
+                 for item in templates if int(item.get("parameter_count") or 0) == len(params)), {})
+            returns = ((declaration.get("returnParameters") or {}).get("parameters") or [])
+            return_types = [
+                str((value.get("typeDescriptions") or {}).get("typeString") or "")
+                for value in returns
+            ]
+            info = dict(template)
+            info.update({
+                "name":
+                unit,
+                "contract":
+                subject.get("contract"),
+                "visibility":
+                declaration.get("visibility"),
+                "state_mutability":
+                declaration.get("stateMutability"),
+                "parameter_count":
+                len(params),
+                "parameter_types":
+                list(param_types),
+                "return_count":
+                len(returns),
+                "return_types":
+                return_types,
+                "implemented":
+                bool(declaration.get("implemented", True)),
+                "ast_id":
+                declaration.get("id"),
+                "path_function": (f"sol:@C@{subject.get('contract')}@F@{unit}#"
+                                  f"{declaration.get('id')}"),
+                "delegating_wrapper": _is_single_return_call(declaration),
+            })
+            resolved.append(info)
+    return resolved or templates
 
 
 def build_schedule(manifest: dict,
@@ -504,10 +660,8 @@ def build_schedule(manifest: dict,
     timeout_s = _validate_budget("--timeout", timeout_s)
     run_timeout_s = _validate_budget("--run-timeout", run_timeout_s)
     memlimit_gib = _validate_budget("--memlimit-gib", memlimit_gib)
-    workdir = workdir or default_workdir_root(cert_out,
-                                              timeout_s=timeout_s,
-                                              run_timeout_s=run_timeout_s,
-                                              memlimit_gib=memlimit_gib)
+    workdir = workdir or default_workdir_root(
+        cert_out, timeout_s=timeout_s, run_timeout_s=run_timeout_s, memlimit_gib=memlimit_gib)
 
     ast_cache_root = manifest.get("ast_cache_root") or None
     try:
@@ -522,6 +676,7 @@ def build_schedule(manifest: dict,
     no_path_routes = []
     no_unit_rows = []
     non_target_unit_rows = []
+    skipped_units = []
     seen_jobs = set()
     for row_pos, row in enumerate(manifest.get("subjects") or []):
         status = row.get("status")
@@ -538,25 +693,32 @@ def build_schedule(manifest: dict,
         units = list((row.get("units") or {}).get("units") or [])
         if not units:
             unit_hints = row.get("unit_hints") or {}
+            unit_enum = row.get("units") if isinstance(row.get("units"), dict) else {}
             no_unit_rows.append({
-                "row": row_pos,
-                "status": "no-units",
-                "reason": (
-                    "target contract has no schedulable public/external units"),
-                "subject": subject,
-                "target": row.get("target"),
-                "unit_hints": unit_hints,
+                "row":
+                row_pos,
+                "status":
+                "no-units",
+                "reason": (unit_enum.get("no_unit_reason")
+                           or "target contract has no schedulable public/external units"),
+                "subject":
+                subject,
+                "target":
+                row.get("target"),
+                "unit_hints":
+                unit_hints,
+                "skipped":
+                list(unit_enum.get("skipped") or []),
                 "pending_unit_hints":
-                    list(unit_hints.get("pending_unit_hints") or []),
+                list(unit_hints.get("pending_unit_hints") or []),
                 "missing_unit_hints":
-                    list(unit_hints.get("missing_unit_hints") or []),
+                list(unit_hints.get("missing_unit_hints") or []),
             })
             continue
-        infos = {
-            item.get("name"): item
-            for item in (row.get("units") or {}).get("unit_info") or []
-            if isinstance(item, dict) and item.get("name")
-        }
+        infos = {}
+        for item in (row.get("units") or {}).get("unit_info") or []:
+            if isinstance(item, dict) and item.get("name"):
+                infos.setdefault(item["name"], []).append(item)
         missing = [
             name for name in ("root", "benchmark", "subject_id", "contract")
             if not subject.get(name)
@@ -566,22 +728,58 @@ def build_schedule(manifest: dict,
         units, route = _route_initial_no_path_unit(subject, units)
         if route is not None:
             no_path_routes.append({"subject": subject, **route})
+        candidates = []
+        expanded_names = set()
         for unit in units:
-            unit_info = infos.get(unit)
+            if unit in expanded_names:
+                continue
+            expanded_names.add(unit)
+            matches = infos.get(unit) or [None]
+            # The prepared manifest may already resolve overload identities,
+            # but it intentionally carries signature metadata rather than AST
+            # body shape.  Always enrich real units from the cached AST so the
+            # cheap-first rank can distinguish a forwarding overload from the
+            # direct mutator it calls.
+            if matches != [None]:
+                matches = _ast_unit_infos(row, subject, unit, matches)
+            if len(matches) > 1 and not all(
+                    str((item or {}).get("path_function") or "") for item in matches):
+                for item in matches:
+                    skipped_units.append({
+                        "row": row_pos,
+                        "unit": unit,
+                        "reason": "overloaded unit needs unique --path-function",
+                        "unit_info": item,
+                        "subject": subject,
+                    })
+                continue
+            candidates.extend((unit, item) for item in matches)
+        for unit, unit_info in candidates:
             owner = str((unit_info or {}).get("contract") or "")
             target_contract = str(subject.get("contract") or "")
             if owner and target_contract and owner != target_contract:
-                non_target_unit_rows.append({
-                    "row": row_pos,
-                    "unit": unit,
-                    "unit_contract": owner,
-                    "target_contract": target_contract,
-                    "reason": "unit is not defined on the target contract",
-                    "subject": subject,
-                    "target": row.get("target"),
-                })
-                continue
-            key = (subject.get("benchmark"), subject.get("subject_id"), unit)
+                unit_info = dict(unit_info)
+                path_function = str(unit_info.get("path_function") or "")
+                owner_marker = f"@C@{owner}@"
+                target_marker = f"@C@{target_contract}@"
+                if owner_marker not in path_function:
+                    non_target_unit_rows.append({
+                        "row": row_pos,
+                        "unit": unit,
+                        "unit_contract": owner,
+                        "target_contract": target_contract,
+                        "reason": "inherited unit has no rewriteable path-function",
+                        "subject": subject,
+                        "target": row.get("target"),
+                    })
+                    continue
+                unit_info["path_function"] = path_function.replace(owner_marker, target_marker, 1)
+                unit_info["inherited_from_contract"] = owner
+                unit_info["contract"] = target_contract
+            path_function = str((unit_info or {}).get("path_function") or "")
+            signature = tuple((unit_info or {}).get("parameter_types") or ())
+            key = (subject.get("benchmark"), subject.get("subject_id"), unit, path_function
+                   or signature)
             if key in seen_jobs:
                 duplicate_jobs.append({
                     "row": row_pos,
@@ -592,28 +790,29 @@ def build_schedule(manifest: dict,
                 })
                 continue
             seen_jobs.add(key)
-            jobs.append(_job_for_unit(row, unit, len(jobs), ast_cache_root,
-                                      cert_out or None, unit_info,
-                                      timeout_s=timeout_s,
-                                      run_timeout_s=run_timeout_s,
-                                      memlimit_gib=memlimit_gib,
-                                      workdir=workdir))
+            jobs.append(
+                _job_for_unit(row,
+                              unit,
+                              len(jobs),
+                              ast_cache_root,
+                              cert_out or None,
+                              unit_info,
+                              timeout_s=timeout_s,
+                              run_timeout_s=run_timeout_s,
+                              memlimit_gib=memlimit_gib,
+                              workdir=workdir))
 
     shard_spec = _parse_shard(shard)
     total_jobs = len(jobs)
+
     def _job_sort_key(item: dict) -> tuple:
         rank = item.get("schedule_rank", {}).get("cheap_first") or [50, 0, 0]
         tier = rank[0] if rank else 50
         rest = tuple(rank[1:])
-        target_wrapper = (
-            0 if item.get("priority_reason") == "internal-target-wrapper"
-            else 1)
-        hinted_tie = (
-            0 if item.get("priority_reason") in
-            ("target-hint", "internal-target-wrapper",
-             "expensive-target-hint") else 1)
-        return (item["priority"], target_wrapper, tier, hinted_tie, rest,
-                item["ordinal"])
+        target_wrapper = (0 if item.get("priority_reason") == "internal-target-wrapper" else 1)
+        hinted_tie = (0 if item.get("priority_reason") in ("target-hint", "internal-target-wrapper",
+                                                           "expensive-target-hint") else 1)
+        return (item["priority"], target_wrapper, tier, hinted_tie, rest, item["ordinal"])
 
     jobs.sort(key=_job_sort_key)
     jobs = _select_jobs(jobs, selection_strategy)
@@ -624,10 +823,10 @@ def build_schedule(manifest: dict,
     by_benchmark = Counter(job["benchmark"] for job in jobs)
     by_priority = Counter(str(job["priority"]) for job in jobs)
     static_obstacles = Counter(
-        obstacle.get("tag") or "<unknown>"
-        for job in jobs
+        obstacle.get("tag") or "<unknown>" for job in jobs
         for obstacle in job.get("static_obstacles") or [])
     skipped_by_status = Counter(str(row.get("status") or "<missing>") for row in skipped_rows)
+    skipped_units_by_reason = Counter(item["reason"] for item in skipped_units)
     return {
         "schema": "veriput-unit-schedule/v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -665,11 +864,14 @@ def build_schedule(manifest: dict,
             "skipped_by_status": dict(sorted(skipped_by_status.items())),
             "no_unit_rows": len(no_unit_rows),
             "non_target_unit_rows": len(non_target_unit_rows),
+            "skipped_units": len(skipped_units),
+            "skipped_units_by_reason": dict(skipped_units_by_reason),
             "duplicate_jobs": len(duplicate_jobs),
         },
         "skipped_rows": skipped_rows,
         "no_unit_rows": no_unit_rows,
         "non_target_unit_rows": non_target_unit_rows,
+        "skipped_units": skipped_units,
         "duplicate_jobs": duplicate_jobs,
         "jobs": jobs,
     }

@@ -27,6 +27,19 @@
 // scoping. Extracts the contract from a Solidity mangled id "sol:@C@<C>@F@...".
 static std::string contract_of(const std::string &mangled_id);
 
+static bool
+is_declared_solidity_path_decision(goto_programt::const_targett instruction)
+{
+  return instruction->location.get_bool("sol_source_decision") ||
+         instruction->location.get_bool("sol_abi_value_gate");
+}
+
+static std::string solidity_path_decision_site(const locationt &location)
+{
+  return location.as_string() + "\tsrc=" + id2string(location.get("sol_src")) +
+         "\tkind=" + id2string(location.get("sol_source_decision_kind"));
+}
+
 size_t goto_coveraget::total_assert = 0;
 size_t goto_coveraget::total_assert_ins = 0;
 std::set<std::pair<std::string, std::string>> goto_coveraget::total_cond;
@@ -2813,7 +2826,8 @@ void goto_coveraget::audit_entry_liveness(const std::string &focus_function)
     log_warning(
       "--solidity-path-coverage: {} instrumented path claim(s) reached no "
       "solver verdict. This run establishes no path witness, but it is still a "
-      "reportable result: cov-report.json records every affected path as U with "
+      "reportable result: cov-report.json records every affected path as U "
+      "with "
       "reason 'unit-not-entered' instead of aborting before the report is "
       "written. Treat this as a harness/frontend defect to repair, not as a "
       "successful coverage measurement.",
@@ -3682,31 +3696,42 @@ static size_t count_paths_no_instrument(
   };
 
   using becntt = std::map<unsigned, unsigned>;
-  std::vector<std::pair<goto_programt::const_targett, becntt>> stack;
-  stack.push_back({p.instructions.begin(), becntt{}});
-  size_t paths = 0, pushes = 0;
+  using statet =
+    std::tuple<goto_programt::const_targett, becntt, uint64_t, unsigned>;
+  std::vector<statet> stack;
+  stack.push_back({p.instructions.begin(), becntt{}, 1, 0});
+  std::set<std::pair<uint64_t, char>> paths;
+  size_t pushes = 0;
   const size_t push_cap = 50 * cap + 100000;
 
   while (!stack.empty())
   {
-    auto [pc, becnt] = stack.back();
+    auto [pc, becnt, enc, depth] = stack.back();
     stack.pop_back();
     while (true)
     {
       if (pc == p.instructions.end() || pc->is_end_function())
       {
         if (pc != p.instructions.end())
-          ++paths;
+          paths.emplace(enc, 'N');
         break;
       }
       if (is_err_call(pc))
       {
-        ++paths;
+        paths.emplace(enc, 'R');
         break;
       }
-      if (is_source_assert_decision(pc))
+      if (
+        is_source_assert_decision(pc) && is_declared_solidity_path_decision(pc))
       {
-        ++paths;            // assert-false exits via Solidity Panic/revert.
+        if (enc >= (uint64_t(1) << 62))
+        {
+          hit_cap = true;
+          break;
+        }
+        paths.emplace(enc * 2, 'R');
+        enc = enc * 2 + 1;
+        ++depth;
         pc = std::next(pc); // assert-true continues normally.
         continue;
       }
@@ -3716,7 +3741,18 @@ static size_t count_paths_no_instrument(
         if (pc->location.property().as_string() != "skipped")
           collect_short_circuit_decisions(
             to_code_return2t(pc->code).operand, [&](const expr2tc &) { ++rk; });
-        paths += (rk > 0 && rk <= SC_DECISION_MAX) ? (size_t(1) << rk) : 1;
+        if (rk > 0 && rk <= SC_DECISION_MAX)
+        {
+          for (uint64_t mask = 0; mask < (uint64_t(1) << rk); ++mask)
+          {
+            uint64_t candidate = enc;
+            for (size_t j = 0; j < rk; ++j)
+              candidate = candidate * 2 + ((mask >> j) & 1);
+            paths.emplace(candidate, 'N');
+          }
+        }
+        else
+          paths.emplace(enc, 'N');
         break;
       }
       if (pc->is_goto())
@@ -3744,6 +3780,12 @@ static size_t count_paths_no_instrument(
           else
             ++becnt_taken[key];
         }
+        const bool recorded = is_declared_solidity_path_decision(pc);
+        if (recorded && depth + 1 >= 63)
+        {
+          hit_cap = true;
+          break;
+        }
         if (take)
         {
           if (++pushes > push_cap)
@@ -3751,7 +3793,16 @@ static size_t count_paths_no_instrument(
             hit_cap = true;
             break;
           }
-          stack.push_back({pc->get_target(), becnt_taken});
+          stack.push_back(
+            {pc->get_target(),
+             becnt_taken,
+             recorded ? enc * 2 + 1 : enc,
+             depth + (recorded ? 1 : 0)});
+        }
+        if (is_declared_solidity_path_decision(pc))
+        {
+          enc *= 2;
+          ++depth;
         }
         pc = std::next(pc);
         continue;
@@ -3770,14 +3821,17 @@ static size_t count_paths_no_instrument(
               hit_cap = true;
               break;
             }
-            stack.push_back({std::next(pc), becnt});
+            uint64_t candidate = enc;
+            for (size_t j = 0; j < k; ++j)
+              candidate = candidate * 2 + ((m >> j) & 1);
+            stack.push_back({std::next(pc), becnt, candidate, depth + k});
           }
           break;
         }
       }
       pc = std::next(pc);
     }
-    if (paths > cap)
+    if (paths.size() > cap)
     {
       hit_cap = true;
       break;
@@ -3785,7 +3839,7 @@ static size_t count_paths_no_instrument(
     if (hit_cap)
       break;
   }
-  return paths;
+  return paths.size();
 }
 
 // ---------------------------------------------------------------------------
@@ -4165,7 +4219,7 @@ void goto_coveraget::solidity_path_coverage()
   //                         though the source is untouched.
   {
     static constexpr int PATH_ID_SCHEMA_VERSION = 1;
-    static constexpr int DECISION_SET_VERSION = 4;
+    static constexpr int DECISION_SET_VERSION = 5;
     uint64_t h = fnv1a("path-cov-fingerprint");
     h = fnv1a("schema=" + std::to_string(PATH_ID_SCHEMA_VERSION), h);
     h = fnv1a("decisions=" + std::to_string(DECISION_SET_VERSION), h);
@@ -5196,6 +5250,9 @@ void goto_coveraget::solidity_path_coverage()
   // one number and calling it a failure would send someone hunting for a defect
   // that may not exist.
   std::map<std::string, size_t> estimated_paths;
+  std::map<std::string, size_t> enumerated_paths_by_unit;
+  std::map<std::string, size_t> dropped_paths_by_unit;
+  std::map<std::string, bool> loop_truncated_by_unit;
 
   Forall_goto_functions (e_it, goto_functions)
   {
@@ -5215,7 +5272,8 @@ void goto_coveraget::solidity_path_coverage()
 
     const std::string uname = e_it->first.as_string();
     auto stage_spec_names = [&uname](const std::string &spec) {
-      return uname == spec || uname.find("@F@" + spec + "#") != std::string::npos;
+      return uname == spec ||
+             uname.find("@F@" + spec + "#") != std::string::npos;
     };
     const bool expansion_stage_target =
       (outer_on && stage_spec_names(outer_unit)) ||
@@ -6339,9 +6397,12 @@ void goto_coveraget::solidity_path_coverage()
     // each in collect order (matched by the DFS fan-out).
     Forall_goto_program_instructions (it, goto_program)
     {
-      if (it->is_goto() && !is_true(it->guard))
+      if (
+        it->is_goto() && !is_true(it->guard) &&
+        is_declared_solidity_path_decision(it))
       {
-        phase1_decision_sites.emplace(it->location.as_string(), 0u);
+        phase1_decision_sites.emplace(
+          solidity_path_decision_site(it->location), 0u);
         if (path_cov_probe)
         {
           const expr2tc taken =
@@ -6353,9 +6414,11 @@ void goto_coveraget::solidity_path_coverage()
         }
         snapshot(it, it->guard);
       }
-      else if (is_source_assert_decision(it))
+      else if (
+        is_source_assert_decision(it) && is_declared_solidity_path_decision(it))
       {
-        phase1_decision_sites.emplace(it->location.as_string(), 0u);
+        phase1_decision_sites.emplace(
+          solidity_path_decision_site(it->location), 0u);
         if (path_cov_probe)
         {
           const expr2tc holds =
@@ -6387,7 +6450,8 @@ void goto_coveraget::solidity_path_coverage()
         }
         for (unsigned j = 0; j < ops.size(); ++j)
         {
-          phase1_decision_sites.emplace(it->location.as_string(), j);
+          phase1_decision_sites.emplace(
+            solidity_path_decision_site(it->location), j);
           snapshot(it, ops[j]);
         }
       }
@@ -6911,8 +6975,9 @@ void goto_coveraget::solidity_path_coverage()
       if (!record_decisions)
         return;
       const std::string loc = l.as_string();
+      const std::string site = solidity_path_decision_site(l);
       const std::string ikey =
-        loc + "\t" + std::to_string(sub) + "\t" + from_expr(ns, "", cond);
+        site + "\t" + std::to_string(sub) + "\t" + from_expr(ns, "", cond);
       auto ins = dec_intern.emplace(ikey, (uint32_t)dec_table.size());
       if (ins.second)
       {
@@ -6922,6 +6987,8 @@ void goto_coveraget::solidity_path_coverage()
         d.cond_arm_true = from_expr(ns, "", gen_not_expr(cond));
         d.sub = sub;
         d.synthetic_abi_gate = l.get_bool("sol_abi_value_gate");
+        d.source_span = id2string(l.get("sol_src"));
+        d.source_decision_kind = id2string(l.get("sol_source_decision_kind"));
         dec_table.push_back(d);
       }
       dec_index[key_enc] = ins.first->second;
@@ -7446,14 +7513,16 @@ void goto_coveraget::solidity_path_coverage()
             break;
           break;
         }
-        if (is_source_assert_decision(pc))
+        if (
+          is_source_assert_decision(pc) &&
+          is_declared_solidity_path_decision(pc))
         {
           if (enc >= (uint64_t(1) << 62))
           {
             ++dropped_paths;
             break;
           }
-          const std::string dsite = pc->location.as_string();
+          const std::string dsite = solidity_path_decision_site(pc->location);
           occt occ_false = occ;
           const uint64_t idh_false =
             step_id(idh, occ_false, dsite, 0, /*polarity=*/false);
@@ -7488,6 +7557,45 @@ void goto_coveraget::solidity_path_coverage()
             pc = pc->get_target();
             continue;
           }
+          // Compiler checks and model-internal branches still govern which
+          // execution is feasible, but they are explicitly not decisions in
+          // the declared source-level path metric. Explore both successors
+          // without extending the decision record.
+          if (!is_declared_solidity_path_decision(pc))
+          {
+            bool take_unrecorded = true;
+            becntt unrecorded_taken = becnt;
+            if (back)
+            {
+              const unsigned key = pc->get_target()->target_number;
+              if (unrecorded_taken[key] >= path_cov_unwind)
+              {
+                take_unrecorded = false;
+                loop_truncated = true;
+              }
+              else
+                ++unrecorded_taken[key];
+            }
+            if (take_unrecorded && ++pushes > push_cap)
+            {
+              capped = true;
+              ++dropped_paths;
+              break;
+            }
+            if (take_unrecorded)
+              stack.push_back(
+                {pc->get_target(),
+                 enc,
+                 unrecorded_taken,
+                 depth,
+                 rolled_back,
+                 saw_epilogue,
+                 saw_source_return,
+                 idh,
+                 occ});
+            pc = std::next(pc);
+            continue;
+          }
           // Conditional. Keep enc within 64 bits (leading sentinel + one bit
           // per decision on the path); drop over-long paths rather than alias.
           if (enc >= (uint64_t(1) << 62))
@@ -7514,7 +7622,7 @@ void goto_coveraget::solidity_path_coverage()
           // continues in-place. A reverting successor (custom-error revert) is
           // detected at the top of the loop when the DFS reaches the
           // `#sol_error` call instruction, so no per-edge revert test is needed.
-          const std::string dsite = pc->location.as_string();
+          const std::string dsite = solidity_path_decision_site(pc->location);
           if (take)
           {
             if (++pushes > push_cap)
@@ -7580,7 +7688,7 @@ void goto_coveraget::solidity_path_coverage()
             collect_short_circuit_decisions(
               rsrc, [&](const expr2tc &e) { rops.push_back(e); });
           const size_t RK = rops.size();
-          const std::string rsite = pc->location.as_string();
+          const std::string rsite = solidity_path_decision_site(pc->location);
           // The frontend's positive normal-exit marker (see classify_exit).
           // Read from the RETURN instruction itself, so a synthesised
           // rollback RETURN — which carries no marker — cannot borrow it.
@@ -7662,7 +7770,7 @@ void goto_coveraget::solidity_path_coverage()
           if (K > 0 && K <= SC_DECISION_MAX)
           {
             bool overflowed = false;
-            const std::string asite = pc->location.as_string();
+            const std::string asite = solidity_path_decision_site(pc->location);
             for (uint64_t mask = 0; mask < (uint64_t(1) << K); ++mask)
             {
               uint64_t e = enc, d = depth, h = idh;
@@ -7747,6 +7855,10 @@ void goto_coveraget::solidity_path_coverage()
     // So this is reported as an absolute count and a strength annotation, and
     // degradation exists precisely so it should not be reached at all.
     const bool unit_truncated = capped || dropped_paths > dropped_before_unit;
+    const std::string census_unit = f_it->first.as_string();
+    enumerated_paths_by_unit[census_unit] = to_insert.size();
+    dropped_paths_by_unit[census_unit] = dropped_paths - dropped_before_unit;
+    loop_truncated_by_unit[census_unit] = loop_truncated;
 
     // ---- Path-count distribution measurement ----
     {
@@ -8062,7 +8174,12 @@ void goto_coveraget::solidity_path_coverage()
           continue;
         if (!seen.insert(&*i).second)
           continue;
-        if (is_source_assert_decision(i))
+        // A verifier-generated safety assertion (overflow, bounds, pointer
+        // safety, ...) is an obligation at this program point, not a Solidity
+        // control-flow exit. Only frontend-declared source decisions have a
+        // false arm that the path enumerator models as a reverting exit.
+        if (
+          is_source_assert_decision(i) && is_declared_solidity_path_decision(i))
         {
           reachable_exits.insert(&*i);
           work.push_back(std::next(i));
@@ -9105,13 +9222,19 @@ void goto_coveraget::solidity_path_coverage()
               p == std::string::npos ||
               id.find('@', p + 1) != std::string::npos)
               continue;
-            // NONDET on the right-hand side, not merely "assigned". The
-            // quantity of interest is the one the HARNESS chose; the frontend
-            // emits `success=false` two instructions earlier in the very same
-            // body, and pinning that one would bound a value the path discards.
+            // Usually the source is a direct NONDET. A Solidity low-level
+            // `(bool ok, bytes memory data) = addr.call(...)` is different:
+            // `ok` is assigned from the generated tuple's success member, so
+            // the frontend marks that exact assignment. Binding the marked
+            // local after this instruction constrains the semantic value the
+            // source branch reads; recursively looking for a nondet symbol
+            // would instead find only the tuple container (or nothing).
+            const bool marked_low_level_success =
+              it->location.get_bool("sol_extcall_success");
             if (
-              !is_sideeffect2t(a.source) ||
-              to_sideeffect2t(a.source).kind != sideeffect2t::nondet)
+              !marked_low_level_success &&
+              (!is_sideeffect2t(a.source) ||
+               to_sideeffect2t(a.source).kind != sideeffect2t::nondet))
               continue;
             ++sites;
             owners.insert(id);
@@ -9130,7 +9253,8 @@ void goto_coveraget::solidity_path_coverage()
         if (sites == 0)
         {
           err =
-            "no ASSIGN of a NONDET value to a Solidity symbol with that name "
+            "no ASSIGN of a NONDET value, and no frontend-marked low-level "
+            "call success assignment, to a Solidity symbol with that name "
             "exists in this unit's own body or in anything it calls, "
             "transitively (" +
             std::to_string(reach.size()) +
@@ -10424,19 +10548,20 @@ void goto_coveraget::solidity_path_coverage()
           continue;
         // ---- A DUPLICATE NAME IS REFUSED, NOT SILENTLY COLLAPSED ----------
         //
-        // This loop did not `break`, so two `vars` entries with the same name
-        // left the LAST one winning and the earlier one gone without a word.
+        // Two `vars` entries with the exact same name must not leave the LAST
+        // one winning and the earlier one gone without a word.
         // That is a live hazard for anything that proposes specs
         // automatically: `delta_dir` is mandatory and a proposer that wanted
         // both directions would naturally write two same-named entries, get
         // ONE of them measured, and read the single result as though both had
         // been asked. A spec is an INPUT, and an input silently reinterpreted
         // is the failure shape this project keeps paying for.
-        const assert_vart *spec = nullptr;
+        std::vector<const assert_vart *> specs;
+        std::set<std::string> matching_names;
         for (const auto &v : assert_vars)
           if (path_cov_component_name_matches_dotted_root(comp, v.name))
           {
-            if (spec != nullptr)
+            if (!matching_names.insert(v.name).second)
             {
               log_error(
                 "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: "
@@ -10446,223 +10571,233 @@ void goto_coveraget::solidity_path_coverage()
                 "(both delta directions, say), run them as two SEPARATE "
                 "queries whose results can be told apart",
                 uid,
-                vname);
+                v.name);
               exit(1);
             }
-            spec = &v;
+            specs.push_back(&v);
           }
-        if (comp_vars_present && spec == nullptr)
+        if (comp_vars_present && specs.empty())
           continue; // an explicit `vars` list is a whitelist
-        const std::string oname = spec == nullptr ? vname : spec->name;
-        if (spec != nullptr)
-          named_seen.insert(spec->name);
+        if (specs.empty())
+          specs.push_back(nullptr);
 
-        expr2tc live = symbol2tc(migrate_type(ostruct), obj->id);
-        if (!walk_fields(ns, live, oname))
+        for (const assert_vart *spec : specs)
         {
-          path_cov_refused_coords[oname] =
-            "the component does not resolve through the contract object's "
-            "field walk, so no post-state expression can be built for it";
-          continue;
-        }
-        const type2tc vt = live->type;
+          const std::string oname = spec == nullptr ? vname : spec->name;
+          if (spec != nullptr)
+            named_seen.insert(spec->name);
 
-        // ---- (F): coord_expressible is the EQUALITY gate, NOT the interval one
-        //
-        // The two must be computed in THIS order and never collapsed. Before
-        // S5, `coord_expressible` refused bool and this read
-        // `interval_ok = coord_expressible(...)`, `equality_ok = interval_ok ||
-        // is_bool_type(vt)` -- which was correct only for as long as the
-        // whitelist kept bool out. The moment S5 widened the whitelist,
-        // `interval_ok` became TRUE for a bool, the `if (!interval_ok) continue`
-        // below stopped firing, and the four ordering rungs were built as
-        // `>=` / `<=` / `>` / `<` over a bool -- which lands in the
-        // `assert(is_signedbv_type(...))` arms of smt_conv (2494 / 2525 / 2556 /
-        // 2587) and SIGABRTs. Widening the whitelist WITHOUT this split turns a
-        // deliberately correct path into the exact crash the whitelist exists to
-        // prevent, so the two edits are one edit.
-        //
-        // `post == pre` / `post != pre` remain perfectly expressible on a bool,
-        // and they are the class a flag-setting function is entirely about, so
-        // the equality rungs are still emitted.
-        std::string why;
-        const bool equality_ok = coord_equality_expressible(vt, why);
-        const bool interval_ok = equality_ok && is_unsignedbv_type(vt);
-        if (!equality_ok)
-        {
-          path_cov_refused_coords[oname] = why;
-          continue;
-        }
-        if (!interval_ok)
-          path_cov_refused_coords[oname + " [ordering/interval rungs]"] =
-            // `why` is EMPTY when coord_expressible accepted the type, which is
-            // now the bool case -- the only way to reach here with equality_ok.
-            // Printing an empty reason would read as "refused, cause unknown".
-            (why.empty()
-               ? std::string(
-                   "it resolves to a BOOLEAN -- a two-point domain has no "
-                   "ordering to measure, and `post >= pre` built on a bool "
-                   "operand reaches the signedbv-asserting arm of the SMT "
-                   "conversion rather than a comparison")
-               : why) +
-            ". The equality rungs (post == pre / post != pre) ARE emitted for "
-            "it -- only the ordering, interval and delta rungs are not";
-        if (
-          !interval_ok && spec != nullptr &&
-          (!spec->abs.empty() || !spec->deltas.empty()))
-        {
-          log_error(
-            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: variable "
-            "'{}' is not an ordering-capable unsigned scalar, but its spec "
-            "contains structured R2 "
-            "interval or delta candidate(s). Typed R2 arithmetic/interval "
-            "terms require an "
-            "ordering-capable unsigned scalar; silently dropping ASKED "
-            "candidates would leave the batch summary incomplete",
-            uid,
-            oname);
-          exit(1);
-        }
+          expr2tc live = symbol2tc(migrate_type(ostruct), obj->id);
+          if (!walk_fields(ns, live, oname))
+          {
+            path_cov_refused_coords[oname] =
+              "the component does not resolve through the contract object's "
+              "field walk, so no post-state expression can be built for it";
+            continue;
+          }
+          const type2tc vt = live->type;
 
-        // ---- pre_v: the entry snapshot ----
-        //
-        // From the SAME member expression the exit read uses. Without it the
-        // assertion at the exit would compare the post-state with itself.
-        // `.location.property("skipped")` is load bearing. Plain list insert,
-        // never insert_swap: insert_swap moves the instruction's CONTENT, so
-        // the iterator naming the original first instruction ends up naming the
-        // new one and the function acquires a self-loop (measured, ABI gate).
-        symbolt ssym;
-        ssym.type = migrate_type_back(vt);
-        ssym.name = "__ESBMC_pre$" + i2string(ghost_counter++);
-        ssym.id = "path_cov::" + id2string(ssym.name);
-        ssym.lvalue = true;
-        ssym.static_lifetime = false;
-        ssym.is_extern = false;
-        symbolt *psn;
-        cov_context->move(ssym, psn);
-        expr2tc pre_v = symbol2tc(migrate_type(psn->type), psn->id);
-        goto_programt::instructiont dcl;
-        dcl.type = DECL;
-        dcl.code = code_decl2tc(vt, psn->id);
-        dcl.location = entry->location;
-        dcl.location.property("skipped");
-        dcl.function = entry->location.get_function();
-        goto_program.instructions.insert(entry, dcl);
-        goto_programt::instructiont asg;
-        asg.type = ASSIGN;
-        asg.code = code_assign2tc(pre_v, live);
-        asg.location = entry->location;
-        asg.location.property("skipped");
-        asg.function = entry->location.get_function();
-        goto_program.instructions.insert(entry, asg);
-        ++vars_emitted;
+          // ---- (F): coord_expressible is the EQUALITY gate, NOT the interval one
+          //
+          // The two must be computed in THIS order and never collapsed. Before
+          // S5, `coord_expressible` refused bool and this read
+          // `interval_ok = coord_expressible(...)`, `equality_ok = interval_ok ||
+          // is_bool_type(vt)` -- which was correct only for as long as the
+          // whitelist kept bool out. The moment S5 widened the whitelist,
+          // `interval_ok` became TRUE for a bool, the `if (!interval_ok) continue`
+          // below stopped firing, and the four ordering rungs were built as
+          // `>=` / `<=` / `>` / `<` over a bool -- which lands in the
+          // `assert(is_signedbv_type(...))` arms of smt_conv (2494 / 2525 / 2556 /
+          // 2587) and SIGABRTs. Widening the whitelist WITHOUT this split turns a
+          // deliberately correct path into the exact crash the whitelist exists to
+          // prevent, so the two edits are one edit.
+          //
+          // `post == pre` / `post != pre` remain perfectly expressible on a bool,
+          // and they are the class a flag-setting function is entirely about, so
+          // the equality rungs are still emitted.
+          std::string why;
+          const bool equality_ok = coord_equality_expressible(vt, why);
+          const bool interval_ok = equality_ok && is_unsignedbv_type(vt);
+          if (!equality_ok)
+          {
+            path_cov_refused_coords[oname] = why;
+            continue;
+          }
+          if (!interval_ok)
+            path_cov_refused_coords[oname + " [ordering/interval rungs]"] =
+              // `why` is EMPTY when coord_expressible accepted the type, which is
+              // now the bool case -- the only way to reach here with equality_ok.
+              // Printing an empty reason would read as "refused, cause unknown".
+              (why.empty()
+                 ? std::string(
+                     "it resolves to a BOOLEAN -- a two-point domain has no "
+                     "ordering to measure, and `post >= pre` built on a bool "
+                     "operand reaches the signedbv-asserting arm of the SMT "
+                     "conversion rather than a comparison")
+                 : why) +
+              ". The equality rungs (post == pre / post != pre) ARE emitted "
+              "for "
+              "it -- only the ordering, interval and delta rungs are not";
+          if (
+            !interval_ok && spec != nullptr &&
+            (!spec->abs.empty() || !spec->deltas.empty()))
+          {
+            log_error(
+              "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: variable "
+              "'{}' is not an ordering-capable unsigned scalar, but its spec "
+              "contains structured R2 "
+              "interval or delta candidate(s). Typed R2 arithmetic/interval "
+              "terms require an "
+              "ordering-capable unsigned scalar; silently dropping ASKED "
+              "candidates would leave the batch summary incomplete",
+              uid,
+              oname);
+            exit(1);
+          }
 
-        if (!assert_candidates_exact)
-        {
-          // R1 -- the equality rungs. Emitted as a PAIR, always, and that is
-          // the one thing this mode can testify to on its own: the two are
-          // necessarily opposite, so a run in which both HOLD is a run in
-          // which the exit read is not observing the unit's writes, and a run
-          // in which both are REFUTED is one in which the antecedent never
-          // matched.
-          emit_rung(oname, "eq", "post == pre", equality2tc(live, pre_v));
-          emit_rung(oname, "ne", "post != pre", notequal2tc(live, pre_v));
-        }
+          // ---- pre_v: the entry snapshot ----
+          //
+          // From the SAME member expression the exit read uses. Without it the
+          // assertion at the exit would compare the post-state with itself.
+          // `.location.property("skipped")` is load bearing. Plain list insert,
+          // never insert_swap: insert_swap moves the instruction's CONTENT, so
+          // the iterator naming the original first instruction ends up naming the
+          // new one and the function acquires a self-loop (measured, ABI gate).
+          symbolt ssym;
+          ssym.type = migrate_type_back(vt);
+          ssym.name = "__ESBMC_pre$" + i2string(ghost_counter++);
+          ssym.id = "path_cov::" + id2string(ssym.name);
+          ssym.lvalue = true;
+          ssym.static_lifetime = false;
+          ssym.is_extern = false;
+          symbolt *psn;
+          cov_context->move(ssym, psn);
+          expr2tc pre_v = symbol2tc(migrate_type(psn->type), psn->id);
+          goto_programt::instructiont dcl;
+          dcl.type = DECL;
+          dcl.code = code_decl2tc(vt, psn->id);
+          dcl.location = entry->location;
+          dcl.location.property("skipped");
+          dcl.function = entry->location.get_function();
+          goto_program.instructions.insert(entry, dcl);
+          goto_programt::instructiont asg;
+          asg.type = ASSIGN;
+          asg.code = code_assign2tc(pre_v, live);
+          asg.location = entry->location;
+          asg.location.property("skipped");
+          asg.function = entry->location.get_function();
+          goto_program.instructions.insert(entry, asg);
+          ++vars_emitted;
 
-        if (!interval_ok)
-        {
+          if (!assert_candidates_exact)
+          {
+            // R1 -- the equality rungs. Emitted as a PAIR, always, and that is
+            // the one thing this mode can testify to on its own: the two are
+            // necessarily opposite, so a run in which both HOLD is a run in
+            // which the exit read is not observing the unit's writes, and a run
+            // in which both are REFUTED is one in which the antecedent never
+            // matched.
+            emit_rung(oname, "eq", "post == pre", equality2tc(live, pre_v));
+            emit_rung(oname, "ne", "post != pre", notequal2tc(live, pre_v));
+          }
+
+          if (!interval_ok)
+          {
+            emit_structured_rungs(
+              spec, vt, oname, live, pre_v, "post", true, true);
+            continue;
+          }
+
+          if (!assert_candidates_exact)
+          {
+            emit_rung(
+              oname, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
+            emit_rung(
+              oname, "le", "post <= pre", lessthanequal2tc(live, pre_v));
+            emit_rung(oname, "gt", "post > pre", greaterthan2tc(live, pre_v));
+            emit_rung(oname, "lt", "post < pre", lessthan2tc(live, pre_v));
+          }
+
+          // ---- AN R2 BOUND MAY NAME A QUANTITY, NOT ONLY A DECIMAL ----------
+          //
+          // R2 is the class of absolute and delta bounds (`post in [lo, hi]`,
+          // `post - pre in [lo, hi]`). Its endpoints were parsed with
+          // `string2integer`, i.e. LITERAL CONSTANTS ONLY -- and that is what
+          // makes R2 nearly useless on a generated test. The property a
+          // deposit-shaped unit is actually about is
+          //
+          //     post - pre == amount
+          //
+          // with `amount` the unit's own parameter. A fuzz test ranges over
+          // `amount`, so the only R2 a literal can express -- `post - pre in
+          // [7, 7]` -- is false on 255 of 256 runs and has to be dropped. The
+          // strongest oracle this pipeline could emit was inexpressible.
+          //
+          // A NAMED ENDPOINT IS SNAPSHOTTED AT ENTRY, for the same reason a
+          // mapping key is: the comparison happens at the EXIT, and a parameter
+          // the body reassigned would make the bound a statement about a value
+          // that no longer exists. Both endpoints therefore become entry ghosts.
+          //
+          // ⛔ EMITTER SAFETY, stated because this half can land alone: the rung
+          // TEXT carries the endpoint verbatim, so the emitter sees `post - pre
+          // in [amount, amount]`. An emitter that cannot parse that shape
+          // reports `rung shape not rendered` and DROPS it -- visible, and
+          // never a wrong assertion. This change cannot produce a red test on
+          // the unmodified contract; the worst it can do is lose a rung until
+          // the emitter learns the shape.
+          // ⛔ A FORWARDER, NOT A SECOND IMPLEMENTATION. This body used to be the
+          // only place named endpoints were understood, and the SLOT loop below
+          // silently kept `string2integer`, i.e. the constant 0 for any name. It
+          // now forwards to the one builder defined beside `emit_rung`, so the
+          // two candidate shapes cannot answer the same question differently
+          // again -- there is only one answer left to give.
+          auto bound_expr =
+            [&](const char *what, const std::string &s) -> expr2tc {
+            return bound_endpoint(vt, oname, what, s);
+          };
+
+          if (spec != nullptr && spec->has_abs)
+          {
+            const expr2tc alo = bound_expr("abs_lo", spec->abs_lo);
+            const expr2tc ahi = bound_expr("abs_hi", spec->abs_hi);
+            emit_rung(
+              oname,
+              "abs",
+              "post in [" + spec->abs_lo + ", " + spec->abs_hi + "]",
+              and2tc(
+                greaterthanequal2tc(live, alo), lessthanequal2tc(live, ahi)));
+          }
+          if (spec != nullptr && spec->has_delta)
+          {
+            const expr2tc dlo = bound_expr("delta_lo", spec->delta_lo);
+            const expr2tc dhi = bound_expr("delta_hi", spec->delta_hi);
+            // ---- THE DIRECTION CONJUNCT IS NOT DECORATION ----
+            //
+            // Candidate variables are unsigned, so `post - pre` WRAPS when the
+            // value decreased: a decrease of d shows up as 2^w - d. A naive
+            // `lo <= post - pre <= hi` therefore HOLDS on a decreasing path
+            // whenever the wrapped difference lands in the window -- and for the
+            // wide window a driver writes first, on EVERY decreasing path.
+            const expr2tc d = spec->delta_dir == "inc"
+                                ? sub2tc(vt, live, pre_v)
+                                : sub2tc(vt, pre_v, live);
+            const expr2tc dir = spec->delta_dir == "inc"
+                                  ? greaterthanequal2tc(live, pre_v)
+                                  : greaterthanequal2tc(pre_v, live);
+            emit_rung(
+              oname,
+              "delta",
+              (spec->delta_dir == "inc" ? std::string("post - pre in [")
+                                        : std::string("pre - post in [")) +
+                spec->delta_lo + ", " + spec->delta_hi + "] with " +
+                (spec->delta_dir == "inc" ? "post >= pre" : "pre >= post"),
+              and2tc(
+                dir,
+                and2tc(greaterthanequal2tc(d, dlo), lessthanequal2tc(d, dhi))));
+          }
           emit_structured_rungs(
             spec, vt, oname, live, pre_v, "post", true, true);
-          continue;
         }
-
-        if (!assert_candidates_exact)
-        {
-          emit_rung(
-            oname, "ge", "post >= pre", greaterthanequal2tc(live, pre_v));
-          emit_rung(oname, "le", "post <= pre", lessthanequal2tc(live, pre_v));
-          emit_rung(oname, "gt", "post > pre", greaterthan2tc(live, pre_v));
-          emit_rung(oname, "lt", "post < pre", lessthan2tc(live, pre_v));
-        }
-
-        // ---- AN R2 BOUND MAY NAME A QUANTITY, NOT ONLY A DECIMAL ----------
-        //
-        // R2 is the class of absolute and delta bounds (`post in [lo, hi]`,
-        // `post - pre in [lo, hi]`). Its endpoints were parsed with
-        // `string2integer`, i.e. LITERAL CONSTANTS ONLY -- and that is what
-        // makes R2 nearly useless on a generated test. The property a
-        // deposit-shaped unit is actually about is
-        //
-        //     post - pre == amount
-        //
-        // with `amount` the unit's own parameter. A fuzz test ranges over
-        // `amount`, so the only R2 a literal can express -- `post - pre in
-        // [7, 7]` -- is false on 255 of 256 runs and has to be dropped. The
-        // strongest oracle this pipeline could emit was inexpressible.
-        //
-        // A NAMED ENDPOINT IS SNAPSHOTTED AT ENTRY, for the same reason a
-        // mapping key is: the comparison happens at the EXIT, and a parameter
-        // the body reassigned would make the bound a statement about a value
-        // that no longer exists. Both endpoints therefore become entry ghosts.
-        //
-        // ⛔ EMITTER SAFETY, stated because this half can land alone: the rung
-        // TEXT carries the endpoint verbatim, so the emitter sees `post - pre
-        // in [amount, amount]`. An emitter that cannot parse that shape
-        // reports `rung shape not rendered` and DROPS it -- visible, and
-        // never a wrong assertion. This change cannot produce a red test on
-        // the unmodified contract; the worst it can do is lose a rung until
-        // the emitter learns the shape.
-        // ⛔ A FORWARDER, NOT A SECOND IMPLEMENTATION. This body used to be the
-        // only place named endpoints were understood, and the SLOT loop below
-        // silently kept `string2integer`, i.e. the constant 0 for any name. It
-        // now forwards to the one builder defined beside `emit_rung`, so the
-        // two candidate shapes cannot answer the same question differently
-        // again -- there is only one answer left to give.
-        auto bound_expr =
-          [&](const char *what, const std::string &s) -> expr2tc {
-          return bound_endpoint(vt, oname, what, s);
-        };
-
-        if (spec != nullptr && spec->has_abs)
-        {
-          const expr2tc alo = bound_expr("abs_lo", spec->abs_lo);
-          const expr2tc ahi = bound_expr("abs_hi", spec->abs_hi);
-          emit_rung(
-            oname,
-            "abs",
-            "post in [" + spec->abs_lo + ", " + spec->abs_hi + "]",
-            and2tc(
-              greaterthanequal2tc(live, alo), lessthanequal2tc(live, ahi)));
-        }
-        if (spec != nullptr && spec->has_delta)
-        {
-          const expr2tc dlo = bound_expr("delta_lo", spec->delta_lo);
-          const expr2tc dhi = bound_expr("delta_hi", spec->delta_hi);
-          // ---- THE DIRECTION CONJUNCT IS NOT DECORATION ----
-          //
-          // Candidate variables are unsigned, so `post - pre` WRAPS when the
-          // value decreased: a decrease of d shows up as 2^w - d. A naive
-          // `lo <= post - pre <= hi` therefore HOLDS on a decreasing path
-          // whenever the wrapped difference lands in the window -- and for the
-          // wide window a driver writes first, on EVERY decreasing path.
-          const expr2tc d = spec->delta_dir == "inc" ? sub2tc(vt, live, pre_v)
-                                                     : sub2tc(vt, pre_v, live);
-          const expr2tc dir = spec->delta_dir == "inc"
-                                ? greaterthanequal2tc(live, pre_v)
-                                : greaterthanequal2tc(pre_v, live);
-          emit_rung(
-            oname,
-            "delta",
-            (spec->delta_dir == "inc" ? std::string("post - pre in [")
-                                      : std::string("pre - post in [")) +
-              spec->delta_lo + ", " + spec->delta_hi + "] with " +
-              (spec->delta_dir == "inc" ? "post >= pre" : "pre >= post"),
-            and2tc(
-              dir,
-              and2tc(greaterthanequal2tc(d, dlo), lessthanequal2tc(d, dhi))));
-        }
-        emit_structured_rungs(spec, vt, oname, live, pre_v, "post", true, true);
       }
 
       // ---- MAPPING SLOTS AS OBSERVABLES ----
@@ -11973,6 +12108,173 @@ void goto_coveraget::solidity_path_coverage()
       skipped_paths,
       covered_set_path,
       all_claims.size());
+
+  // Structural denominator export. This runs after G has been frozen and all
+  // path targets have been installed, but before get_goto_program() returns to
+  // the solver driver. Every target is therefore undecided by construction.
+  if (!path_cov_census_out.empty())
+  {
+    nlohmann::json census;
+    census["schema"] = "esbmc/solidity-path-census/v1";
+    census["decision_set_version"] = 5;
+    census["enumeration_complete"] = dropped_paths == 0;
+    census["bounds"] = {
+      {"unwind", path_cov_unwind},
+      {"call_depth", path_cov_unwind},
+      {"reentry_depth", path_cov_unwind},
+      {"max_goals_per_unit", path_cov_max_goals}};
+    census["scope"] = {
+      {"contract", scope_contract},
+      {"focus_function", focus_function},
+      {"instrument_only", instrument_only}};
+    census["fingerprint"] = path_cov_fingerprint;
+    census["targets"] = nlohmann::json::array();
+    census["units"] = nlohmann::json::array();
+
+    auto budget_name = [](budget_statet state) {
+      switch (state)
+      {
+      case budget_statet::fits:
+        return "fits";
+      case budget_statet::no_candidates:
+        return "no-candidates";
+      case budget_statet::degraded_fits:
+        return "degraded-fits";
+      case budget_statet::degraded_over:
+        return "degraded-over";
+      }
+      return "unknown";
+    };
+
+    for (const auto &[unit, count] : enumerated_paths_by_unit)
+    {
+      nlohmann::json u;
+      u["unit"] = unit;
+      u["enumerated"] = count;
+      u["dropped_observed"] = dropped_paths_by_unit[unit];
+      u["loop_bound_cut"] = loop_truncated_by_unit[unit];
+      const auto bs = budget_state.find(unit);
+      u["budget_state"] = budget_name(
+        bs == budget_state.end() ? budget_statet::fits : bs->second);
+      const auto ep = estimated_paths.find(unit);
+      if (ep != estimated_paths.end())
+        u["estimated_after_degradation"] = ep->second;
+      const auto dc = degraded_call_sites.find(unit);
+      u["withdrawn_call_sites"] = dc == degraded_call_sites.end()
+                                    ? std::vector<std::string>{}
+                                    : dc->second;
+      census["units"].push_back(std::move(u));
+    }
+
+    for (const auto &key : all_claims)
+    {
+      const std::string &comment = key.first;
+      const auto pos = comment.rfind(":path:");
+      if (pos == std::string::npos)
+        continue;
+      const std::string unit = comment.substr(0, pos);
+      const uint64_t enc =
+        strtoull(comment.substr(pos + 6).c_str(), nullptr, 10);
+      nlohmann::json t;
+      t["claim"] = comment;
+      t["location"] = key.second;
+      t["unit"] = unit;
+      t["record"] = std::to_string(enc);
+      const auto si = path_stable_id.find(key);
+      if (si != path_stable_id.end())
+        t["stable_id"] = si->second;
+      const auto depth_it = path_decision_depth.find(key);
+      const uint64_t depth =
+        depth_it == path_decision_depth.end() ? 0 : depth_it->second;
+      t["depth"] = depth;
+      if (revert_paths.count(key) || rollback_revert_paths.count(key))
+        t["boundary_kind"] = "revert";
+      else if (normal_exit_paths.count(key))
+        t["boundary_kind"] = "normal";
+      else if (undetermined_exit_paths.count(key))
+        t["boundary_kind"] = "undetermined";
+      else
+        t["boundary_kind"] = "unclassified";
+      t["status"] = "D";
+      if (const auto oi = named_obstacle_paths.find(key);
+          oi != named_obstacle_paths.end())
+        t["model_obstacle"] = oi->second;
+      if (const auto wi = truncation_weakened.find(key);
+          wi != truncation_weakened.end())
+        t["truncation_weakened"] = wi->second;
+
+      nlohmann::json seq = nlohmann::json::array();
+      size_t missing = 0;
+      const auto table_it = path_decision_table.find(unit);
+      const auto index_it = path_decision_index.find(unit);
+      for (uint64_t k = 0; k < depth; ++k)
+      {
+        const uint64_t prefix = enc >> (depth - 1 - k);
+        if (
+          table_it == path_decision_table.end() ||
+          index_it == path_decision_index.end())
+        {
+          ++missing;
+          continue;
+        }
+        const auto pi = index_it->second.find(prefix);
+        if (
+          pi == index_it->second.end() || pi->second >= table_it->second.size())
+        {
+          ++missing;
+          continue;
+        }
+        const auto &d = table_it->second[pi->second];
+        nlohmann::json e;
+        e["index"] = k + 1;
+        e["location"] = d.loc;
+        e["operand"] = d.sub;
+        e["arm"] = (prefix & 1) != 0 ? "taken" : "fall-through";
+        e["branch_claim"] =
+          (prefix & 1) != 0 ? d.cond_arm_true : d.cond_arm_false;
+        e["synthetic_abi_gate"] = d.synthetic_abi_gate;
+        e["source_span"] = d.source_span;
+        e["source_decision_kind"] = d.source_decision_kind;
+        seq.push_back(std::move(e));
+      }
+      t["decisions"] = std::move(seq);
+      t["decisions_unrecorded"] = missing;
+      census["targets"].push_back(std::move(t));
+    }
+    census["summary"] = {
+      {"targets_enumerated", all_claims.size()},
+      {"units", enumerated_paths_by_unit.size()},
+      {"dropped_observed", dropped_paths}};
+
+    const std::string tmp_path = path_cov_census_out + ".tmp";
+    {
+      std::ofstream out(tmp_path);
+      if (!out)
+      {
+        log_error("cannot open path census output '{}'", tmp_path);
+        exit(1);
+      }
+      out << census.dump(2) << '\n';
+      if (!out)
+      {
+        log_error("failed while writing path census output '{}'", tmp_path);
+        exit(1);
+      }
+    }
+    if (std::rename(tmp_path.c_str(), path_cov_census_out.c_str()) != 0)
+    {
+      log_error(
+        "cannot publish path census '{}' from temporary file '{}'",
+        path_cov_census_out,
+        tmp_path);
+      exit(1);
+    }
+    log_success(
+      "Path census written to {} ({} targets; complete={})",
+      path_cov_census_out,
+      all_claims.size(),
+      dropped_paths == 0 ? "true" : "false");
+  }
 
   // ---- THE SIGNAL-SAFE SNAPSHOT, published before a single claim is solved ----
   //

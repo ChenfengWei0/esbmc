@@ -17,6 +17,7 @@
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
 #include <util/message.h>
+#include <util/picosha2.h>
 #include <util/std_types.h>
 #include <fstream>
 
@@ -58,6 +59,9 @@ struct path_cov_fixturet
   bool present = false;          // a --path-cov-fixture file was given
   bool skip_constructor = false; // ... and it asks for the deployment to go
   std::string contract;          // which contract it describes
+  std::string veriput_fixture_kind;
+  std::string focus_function;
+  std::string source_sha256;
   // name -> value, in file order. A vector rather than a map so the emitted
   // assignments are in the order the fixture was written, which is the order a
   // reader of the goto dump will look for them in.
@@ -103,6 +107,9 @@ const path_cov_fixturet &path_cov_fixture()
   f.present = true;
   f.skip_constructor = j.value("skip_constructor", false);
   f.contract = j.value("contract", std::string());
+  f.veriput_fixture_kind = j.value("veriput_fixture_kind", std::string());
+  f.focus_function = j.value("focus_function", std::string());
+  f.source_sha256 = j.value("source_sha256", std::string());
   if (f.contract.empty())
   {
     log_error(
@@ -117,7 +124,8 @@ const path_cov_fixturet &path_cov_fixture()
   {
     if (!j["state"].is_object())
     {
-      log_error("--path-cov-fixture: \"state\" must be an object of name:value");
+      log_error(
+        "--path-cov-fixture: \"state\" must be an object of name:value");
       abort();
     }
     for (auto it = j["state"].begin(); it != j["state"].end(); ++it)
@@ -175,6 +183,39 @@ bool fixture_drops_deployment(const std::string &c_name)
   return f.present && f.skip_constructor && f.contract == c_name;
 }
 } // namespace
+
+bool solidity_convertert::fixture_allows_evk_cash_focus_pruning(
+  const std::string &)
+{
+  const path_cov_fixturet &f = path_cov_fixture();
+  return f.present && f.skip_constructor && f.contract == "Borrowing" &&
+         f.veriput_fixture_kind == "evk-cash-proxy-entry-zero-storage";
+}
+
+bool solidity_convertert::fixture_allows_vault_admin_focus_pruning(
+  const std::string &cname)
+{
+  const path_cov_fixturet &f = path_cov_fixture();
+  const bool requested = f.present && !f.skip_constructor &&
+                         f.contract == "VaultAdmin" && cname == "VaultAdmin" &&
+                         f.focus_function == "getMinimumPoolTokens" &&
+                         f.veriput_fixture_kind ==
+                           "vault-admin-minimum-pool-tokens-focus-closure-v1";
+  if (!requested)
+    return false;
+
+  const std::string actual = picosha2::hash256_hex_string(contract_contents);
+  if (f.source_sha256.empty() || actual != f.source_sha256)
+  {
+    log_warning(
+      "--path-cov-fixture: VaultAdmin focus-closure source SHA-256 did not "
+      "match (expected '{}', actual '{}'); converting every function body",
+      f.source_sha256,
+      actual);
+    return false;
+  }
+  return true;
+}
 
 /*
   e.g. x = func();
@@ -256,7 +297,7 @@ void solidity_convertert::add_static_contract_instance(
   ctor_ins_symbol.static_lifetime = true;
   ctor_ins_symbol.file_local = true;
 
-  auto &added_sym = *move_symbol_to_context(ctor_ins_symbol);
+  move_symbol_to_context(ctor_ins_symbol);
 
   // get value
   std::string ctor_id;
@@ -328,7 +369,10 @@ void solidity_convertert::add_static_contract_instance(
   }
 
   if (run_ctor)
+  {
+    auto &added_sym = *context.find_symbol(ctor_ins_id);
     added_sym.value = ctor;
+  }
 }
 
 void solidity_convertert::get_inherit_static_contract_instance_name(
@@ -991,20 +1035,43 @@ bool solidity_convertert::multi_transaction_verification(
           abort();
         }
 
-        const unsigned w = bv_width(*comp_type);
-        if (w == 0)
+        exprt value;
+        if (comp_type->is_bool())
         {
-          log_error(
-            "--path-cov-fixture: state variable '{}' of contract {} is not a "
-            "scalar this stage can assign (its type has no bit width). Only "
-            "integer / address / bool state is supported",
-            kv.first,
-            c_name);
-          abort();
+          if (kv.second != 0 && kv.second != 1)
+          {
+            log_error(
+              "--path-cov-fixture: bool state variable '{}.{}' must be 0 or "
+              "1, got {}",
+              c_name,
+              kv.first,
+              integer2string(kv.second));
+            abort();
+          }
+          if (kv.second == 0)
+            value = false_exprt();
+          else
+            value = true_exprt();
+        }
+        else
+        {
+          const unsigned w = bv_width(*comp_type);
+          if (w == 0)
+          {
+            log_error(
+              "--path-cov-fixture: state variable '{}' of contract {} is not "
+              "a scalar this stage can assign (its type has no bit width). "
+              "Only integer / address / bool state is supported",
+              kv.first,
+              c_name);
+            abort();
+          }
+          value = constant_exprt(
+            integer2binary(kv.second, w),
+            integer2string(kv.second),
+            *comp_type);
         }
 
-        exprt value = constant_exprt(
-          integer2binary(kv.second, w), integer2string(kv.second), *comp_type);
         exprt lhs = member_exprt(instance, kv.first, *comp_type);
         exprt assign = side_effect_exprt("assign", *comp_type);
         assign.copy_to_operands(lhs, value);

@@ -58,7 +58,7 @@
         "required_mem_gib": 20.0,
         "returncode": 0,
         "stderr": "",
-        "stdout": "remote-preflight-ok MemAvailable=20.672GiB required=20.000GiB"
+        "stdout": "remote-preflight-ok MemAvailable=20.680GiB required=20.000GiB"
       },
       "name": "remote ESBMC/VeriPUT/memory preflight ready",
       "ok": true

@@ -360,6 +360,11 @@ bool solidity_convertert::get_function_definition(
   // solc 0.6.x always emits the `body` field with JSON null for unimplemented
   // (interface / abstract) functions; 0.8.x omits it. Treat both as "no body".
   bool has_body = ast_node.contains("body") && !ast_node["body"].is_null();
+  if (
+    has_body && fixture_focus_closure_built && ast_node.contains("id") &&
+    ast_node["id"].is_number_integer() &&
+    fixture_focus_closure.count(ast_node["id"].get<int>()) == 0)
+    has_body = false;
   exprt body_exprt = code_blockt();
   if (has_body)
   {
@@ -1250,7 +1255,10 @@ bool solidity_convertert::insert_modifier_json(
       const nlohmann::json src = ast_node["src"];
       nlohmann::json new_function = {
         {"nodeType", "FunctionDefinition"},
-        {"id", 0},
+        // Tuple definitions and instances are keyed by the function AST id.
+        // Reusing zero here made every modifier wrapper in a contract share
+        // tuple_instance$0, even when their return layouts differed.
+        {"id", ast_node["id"]},
         {"name", fname},
         {"kind", "function"},
         {"implemented", true},
@@ -1916,7 +1924,7 @@ bool solidity_convertert::get_func_modifier(
 
     exprt this_ptr;
     auto next_it = std::next(it);
-    std::string next_aux_func_name, next_aux_func_id;
+    std::string next_aux_func_name;
     if (next_it != modifiers.rend())
     {
       if (
@@ -1956,6 +1964,7 @@ bool solidity_convertert::get_func_modifier(
         (*next_it)["modifierName"]["referencedDeclaration"];
       nlohmann::json next_mod_def = find_decl_ref(next_modifier_id);
       std::string next_mod_name = next_mod_def["name"];
+      std::string next_aux_func_id;
       get_modifier_function_name(
         c_name, next_mod_name, f_name, next_aux_func_name, next_aux_func_id);
 
@@ -2022,8 +2031,7 @@ bool solidity_convertert::get_func_modifier(
       // to next_it's modifier, not to the outer modifier currently being
       // lowered. Passing `it` here shifts arguments between stacked
       // parameterized modifiers and can produce a malformed call shape.
-      if (
-        next_it->contains("arguments") && (*next_it)["arguments"].is_array())
+      if (next_it->contains("arguments") && (*next_it)["arguments"].is_array())
         for (const auto &arg_json : (*next_it)["arguments"])
         {
           if (append_modifier_argument(arg_json))

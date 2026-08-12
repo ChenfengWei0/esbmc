@@ -4469,6 +4469,16 @@ bool esbmc_parseoptionst::process_goto_program(
         }
         tmp.path_cov_max_goals = static_cast<size_t>(v);
       }
+      if (cmdline.isset("path-cov-census-json"))
+      {
+        tmp.path_cov_census_out = cmdline.getval("path-cov-census-json");
+        if (tmp.path_cov_census_out.empty())
+        {
+          log_error("--path-cov-census-json requires a non-empty output file");
+          return true;
+        }
+        tmp.emit_decision_sites = true;
+      }
       // ---- THE PER-CLAIM SOLVER BUDGET ----
       //
       // Read here with the other knobs, and published as a static so the solve

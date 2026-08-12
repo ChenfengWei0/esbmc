@@ -1,0 +1,6 @@
+CORE
+contract.sol
+--contract FallbackSignatureParams --focus-function ping --solidity-path-coverage --solidity-max-tx 1 --no-standard-checks --unwind 4 --no-unwinding-assertions
+^--solidity-path-coverage: instrumented 2 complete path\(s\) across 1 unit\(s\)
+^Complete Paths : 2$
+^VERIFICATION FAILED$

@@ -21,6 +21,7 @@ DEFAULT_RESULT_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 DEFAULT_DATASETS = ("bugfix124", "real203", "peer182")
 DATASETS = DEFAULT_DATASETS
 REDO_SUFFIX_RE = re.compile(r"\.redo\.\d+(?:\.\d+)?$")
+SUPERSEDED_SUFFIX_RE = re.compile(r"\.superseded\.\d+(?:\.\d+)?$")
 ADOPTED_SUFFIX_RE = re.compile(r"\.adopted_from_[^.]+$")
 
 
@@ -29,6 +30,7 @@ def _utc_now() -> str:
 
 
 def base_subject_id(dirname: str) -> str:
+    dirname = SUPERSEDED_SUFFIX_RE.sub("", dirname)
     return ADOPTED_SUFFIX_RE.sub("", REDO_SUFFIX_RE.sub("", dirname))
 
 
@@ -70,6 +72,13 @@ def valid_put_tests(result: dict) -> list[dict]:
         test for test in tests
         if test.get("kind") == "put" or test.get("b") is True
     ]
+
+
+def _is_valid_reference_test(row: dict) -> bool:
+    if (row.get("stage2_source") == "no_unit_deploy_fallback"
+            or row.get("stage4_kind") in ("deploy-only", "creation-code-only")):
+        return False
+    return row.get("valid_reference_test") is True
 
 
 def _count(result: dict, key: str) -> int:
@@ -207,7 +216,7 @@ def green_r1r2_no_width_rows(
             gates = row.get("gates") or {}
             if row.get("kind") != "put":
                 continue
-            if row.get("valid_reference_test"):
+            if _is_valid_reference_test(row):
                 continue
             if row.get("forge_status") != "Success":
                 continue
@@ -283,10 +292,16 @@ def classify_no_valid(result: dict, result_path: Path | None = None) -> str:
     return row.get("completion_status") or "no-valid-unknown"
 
 
-def classify_valid_no_put(result: dict) -> str:
+def classify_valid_no_put(result: dict, result_path: Path | None = None) -> str:
     sources = Counter()
     notes = []
-    for test in result.get("put", {}).get("valid_tests") or []:
+    valid_tests = [
+        row for row in summary_artifact_rows(result, result_path)
+        if _is_valid_reference_test(row)
+    ]
+    if not valid_tests:
+        valid_tests = result.get("put", {}).get("valid_tests") or []
+    for test in valid_tests:
         if test.get("kind") == "concrete":
             sources[test.get("stage2_source") or "concrete-unknown"] += 1
         put_json = _put_json_for_test(test)
@@ -307,7 +322,7 @@ def classify_valid_no_put(result: dict) -> str:
 def classify_no_r1r2(result: dict, result_path: Path | None = None) -> str:
     causes = Counter()
     for row in summary_artifact_rows(result, result_path):
-        if row.get("kind") != "put" or not row.get("valid_reference_test"):
+        if row.get("kind") != "put" or not _is_valid_reference_test(row):
             continue
         if _put_json_has_r1r2(Path(row["summary_path"]), row.get("test")):
             continue
@@ -326,7 +341,7 @@ def classify(result: dict, bucket: str, result_path: Path | None = None) -> str:
     if bucket == "no-valid":
         return classify_no_valid(result, result_path)
     if bucket == "valid-no-PUT":
-        return classify_valid_no_put(result)
+        return classify_valid_no_put(result, result_path)
     if bucket == "valid-PUT-no-R1R2":
         return classify_no_r1r2(result, result_path)
     return "strong-enough"
@@ -338,6 +353,25 @@ def _artifact_totals(result: dict) -> dict:
 
 def _result_artifact_totals(result: dict) -> dict:
     put = result.get("put", {})
+    rows = [
+        row for row in (put.get("raw_tests") or put.get("raw_artifacts") or [])
+        if isinstance(row, dict) and row.get("kind") in ("put", "concrete")
+    ]
+    if rows:
+        return {
+            "raw": len(rows),
+            "valid": sum(1 for row in rows if _is_valid_reference_test(row)),
+            "put_raw": sum(1 for row in rows if row.get("kind") == "put"),
+            "put_valid": sum(
+                1 for row in rows
+                if row.get("kind") == "put" and _is_valid_reference_test(row)),
+            "concrete_raw": sum(
+                1 for row in rows if row.get("kind") == "concrete"),
+            "concrete_valid": sum(
+                1 for row in rows
+                if row.get("kind") == "concrete"
+                and _is_valid_reference_test(row)),
+        }
     return {
         "raw": put.get("raw", 0),
         "valid": put.get("valid", 0),
@@ -389,17 +423,17 @@ def summary_artifact_totals(
         return None
     return {
         "raw": len(rows),
-        "valid": sum(1 for row in rows if row.get("valid_reference_test")),
+        "valid": sum(1 for row in rows if _is_valid_reference_test(row)),
         "put_raw": sum(1 for row in rows if row.get("kind") == "put"),
         "put_valid": sum(
             1 for row in rows
-            if row.get("kind") == "put" and row.get("valid_reference_test")),
+            if row.get("kind") == "put" and _is_valid_reference_test(row)),
         "concrete_raw": sum(
             1 for row in rows if row.get("kind") == "concrete"),
         "concrete_valid": sum(
             1 for row in rows
             if row.get("kind") == "concrete"
-            and row.get("valid_reference_test")),
+            and _is_valid_reference_test(row)),
     }
 
 
@@ -411,7 +445,7 @@ def artifact_totals(result: dict, result_path: Path | None = None) -> dict:
 def _summary_valid_put_has_r1r2(
         result: dict, result_path: Path | None = None) -> bool:
     for row in summary_artifact_rows(result, result_path):
-        if row.get("kind") != "put" or not row.get("valid_reference_test"):
+        if row.get("kind") != "put" or not _is_valid_reference_test(row):
             continue
         if _put_json_has_r1r2(Path(row["summary_path"]), row.get("test")):
             return True

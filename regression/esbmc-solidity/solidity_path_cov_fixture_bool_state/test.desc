@@ -1,0 +1,8 @@
+CORE
+contract.sol
+--contract BoolFixture --solidity-path-coverage --solidity-max-tx 1 --focus-function initialize --path-cov-fixture fixture.json
+^--path-cov-fixture: BoolFixture\.initialized = 1 \(assigned before the transaction driver, in place of the deployment\)
+^--solidity-path-coverage: 3 of 3 instrumented path claim\(s\) reached the solver across 1 unit\(s\)
+^Path Status: F 2, I 0, U 1
+^VERIFICATION FAILED
+\A(?!(.|\n)*INTERNAL DEFECT)

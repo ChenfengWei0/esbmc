@@ -253,6 +253,8 @@ def _add_test(test_case, executor):
             return
 
         output_to_validate = stdout.decode(errors="replace") + stderr.decode(errors="replace")
+        if any("ESBMC_EXIT_CODE" in regex for regex in test_case.test_regex):
+            output_to_validate += "\nESBMC_EXIT_CODE: {}\n".format(rc)
         error_message_prefix = (
             "\nTEST: "
             + str(test_case.test_dir)

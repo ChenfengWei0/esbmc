@@ -71,6 +71,46 @@ AST_FOCUS_RETRY_REASONS = {
 AST_RETRY_MAX_ENV_COORDS = 2
 AST_RETRY_MAX_SLOT_COORDS = 4
 
+# CE scheduling is deliberately allow-listed.  These are the three cases for
+# which a 60-second CE collection already exists.  A missing case policy must
+# never be interpreted as evidence for an arbitrary contract or unit.
+CE_CASE_POLICIES = {
+    ("stress243", "ERC-3643__ERC-3643__TREXImplementationAuthority"):
+    {
+        "witness_units": ("getContracts",),
+        "coordinate_required": True,
+        "stop_units": (),
+        "stop_case_without_candidate": False,
+    },
+    ("stress243", "balancer__balancer-v3-monorepo__DynamicWeightedLPOracle"):
+    {
+        # computeTVLGivenPrices consumed the full CE budget without a witness.
+        # getRoundData has a single ABI coordinate and five scalar returns,
+        # which is the narrowest fresh candidate left in this target.
+        "witness_units": (),
+        "initial_coordinate_units": ("getRoundData",),
+        "coordinate_required": False,
+        "stop_units": ("computeTVLGivenPrices",),
+        "stop_case_without_candidate": False,
+    },
+    ("bugfix124", "pop_058_PuttyV2"):
+    {
+        # The observed CE and all completed certification rows are no-witness.
+        # Do not infer a witness for the eight units that were never reached.
+        "witness_units": (),
+        "coordinate_required": True,
+        "stop_units": (),
+        "stop_case_without_candidate": True,
+    },
+}
+CE_RUNTIME_COORDINATE_PREFIXES = (
+    "block.",
+    "tx.",
+    "msg.data",
+    "msg.sig",
+)
+CE_ENV_COORDINATES = {"msg.sender", "msg.value", "tx.origin"}
+
 
 class CampaignError(ValueError):
     """The schedule, journals, or requested attempt cannot be planned."""
@@ -104,6 +144,252 @@ def _read_journal(path: str) -> tuple[list[dict], int]:
 
 def _read_jsonl(path: str) -> tuple[list[dict], int]:
     return _read_journal(path)
+
+
+def _job_case_key(job: dict) -> tuple[str, str]:
+    return (str(job.get("benchmark") or ""),
+            str(job.get("subject_id") or ""))
+
+
+def _ce_row_matches_job(row: dict, job: dict) -> bool:
+    if str(row.get("unit") or "") != str(job.get("unit") or ""):
+        return False
+    benchmark, subject_id = _job_case_key(job)
+    subject = row.get("subject") or {}
+    if isinstance(subject, dict):
+        if (str(subject.get("benchmark") or "") == benchmark
+                and str(subject.get("subject_id") or "") == subject_id):
+            return True
+    raw_benchmark = str(row.get("benchmark") or "")
+    return raw_benchmark in (benchmark, f"{benchmark}__{subject_id}")
+
+
+def _ce_coordinate_name(name: object) -> str:
+    return str(name).strip()
+
+
+def _ce_coordinate_values(rows: list[dict]) -> tuple[set[str], dict[str, set[str]]]:
+    explicit = set()
+    values = defaultdict(set)
+
+    def add_value(name: object, value: object = "<explicit>") -> None:
+        coord = _ce_coordinate_name(name)
+        if not coord or coord.startswith(CE_RUNTIME_COORDINATE_PREFIXES):
+            return
+        explicit.add(coord)
+        try:
+            encoded = json.dumps(value, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            encoded = repr(value)
+        values[coord].add(encoded)
+
+    for row in rows:
+        for field in ("coords", "env_coords", "slot_coords"):
+            raw = row.get(field)
+            if isinstance(raw, str):
+                add_value(raw)
+            elif isinstance(raw, (list, tuple, set)):
+                for coord in raw:
+                    add_value(coord)
+        journal = row.get("partial_witness_journal") or {}
+        if not isinstance(journal, dict):
+            continue
+        for path in journal.get("paths") or []:
+            if not isinstance(path, dict):
+                continue
+            ce = path.get("ce") or {}
+            if not isinstance(ce, dict):
+                continue
+            for name, value in ce.items():
+                add_value(name, value)
+    return explicit, values
+
+
+def _ce_observation(rows: list[dict]) -> dict:
+    """Summarise CE evidence without treating CE as a proof."""
+
+    explicit, coordinate_values = _ce_coordinate_values(rows)
+    varying = sorted(name for name, values in coordinate_values.items()
+                     if len(values) > 1)
+    witness_paths = 0
+    witness_count = 0
+    certified_regions = 0
+    for row in rows:
+        progress = row.get("generalise_progress") or {}
+        journal = row.get("partial_witness_journal") or {}
+        if isinstance(row.get("witnessed"), int):
+            witness_paths = max(witness_paths, int(row["witnessed"]))
+        if isinstance(progress, dict):
+            witness_paths = max(witness_paths,
+                                int(progress.get("witnessed") or 0))
+        if isinstance(journal, dict):
+            witness_paths = max(witness_paths,
+                                int(journal.get("path_count") or 0))
+            witness_count = max(witness_count,
+                                int(journal.get("witness_count") or 0))
+        certified_regions = max(certified_regions,
+                                len(row.get("certified") or {}))
+    has_witness = witness_paths > 0 or witness_count > 0
+    has_coordinate = bool(explicit or varying)
+    return {
+        "rows": len(rows),
+        "latest_bucket": rows[-1].get("bucket") if rows else None,
+        "latest_driver_tag": ((rows[-1].get("driver_diagnostic") or {}).get("tag")
+                               if rows else None),
+        "witnessed_paths": witness_paths,
+        "witness_count": witness_count,
+        "has_witness": has_witness,
+        "explicit_coordinates": sorted(explicit),
+        "varying_coordinates": varying,
+        "has_coordinate_evidence": has_coordinate,
+        "certified_regions": certified_regions,
+        # A CE can nominate a candidate, but only a certified region can add
+        # theory coverage.  Keep these counters separate and auditable.
+        "provisional_candidate": bool(has_witness and has_coordinate),
+        "theory_increment": (1 if certified_regions and has_coordinate else 0),
+    }
+
+
+def _ce_rows_for_job(rows: list[dict], job: dict) -> list[dict]:
+    return [row for row in rows if _ce_row_matches_job(row, job)]
+
+
+def _append_ce_coordinates(job: dict, observation: dict) -> None:
+    """Carry only observed environment coordinates into the next retry."""
+
+    coordinates = [name for name in observation.get("varying_coordinates") or []
+                   if name in CE_ENV_COORDINATES]
+    if not coordinates:
+        return
+
+    def rewrite(argv: list[str]) -> list[str]:
+        for coordinate in coordinates:
+            argv = _with_repeated_argv_value(argv, "--env-coord", coordinate)
+        return argv
+
+    _apply_argv_rewrite(job, rewrite)
+
+
+def _apply_ce_scheduler_gate(pending_by_attempt: dict[int, list[dict]],
+                             ce_rows: list[dict],
+                             all_jobs: list[dict] | None = None) -> dict:
+    """Filter the allow-listed cases using their actual 60-second CE evidence."""
+
+    if not ce_rows:
+        return {
+            "enabled": False,
+            "skipped_jobs": [],
+            "selected_jobs": [],
+            "theory_increment": 0,
+            "provisional_candidates": 0,
+        }
+
+    skipped = []
+    selected = []
+    observations = {}
+    for job in all_jobs or []:
+        case_key = _job_case_key(job)
+        if case_key not in CE_CASE_POLICIES:
+            continue
+        matching_rows = _ce_rows_for_job(ce_rows, job)
+        if not matching_rows:
+            continue
+        case_label = f"{case_key[0]}/{case_key[1]}"
+        unit = str(job.get("unit") or "")
+        observations.setdefault(case_label, {})[unit] = _ce_observation(matching_rows)
+    for attempt, jobs in list(pending_by_attempt.items()):
+        kept = []
+        for job in jobs:
+            case_key = _job_case_key(job)
+            policy = CE_CASE_POLICIES.get(case_key)
+            if policy is None:
+                kept.append(job)
+                continue
+
+            matching_rows = _ce_rows_for_job(ce_rows, job)
+            observation = _ce_observation(matching_rows)
+            case_label = f"{case_key[0]}/{case_key[1]}"
+            unit = str(job.get("unit") or "")
+            observations.setdefault(case_label, {})[unit] = observation
+            unit_info = job.get("unit_info") or {}
+            decision = "defer-no-case-evidence"
+            reason = "unit is outside the case-specific CE allow-list"
+            keep = False
+
+            if unit in set(policy.get("stop_units") or ()):
+                decision = "stop-no-witness"
+                reason = "60-second CE ended without a path witness"
+            elif unit in set(policy.get("witness_units") or ()):
+                if (observation["has_witness"]
+                        and (not policy.get("coordinate_required")
+                             or observation["has_coordinate_evidence"])):
+                    keep = True
+                    decision = "select-witness-coordinate-candidate"
+                    reason = "CE witness and coordinate variation are recorded"
+                    _append_ce_coordinates(job, observation)
+                elif observation["has_witness"]:
+                    decision = "stop-witness-without-coordinate"
+                    reason = "witness exists, but no varying coordinate was observed"
+                else:
+                    decision = "stop-no-witness"
+                    reason = "allow-listed unit has no CE witness"
+            elif unit in set(policy.get("initial_coordinate_units") or ()):
+                parameters = int(unit_info.get("parameter_count") or 0)
+                returns = int(unit_info.get("return_count") or 0)
+                if parameters > 0 and returns > 0:
+                    keep = True
+                    decision = "select-abi-coordinate-candidate"
+                    reason = "target AST records an ABI input and observable return"
+                else:
+                    decision = "stop-no-usable-coordinate"
+                    reason = "initial candidate has no ABI input/observable return pair"
+            elif policy.get("stop_case_without_candidate"):
+                decision = "stop-case-no-witness"
+                reason = "case has no observed witness; do not infer unvisited units"
+
+            job = copy.deepcopy(job)
+            job["ce_scheduler"] = {
+                "schema": "veriput-ce-scheduler-evidence/v1",
+                "decision": decision,
+                "reason": reason,
+                "observation": observation,
+                "theory_increment": int(observation["theory_increment"]
+                                         if keep else 0),
+                "theory_credit_status": (
+                    "certified-region-required" if keep else "not-submitted"),
+            }
+            if keep:
+                kept.append(job)
+                selected.append({
+                    "attempt": attempt,
+                    "case": case_label,
+                    "unit": unit,
+                    "decision": decision,
+                    "reason": reason,
+                    "theory_increment": job["ce_scheduler"]["theory_increment"],
+                    "provisional_candidate": observation["provisional_candidate"],
+                })
+            else:
+                skipped.append({
+                    "attempt": attempt,
+                    "case": case_label,
+                    "unit": unit,
+                    "decision": decision,
+                    "reason": reason,
+                    "theory_increment": 0,
+                })
+        pending_by_attempt[attempt] = kept
+
+    return {
+        "enabled": True,
+        "observations": observations,
+        "skipped_jobs": skipped,
+        "selected_jobs": selected,
+        "theory_increment": sum(item["theory_increment"] for item in selected),
+        "provisional_candidates": sum(
+            1 for item in selected
+            if item.get("provisional_candidate")),
+    }
 
 
 def _row_attempt(row: dict, fallback_attempt: int, policy: dict[int, dict]) -> int:
@@ -898,7 +1184,8 @@ def _attempt_budgeted_jobs(jobs: list[dict], attempt_cfg: dict | None) -> list[d
 
 
 def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attempt_cfg: dict | None,
-                          source_journals: list[str]) -> dict:
+                          source_journals: list[str],
+                          source_ce_jsonls: list[str] | None = None) -> dict:
     attempt = (attempt_cfg or {}).get("attempt")
     run_timeout_s = (attempt_cfg or {}).get("timeout_s")
     certify_timeout_s = (
@@ -920,6 +1207,7 @@ def _schedule_for_attempt(base_schedule: dict, selected_jobs: list[dict], attemp
             "campaign_policy": "veriput-unit-campaign-policy/v1",
             "campaign_attempt": attempt,
             "campaign_journals": source_journals,
+            "campaign_ce_jsonls": source_ce_jsonls or [],
         },
         "shard": base_schedule.get("shard"),
         "limit": base_schedule.get("limit"),
@@ -1022,6 +1310,7 @@ def plan_campaign_for_schedule(schedule: dict,
                                *,
                                journal_paths: list[str] | None = None,
                                cert_jsonl_paths: list[str] | None = None,
+                               ce_jsonl_paths: list[str] | None = None,
                                min_certified_path_rate: float = 0.70,
                                attempt: int = 0,
                                selection_strategy: str = "priority",
@@ -1034,7 +1323,14 @@ def plan_campaign_for_schedule(schedule: dict,
         raise CampaignError(f"unsupported schedule schema {schedule.get('schema')!r}")
     journals = journal_paths or []
     cert_jsonls = cert_jsonl_paths or []
+    ce_jsonls = ce_jsonl_paths or []
     cert_quality, bad_cert_lines = _cert_quality_by_unit(cert_jsonls, min_certified_path_rate)
+    ce_rows = []
+    bad_ce_lines = 0
+    for path in ce_jsonls:
+        rows, bad = _read_jsonl(path)
+        ce_rows.extend(rows)
+        bad_ce_lines += bad
     policy = _policy_by_attempt()
     jobs_by_id = {job.get("job_id"): job for job in schedule.get("jobs") or [] if job.get("job_id")}
     latest = {}
@@ -1133,12 +1429,15 @@ def plan_campaign_for_schedule(schedule: dict,
         by_benchmark_state[job.get("benchmark") or "<unknown>"][state] += 1
         by_priority_state[str(job.get("priority", "<missing>"))][state] += 1
 
+    ce_scheduler = _apply_ce_scheduler_gate(pending_by_attempt, ce_rows,
+                                             list(jobs_by_id.values()))
     selected = _selected_attempt(pending_by_attempt, attempt)
     selected_jobs_all = list(pending_by_attempt.get(selected, [])) if selected else []
     selected_jobs, selected_jobs_before_limit = _ordered_selected_jobs(
         selected_jobs_all, selection_strategy, limit)
     attempt_cfg = policy.get(selected) if selected else None
-    next_schedule = _schedule_for_attempt(schedule, selected_jobs, attempt_cfg, journals)
+    next_schedule = _schedule_for_attempt(schedule, selected_jobs, attempt_cfg, journals,
+                                          ce_jsonls)
     if next_schedule_out and next_schedule:
         out = Path(next_schedule_out)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -1189,7 +1488,8 @@ def plan_campaign_for_schedule(schedule: dict,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "schedule": schedule_label,
         "journals": journals,
-        "cert_jsonls": cert_jsonls,
+            "cert_jsonls": cert_jsonls,
+            "ce_jsonls": ce_jsonls,
         "policy": {
             "schema": "veriput-unit-campaign-policy/v1",
             "attempts": list(DEFAULT_POLICY),
@@ -1201,6 +1501,7 @@ def plan_campaign_for_schedule(schedule: dict,
             "exhausted": len(exhausted),
             "bad_journal_lines": bad_lines,
             "bad_cert_jsonl_lines": bad_cert_lines,
+            "bad_ce_jsonl_lines": bad_ce_lines,
             "orphan_journal_rows": orphan_rows,
             "cert_quality_enabled": bool(cert_jsonls),
             "cert_weak": dict(sorted(cert_weak.items())),
@@ -1218,6 +1519,7 @@ def plan_campaign_for_schedule(schedule: dict,
             "selected_jobs_before_limit": selected_jobs_before_limit,
             "selection_strategy": selection_strategy,
             "selection_limit": limit or None,
+            "ce_scheduler": ce_scheduler,
         },
         "by_benchmark_state": {
             bench: dict(sorted(counter.items()))
@@ -1236,6 +1538,7 @@ def plan_campaign(schedule_path: str,
                   *,
                   journal_paths: list[str] | None = None,
                   cert_jsonl_paths: list[str] | None = None,
+                  ce_jsonl_paths: list[str] | None = None,
                   min_certified_path_rate: float = 0.70,
                   attempt: int = 0,
                   selection_strategy: str = "priority",
@@ -1249,6 +1552,7 @@ def plan_campaign(schedule_path: str,
                                       schedule_path,
                                       journal_paths=journal_paths,
                                       cert_jsonl_paths=cert_jsonl_paths,
+                                      ce_jsonl_paths=ce_jsonl_paths,
                                       min_certified_path_rate=min_certified_path_rate,
                                       attempt=attempt,
                                       selection_strategy=selection_strategy,
@@ -1271,6 +1575,11 @@ def main() -> int:
                     default=[],
                     help="certify_all.py --out JSONL; when present, runner-ok jobs "
                     "must also meet the certification quality threshold")
+    ap.add_argument("--ce-jsonl",
+                    action="append",
+                    default=[],
+                    help="60-second CE collection JSONL; restrict the allow-listed "
+                    "cases to witnessed/coordinate-backed units")
     ap.add_argument("--min-certified-path-rate",
                     type=float,
                     default=0.70,
@@ -1306,6 +1615,7 @@ def main() -> int:
         doc = plan_campaign(args.schedule,
                             journal_paths=args.journal,
                             cert_jsonl_paths=args.cert_jsonl,
+                            ce_jsonl_paths=args.ce_jsonl,
                             min_certified_path_rate=args.min_certified_path_rate,
                             attempt=args.attempt,
                             selection_strategy=args.selection_strategy,

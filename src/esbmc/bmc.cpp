@@ -2755,10 +2755,10 @@ void report_coverage(
           }
           gj["claims_total"] = claims;
           gj["claim_status"] = {{"F", nF}, {"P", nP}, {"U", nU}, {"B", nB}};
-          gj["status"] =
-            nF > 0 ? "F" : (goal.exit_universe_truncated
-                               ? "U"
-                               : (nP == claims ? "P" : "U"));
+          gj["status"] = nF > 0 ? "F"
+                                : (goal.exit_universe_truncated
+                                     ? "U"
+                                     : (nP == claims ? "P" : "U"));
           if (nF > 0)
             ++fired;
 
@@ -3805,8 +3805,7 @@ smt_convt::resultt bmct::multi_property_check(
         is_path_cov && step.comment.find(":path:") != std::string::npos &&
         step.comment.find(":probe:") == std::string::npos)
         priority[counter] = 0;
-      else if (
-        is_path_cov && step.comment.find(":probe:") != std::string::npos)
+      else if (is_path_cov && step.comment.find(":probe:") != std::string::npos)
         priority[counter] = 2;
       else
         priority[counter] = 1;
@@ -4024,8 +4023,7 @@ smt_convt::resultt bmct::multi_property_check(
     // explicit --path-cov-probe witness source.
     if (
       is_path_cov && options.get_bool_option("result-only") &&
-      !is_probe_claim &&
-      claim.claim_property != "instrumented assertion")
+      !is_probe_claim && claim.claim_property != "instrumented assertion")
     {
       ++summary.skipped_properties;
       return;
@@ -5106,6 +5104,12 @@ smt_convt::resultt bmct::multi_property_check(
           // the members of the tuple in the wrong order -- a wrong value wearing
           // the right shape.
           std::map<unsigned long, std::string> ret_members;
+          // Low-level-call success destructures are source-marked by the
+          // Solidity frontend. Keep them per recursive invocation: the first
+          // `_s` in a trace may belong to a reentrant call, while the violated
+          // path assertion belongs to a different `go` frame.
+          std::map<size_t, std::map<std::string, std::string>>
+            extcall_success_by_depth;
           for (const auto &st : w.trace.steps)
           {
             // Stop at THIS path's own violated assert. The harness runs
@@ -5451,6 +5455,13 @@ smt_convt::resultt bmct::multi_property_check(
               continue;
             }
             const std::string val = from_expr(ns, "", val_expr);
+            if (st.pc->location.get_bool("sol_extcall_success"))
+            {
+              const size_t depth = count_target_frames(st.stack_trace);
+              if (depth > 0)
+                extcall_success_by_depth[depth][name] = val;
+              continue;
+            }
             // WHOLE-OBJECT restore: require(cond) / revert("msg") lower to a
             // rollback block that assigns the entry snapshot back as ONE
             // aggregate — `*this = _sol_save_this` — never per field. Tracking
@@ -5740,6 +5751,13 @@ smt_convt::resultt bmct::multi_property_check(
           // own assert.
           for (const auto &[n, v] : last_env)
             ce.env.emplace_back(n, v);
+          if (assert_depth_known)
+          {
+            auto xd = extcall_success_by_depth.find(assert_target_depth);
+            if (xd != extcall_success_by_depth.end())
+              for (const auto &[n, v] : xd->second)
+                ce.extcall_returns.emplace_back(n, v);
+          }
           // Pick the snapshot for the invocation the refuted assert sits in.
           // Anything else would be a different invocation's entry state, which
           // for a recursive function is a different number — reporting it would
@@ -5776,7 +5794,8 @@ smt_convt::resultt bmct::multi_property_check(
             }
             goto_coveraget::write_path_ce_journal_atomic(
               fmt::format(
-                "after first witness for claim {} of {}", decided_now,
+                "after first witness for claim {} of {}",
+                decided_now,
                 remaining_claims),
               /*complete=*/false);
           }

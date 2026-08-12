@@ -45,7 +45,10 @@
 /// prefix or substring test: `--focus-function pub` must not select `pubx`, and
 /// a name-only match deliberately keeps EVERY OVERLOAD of that name, because the
 /// dispatcher offers all of them and an entry that can be entered must not be
-/// left unmeasured.
+/// left unmeasured. Callers checking a fully mangled unit id may pass
+/// `sol:@C@C@F@pub#42`; its bounded `@F@...#` name is matched against the focus
+/// set. This lets --path-cov-instrument-only select one overload while the
+/// dispatcher still admits every overload named by --focus-function.
 
 /// Split a `--focus-function` value into the function names it selects.
 /// Order is preserved (so diagnostics list names as the user wrote them) and
@@ -73,6 +76,21 @@ inline std::vector<std::string> focus_function_names(const std::string &raw)
   return out;
 }
 
+/// Return the source-level function name represented by `fn`, or `fn` itself
+/// when it is not a Solidity mangled unit id.
+inline std::string focus_function_source_name(const std::string &fn)
+{
+  const std::string tag = "@F@";
+  const size_t f = fn.find(tag);
+  if (f == std::string::npos)
+    return fn;
+  const size_t begin = f + tag.size();
+  const size_t hash = fn.find('#', begin);
+  if (hash == std::string::npos || hash == begin)
+    return fn;
+  return fn.substr(begin, hash - begin);
+}
+
 /// Does `raw` (a whole `--focus-function` value) select the function named
 /// `fn`? An EMPTY value selects everything -- that is "no narrowing", the state
 /// every caller must treat as "the focus is off", not as "the focus selects
@@ -82,8 +100,9 @@ focus_function_selects(const std::string &raw, const std::string &fn)
 {
   if (raw.empty())
     return true;
+  const std::string source_name = focus_function_source_name(fn);
   for (const auto &name : focus_function_names(raw))
-    if (name == fn)
+    if (name == fn || name == source_name)
       return true;
   return false;
 }

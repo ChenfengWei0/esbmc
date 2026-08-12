@@ -24,6 +24,70 @@
 
 #include <fstream>
 
+static void annotate_solidity_ast_location(
+  const nlohmann::json &node,
+  locationt &location)
+{
+  if (node.contains("src") && node["src"].is_string())
+    location.set("sol_src", node["src"].get<std::string>());
+  const std::string node_type = node.value("nodeType", "");
+  if (!node_type.empty())
+    location.set("sol_ast_node_type", node_type);
+
+  std::string kind;
+  if (node_type == "IfStatement")
+    kind = "if";
+  else if (node_type == "ForStatement")
+    kind = "for";
+  else if (node_type == "WhileStatement")
+    kind = "while";
+  else if (node_type == "DoWhileStatement")
+    kind = "do-while";
+  else if (node_type == "Conditional")
+    kind = "ternary";
+  else if (
+    node_type == "BinaryOperation" &&
+    (node.value("operator", "") == "&&" || node.value("operator", "") == "||"))
+    kind = "short-circuit";
+  else if (node_type == "TryStatement")
+    kind = "try";
+
+  const nlohmann::json *call = nullptr;
+  if (node_type == "FunctionCall")
+    call = &node;
+  else if (
+    node_type == "ExpressionStatement" && node.contains("expression") &&
+    node["expression"].is_object() &&
+    node["expression"].value("nodeType", "") == "FunctionCall")
+    call = &node["expression"];
+  if (call != nullptr)
+  {
+    if (call->contains("src") && (*call)["src"].is_string())
+      location.set("sol_src", (*call)["src"].get<std::string>());
+    const auto &callee = call->value("expression", nlohmann::json::object());
+    const std::string name =
+      callee.value("name", callee.value("memberName", ""));
+    if (name == "require" || name == "assert")
+      kind = name;
+    else
+    {
+      const std::string type =
+        callee.value("typeDescriptions", nlohmann::json::object())
+          .value("typeString", "");
+      if (
+        type.find(" external") != std::string::npos || name == "call" ||
+        name == "send" || name == "transfer" || name == "delegatecall" ||
+        name == "staticcall")
+        kind = "external-call";
+    }
+  }
+  if (!kind.empty())
+  {
+    location.set("sol_source_decision", true);
+    location.set("sol_source_decision_kind", kind);
+  }
+}
+
 // Lexically-declaring contract of an AST node: the top-level
 // ContractDefinition whose source byte span contains the node's `src`
 // start offset. This is the definition of "lexical declarer" itself and
@@ -79,6 +143,7 @@ void solidity_convertert::get_location_from_node(
   location.set_line(get_line_number(ast_node));
   location.set_file(
     absolute_path); // assume absolute_path is the name of the contrace file, since we ran solc in the same directory
+  annotate_solidity_ast_location(ast_node, location);
 
   // To annotate local declaration within a function
   if (current_functionDecl)
@@ -105,6 +170,7 @@ void solidity_convertert::get_start_location_from_stmt(
   location.set_line(get_line_number(ast_node));
   location.set_file(
     absolute_path); // assume absolute_path is the name of the contrace file, since we ran solc in the same directory
+  annotate_solidity_ast_location(ast_node, location);
 
   if (!function_name.empty())
     location.set_function(function_name);
@@ -131,6 +197,7 @@ void solidity_convertert::get_final_location_from_stmt(
   location.set_line(get_line_number(ast_node, true));
   location.set_file(
     absolute_path); // assume absolute_path is the name of the contrace file, since we ran solc in the same directory
+  annotate_solidity_ast_location(ast_node, location);
 
   if (!function_name.empty())
     location.set_function(function_name);

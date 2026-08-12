@@ -1,0 +1,6 @@
+CORE
+contract.sol
+--contract VaultAdmin --solidity-path-coverage --solidity-max-tx 1 --focus-function getMinimumPoolTokens --path-cov-fixture fixture.json
+^WARNING: --path-cov-fixture: VaultAdmin focus-closure source SHA-256 did not match .* converting every function body
+^--solidity-path-coverage: instrumented 2 complete path\(s\) across 1 unit\(s\)
+^VERIFICATION FAILED$

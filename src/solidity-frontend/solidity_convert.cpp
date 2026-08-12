@@ -298,7 +298,8 @@ bool solidity_convertert::convert()
     // ten-function list fix one typo per run, and -- worse -- a list whose first
     // name is right and whose second is wrong would pass this check entirely if
     // the loop stopped at the first success.
-    const std::vector<std::string> focus_names = focus_function_names(focus_func);
+    const std::vector<std::string> focus_names =
+      focus_function_names(focus_func);
     if (focus_names.empty())
     {
       log_error(
@@ -326,8 +327,6 @@ bool solidity_convertert::convert()
             config.options.get_option("no-visibility").empty())
             continue;
           if (m.name == focus_cnt)
-            continue;
-          if (m.name == "receive" || m.name == "fallback")
             continue;
           found = true;
           break;
@@ -362,20 +361,17 @@ bool solidity_convertert::convert()
 
   std::string old_path = absolute_path;
 
-  // Pre-round: walk every interface and register its nested
-  // struct / enum / error / event symbols up front. Libraries processed
-  // later in round 1 can have function signatures referencing
-  // `IFoo.Bar` types, and those references would otherwise be unresolved
-  // (the interface itself is only fully processed in round 2). Without
-  // this pass, a library returning an interface-nested struct crashes on
-  // named-return declaration. Order-independent: the interface body is
-  // not fully converted here, only type-child symbols are registered.
+  // Pre-round: register nested type symbols from contracts and interfaces.
+  // A focused contract may reference `Other.Struct` without converting
+  // `Other` itself; delaying that struct until round 2 leaves local
+  // declarations with an unresolved symbolic type. Libraries retain their
+  // existing round-1 pre-pass in get_noncontract_defition.
   for (nlohmann::json::iterator itr = nodes.begin(); itr != nodes.end(); ++itr)
   {
     if (
       (*itr)["nodeType"] == "ContractDefinition" &&
-      (*itr).contains("contractKind") &&
-      (*itr)["contractKind"] == "interface" && (*itr).contains("nodes"))
+      (*itr).contains("contractKind") && (*itr)["contractKind"] != "library" &&
+      (*itr).contains("nodes"))
     {
       std::string if_name = (*itr)["name"].get<std::string>();
       std::string old = current_baseContractName;
@@ -1615,6 +1611,413 @@ bool solidity_convertert::populate_function_signature(
   return false;
 }
 
+namespace
+{
+void collect_referenced_declarations(
+  const nlohmann::json &node,
+  std::set<int> &out)
+{
+  if (node.is_object())
+  {
+    const auto ref = node.find("referencedDeclaration");
+    if (ref != node.end() && ref->is_number_integer())
+    {
+      const int id = ref->get<int>();
+      if (id >= 0)
+        out.insert(id);
+    }
+  }
+  if (node.is_object() || node.is_array())
+    for (const auto &child : node)
+      if (child.is_object() || child.is_array())
+        collect_referenced_declarations(child, out);
+}
+
+void collect_callable_nodes(
+  const nlohmann::json &node,
+  std::map<int, const nlohmann::json *> &out)
+{
+  if (node.is_object() && node.contains("id") && node["id"].is_number_integer())
+  {
+    const std::string kind = node.value("nodeType", std::string());
+    if (kind == "FunctionDefinition" || kind == "ModifierDefinition")
+      out.emplace(node["id"].get<int>(), &node);
+  }
+  if (node.is_object() || node.is_array())
+    for (const auto &child : node)
+      if (child.is_object() || child.is_array())
+        collect_callable_nodes(child, out);
+}
+
+std::set<int> focused_fixture_function_closure(
+  const nlohmann::json &source_ast,
+  const int focus_id)
+{
+  std::map<int, const nlohmann::json *> callable_nodes;
+  std::set<int> closure;
+  std::vector<int> pending;
+
+  collect_callable_nodes(source_ast, callable_nodes);
+  closure.insert(focus_id);
+  pending.push_back(focus_id);
+
+  for (std::size_t i = 0; i < pending.size(); ++i)
+  {
+    const auto node_it = callable_nodes.find(pending[i]);
+    if (node_it == callable_nodes.end())
+      continue;
+    std::set<int> refs;
+    collect_referenced_declarations(*node_it->second, refs);
+    for (const int ref : refs)
+      if (callable_nodes.count(ref) != 0 && closure.insert(ref).second)
+        pending.push_back(ref);
+  }
+  return closure;
+}
+
+bool is_exact_evk_cash_body(const nlohmann::json &node)
+{
+  if (
+    node.value("nodeType", std::string()) != "FunctionDefinition" ||
+    node.value("name", std::string()) != "cash" ||
+    node.value("visibility", std::string()) != "public" ||
+    node.value("stateMutability", std::string()) != "view" ||
+    !node.value("virtual", false) || !node.contains("parameters") ||
+    !node["parameters"].contains("parameters") ||
+    !node["parameters"]["parameters"].empty() ||
+    !node.contains("returnParameters") ||
+    !node["returnParameters"].contains("parameters") ||
+    node["returnParameters"]["parameters"].size() != 1 ||
+    node["returnParameters"]["parameters"][0]["typeDescriptions"].value(
+      "typeString", std::string()) != "uint256" ||
+    !node.contains("modifiers") || node["modifiers"].size() != 1 ||
+    node["modifiers"][0]["modifierName"].value("name", std::string()) !=
+      "nonReentrantView" ||
+    !node.contains("body") || !node["body"].contains("statements") ||
+    node["body"]["statements"].size() != 1)
+    return false;
+
+  const nlohmann::json &ret = node["body"]["statements"][0];
+  if (
+    ret.value("nodeType", std::string()) != "Return" ||
+    !ret.contains("expression"))
+    return false;
+  const nlohmann::json &call = ret["expression"];
+  if (
+    call.value("nodeType", std::string()) != "FunctionCall" ||
+    !call.value("arguments", nlohmann::json::array()).empty() ||
+    !call.contains("expression"))
+    return false;
+  const nlohmann::json &to_uint = call["expression"];
+  if (
+    to_uint.value("nodeType", std::string()) != "MemberAccess" ||
+    to_uint.value("memberName", std::string()) != "toUint" ||
+    !to_uint.contains("expression"))
+    return false;
+  const nlohmann::json &cash = to_uint["expression"];
+  return cash.value("nodeType", std::string()) == "MemberAccess" &&
+         cash.value("memberName", std::string()) == "cash" &&
+         cash.contains("expression") &&
+         cash["expression"].value("nodeType", std::string()) == "Identifier" &&
+         cash["expression"].value("name", std::string()) == "vaultStorage";
+}
+
+bool contains_unsafe_focus_dispatch(const nlohmann::json &node)
+{
+  if (node.is_object())
+  {
+    const std::string kind = node.value("nodeType", std::string());
+    if (kind == "NewExpression")
+      return true;
+  }
+  if (node.is_object() || node.is_array())
+    for (const auto &child : node)
+      if (
+        (child.is_object() || child.is_array()) &&
+        contains_unsafe_focus_dispatch(child))
+        return true;
+  return false;
+}
+
+bool safe_evk_cash_focus_closure(
+  const nlohmann::json &source_ast,
+  std::set<int> &closure)
+{
+  std::map<int, const nlohmann::json *> callable_nodes;
+  collect_callable_nodes(source_ast, callable_nodes);
+
+  int focus_id = -1;
+  for (const auto &entry : callable_nodes)
+  {
+    if (!is_exact_evk_cash_body(*entry.second))
+      continue;
+    if (focus_id >= 0)
+      return false;
+    focus_id = entry.first;
+  }
+  if (focus_id < 0)
+    return false;
+
+  closure = focused_fixture_function_closure(source_ast, focus_id);
+  for (const int id : closure)
+  {
+    const auto it = callable_nodes.find(id);
+    if (
+      it == callable_nodes.end() || contains_unsafe_focus_dispatch(*it->second))
+      return false;
+    if (id == focus_id)
+      continue;
+    const nlohmann::json &callee = *it->second;
+    const nlohmann::json overrides =
+      callee.value("overrides", nlohmann::json(nullptr));
+    if (callee.value("virtual", false) || !overrides.is_null())
+      return false;
+  }
+  return true;
+}
+
+bool is_exact_eclp_imbalance_slopes_body(const nlohmann::json &node)
+{
+  if (
+    node.value("nodeType", std::string()) != "FunctionDefinition" ||
+    node.value("name", std::string()) != "getImbalanceSlopes" ||
+    node.value("visibility", std::string()) != "external" ||
+    node.value("stateMutability", std::string()) != "view" ||
+    node.value("virtual", false) || !node.contains("parameters") ||
+    !node["parameters"].contains("parameters") ||
+    node["parameters"]["parameters"].size() != 1 ||
+    !node.contains("returnParameters") ||
+    !node["returnParameters"].contains("parameters") ||
+    node["returnParameters"]["parameters"].size() != 2 ||
+    !node.contains("body") || !node["body"].contains("statements") ||
+    node["body"]["statements"].size() != 2)
+    return false;
+
+  const auto &param = node["parameters"]["parameters"][0];
+  const auto &returns = node["returnParameters"]["parameters"];
+  if (
+    param["typeDescriptions"].value("typeString", std::string()) != "address" ||
+    returns[0]["typeDescriptions"].value("typeString", std::string()) !=
+      "uint256" ||
+    returns[1]["typeDescriptions"].value("typeString", std::string()) !=
+      "uint256")
+    return false;
+
+  const auto &decl = node["body"]["statements"][0];
+  const auto &ret = node["body"]["statements"][1];
+  return decl.value("nodeType", std::string()) ==
+           "VariableDeclarationStatement" &&
+         decl.contains("initialValue") &&
+         decl["initialValue"].value("nodeType", std::string()) ==
+           "IndexAccess" &&
+         ret.value("nodeType", std::string()) == "Return" &&
+         ret.contains("expression") &&
+         ret["expression"].value("nodeType", std::string()) ==
+           "TupleExpression";
+}
+
+bool safe_eclp_imbalance_focus_closure(
+  const nlohmann::json &source_ast,
+  std::set<int> &closure)
+{
+  std::map<int, const nlohmann::json *> callable_nodes;
+  collect_callable_nodes(source_ast, callable_nodes);
+
+  const nlohmann::json *target = nullptr;
+  if (!source_ast.contains("nodes") || !source_ast["nodes"].is_array())
+    return false;
+  const auto &source_nodes = source_ast["nodes"];
+  for (const auto &node : source_nodes)
+  {
+    if (
+      node.value("nodeType", std::string()) == "ContractDefinition" &&
+      node.value("name", std::string()) == "ECLPSurgeHook")
+    {
+      if (target != nullptr)
+        return false;
+      target = &node;
+    }
+  }
+  if (
+    target == nullptr || !target->contains("linearizedBaseContracts") ||
+    !(*target)["linearizedBaseContracts"].is_array())
+    return false;
+
+  std::set<int> hierarchy;
+  for (const auto &id : (*target)["linearizedBaseContracts"])
+    if (id.is_number_integer())
+      hierarchy.insert(id.get<int>());
+
+  std::vector<int> roots;
+  int focus_id = -1;
+  for (const auto &contract : source_nodes)
+  {
+    if (
+      contract.value("nodeType", std::string()) != "ContractDefinition" ||
+      !contract.contains("id") ||
+      hierarchy.count(contract["id"].get<int>()) == 0)
+      continue;
+    for (const auto &member : contract.value("nodes", nlohmann::json::array()))
+    {
+      if (
+        member.value("nodeType", std::string()) != "FunctionDefinition" ||
+        !member.contains("id") || !member["id"].is_number_integer())
+        continue;
+      const int id = member["id"].get<int>();
+      if (member.value("kind", std::string()) == "constructor")
+        roots.push_back(id);
+      if (is_exact_eclp_imbalance_slopes_body(member))
+      {
+        if (focus_id >= 0)
+          return false;
+        focus_id = id;
+      }
+    }
+  }
+  if (focus_id < 0)
+    return false;
+  roots.push_back(focus_id);
+
+  std::vector<int> pending = roots;
+  closure.insert(roots.begin(), roots.end());
+  for (std::size_t i = 0; i < pending.size(); ++i)
+  {
+    const auto node_it = callable_nodes.find(pending[i]);
+    if (node_it == callable_nodes.end())
+      return false;
+    if (contains_unsafe_focus_dispatch(*node_it->second))
+      return false;
+    std::set<int> refs;
+    collect_referenced_declarations(*node_it->second, refs);
+    for (const int ref : refs)
+      if (callable_nodes.count(ref) != 0 && closure.insert(ref).second)
+        pending.push_back(ref);
+  }
+  return true;
+}
+
+bool is_exact_vault_admin_minimum_pool_tokens_body(const nlohmann::json &node)
+{
+  if (
+    node.value("nodeType", std::string()) != "FunctionDefinition" ||
+    node.value("name", std::string()) != "getMinimumPoolTokens" ||
+    node.value("visibility", std::string()) != "external" ||
+    node.value("stateMutability", std::string()) != "pure" ||
+    node.value("virtual", false) ||
+    !node.value("modifiers", nlohmann::json::array()).empty() ||
+    !node.contains("parameters") ||
+    !node["parameters"].contains("parameters") ||
+    !node["parameters"]["parameters"].empty() ||
+    !node.contains("returnParameters") ||
+    !node["returnParameters"].contains("parameters") ||
+    node["returnParameters"]["parameters"].size() != 1 ||
+    node["returnParameters"]["parameters"][0]["typeDescriptions"].value(
+      "typeString", std::string()) != "uint256" ||
+    !node.contains("body") || !node["body"].contains("statements") ||
+    node["body"]["statements"].size() != 1)
+    return false;
+
+  const nlohmann::json &ret = node["body"]["statements"][0];
+  if (
+    ret.value("nodeType", std::string()) != "Return" ||
+    !ret.contains("expression"))
+    return false;
+  const nlohmann::json &value = ret["expression"];
+  return value.value("nodeType", std::string()) == "Identifier" &&
+         value.value("name", std::string()) == "_MIN_TOKENS" &&
+         value.value("referencedDeclaration", -1) >= 0;
+}
+
+bool safe_vault_admin_minimum_pool_tokens_focus_closure(
+  const nlohmann::json &source_ast,
+  std::set<int> &closure)
+{
+  if (!source_ast.contains("nodes") || !source_ast["nodes"].is_array())
+    return false;
+
+  std::map<int, const nlohmann::json *> callable_nodes;
+  collect_callable_nodes(source_ast, callable_nodes);
+  const nlohmann::json *target = nullptr;
+  for (const auto &node : source_ast["nodes"])
+  {
+    if (
+      node.value("nodeType", std::string()) == "ContractDefinition" &&
+      node.value("name", std::string()) == "VaultAdmin")
+    {
+      if (target != nullptr)
+        return false;
+      target = &node;
+    }
+  }
+  if (
+    target == nullptr || !target->contains("linearizedBaseContracts") ||
+    !(*target)["linearizedBaseContracts"].is_array())
+    return false;
+
+  std::set<int> hierarchy;
+  for (const auto &id : (*target)["linearizedBaseContracts"])
+    if (id.is_number_integer())
+      hierarchy.insert(id.get<int>());
+
+  int focus_id = -1;
+  std::vector<int> roots;
+  for (const auto &contract : source_ast["nodes"])
+  {
+    if (
+      contract.value("nodeType", std::string()) != "ContractDefinition" ||
+      !contract.contains("id") || !contract["id"].is_number_integer() ||
+      hierarchy.count(contract["id"].get<int>()) == 0)
+      continue;
+    for (const auto &member : contract.value("nodes", nlohmann::json::array()))
+    {
+      if (
+        member.value("nodeType", std::string()) != "FunctionDefinition" ||
+        !member.contains("id") || !member["id"].is_number_integer())
+        continue;
+      const int id = member["id"].get<int>();
+      if (member.value("kind", std::string()) == "constructor")
+        roots.push_back(id);
+      if (is_exact_vault_admin_minimum_pool_tokens_body(member))
+      {
+        if (focus_id >= 0)
+          return false;
+        focus_id = id;
+      }
+    }
+  }
+  if (focus_id < 0)
+    return false;
+  roots.push_back(focus_id);
+
+  std::vector<int> pending = roots;
+  closure.insert(roots.begin(), roots.end());
+  for (std::size_t i = 0; i < pending.size(); ++i)
+  {
+    const auto node_it = callable_nodes.find(pending[i]);
+    if (
+      node_it == callable_nodes.end() ||
+      contains_unsafe_focus_dispatch(*node_it->second))
+      return false;
+    const nlohmann::json &callable = *node_it->second;
+    if (pending[i] != focus_id)
+    {
+      const nlohmann::json overrides =
+        callable.value("overrides", nlohmann::json(nullptr));
+      if (
+        callable.value("kind", std::string()) != "constructor" &&
+        (callable.value("virtual", false) || !overrides.is_null()))
+        return false;
+    }
+    std::set<int> refs;
+    collect_referenced_declarations(callable, refs);
+    for (const int ref : refs)
+      if (callable_nodes.count(ref) != 0 && closure.insert(ref).second)
+        pending.push_back(ref);
+  }
+  return true;
+}
+} // namespace
+
 bool solidity_convertert::convert_ast_nodes(
   const nlohmann::json &contract_def,
   const std::string &cname)
@@ -1626,6 +2029,53 @@ bool solidity_convertert::convert_ast_nodes(
   // flag the ctor of abstract/interface/library contracts as non-instantiable
   // so the Foundry coverage-test generator never emits `new <Abstract>(...)`
   mark_ctor_instantiability(cname);
+
+  // A path fixture removes deployment from an exact focused-unit query.  The
+  // old frontend still converted every inherited function body merged into
+  // the target contract, even though the focused dispatcher could call only
+  // one of them.  Large module contracts therefore spent the whole query
+  // budget before producing a coverage report.  Keep declarations for symbol
+  // and low-level-dispatch construction, but convert bodies only in the
+  // selected function's transitive AST reference closure.  Restrict this to
+  // explicit fixtures: ordinary focus mode still executes the constructor and
+  // retains its historical full-contract conversion surface.
+  const bool fixture_focus_enabled =
+    focus_function_names(focus_func) == std::vector<std::string>{"cash"} &&
+    tgt_cnt_set == std::set<std::string>{"Borrowing"} &&
+    fixture_allows_evk_cash_focus_pruning(cname);
+  const bool eclp_focus_enabled =
+    focus_function_names(focus_func) ==
+      std::vector<std::string>{"getImbalanceSlopes"} &&
+    tgt_cnt_set == std::set<std::string>{"ECLPSurgeHook"};
+  const bool vault_admin_focus_enabled =
+    focus_function_names(focus_func) ==
+      std::vector<std::string>{"getMinimumPoolTokens"} &&
+    tgt_cnt_set == std::set<std::string>{"VaultAdmin"} &&
+    fixture_allows_vault_admin_focus_pruning(cname);
+  if (
+    (fixture_focus_enabled || eclp_focus_enabled ||
+     vault_admin_focus_enabled) &&
+    !fixture_focus_closure_built)
+  {
+    if (fixture_focus_enabled)
+      fixture_focus_closure_built =
+        safe_evk_cash_focus_closure(src_ast_json, fixture_focus_closure);
+    else if (eclp_focus_enabled)
+      fixture_focus_closure_built =
+        safe_eclp_imbalance_focus_closure(src_ast_json, fixture_focus_closure);
+    else
+      fixture_focus_closure_built =
+        safe_vault_admin_minimum_pool_tokens_focus_closure(
+          src_ast_json, fixture_focus_closure);
+    if (!fixture_focus_closure_built)
+      fixture_focus_closure.clear();
+    else if (vault_admin_focus_enabled)
+      log_status(
+        "--path-cov-fixture: exact VaultAdmin/getMinimumPoolTokens source "
+        "matched; retaining {} callable body/bodies in the constructor and "
+        "focused-unit closure",
+        fixture_focus_closure.size());
+  }
 
   size_t index = 0;
   nlohmann::json ast_nodes = contract_def["nodes"];

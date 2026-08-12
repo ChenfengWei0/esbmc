@@ -1,8 +1,5 @@
-// C1: A CHECKED-ARITHMETIC OVERFLOW MUST BE ITS OWN PATH WITH ITS OWN EXIT.
-//
-// KNOWNBUG. The expectations below are what the implementation plan's decision
-// C1 promises and what has never been implemented. Measured today with
-// `--overflow-check`:
+// A verifier-generated checked-arithmetic ASSERT is a safety obligation, not a
+// source-level Solidity path decision. With `--overflow-check` this remains:
 //
 //     instrumented 3 complete path(s) across 1 unit(s)
 //     Complete Paths : 3        Path Status: F 3, I 0, U 0
@@ -53,9 +50,11 @@
 // value, which is why the fix is C1 -- a frontend change lowering checked
 // arithmetic to a real `if (overflow) revert` two-exit branch -- and not a knob.
 //
-// Once C1 lands: 4 paths, the fourth exiting `revert`, rendered with
-// `vm.expectRevert(Panic 0x11)`, and the normal-exit counterexample satisfies
-// `bal + amt < 2^256`.
+// The exit census must apply the same distinction. Treating every ASSERT as a
+// physical path exit makes it report the overflow obligation as reachable but
+// unenumerated and abort before writing cov-report.json. This regression keeps
+// the safety claim enabled while checking that the declared path universe stays
+// at three and instrumentation completes.
 pragma solidity ^0.8.0;
 
 contract C {

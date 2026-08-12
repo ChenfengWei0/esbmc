@@ -926,6 +926,11 @@ public:
     // line. Flagged at the source rather than left for the consumer to guess
     // from the condition text.
     bool synthetic_abi_gate = false;
+    // Exact solc AST span and source-level decision class. Unlike line/function,
+    // these survive modifier splicing and distinguish source choices from
+    // compiler/model control flow at the same location.
+    std::string source_span;
+    std::string source_decision_kind;
   };
   // unit id -> that unit's interned decision descriptors.
   static std::map<std::string, std::vector<path_decisiont>> path_decision_table;
@@ -1022,6 +1027,9 @@ public:
   // fits, and only if that fails does the enumeration truncate at the cap. On
   // truncation the dropped count is always reported — never a silent cut.
   size_t path_cov_max_goals = 10000;
+  // Optional solver-free export of the structural path universe. Written at
+  // the end of solidity_path_coverage(), before the BMC driver starts.
+  std::string path_cov_census_out;
   // Loop bound for path enumeration: each back-edge is followed at most this
   // many times per path, so complete paths are enumerated up to this many
   // loop iterations. Set from --unwind by the dispatch (default 4). Must

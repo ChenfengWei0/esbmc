@@ -1,0 +1,9 @@
+CORE
+contract.sol
+--contract StructMembers --solidity-path-coverage --solidity-max-tx 1 --path-cov-assert spec.json --memlimit 8g
+^--path-cov-assert: region NON-VACUITY witnessed
+^--path-cov-assert: pool\.token: post != pre  HOLDS$
+^--path-cov-assert: pool\.pId: post != pre  HOLDS$
+^--path-cov-assert: pool\.rewards: post != pre  HOLDS$
+^--path-cov-assert: ladder summary -- 18 candidate\(s\): 9 HOLDS, 9 REFUTED, 0 no verdict \(solver unknown\), 0 no verdict \(never reached the solver\)
+\A(?!(.|\n)*REFUSING THE LADDER)

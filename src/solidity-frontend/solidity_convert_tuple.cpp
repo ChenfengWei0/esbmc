@@ -29,6 +29,27 @@ const nlohmann::json *get_tuple_assignment_rhs_json(const nlohmann::json &expr)
   return nullptr;
 }
 
+bool is_low_level_call_tuple_rhs(const nlohmann::json &expr)
+{
+  const nlohmann::json *rhs = get_tuple_assignment_rhs_json(expr);
+  if (rhs == nullptr || !rhs->is_object())
+    return false;
+
+  const nlohmann::json *callee = rhs;
+  if (callee->value("nodeType", "") == "FunctionCall")
+    callee = &(*callee)["expression"];
+  if (
+    callee->is_object() &&
+    callee->value("nodeType", "") == "FunctionCallOptions")
+    callee = &(*callee)["expression"];
+
+  return callee->is_object() &&
+         callee->value("nodeType", "") == "MemberAccess" &&
+         (callee->value("memberName", "") == "call" ||
+          callee->value("memberName", "") == "staticcall" ||
+          callee->value("memberName", "") == "delegatecall");
+}
+
 } // namespace
 
 bool solidity_convertert::get_tuple_definition(const nlohmann::json &ast_node)
@@ -198,9 +219,7 @@ bool solidity_convertert::get_tuple_instance(
   if (is > as)
   {
     log_error(
-      "Tuple instance has {} fields but only {} AST components",
-      is,
-      as);
+      "Tuple instance has {} fields but only {} AST components", is, as);
     return true;
   }
 
@@ -659,15 +678,23 @@ bool solidity_convertert::construct_tuple_assigments(
     }
     else if (rhs_call_json && rhs_call_json->contains("expression"))
     {
-      if (get_tuple_function_ref((*rhs_call_json)["expression"], new_rhs))
+      const nlohmann::json *callee_p = &(*rhs_call_json)["expression"];
+      while (callee_p->is_object() &&
+             callee_p->value("nodeType", "") == "TupleExpression" &&
+             callee_p->contains("components") &&
+             (*callee_p)["components"].is_array() &&
+             (*callee_p)["components"].size() == 1 &&
+             !(*callee_p)["components"][0].is_null())
+        callee_p = &(*callee_p)["components"][0];
+
+      if (get_tuple_function_ref(*callee_p, new_rhs))
       {
-        const auto &callee = (*rhs_call_json)["expression"];
+        const auto &callee = *callee_p;
         const bool is_abi_decode =
           callee.is_object() &&
           callee.value("nodeType", "") == "MemberAccess" &&
           callee.value("memberName", "") == "decode" &&
-          callee.contains("expression") &&
-          callee["expression"].is_object() &&
+          callee.contains("expression") && callee["expression"].is_object() &&
           callee["expression"].value("name", "") == "abi";
         if (is_abi_decode)
         {
@@ -976,6 +1003,20 @@ void solidity_convertert::get_tuple_assignment(
     assign_expr = side_effect_exprt("assign", lop.type());
     convert_type_expr(ns, rop, lop, expr);
     assign_expr.copy_to_operands(lop, rop);
+  }
+  // Preserve the source provenance of the success component from
+  // `(bool ok, bytes memory data) = target.call(...)`.  Its lowered RHS is a
+  // member of the frontend's low-level-call tuple, not a syntactic NONDET, so
+  // counterexample extraction cannot recover the call-controlled value by
+  // recursively looking for a nondet symbol.  Mark only the first (boolean)
+  // component; the bytes payload is not a scalar certification coordinate.
+  if (
+    is_low_level_call_tuple_rhs(expr) && lop.type().id() == typet::id_bool &&
+    !lop.identifier().empty())
+  {
+    assign_expr.location().set("sol_extcall_success", true);
+    assign_expr.location().set(
+      "sol_extcall_success_symbol", lop.identifier().as_string());
   }
   convert_expression_to_code(assign_expr);
   if (current_functionDecl)

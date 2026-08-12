@@ -1,0 +1,12 @@
+CORE
+contract.sol
+--contract Overloaded --focus-function approve --path-cov-instrument-only sol:@C@Overloaded@F@approve#11 --solidity-path-coverage --solidity-max-tx 1
+^--path-cov-instrument-only: 'sol:@C@Overloaded@F@approve#25' is dispatchable .* but NOT instrumented
+^--solidity-path-coverage: instrumented 2 complete path\(s\) across 1 unit\(s\)
+^--solidity-path-coverage: path distribution .* max 2 in 'sol:@C@Overloaded@F@approve#11'
+^Complete Paths : 2$
+^Reached : 2$
+^Path Coverage: 100%$
+^Path Exits: normal 1, revert 1, undetermined 0$
+^Path Status: F 2, I 0, U 0$
+^VERIFICATION FAILED$

@@ -314,8 +314,9 @@ bool solidity_convertert::get_expr(
     if (!expr.contains("expression") || !expr.contains("referencedDeclaration"))
     {
       typet t;
-      if (expr.contains("typeDescriptions") &&
-          !get_type_description(expr["typeDescriptions"], t))
+      if (
+        expr.contains("typeDescriptions") &&
+        !get_type_description(expr["typeDescriptions"], t))
       {
         get_solidity_nondet_value(t, location, new_expr);
         break;
@@ -458,8 +459,9 @@ bool solidity_convertert::get_expr(
     if (!expr.contains("expression") || !expr.contains("memberName"))
     {
       typet t;
-      if (expr.contains("typeDescriptions") &&
-          !get_type_description(expr["typeDescriptions"], t))
+      if (
+        expr.contains("typeDescriptions") &&
+        !get_type_description(expr["typeDescriptions"], t))
       {
         get_solidity_nondet_value(t, location, new_expr);
         break;
@@ -2524,6 +2526,22 @@ bool solidity_convertert::get_call_expr(
         new_expr = rollback;
         return false;
       }
+
+      // Constructors and other contexts without a rollback snapshot cannot use
+      // revert-observation lowering. In path-coverage mode, prune the failing
+      // deployment path so it cannot flow into a focused unit whose deployed
+      // instance would not exist on chain.
+      side_effect_expr_function_callt assume_call;
+      get_library_function_call_no_args(
+        "__ESBMC_assume",
+        "c:@F@__ESBMC_assume",
+        empty_typet(),
+        new_expr.location(),
+        assume_call);
+      assume_call.arguments().push_back(single_arg);
+      convert_expression_to_code(assume_call);
+      new_expr = assume_call;
+      return false;
     }
     else
     {
@@ -2755,6 +2773,70 @@ bool solidity_convertert::get_call_expr(
 
         std::vector<std::pair<unsigned, exprt>> fold_args;
 
+        std::function<bool(exprt)> append_fold_expr;
+        append_fold_expr = [&](exprt value) -> bool {
+          typet resolved = value.type();
+          while (resolved.id() == "symbol")
+          {
+            const symbolt *symbol =
+              context.find_symbol(to_symbol_type(resolved).get_identifier());
+            if (symbol == nullptr)
+            {
+              log_error(
+                "abi/hash fold cannot resolve aggregate type symbol '{}'",
+                to_symbol_type(resolved).get_identifier());
+              return true;
+            }
+            resolved = symbol->type;
+          }
+
+          // Dynamic bytes are represented by a struct but contribute their
+          // length to the abstract ABI key, consistently with top-level bytes.
+          if (is_bytes_type(value.type()) || is_bytes_type(resolved))
+          {
+            return append_fold_expr(member_exprt(value, "length", size_type()));
+          }
+
+          // Keep the existing fixed-bytes exclusion until BytesStatic.data can
+          // be flattened without including representation-only padding.
+          if (is_bytesN_type(value.type()) || is_bytesN_type(resolved))
+            return false;
+
+          if (resolved.id() == "struct")
+          {
+            for (const auto &component : to_struct_type(resolved).components())
+            {
+              const std::string name = component.name().as_string();
+              if (name.compare(0, 9, "anon_pad$") == 0)
+                continue;
+              if (append_fold_expr(
+                    member_exprt(value, component.name(), component.type())))
+                return true;
+            }
+            return false;
+          }
+
+          // Capture original bit-width before any cast.
+          unsigned bw = 256;
+          if (resolved.id() == "unsignedbv" || resolved.id() == "signedbv")
+          {
+            bw = atoi(resolved.width().c_str());
+            if (bw == 0)
+              bw = 256;
+          }
+          else if (resolved.id() == "bool")
+            bw = 8;
+
+          // Normalise to bw-bit unsignedbv for uniform concat. Pointer values
+          // intentionally retain the historical 256-bit ABI-word treatment.
+          typet value_t = unsignedbv_typet(bw);
+          if (value.type() != value_t)
+            solidity_gen_typecast(ns, value, value_t);
+
+          fold_args.emplace_back(bw, value);
+          return false;
+        };
+
         std::function<bool(const nlohmann::json &)> fold_arg =
           [&](const nlohmann::json &a) -> bool {
           std::string tid =
@@ -2789,30 +2871,7 @@ bool solidity_convertert::get_call_expr(
           if (get_expr(a, a["typeDescriptions"], single_arg))
             return true;
 
-          // Dynamic bytes: fold by .length (closes B7-C from T2.1).
-          if (tid.compare(0, 8, "t_bytes_") == 0)
-            single_arg = member_exprt(single_arg, "length", size_type());
-
-          // Capture original bit-width before any cast.
-          unsigned bw = 256;
-          if (
-            single_arg.type().id() == "unsignedbv" ||
-            single_arg.type().id() == "signedbv")
-          {
-            bw = atoi(single_arg.type().width().c_str());
-            if (bw == 0)
-              bw = 256;
-          }
-          else if (single_arg.type().id() == "bool")
-            bw = 8;
-
-          // Normalise to bw-bit unsignedbv for uniform concat.
-          typet single_t = unsignedbv_typet(bw);
-          if (single_arg.type() != single_t)
-            solidity_gen_typecast(ns, single_arg, single_t);
-
-          fold_args.emplace_back(bw, single_arg);
-          return false;
+          return append_fold_expr(single_arg);
         };
 
         for (const auto &arg : expr["arguments"])
@@ -3451,6 +3510,39 @@ bool solidity_convertert::get_contract_member_call_expr(
           fdecl["returnParameters"]["parameters"].is_array() &&
           !fdecl["returnParameters"]["parameters"].empty())
         {
+          const auto &returns = fdecl["returnParameters"]["parameters"];
+          if (returns.size() > 1)
+          {
+            exprt tuple;
+            if (get_tuple_function_ref(callee_expr_json, tuple))
+              return true;
+            if (!tuple.type().is_struct())
+            {
+              log_error(
+                "opaque member call `{}` has a non-struct multi-return tuple",
+                fdecl.value("name", "<unnamed>"));
+              return true;
+            }
+
+            for (const auto &component :
+                 to_struct_type(tuple.type()).components())
+            {
+              if (
+                component.get_name().as_string().find("anon_pad") !=
+                std::string::npos)
+                continue;
+              exprt member =
+                member_exprt(tuple, component.get_name(), component.type());
+              exprt value;
+              get_solidity_nondet_value(component.type(), location, value);
+              exprt assign = side_effect_exprt("assign", member.type());
+              assign.copy_to_operands(member, value);
+              convert_expression_to_code(assign);
+              move_to_front_block(assign);
+            }
+            new_expr = tuple;
+            return false;
+          }
           const auto &rp = fdecl["returnParameters"]["parameters"][0];
           if (rp.contains("typeDescriptions"))
           {
@@ -3461,8 +3553,8 @@ bool solidity_convertert::get_contract_member_call_expr(
           fnode == "VariableDeclaration" && fdecl.contains("typeName") &&
           fdecl["typeName"].contains("typeDescriptions"))
         {
-          have_type = !get_type_description(
-            fdecl["typeName"]["typeDescriptions"], ret_t);
+          have_type =
+            !get_type_description(fdecl["typeName"]["typeDescriptions"], ret_t);
         }
       }
     }
@@ -3546,10 +3638,9 @@ bool solidity_convertert::get_contract_member_call_expr(
     const std::string ts = node["typeDescriptions"].value("typeString", "");
     auto sp = ts.rfind(' ');
     if (
-      sp != std::string::npos &&
-      (ts.compare(0, 9, "contract ") == 0 ||
-       ts.compare(0, 10, "interface ") == 0 ||
-       ts.compare(0, 8, "library ") == 0))
+      sp != std::string::npos && (ts.compare(0, 9, "contract ") == 0 ||
+                                  ts.compare(0, 10, "interface ") == 0 ||
+                                  ts.compare(0, 8, "library ") == 0))
       return ts.substr(sp + 1);
     return "";
   };
@@ -4182,9 +4273,7 @@ bool solidity_convertert::get_contract_member_call_expr(
       // have no concrete implementation to call — return nondet.
       if (get_unbound_expr(func_call_json, current_contractName, new_expr))
         return true;
-
-      typet t = to_code_type(comp.type()).return_type();
-      get_nondet_expr(t, new_expr);
+      return synthesize_nondet_member_return();
     }
     else
     {
@@ -5477,7 +5566,8 @@ bool solidity_convertert::get_binary_operator_expr(
   typet t;
   if (current_BinOp_type.empty())
   {
-    log_warning("missing binary operator type context; using nondet expression");
+    log_warning(
+      "missing binary operator type context; using nondet expression");
     typet fallback_t;
     if (
       expr.contains("typeDescriptions") &&
@@ -5499,18 +5589,13 @@ bool solidity_convertert::get_binary_operator_expr(
       return true;
   }
 
+  // 2.1 special handling for the sol_unbound harness
+  convert_unboundcall_nondet(lhs, common_type, l);
+  convert_unboundcall_nondet(rhs, common_type, l);
   typet lt = lhs.type();
   typet rt = rhs.type();
   SolidityGrammar::SolType lt_sol = get_sol_type(lt);
   SolidityGrammar::SolType rt_sol = get_sol_type(rt);
-
-  // 2.1 special handling for the sol_unbound harness
-  convert_unboundcall_nondet(lhs, common_type, l);
-  convert_unboundcall_nondet(rhs, common_type, l);
-  lt = lhs.type();
-  rt = rhs.type();
-  lt_sol = get_sol_type(lt);
-  rt_sol = get_sol_type(rt);
 
   // 3. Convert opcode
   SolidityGrammar::ExpressionT opcode =
@@ -5813,8 +5898,7 @@ bool solidity_convertert::get_binary_operator_expr(
           "solidity",
           "Bitwise operations only supported for static bytesN; "
           "over-approximating result");
-        const typet result_type =
-          is_bytesN_type(common_type) ? common_type : t;
+        const typet result_type = is_bytesN_type(common_type) ? common_type : t;
         get_solidity_nondet_value(result_type, l, new_expr);
         return false;
       }
@@ -5925,7 +6009,8 @@ bool solidity_convertert::get_binary_operator_expr(
       rt_sol == SolidityGrammar::SolType::TUPLE_INSTANCE ||
       rt_sol == SolidityGrammar::SolType::TUPLE_RETURNS || lhs_is_tuple_block)
     {
-      construct_tuple_assigments(expr, lhs, rhs);
+      if (construct_tuple_assigments(expr, lhs, rhs))
+        return true;
       new_expr = code_skipt();
       return false;
     }

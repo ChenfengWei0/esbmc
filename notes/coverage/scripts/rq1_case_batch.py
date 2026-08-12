@@ -38,6 +38,11 @@ DEFAULT_REMOTE_LD_LIBRARY_PATH = (
 HISTORICAL_RESULT_SUFFIX_RE = re.compile(
     r"(?P<canonical>.+?)(?P<suffix>\.redo\..+|\.superseded\..+|"
     r"\.adopted_from_.+|\.incomplete\..+)$")
+PREVENTION_FIELD_RE = re.compile(r"prevent(?:ion)?", re.IGNORECASE)
+PREVENTION_PATH_RE = re.compile(
+    r"(?:`([^`]+)`|"
+    r"((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+"
+    r"\.(?:py|cpp|h|hpp|c|cc|md|json|jsonl|tsv)))")
 
 STATE_ORDER = {
     "NO_VALID": 0,
@@ -160,6 +165,104 @@ def _manual_section(manual_md: Path, bench: str, subject: str) -> str:
     return text[match.start():end]
 
 
+def _normalize_repo_path(token: str) -> str:
+    token = token.strip().strip(".,;:()[]{}\"'")
+    if not token:
+        return ""
+    if token.startswith("./"):
+        token = token[2:]
+    return token
+
+
+def _path_token_is_relevant(token: str) -> bool:
+    if not token:
+        return False
+    if token.startswith(("/tmp/", "http://", "https://")):
+        return False
+    suffixes = (
+        ".py", ".cpp", ".h", ".hpp", ".c", ".cc", ".md", ".json", ".jsonl",
+        ".tsv",
+    )
+    return "/" in token and token.endswith(suffixes)
+
+
+def historical_prevention_references(args: argparse.Namespace) -> dict:
+    """Collect every prevention/prevent field in md/state used by run gates."""
+    md_entries = []
+    files = set()
+    issues = []
+    for root in args.prevention_md_roots:
+        for path in sorted(Path(root).glob("**/*.md")):
+            try:
+                lines = path.read_text(errors="replace").splitlines()
+            except OSError:
+                continue
+            for lineno, line in enumerate(lines, 1):
+                if not PREVENTION_FIELD_RE.search(line):
+                    continue
+                issue = {
+                    "source": str(path),
+                    "line": lineno,
+                    "text": line.strip(),
+                }
+                issues.append(issue)
+                for match in PREVENTION_PATH_RE.finditer(line):
+                    token = _normalize_repo_path(match.group(1) or match.group(2) or "")
+                    if _path_token_is_relevant(token):
+                        files.add(token)
+                        md_entries.append({
+                            "source": str(path),
+                            "line": lineno,
+                            "path": token,
+                        })
+
+    state_doc = load_case_state(args)
+    state_entries = []
+    for key, row in sorted((state_doc.get("cases") or {}).items()):
+        gt = row.get("ground_truth")
+        if not isinstance(gt, dict):
+            continue
+        for field in ("prevention_files_read", "fix_targets"):
+            for token in gt.get(field) or []:
+                token = _normalize_repo_path(str(token))
+                if _path_token_is_relevant(token):
+                    files.add(token)
+                    state_entries.append({
+                        "case": key,
+                        "field": field,
+                        "path": token,
+                    })
+        for field in ("prevention_code_change", "why_static_missed",
+                      "last_failure"):
+            value = str(gt.get(field) or "")
+            if PREVENTION_FIELD_RE.search(field) or PREVENTION_FIELD_RE.search(value):
+                issues.append({
+                    "source": str(args.case_state),
+                    "case": key,
+                    "field": field,
+                    "text": value,
+                })
+                for match in PREVENTION_PATH_RE.finditer(value):
+                    token = _normalize_repo_path(match.group(1) or match.group(2) or "")
+                    if _path_token_is_relevant(token):
+                        files.add(token)
+                        state_entries.append({
+                            "case": key,
+                            "field": field,
+                            "path": token,
+                        })
+    return {
+        "schema": "veriput-rq1-historical-prevention-references/v1",
+        "md_roots": [str(path) for path in args.prevention_md_roots],
+        "issue_count": len(issues),
+        "issues": issues,
+        "file_count": len(files),
+        "files": sorted(files),
+        "md_entries": md_entries,
+        "state_entries": state_entries,
+    }
+
+
 def ground_truth_status(args: argparse.Namespace, rows: list[dict]) -> dict:
     state_doc = load_case_state(args)
     cases = []
@@ -280,7 +383,27 @@ def init_state(args: argparse.Namespace) -> dict:
 
 def state_summary(args: argparse.Namespace) -> dict:
     doc = load_case_state(args)
-    rows = list((doc.get("cases") or {}).values())
+    inventory = read_json(args.inventory)
+    inventory_rows = (inventory.get("rows")
+                      if isinstance(inventory.get("rows"), list) else [])
+    identities = []
+    seen = set()
+    for inventory_row in inventory_rows:
+        bench = str(inventory_row.get("bench") or "")
+        subject = str(inventory_row.get("subject") or "")
+        key = case_key(bench, subject)
+        if not bench or not subject or key in seen:
+            continue
+        seen.add(key)
+        identities.append((bench, subject, key))
+    cases = doc.get("cases") or {}
+    rows = [
+        cases.get(key) or {
+            "bench": bench,
+            "subject": subject,
+            "state": "NO_VALID",
+        } for bench, subject, key in identities
+    ]
     counts = Counter(str(row.get("state") or "NO_VALID") for row in rows)
     missing_gt = []
     for row in rows:
@@ -311,12 +434,16 @@ def sync_state_from_results(args: argparse.Namespace) -> dict:
     state_doc = load_case_state(args)
     changed = []
     counts = Counter()
+    seen = set()
     for row in rows:
         bench = str(row.get("bench") or "")
         subject = str(row.get("subject") or "")
         if not bench or not subject:
             continue
         key = case_key(bench, subject)
+        if key in seen:
+            continue
+        seen.add(key)
         subject_dir, result = best_result_for_subject(args, bench, subject)
         nums = result_numbers(result)
         bucket = quality_bucket(nums["valid"], nums["put"], nums["r1r2"])
@@ -369,7 +496,7 @@ def sync_state_from_results(args: argparse.Namespace) -> dict:
         "case_state": str(args.case_state),
         "results_root": str(args.results_root),
         "inventory": str(args.inventory),
-        "case_count": len(rows),
+        "case_count": len(seen),
         "state_counts": dict(sorted(counts.items())),
         "changed_count": len(changed),
         "changed": changed,
@@ -402,16 +529,19 @@ def _audit_base_args(args: argparse.Namespace, tmp: Path) -> SimpleNamespace:
         inventory=tmp / "inventory.json",
         run_root=tmp / "runs",
         start_index=1,
-        end_index=8,
-        batch_size=8,
+        end_index=5,
+        batch_size=5,
         require_batch_size=True,
         run_state=[],
         local_parallel=5,
         remote_parallel=3,
         remote_host="audit-host",
+        remote_esbmc=tmp / "remote-esbmc",
+        remote_veriput=tmp / "remote-veriput",
         timeout_s=600,
-        local_memlimit_gib=12,
+        local_memlimit_gib=8,
         remote_memlimit_gib=6.0,
+        remote_reserve_mem_gib=2.0,
         local_rss_limit_gib=18,
         remote_rss_limit_gib=9.0,
         results_root=tmp / "results",
@@ -426,6 +556,7 @@ def _audit_base_args(args: argparse.Namespace, tmp: Path) -> SimpleNamespace:
         supervise_timeout_s=7200,
         settle_after_supervise_stop=True,
         reset_leases=True,
+        prevention_md_roots=[tmp / "notes"],
     )
 
 
@@ -442,7 +573,7 @@ def _audit_write_inventory(path: Path, count: int = 8) -> list[dict]:
 
 def _audit_ground_truth_gate(tmp: Path) -> tuple[bool, str]:
     audit_args = _audit_base_args(argparse.Namespace(), tmp)
-    rows = _audit_write_inventory(audit_args.inventory, 8)
+    rows = _audit_write_inventory(audit_args.inventory, 5)
     init_state(audit_args)
     seed_ground_truth(audit_args)
     seeded_gate = ground_truth_status(audit_args, rows)
@@ -457,14 +588,14 @@ def _audit_ground_truth_gate(tmp: Path) -> tuple[bool, str]:
     if not ready_gate["ok"]:
         return False, "full structured ground truth did not pass"
     short_args = _audit_base_args(argparse.Namespace(), tmp)
-    short_args.end_index = 7
+    short_args.end_index = 4
     try:
         inventory_rows(short_args)
     except SystemExit as exc:
         if "batch size gate failed" in str(exc):
-            return True, "placeholder gate fails, full ground truth passes, 7-case batch rejects"
+            return True, "placeholder gate fails, full ground truth passes, short batch rejects"
         return False, f"unexpected batch gate failure: {exc}"
-    return False, "7-case batch was accepted"
+    return False, "short batch was accepted"
 
 
 def _audit_preflight_and_oracle(tmp: Path) -> tuple[bool, str]:
@@ -526,7 +657,7 @@ def _audit_preflight_and_oracle(tmp: Path) -> tuple[bool, str]:
 
 def _audit_settle_side_effects(tmp: Path) -> tuple[bool, str]:
     audit_args = _audit_base_args(argparse.Namespace(), tmp)
-    rows = _audit_write_inventory(audit_args.inventory, 8)
+    rows = _audit_write_inventory(audit_args.inventory, 5)
     init_state(audit_args)
     state = load_case_state(audit_args)
     for row in rows:
@@ -562,7 +693,7 @@ def _audit_settle_side_effects(tmp: Path) -> tuple[bool, str]:
     no_valid_key = case_key("bugfix124", "audit_subject_003")
     if first["new_valid"] != 2 or first["new_put"] != 1 or first["new_r1r2"] != 1:
         return False, f"unexpected settlement counters: {first.get('bucket_counts')}"
-    if second["case_count"] != 8:
+    if second["case_count"] != 5:
         return False, "second settle did not keep batch shape"
     cases = state_after.get("cases") or {}
     if cases.get(full_key, {}).get("state") != "VALID_PUT_R1R2":
@@ -575,7 +706,7 @@ def _audit_settle_side_effects(tmp: Path) -> tuple[bool, str]:
         return False, "ledger did not record batch"
     if manual.count("RQ1_BATCH_SETTLEMENT_BEGIN audit-batch") != 1:
         return False, "manual settlement was not marker-upserted"
-    if len(tickets) < 7:
+    if len(tickets) < 4:
         return False, "repair tickets missing for below-VALID_PUT_R1R2 cases"
     return True, "settle writes state/ledger/MD once and repair tickets for quality debt"
 
@@ -583,7 +714,7 @@ def _audit_settle_side_effects(tmp: Path) -> tuple[bool, str]:
 def _audit_rolling_fill(tmp: Path) -> tuple[bool, str]:
     audit_args = _audit_base_args(argparse.Namespace(), tmp)
     audit_args.run_state = ["NO_VALID"]
-    rows = _audit_write_inventory(audit_args.inventory, 13)
+    rows = _audit_write_inventory(audit_args.inventory, 10)
     init_state(audit_args)
     state = load_case_state(audit_args)
     for idx, row in enumerate(rows, start=1):
@@ -594,13 +725,68 @@ def _audit_rolling_fill(tmp: Path) -> tuple[bool, str]:
     write_case_state(audit_args, state)
     selected = inventory_rows(audit_args)
     selected_subjects = [row["subject"] for row in selected]
-    expected = [f"audit_subject_{idx:03d}" for idx in range(6, 14)]
+    expected = [f"audit_subject_{idx:03d}" for idx in range(6, 11)]
     if selected_subjects != expected:
         return False, f"rolling selected {selected_subjects}, expected {expected}"
     prepared = prepare(audit_args)
-    if prepared["case_count"] != 8:
-        return False, f"prepare wrote {prepared['case_count']} cases, expected 8"
-    return True, "run-state rolling fill skips already-fixed rows and prepares exactly 8"
+    if prepared["case_count"] != 5:
+        return False, f"prepare wrote {prepared['case_count']} cases, expected 5"
+    return True, "run-state rolling fill skips already-fixed rows and prepares exactly 5"
+
+
+def _audit_historical_prevention_gate(tmp: Path) -> tuple[bool, str]:
+    audit_args = _audit_base_args(argparse.Namespace(), tmp)
+    audit_args.manual_md = tmp / "notes" / "manual.md"
+    rows = _audit_write_inventory(audit_args.inventory, 8)
+    prevent_file = tmp / "notes" / "coverage" / "scripts" / "prevent_fix.py"
+    prevent_file.parent.mkdir(parents=True, exist_ok=True)
+    prevent_file.write_text("# prevention fixture\n")
+    batch_file = tmp / "notes" / "coverage" / "scripts" / "rq1_case_batch.py"
+    batch_file.write_text("# batch fixture\n")
+    audit_args.manual_md.parent.mkdir(parents=True, exist_ok=True)
+    audit_args.manual_md.write_text(
+        "## note\n"
+        "- prevention_code_change: read `notes/coverage/scripts/prevent_fix.py`\n")
+    init_state(audit_args)
+    state = load_case_state(audit_args)
+    for row in rows:
+        key = case_key(row["bench"], row["subject"])
+        gt = _full_ground_truth()
+        gt["prevention_files_read"] = ["notes/coverage/scripts/rq1_case_batch.py"]
+        gt["fix_targets"] = ["notes/coverage/scripts/rq1_case_batch.py"]
+        state["cases"][key]["ground_truth"] = gt
+    write_case_state(audit_args, state)
+    cwd = Path.cwd()
+    try:
+        os.chdir(tmp)
+        refs = historical_prevention_references(audit_args)
+        if "notes/coverage/scripts/prevent_fix.py" not in refs["files"]:
+            return False, f"historical prevention file was not detected: {refs}"
+        first = pre_run_readiness(audit_args)
+        hist_check = next(
+            (row for row in first["checks"]
+             if row["name"] == "all historical prevent/prevention files were read before rerun"),
+            None,
+        )
+        if not hist_check or hist_check["ok"]:
+            return False, "readiness accepted unread historical prevention file"
+        state = load_case_state(audit_args)
+        for row in rows:
+            key = case_key(row["bench"], row["subject"])
+            state["cases"][key]["ground_truth"]["prevention_files_read"].append(
+                "notes/coverage/scripts/prevent_fix.py")
+        write_case_state(audit_args, state)
+        second = pre_run_readiness(audit_args)
+        hist_check = next(
+            (row for row in second["checks"]
+             if row["name"] == "all historical prevent/prevention files were read before rerun"),
+            None,
+        )
+        if not hist_check or not hist_check["ok"]:
+            return False, f"readiness still rejected after recording read: {hist_check}"
+    finally:
+        os.chdir(cwd)
+    return True, "historical md prevention files are detected and gate reruns"
 
 
 def _audit_behavior() -> dict:
@@ -616,6 +802,8 @@ def _audit_behavior() -> dict:
              _audit_settle_side_effects),
             (18, "behavior: rolling run-state fill",
              _audit_rolling_fill),
+            (19, "behavior: historical prevention readiness gate",
+             _audit_historical_prevention_gate),
         ):
             try:
                 ok, evidence = fn(tmp / f"check_{item}")
@@ -648,8 +836,8 @@ def audit(args: argparse.Namespace) -> dict:
         and len(state.get("cases") or {}) == 205,
         f"{args.case_state}: baseline={state.get('initial_no_valid_baseline')} "
         f"cases={len(state.get('cases') or {})}")
-    add(2, "exactly eight case batch gate",
-        args.batch_size == 8 and args.require_batch_size,
+    add(2, "fixed-size rolling case batch gate",
+        args.batch_size == 5 and args.require_batch_size,
         f"batch_size={args.batch_size} require_batch_size={args.require_batch_size}")
     add(3, "structured ground truth gate",
         tuple(GROUND_TRUTH_REQUIRED_FIELDS)
@@ -662,6 +850,9 @@ def audit(args: argparse.Namespace) -> dict:
     add(4.1, "prevention files must be read before rerun",
         "prevention_files_read" in GROUND_TRUTH_REQUIRED_FIELDS,
         "readiness requires prevention_files_read to exist, be readable, and cover fix_targets")
+    add(4.2, "historical prevention scan is a readiness gate",
+        callable(historical_prevention_references),
+        "readiness scans md/state prevent/prevention references and refuses unread files")
     add(5, "scheduler preflight",
         callable(schedule_preflight),
         "schedule_preflight checks expected contract, expected units, wrong-contract jobs")
@@ -684,6 +875,22 @@ def audit(args: argparse.Namespace) -> dict:
         and quality_bucket(1, 1, 0) == "VALID_PUT_NO_R1R2"
         and quality_bucket(1, 1, 1) == "VALID_PUT_R1R2",
         "quality_bucket maps valid/PUT/R1R2 to four states")
+    add(9.1, "canonical row overrides stale artifact counts",
+        result_numbers({
+            "row": {
+                "valid": 0,
+                "put_valid": 0,
+                "valid_put_with_R1_or_R2": 0,
+            },
+            "put": {
+                "artifact_counts": {
+                    "valid": 1,
+                    "put_valid": 1,
+                    "valid_put_with_R1_or_R2": 1,
+                }
+            },
+        })["valid"] == 0,
+        "explicit row.valid=0 is not promoted by historical artifacts")
     add(10, "writeback metadata capture",
         callable(oracle_details) and callable(oracle_detail_from_summary),
         "settle captures result.json, put summaries, oracle tags, coordinates")
@@ -875,6 +1082,21 @@ def remote_preflight_snapshot(args: argparse.Namespace) -> dict:
         float(args.remote_parallel) * float(args.remote_memlimit_gib)
         + float(args.remote_reserve_mem_gib)
     )
+    if int(args.remote_parallel) <= 0:
+        return {
+            "host": args.remote_host,
+            "remote_esbmc": str(args.remote_esbmc),
+            "remote_veriput": str(args.remote_veriput),
+            "remote_parallel": args.remote_parallel,
+            "remote_memlimit_gib": args.remote_memlimit_gib,
+            "remote_reserve_mem_gib": args.remote_reserve_mem_gib,
+            "required_mem_gib": 0.0,
+            "returncode": 0,
+            "stdout": "remote preflight disabled because remote_parallel=0",
+            "stderr": "",
+            "ready": True,
+            "disabled": True,
+        }
     script = f"""
 set -euo pipefail
 export LD_LIBRARY_PATH={shlex.quote(DEFAULT_REMOTE_LD_LIBRARY_PATH)}:${{LD_LIBRARY_PATH:-}}
@@ -949,51 +1171,97 @@ def pre_run_readiness(args: argparse.Namespace) -> dict:
     def add(name: str, ok: bool, evidence: object) -> None:
         checks.append({"name": name, "ok": bool(ok), "evidence": evidence})
 
-    add("rolling batch has exactly eight runnable cases",
-        len(rows) == args.batch_size == 8 and not inventory_error,
+    add("rolling batch has the configured runnable case count",
+        len(rows) == args.batch_size and args.batch_size == 5 and not inventory_error,
         {
             "manifest_rows": len(rows),
             "batch_size": args.batch_size,
             "inventory_error": inventory_error,
         })
-    add("structured ground truth and failure postmortem complete",
-        bool(gt.get("ok")),
-        {"missing": [
-            case for case in gt.get("cases") or [] if not case.get("ok")
-        ]})
+    if args.require_ground_truth:
+        add("structured ground truth and failure postmortem complete",
+            bool(gt.get("ok")),
+            {"missing": [
+                case for case in gt.get("cases") or [] if not case.get("ok")
+            ]})
+    else:
+        add("structured ground truth and failure postmortem complete",
+            True,
+            {"disabled": True, "reason": "--no-require-ground-truth"})
     state_doc = load_case_state(args)
     prevention_failures = []
+    if args.require_ground_truth:
+        for row in rows:
+            key = case_key(row["bench"], row["subject"])
+            gt_row = ((state_doc.get("cases") or {}).get(key) or {}).get("ground_truth")
+            if not isinstance(gt_row, dict):
+                gt_row = {}
+            prevention_files = [
+                str(path) for path in gt_row.get("prevention_files_read") or []]
+            fix_targets = [str(path) for path in gt_row.get("fix_targets") or []]
+            missing_paths = [
+                path for path in prevention_files
+                if not Path(path).exists()
+            ]
+            uncovered_targets = [
+                path for path in fix_targets
+                if path not in prevention_files
+            ]
+            if not prevention_files or missing_paths or uncovered_targets:
+                prevention_failures.append({
+                    "case": key,
+                    "prevention_files_read": prevention_files,
+                    "fix_targets": fix_targets,
+                    "missing_paths": missing_paths,
+                    "fix_targets_not_read": uncovered_targets,
+                })
+        add("all prevention files from MD/state were read before rerun",
+            not prevention_failures,
+            prevention_failures)
+    else:
+        add("all prevention files from MD/state were read before rerun",
+            True,
+            {"disabled": True, "reason": "--no-require-ground-truth"})
+    batch_prevention_files = set()
     for row in rows:
         key = case_key(row["bench"], row["subject"])
         gt_row = ((state_doc.get("cases") or {}).get(key) or {}).get("ground_truth")
         if not isinstance(gt_row, dict):
             gt_row = {}
-        prevention_files = [str(path) for path in gt_row.get("prevention_files_read") or []]
-        fix_targets = [str(path) for path in gt_row.get("fix_targets") or []]
-        missing_paths = [
-            path for path in prevention_files
+        batch_prevention_files.update(
+            _normalize_repo_path(str(path))
+            for path in gt_row.get("prevention_files_read") or [])
+    if args.require_ground_truth:
+        historical_prevention = historical_prevention_references(args)
+        historical_missing = [
+            path for path in historical_prevention["files"]
             if not Path(path).exists()
         ]
-        uncovered_targets = [
-            path for path in fix_targets
-            if path not in prevention_files
+        historical_unread = [
+            path for path in historical_prevention["files"]
+            if path not in batch_prevention_files
         ]
-        if not prevention_files or missing_paths or uncovered_targets:
-            prevention_failures.append({
-                "case": key,
-                "prevention_files_read": prevention_files,
-                "fix_targets": fix_targets,
-                "missing_paths": missing_paths,
-                "fix_targets_not_read": uncovered_targets,
+        add("all historical prevent/prevention files were read before rerun",
+            not historical_missing and not historical_unread,
+            {
+                "md_roots": historical_prevention["md_roots"],
+                "issue_count": historical_prevention["issue_count"],
+                "required_file_count": historical_prevention["file_count"],
+                "missing_paths": historical_missing,
+                "not_in_current_batch_prevention_files_read": historical_unread,
             })
-    add("all prevention files from MD/state were read before rerun",
-        not prevention_failures,
-        prevention_failures)
+    else:
+        add("all historical prevent/prevention files were read before rerun",
+            True,
+            {"disabled": True, "reason": "--no-require-ground-truth"})
     add("local/remote resource policy fixed",
-        args.local_parallel == 5 and args.remote_parallel == 3
-        and int(args.local_memlimit_gib) == 12
-        and float(args.remote_memlimit_gib) == 6.0
-        and float(args.remote_reserve_mem_gib) == 2.0,
+        args.local_parallel == 5
+        and int(args.local_memlimit_gib) == 8
+        and (
+            (args.remote_parallel == 3
+             and float(args.remote_memlimit_gib) == 6.0
+             and float(args.remote_reserve_mem_gib) == 2.0)
+            or args.remote_parallel == 0),
         {
             "local_parallel": args.local_parallel,
             "remote_parallel": args.remote_parallel,
@@ -1049,6 +1317,8 @@ def start(args: argparse.Namespace) -> dict:
             "reason": "pre-run-readiness-failed",
             "readiness": readiness,
         }
+    if not manifest_path(args).exists():
+        prepare(args)
     state = read_json(state_path(args))
     live_workers = [
         row for row in state.get("workers") or []
@@ -1234,20 +1504,83 @@ def read_jsonl_tail(path: Path, limit: int = 5) -> list[dict]:
     return rows
 
 
+def _is_valid_reference_test(test: dict) -> bool:
+    """Apply the RQ1 replay-validity gate to one detailed artifact row."""
+    stage2_source = str(test.get("stage2_source") or "").replace("_", "-")
+    stage4_kind = str(test.get("stage4_kind") or "").replace("_", "-")
+    if (stage2_source in ("no-unit-deploy-fallback", "structural-deploy-only")
+            or stage4_kind in ("deploy-only", "creation-code-only")):
+        return False
+    return (test.get("valid_reference_test") is True and not test.get("stale")
+            and test.get("refused") is not True)
+
+
+def _detailed_test_rows(result: dict) -> list[dict]:
+    rows = []
+    for source in (result, result.get("row"), result.get("put"),
+                   result.get("adoption")):
+        if not isinstance(source, dict):
+            continue
+        for key in ("raw_tests", "valid_tests", "raw_artifacts",
+                    "valid_artifacts"):
+            value = source.get(key)
+            if isinstance(value, list):
+                rows.extend(test for test in value if isinstance(test, dict))
+    deduped = {}
+    for test in rows:
+        identity = (
+            str(test.get("file") or ""),
+            str(test.get("test") or ""),
+            str(test.get("kind") or ""),
+            str(test.get("unit") or ""),
+            str(test.get("enc") if test.get("enc") is not None else ""),
+        )
+        deduped[identity] = test
+    return list(deduped.values())
+
+
 def result_numbers(result: dict) -> dict:
+    detailed = _detailed_test_rows(result)
+    if detailed:
+        valid_tests = [test for test in detailed if _is_valid_reference_test(test)]
+        valid_puts = [test for test in valid_tests if test.get("kind") == "put"]
+        r1r2 = [
+            test for test in valid_puts
+            if {"R1", "R2"} & set(test.get("oracle_classes") or [])
+        ]
+        return {
+            "valid": len(valid_tests),
+            "put": len(valid_puts),
+            "r1r2": len(r1r2),
+            "quality_bucket": quality_bucket(
+                len(valid_tests), len(valid_puts), len(r1r2)),
+        }
+
     adoption = result.get("adoption") if isinstance(result.get("adoption"), dict) else {}
+    row = result.get("row") if isinstance(result.get("row"), dict) else {}
     put = result.get("put") if isinstance(result.get("put"), dict) else {}
     artifact_counts = (put.get("artifact_counts")
                        if isinstance(put.get("artifact_counts"), dict) else {})
+
+    def current_count(key: str, *legacy_keys: str) -> int:
+        """Read the canonical decision before historical artifact counters."""
+        current = []
+        for obj in (row, adoption):
+            if key in obj:
+                current.append(int(obj.get(key) or 0))
+        if current:
+            return max(current)
+        for obj in (result, artifact_counts, put):
+            for legacy_key in legacy_keys or (key, ):
+                if legacy_key in obj:
+                    return int(obj.get(legacy_key) or 0)
+        return 0
+
     return {
-        "valid": int(adoption.get("valid") or result.get("valid") or
-                     artifact_counts.get("valid") or put.get("valid") or 0),
-        "put": int(adoption.get("put_valid") or result.get("put_valid") or
-                   artifact_counts.get("put_valid") or put.get("put_valid") or 0),
-        "r1r2": int(adoption.get("valid_put_with_R1_or_R2") or
-                    result.get("r1r2") or
-                    artifact_counts.get("valid_put_with_R1_or_R2") or
-                    put.get("valid_put_with_R1_or_R2") or 0),
+        "valid": current_count("valid"),
+        "put": current_count("put_valid"),
+        "r1r2": current_count("valid_put_with_R1_or_R2", "r1r2",
+                               "valid_put_with_R1_or_R2"),
         "quality_bucket": put.get("quality_bucket") or result.get("bucket"),
     }
 
@@ -1260,12 +1593,33 @@ def latest_put_summaries(subject_dir: Path, limit: int = 3) -> list[dict]:
         doc = read_json(path)
         deliverable = doc.get("deliverable_b") if isinstance(doc.get("deliverable_b"), dict) else {}
         quality = deliverable.get("quality") if isinstance(deliverable.get("quality"), dict) else {}
+        rows = deliverable.get("rows")
+        if isinstance(rows, list):
+            valid_rows = [
+                row for row in rows
+                if isinstance(row, dict) and _is_valid_reference_test(row)
+            ]
+            put_rows = [row for row in valid_rows if row.get("kind") == "put"]
+            r1r2_rows = [
+                row for row in put_rows
+                if {"R1", "R2"} & set(row.get("oracle_classes") or [])
+            ]
+            valid_count = len(valid_rows)
+            put_count = len(put_rows)
+            detailed_r1r2_count = len(r1r2_rows)
+            aggregate_r1r2_count = int(quality.get("r1r2_rows") or 0)
+            r1r2_count = min(
+                put_count, max(detailed_r1r2_count, aggregate_r1r2_count))
+        else:
+            valid_count = quality.get("valid_reference_rows")
+            put_count = quality.get("put_rows")
+            r1r2_count = quality.get("r1r2_rows")
         out.append({
             "unit": path.parent.name,
             "b": deliverable.get("b"),
-            "valid_reference_rows": quality.get("valid_reference_rows"),
-            "put_rows": quality.get("put_rows"),
-            "r1r2_rows": quality.get("r1r2_rows"),
+            "valid_reference_rows": valid_count,
+            "put_rows": put_count,
+            "r1r2_rows": r1r2_count,
         })
     return out
 
@@ -1441,11 +1795,10 @@ def schedule_preflight(subject_dir: Path, ground_truth: dict) -> dict:
         if isinstance(job, dict)
         and job.get("priority_reason") == "internal-target-wrapper"
     ]
-    ok = bool(jobs)
-    if expected_units:
+    ok = not bad_contract_jobs
+    if jobs and expected_units:
         ok = ok and bool(target_hits)
-    ok = ok and not bad_contract_jobs
-    if expected_contract and schedule.get("contract"):
+    if jobs and expected_contract and schedule.get("contract"):
         ok = ok and str(schedule.get("contract")) == expected_contract
     return {
         "schedule": str(subject_dir / "unit-schedule.json"),
@@ -1654,6 +2007,10 @@ def _result_subject_matches(path: Path, subject: str) -> bool:
 def best_result_for_subject(args: argparse.Namespace, bench: str,
                             subject: str) -> tuple[Path, dict]:
     parent = args.results_root / bench / "subjects"
+    canonical_dir = parent / subject
+    canonical_result = read_json(canonical_dir / "result.json")
+    if canonical_result:
+        return canonical_dir, canonical_result
     candidates = []
     if parent.exists():
         for subject_dir in parent.iterdir():
@@ -1859,7 +2216,7 @@ def supervise(args: argparse.Namespace) -> dict:
         append_jsonl(intervention_path, event)
         print_supervise_intervention(event)
         events.append(event)
-        if doc.get("hard_stop_required"):
+        if doc.get("hard_stop_required") and args.stop_on_hard_decision:
             stop_result = stop(args)
             settlement = settle(args) if args.settle_after_supervise_stop else {}
             result = {
@@ -1888,7 +2245,7 @@ def supervise(args: argparse.Namespace) -> dict:
             }
             write_json(run_dir(args) / "supervise.json", result)
             return result
-        time.sleep(30)
+        time.sleep(max(1, args.supervise_interval_s))
     result = {
         "schema": "veriput-rq1-case-batch-supervise/v1",
         "batch_id": args.batch_id,
@@ -2075,7 +2432,7 @@ def main() -> int:
     parser.add_argument("--run-root", type=Path, default=DEFAULT_RUN_ROOT)
     parser.add_argument("--start-index", type=int, default=5)
     parser.add_argument("--end-index", type=int, default=12)
-    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--batch-size", type=int, default=5)
     parser.add_argument("--require-batch-size",
                         action=argparse.BooleanOptionalAction,
                         default=True)
@@ -2085,7 +2442,7 @@ def main() -> int:
     parser.add_argument("--remote-esbmc", type=Path, default=DEFAULT_REMOTE_ESBMC)
     parser.add_argument("--remote-veriput", type=Path, default=DEFAULT_REMOTE_VERIPUT)
     parser.add_argument("--timeout-s", type=int, default=600)
-    parser.add_argument("--local-memlimit-gib", type=int, default=12)
+    parser.add_argument("--local-memlimit-gib", type=int, default=8)
     parser.add_argument("--remote-memlimit-gib", type=float, default=6.0)
     parser.add_argument("--remote-reserve-mem-gib", type=float, default=2.0)
     parser.add_argument("--local-rss-limit-gib", type=int, default=18)
@@ -2096,6 +2453,12 @@ def main() -> int:
     parser.add_argument("--case-state", type=Path, default=DEFAULT_CASE_STATE)
     parser.add_argument("--repair-tickets", type=Path,
                         default=DEFAULT_REPAIR_TICKETS)
+    parser.add_argument("--prevention-md-root",
+                        dest="prevention_md_roots",
+                        action="append",
+                        type=Path,
+                        default=[Path("notes")],
+                        help="scan these md trees for prevent/prevention file references before rerun")
     parser.add_argument("--require-ground-truth",
                         action=argparse.BooleanOptionalAction,
                         default=True)

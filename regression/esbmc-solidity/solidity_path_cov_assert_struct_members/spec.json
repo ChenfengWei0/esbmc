@@ -1,0 +1,11 @@
+{
+  "unit": "update",
+  "enc": 1,
+  "depth": 0,
+  "vars_policy": "state-exact",
+  "vars": [
+    {"name": "pool.token"},
+    {"name": "pool.pId"},
+    {"name": "pool.rewards"}
+  ]
+}

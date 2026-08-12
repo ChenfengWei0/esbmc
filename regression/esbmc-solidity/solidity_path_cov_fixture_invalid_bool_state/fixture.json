@@ -1,0 +1,7 @@
+{
+  "contract": "BoolFixture",
+  "skip_constructor": true,
+  "state": {
+    "initialized": 2
+  }
+}

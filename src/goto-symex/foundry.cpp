@@ -334,8 +334,9 @@ std::string foundry_generator::format_sol_value(
   // without reaching it.
   if (sol_type == "BYTES_DYN")
   {
-    if (!is_constant_struct2t(value) ||
-        !is_struct_type(to_constant_struct2t(value).type))
+    if (
+      !is_constant_struct2t(value) ||
+      !is_struct_type(to_constant_struct2t(value).type))
       return "";
     const constant_struct2t &cs = to_constant_struct2t(value);
     const struct_type2t &st = to_struct_type(cs.type);
@@ -429,8 +430,7 @@ std::string foundry_generator::default_sol_literal(
     // to trip a balance/overflow guard than a zero one.
     return "0";
   if (sol_type == "ADDRESS" || sol_type == "ADDRESS_PAYABLE")
-    return nth ? "address(uint160(" + std::to_string(nth) + "))"
-               : "address(0)";
+    return nth ? "address(uint160(" + std::to_string(nth) + "))" : "address(0)";
   // Fixed-size bytesN not exercised on the path: any value is faithful, and a
   // DISTINCT one is preferred for the aliasing reason above.
   if (unsigned n = parse_fixed_bytes_width(sol_type))
@@ -1011,8 +1011,8 @@ static unsigned recover_nondet_string_length(
     if (!e)
       return;
     if (
-      is_symbol2t(e) && to_symbol2t(e).thename.as_string().find("rand_str") !=
-                          std::string::npos)
+      is_symbol2t(e) &&
+      to_symbol2t(e).thename.as_string().find("rand_str") != std::string::npos)
     {
       unsigned n = leading_nonzero(smt_conv.get(e));
       if (n > best)
@@ -1234,14 +1234,19 @@ foundry_generator::test_case foundry_generator::reconstruct(
     out.method = method;
 
     // receive() / fallback() are special functions Solidity forbids calling by
-    // name (`c.receive()` does not compile). They are reached in the EVM via a
-    // low-level `address(c).call{value:}("")` / with mismatched calldata — not
-    // yet reconstructed here — so flag unsupported rather than emit an
-    // uncompilable named call. (The frontend normalizes their names to
-    // "receive"/"fallback"; a regular function cannot carry these names.)
+    // name. Keep them as supported zero-argument calls; the writer renders a
+    // low-level call (empty calldata for receive, deliberately unmatched
+    // calldata for fallback) and asserts its boolean result.
     if (method == "receive" || method == "fallback")
     {
-      out.supported = false;
+      const auto &callable = dispatcher_callable(ns, contract);
+      auto it = callable.find(method);
+      if (it == callable.end() || it->second.size() != 1)
+      {
+        out.supported = false;
+        return out;
+      }
+      out.payable = symbol_is_payable(ns, it->second.front());
       return out;
     }
 
@@ -1827,8 +1832,8 @@ foundry_generator::test_case foundry_generator::reconstruct(
         }
       }
       if (named.empty())
-        named =
-          resolve_dispatcher_method(segs.back().contract, step_location_method(step));
+        named = resolve_dispatcher_method(
+          segs.back().contract, step_location_method(step));
       if (!named.empty())
         segs.back().method = named;
     }
@@ -2002,8 +2007,8 @@ foundry_generator::test_case foundry_generator::reconstruct(
           step.source.pc->location.file().as_string(),
           step.source.pc->location.function().as_string(),
           is_env_helper_step(step) ? 1 : 0,
-          reads_global(step.is_assignment() ? step.rhs : step.cond,
-                       "msg_sender")
+          reads_global(
+            step.is_assignment() ? step.rhs : step.cond, "msg_sender")
             ? 1
             : 0,
           names);
@@ -2565,7 +2570,8 @@ foundry_generator::test_case foundry_generator::reconstruct(
   // that looked responsible, which means the mechanism had been INFERRED rather
   // than seen. Printing the decision is how the next one gets seen instead.
   {
-    std::string dbg = "foundry attribution: refuted={" + out_claims + "} segs=[";
+    std::string dbg =
+      "foundry attribution: refuted={" + out_claims + "} segs=[";
     for (const auto &s : segs)
       dbg += s.contract + "." + (s.method.empty() ? "<none>" : s.method) + " ";
     // ---- THE CTOR-TIME SENDER DECISION, PRINTED ----
@@ -2759,8 +2765,10 @@ std::string foundry_generator::fingerprint(const test_case &tc)
     //
     // `supported` is here because dropping the `payable` gate alone was ALSO
     // wrong, and a regression caught it rather than review. MEASURED on
-    // foundry_covgen_env_receive_fail, whose `receive()` takes an argument type
-    // the emitter cannot render:
+    // Historically foundry_covgen_env_receive_fail exposed this with a
+    // synthetic argument on `receive()`. Special entrypoints now render as
+    // low-level zero-argument calls, while this rule still applies to other
+    // unsupported calls:
     //
     //     function test_cov_0() public {
     //       // UNSUPPORTED: RecvC.receive has an argument type ESBMC cannot
@@ -3269,7 +3277,8 @@ size_t foundry_generator::write_foundry_file(
             const std::string st = sol_type_to_solidity(a.sol_type);
             if (st.empty())
             {
-              abi_sig.clear(); // cannot name the type -> cannot build a selector
+              abi_sig
+                .clear(); // cannot name the type -> cannot build a selector
               break;
             }
             if (!first)
@@ -3281,11 +3290,27 @@ size_t foundry_generator::write_foundry_file(
             abi_sig += ")";
         }
 
+        const bool special_entry =
+          call.method == "receive" || call.method == "fallback";
         if (!call.supported || (!is_lib && !built.count(call.contract)))
           // No `vm.deal` here: the call is not emitted, so an orphan deal would
           // be dead noise and would over-report the pinned-value count.
           f << "    // UNSUPPORTED: " << call.contract << "." << call.method
             << " has an argument type ESBMC cannot yet render as a literal\n";
+        else if (special_entry)
+        {
+          const std::string calldata =
+            call.method == "receive" ? "hex\"\"" : "hex\"deadbeef\"";
+          f << deal_line;
+          f << "    (bool ok" << fn << ", ) = address(" << recv << ").call"
+            << value_brace << "(" << calldata << ");\n";
+          if (call.reverts)
+            f << "    assertFalse(ok" << fn
+              << ", \"covered receive/fallback path must revert\");\n";
+          else if (call.normal_confirmed)
+            f << "    assertTrue(ok" << fn
+              << ", \"covered receive/fallback path must return normally\");\n";
+        }
         else if (!is_lib && !nonpayable_value.empty() && !abi_sig.empty())
         {
           const std::string args = join_args(call);
@@ -3331,7 +3356,8 @@ size_t foundry_generator::write_foundry_file(
           // the call reverts at run time, the test fails, which is exactly the
           // divergence worth hearing about.
           f << deal_line;
-          f << "    // [asserted] path exits normally; a revert fails the test\n";
+          f << "    // [asserted] path exits normally; a revert fails the "
+               "test\n";
           f << "    " << recv << "." << call.method << value_brace << "("
             << join_args(call) << ");\n";
         }
@@ -3375,9 +3401,11 @@ void foundry_generator::generate() const
   // is reported in goto_coverage.cpp: an obstacle is not partial credit.
   if (suppressed_obstacle)
     log_warning(
-      "Foundry: {} counterexample(s) REFUSED -- their path is a NAMED OBSTACLE, "
+      "Foundry: {} counterexample(s) REFUSED -- their path is a NAMED "
+      "OBSTACLE, "
       "i.e. the model admits an execution the chain does not have, so a test "
-      "replaying one is RED on the UNMODIFIED contract. The paths remain in the "
+      "replaying one is RED on the UNMODIFIED contract. The paths remain in "
+      "the "
       "coverage denominator (they are real); what is refused is turning them "
       "into tests. See the NAMED OBSTACLE report above for which units and why",
       suppressed_obstacle);
@@ -3406,8 +3434,10 @@ void foundry_generator::generate() const
       "Foundry: reconstruction accounting -- {} dispatcher segment(s) acquired "
       "NO method and contributed no call; in {} reconstruction(s) NO callable "
       "call existed and a CONSTRUCTOR was already present, so the "
-      "coverage-claim FALLBACK ran to reconstruct the covered method. Under the "
-      "previous `calls.empty()` guard those {} case(s) were instead refused for "
+      "coverage-claim FALLBACK ran to reconstruct the covered method. Under "
+      "the "
+      "previous `calls.empty()` guard those {} case(s) were instead refused "
+      "for "
       "having an EMPTY BODY -- the constructor made `calls` non-empty while "
       "holding nothing callable. This is the empty-body route that does NOT "
       "involve an unrenderable argument: an unsupported call is still pushed "
@@ -3480,16 +3510,17 @@ void foundry_generator::generate() const
     {
       std::string breakdown;
       for (const auto &bt : by_type)
-        breakdown +=
-          (breakdown.empty() ? "" : ", ") + bt.first + " x" +
-          std::to_string(bt.second);
+        breakdown += (breakdown.empty() ? "" : ", ") + bt.first + " x" +
+                     std::to_string(bt.second);
       log_warning(
         "Foundry: {} call(s) carry {} DEFAULTED argument(s) ({}). A defaulted "
         "argument is a TYPE DEFAULT substituted because no value was recovered "
-        "for that parameter -- the emitted call therefore exercises a DIFFERENT "
+        "for that parameter -- the emitted call therefore exercises a "
+        "DIFFERENT "
         "input than the counterexample did, while reading exactly like a "
         "faithful replay. Not refused: the reconstruction cannot yet tell "
-        "\"sliced because irrelevant\" (a faithful default) from \"relevant but "
+        "\"sliced because irrelevant\" (a faithful default) from \"relevant "
+        "but "
         "unrecoverable\" (a wrong test), and refusing every default would "
         "silently shrink the suite. This count is what that decision needs",
         d_calls,

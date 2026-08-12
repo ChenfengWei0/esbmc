@@ -870,13 +870,26 @@ bool solidity_convertert::get_func_decl_ref_type(
     const nlohmann::json *old_functionDecl = current_functionDecl;
     const std::string old_functionName = current_functionName;
 
-    // need in get_function_params()
-    assert(decl.contains("name"));
-    current_functionName = decl["name"].get<std::string>();
-    current_functionDecl = &decl;
-
     std::string current_contractName;
     get_current_contract_name(decl, current_contractName);
+    std::string function_name;
+    if (
+      decl.contains("name") && decl["name"].is_string() &&
+      !decl["name"].get<std::string>().empty())
+      function_name = decl["name"].get<std::string>();
+    else if (
+      decl.contains("kind") && decl["kind"].is_string() &&
+      decl["kind"] == "constructor")
+      function_name = current_contractName;
+    else if (decl.contains("kind") && decl["kind"].is_string())
+      function_name = decl["kind"].get<std::string>();
+
+    if (function_name.empty())
+      function_name = "_anon_";
+
+    // need in get_function_params()
+    current_functionName = function_name;
+    current_functionDecl = &decl;
 
     if (decl.contains("returnParameters"))
     {
@@ -884,7 +897,11 @@ bool solidity_convertert::get_func_decl_ref_type(
 
       typet return_type;
       if (get_type_description(rtn_type, return_type))
+      {
+        current_functionName = old_functionName;
+        current_functionDecl = old_functionDecl;
         return true;
+      }
 
       type.return_type() = return_type;
     }
@@ -897,7 +914,11 @@ bool solidity_convertert::get_func_decl_ref_type(
 
       code_typet::argumentt param;
       if (get_function_params(func_param_decl, current_contractName, param))
+      {
+        current_functionName = old_functionName;
+        current_functionDecl = old_functionDecl;
         return true;
+      }
 
       type.arguments().push_back(param);
     }
@@ -1886,7 +1907,8 @@ void solidity_convertert::convert_type_expr(
           dest_type,
           loc,
           call);
-        call.arguments().push_back(src_expr);
+        src_expr = make_aux_var(src_expr, loc);
+        call.arguments().push_back(address_of_exprt(src_expr));
       }
       else if (is_bytes_type(src_type))
       {

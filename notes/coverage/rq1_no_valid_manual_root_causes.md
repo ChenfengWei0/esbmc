@@ -736,3 +736,24 @@ Per-case rerun prevention summary:
   quality work.
 
 <!-- RQ1_PRE_RUN_READINESS_END manual-005-012-novalid-r3 -->
+
+<!-- RQ1_BATCH_SETTLEMENT_BEGIN manual-005-012-novalid-r3 -->
+
+## Batch settlement: manual-005-012-novalid-r3
+
+- case_count: 8
+- new valid: 6
+- new PUT: 0
+- new R1/R2: 0
+- bucket_counts: {"NO_VALID": 2, "VALID_NO_PUT": 6, "put": 0, "r1r2": 0, "valid": 6}
+
+- `bugfix124/acfix_fixlink_MStableYieldSource`: NO_VALID valid=0 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json
+- `bugfix124/pop_001_Multicall`: NO_VALID valid=0 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json
+- `bugfix124/pop_009_PrivatePool`: VALID_NO_PUT valid=2 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json
+- `bugfix124/pop_018_PrivatePool`: VALID_NO_PUT valid=6 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/result.json
+- `bugfix124/pop_032_PuttyV2`: VALID_NO_PUT valid=1 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_032_PuttyV2/result.json
+- `bugfix124/pop_033_PrivatePool`: VALID_NO_PUT valid=4 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/result.json
+- `bugfix124/pop_042_VaultAdapter`: VALID_NO_PUT valid=2 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_042_VaultAdapter/result.json
+- `bugfix124/pop_046_CVXStaker`: VALID_NO_PUT valid=6 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/result.json
+
+<!-- RQ1_BATCH_SETTLEMENT_END manual-005-012-novalid-r3 -->

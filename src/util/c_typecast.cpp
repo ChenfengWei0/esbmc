@@ -14,6 +14,16 @@
 // copies, because it's unclear to me what the overall algorithm is, therefore
 // I can't replicated it in another way for irep2. Too bad.
 
+static bool
+has_unresolved_symbol_subtype(const typet &type, const namespacet &ns)
+{
+  if (!type.has_subtype())
+    return false;
+
+  const typet &subtype = type.subtype();
+  return subtype.is_symbol() && ns.lookup(subtype.identifier()) == nullptr;
+}
+
 bool c_implicit_typecast(
   exprt &expr,
   const typet &dest_type,
@@ -694,23 +704,28 @@ void c_typecastt::implicit_typecast_followed(
         return;
       }
 
-      const typet &src_sub = ns.follow(src_type.subtype());
-      const typet &dest_sub = ns.follow(dest_type.subtype());
+      if (
+        !has_unresolved_symbol_subtype(src_type, ns) &&
+        !has_unresolved_symbol_subtype(dest_type, ns))
+      {
+        const typet &src_sub = ns.follow(src_type.subtype());
+        const typet &dest_sub = ns.follow(dest_type.subtype());
 
-      if (base_type_eq(dest_type.subtype(), src_type.subtype(), ns))
-      {
+        if (base_type_eq(dest_type.subtype(), src_type.subtype(), ns))
+        {
+        }
+        else if (src_sub.is_code() && dest_sub.is_code())
+        {
+          // very generous:
+          // between any two function pointers it's ok
+        }
+        else if (is_number(src_sub) && is_number(dest_sub))
+        {
+          // also generous: between any to scalar types it's ok
+        }
+        else
+          warnings.emplace_back("incompatible pointer types");
       }
-      else if (src_sub.is_code() && dest_sub.is_code())
-      {
-        // very generous:
-        // between any two function pointers it's ok
-      }
-      else if (is_number(src_sub) && is_number(dest_sub))
-      {
-        // also generous: between any to scalar types it's ok
-      }
-      else
-        warnings.emplace_back("incompatible pointer types");
 
       // check qualifiers
 

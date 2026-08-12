@@ -603,7 +603,8 @@ bool solidity_convertert::get_statement(
           }
         }
 
-        construct_tuple_assigments(stmt, lhs_block, tuple_expr);
+        if (construct_tuple_assigments(stmt, lhs_block, tuple_expr))
+          return true;
       }
     }
     log_debug("solidity", " \t@@@ DeclStmt group has {} decls", ctr);
@@ -2327,6 +2328,25 @@ bool solidity_convertert::convert_yul_expression(
     // Yul reads of internal-fn-ptr-typed locals see 0 (uninit fn-ptr semantics).
     if (out.type().get_bool("#sol_func_ptr"))
       out = from_integer(BigInt(0), u256);
+    else if (
+      is_bytes_type(out.type()) ||
+      (out.type().id() == "struct" && !is_bytesN_type(out.type())))
+    {
+      // A Solidity memory reference is an EVM word in Yul, but aggregate
+      // values such as BytesDynamic are represented as structs in our IR.
+      // Casting that struct to uint256 creates invalid solver IR.  Until the
+      // memory model exposes an address for every aggregate, represent the
+      // pointer word by a fresh uint256.  This is an over-approximation: it
+      // preserves every concrete pointer value without inventing a relation
+      // between the EVM address and the aggregate's host-side layout.
+      log_warning(
+        "[approx] inline assembly at {}:{}: over-approximating aggregate "
+        "memory reference '{}' as a nondet uint256 EVM pointer",
+        loc.get_file().c_str(),
+        loc.get_line().c_str(),
+        name);
+      get_nondet_expr(u256, out);
+    }
     else
       solidity_gen_typecast(ns, out, u256);
     return false;
@@ -2344,7 +2364,32 @@ bool solidity_convertert::convert_yul_expression(
         args[i], src_to_decl, slot_refs, locals, loc, dst);
     };
     auto u256_const = [&](const BigInt &v) { return from_integer(v, u256); };
-    auto cast_u256 = [&](exprt &e) { solidity_gen_typecast(ns, e, u256); };
+    auto cast_u256 = [&](exprt &e) {
+      if (is_bytesN_type(e.type()))
+      {
+        const std::string bytesn_size =
+          e.type().get("#sol_bytesn_size").as_string();
+        side_effect_expr_function_callt call;
+        get_library_function_call_no_args(
+          "bytes_static_to_uint", "c:@F@bytes_static_to_uint", u256, loc, call);
+        e = make_aux_var(e, loc);
+        call.arguments().push_back(address_of_exprt(e));
+        e = call;
+        if (!bytesn_size.empty())
+        {
+          const unsigned n = std::stoul(bytesn_size);
+          if (n < 32)
+          {
+            exprt shifted("shl", u256);
+            shifted.copy_to_operands(
+              e, from_integer(BigInt((32 - n) * 8), u256));
+            e = shifted;
+          }
+        }
+        return;
+      }
+      solidity_gen_typecast(ns, e, u256);
+    };
     // ---- THIS TERNARY IS A PATH DECISION, AND IT IS MEASURED ----
     //
     // Used by `lt`/`gt`/`eq` (below), `slt`/`sgt`, and `iszero`. A ternary's

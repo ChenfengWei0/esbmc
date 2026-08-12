@@ -29,7 +29,222 @@ def check(name, got, want):
     return 1
 
 
+class _GetterEnum:
+
+    def __init__(self, skipped):
+        self.units = ()
+        self.skipped = tuple(skipped)
+
+
+class _GetterSubject:
+
+    def __init__(self):
+        self.unit = ""
+
+
 def main():
+    bad = check("forge-relative-suite-path-is-not-relativized-twice",
+                put_all.project_rel_file("/tmp/Project", "test/Probe.t.sol"),
+                "test/Probe.t.sol")
+    bad += check("forge-absolute-suite-path-is-project-relative",
+                 put_all.project_rel_file(
+                     "/tmp/Project", "/tmp/Project/test/Probe.t.sol"),
+                 "test/Probe.t.sol")
+    with tempfile.TemporaryDirectory() as td:
+        root = os.path.join(td, "subject")
+        os.makedirs(root)
+        flat = os.path.join(root, "flat.sol")
+        solast = os.path.join(root, "missing.solast")
+        solc_bin = os.path.join(root, "solc")
+        with open(flat, "w", encoding="utf-8") as fh:
+            fh.write("contract C { function f() public {} }\n")
+        with open(solc_bin, "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\nexit 0\n")
+        os.chmod(solc_bin, 0o755)
+        subject = Namespace(flat_sol=flat, solast=solast, solc_bin=solc_bin)
+        logs = []
+        bad += check("missing-solast-is-not-regenerated",
+                     put_all.ensure_row_subject_solast(subject, log=logs.append),
+                     False)
+        bad += check("missing-solast-file-stays-missing", os.path.exists(solast),
+                     False)
+    bad += check("missing-solast-reports-fail-closed",
+                 any("refusing to regenerate" in msg for msg in logs), True)
+    old_enumerate = put_all.enumerate_subject_units
+    try:
+        put_all.enumerate_subject_units = lambda _subject: _GetterEnum([{
+            "kind": "public-state-getter",
+            "name": "balances",
+            "parameter_count": 1,
+            "parameter_types": ["address"],
+            "return_count": 1,
+            "return_types": ["uint256"],
+        }])
+        getter_rows = put_all.static_subject_concrete_fallback_rows(
+            {
+                "bucket": "NO-WITNESS-UNKNOWN",
+                "unit": "balances",
+            },
+            _GetterSubject())
+        bad += check("parameterized-public-getter-fallback-is-structural",
+                     (len(getter_rows), getter_rows[0]["stage4_kind"],
+                      getter_rows[0]["detail"]["getter_parameter_count"]),
+                     (1, "getter-only", 1))
+        stale_rows = put_all.static_subject_concrete_fallback_rows(
+            {
+                "bucket": "NO-WITNESS-UNKNOWN",
+                "unit": "staleGetter",
+            },
+            _GetterSubject())
+        bad += check("stale-public-getter-fallback-is-rejected",
+                     stale_rows, [])
+    finally:
+        put_all.enumerate_subject_units = old_enumerate
+    transfer_root = os.path.join(
+        "/home/samson/workspace/VeriPUT/Results/Stress243/subjects",
+        "ProjectOpenSea__seaport__TransferHelper")
+    transfer_flat = os.path.join(transfer_root, "flat.sol")
+    transfer_ast = os.path.join(
+        "/tmp/veriput_rq1_ast_cache/stress243",
+        "stress243__ProjectOpenSea__seaport__TransferHelper",
+        "flat.sol.solast")
+    if os.path.exists(transfer_flat) and os.path.exists(transfer_ast):
+        transfer_subject = Namespace(
+            subject_id="ProjectOpenSea__seaport__TransferHelper",
+            contract="TransferHelper",
+            unit="bulkTransfer",
+            flat_sol=transfer_flat,
+            solast=transfer_ast,
+        )
+        transfer_rows = put_all.static_subject_concrete_fallback_rows({
+            "bucket": "KILLED",
+            "unit": "bulkTransfer",
+        }, transfer_subject)
+        bad += check("transfer-helper-zero-key-fallback-is-concrete-only",
+                     (len(transfer_rows), transfer_rows[0]["region"],
+                      transfer_rows[0]["stage4_kind"]),
+                     (1, {"conduitKey": [0, 0]},
+                      "source-guard-revert-only"))
+        with tempfile.TemporaryDirectory() as td:
+            changed_flat = os.path.join(td, "flat.sol")
+            with open(transfer_flat, "rb") as src, open(changed_flat,
+                                                         "wb") as dst:
+                dst.write(src.read() + b"\n")
+            changed_subject = Namespace(**{
+                **vars(transfer_subject),
+                "flat_sol": changed_flat,
+            })
+            bad += check("transfer-helper-source-drift-rejects-fallback",
+                         put_all.static_subject_concrete_fallback_rows({
+                             "bucket": "KILLED",
+                             "unit": "bulkTransfer",
+                         }, changed_subject), [])
+    else:
+        print("skip - TransferHelper prepared source/AST unavailable")
+    pure_subject = Namespace(
+        unit="version",
+        solast="/tmp/source.solast",
+        contract="PhiNFT1155",
+    )
+    pure_record = {
+        "bucket": "KILLED",
+        "unit": "version",
+        "path_function": "sol:@C@PhiNFT1155@F@version#7634",
+    }
+    old_callable_facts = put_all.unit_callable_facts
+    old_contains_inline_assembly = put_all.unit_contains_inline_assembly
+    old_state_dependencies = put_all.unit_state_dependencies
+    old_env_dependencies = put_all.unit_env_dependencies
+    try:
+        put_all.unit_contains_inline_assembly = lambda *_args, **_kwargs: (False, [])
+        put_all.unit_callable_facts = lambda *_args, **_kwargs: ({
+            "state_mutability": "pure",
+            "parameters": [],
+            "used_parameters": [],
+        }, {"declaration_id": 7634})
+        put_all.unit_state_dependencies = lambda *_args, **_kwargs: ([], {
+            "declaration_id": 7634,
+        })
+        put_all.unit_env_dependencies = lambda *_args, **_kwargs: ([], {
+            "declaration_id": 7634,
+        })
+        pure_rows = put_all.static_pure_unit_concrete_fallback_rows(
+            pure_record, pure_subject)
+        bad += check("zero-parameter-pure-unit-has-source-grounded-fallback",
+                     (len(pure_rows), pure_rows[0]["detail"]["witness_check"]),
+                     (1, "STATIC-PURE-UNIT-NO-COORDINATE"))
+        witnessed_timeout = dict(pure_record)
+        witnessed_timeout["partial_witness_journal"] = {"witness_count": 1}
+        bad += check("witnessed-timeout-keeps-authenticated-fallback-only",
+                     put_all.static_pure_unit_concrete_fallback_rows(
+                         witnessed_timeout, pure_subject), [])
+
+        put_all.unit_callable_facts = lambda *_args, **_kwargs: ({
+            "state_mutability": "view",
+            "parameters": [],
+            "used_parameters": [],
+        }, {})
+        bad += check("zero-parameter-view-unit-has-no-pure-fallback",
+                     put_all.static_pure_unit_concrete_fallback_rows(
+                         pure_record, pure_subject), [])
+
+        put_all.unit_callable_facts = lambda *_args, **_kwargs: ({
+            "state_mutability": "pure",
+            "parameters": [{"name": "unused"}],
+            "used_parameters": [],
+        }, {})
+        bad += check("unused-parameter-pure-unit-has-no-zero-arg-fallback",
+                     put_all.static_pure_unit_concrete_fallback_rows(
+                         pure_record, pure_subject), [])
+
+        put_all.unit_callable_facts = lambda *_args, **_kwargs: ({
+            "state_mutability": "pure",
+            "parameters": [],
+            "used_parameters": [],
+        }, {})
+        put_all.unit_contains_inline_assembly = lambda *_args, **_kwargs: (True, [{
+            "nodeType": "InlineAssembly",
+        }])
+        bad += check("inline-assembly-pure-unit-fails-closed",
+                     put_all.static_pure_unit_concrete_fallback_rows(
+                         pure_record, pure_subject), [])
+
+        put_all.unit_contains_inline_assembly = lambda *_args, **_kwargs: (False, [])
+        put_all.unit_state_dependencies = lambda *_args, **_kwargs: (["owner"], {})
+        bad += check("state-dependent-unit-has-no-pure-fallback",
+                     put_all.static_pure_unit_concrete_fallback_rows(
+                         pure_record, pure_subject), [])
+
+        put_all.unit_state_dependencies = lambda *_args, **_kwargs: ([], {})
+        put_all.unit_env_dependencies = lambda *_args, **_kwargs: (["block.timestamp"], {})
+        bad += check("environment-dependent-unit-has-no-pure-fallback",
+                     put_all.static_pure_unit_concrete_fallback_rows(
+                         pure_record, pure_subject), [])
+    finally:
+        put_all.unit_callable_facts = old_callable_facts
+        put_all.unit_contains_inline_assembly = old_contains_inline_assembly
+        put_all.unit_state_dependencies = old_state_dependencies
+        put_all.unit_env_dependencies = old_env_dependencies
+    reject_detail = {
+        "certification_source": "structural-abi-gate-no-coordinate",
+        "box": [{
+            "name": "msg.value",
+            "lo": "1",
+            "hi": str((1 << 256) - 1),
+            "holes": [],
+        }],
+    }
+    reject_region, _reject_holes, reject_pins = \
+        put_all.parse_certified_detail_region(
+            reject_detail, {
+                "msg.value": 0,
+                "state.immutableScale": 0,
+                "block.timestamp": 7,
+            })
+    bad += check("abi-reject-region-keeps-full-nonzero-value-domain",
+                 reject_region["msg.value"], [1, (1 << 256) - 1])
+    bad += check("abi-reject-region-drops-unobserved-state-pins",
+                 reject_pins, {})
     records = [
         {
             "benchmark": "bench",
@@ -298,7 +513,7 @@ def main():
         for record in records:
             fh.write(json.dumps(record) + "\n")
     try:
-        bad = 0
+        bad += 0
         with tempfile.TemporaryDirectory() as td:
             old_out = put_all.OUT
             old_forge_std = put_all.FORGE_STD
@@ -471,11 +686,14 @@ def main():
         bad += check("stage4-strong-recipe-r2",
                      (args.propose_r2, args.r2_depth, args.r2_term_budget,
                       args.r2_candidate_budget),
-                     (True, 1, 96, 192))
+                     (True, put_all.STRONG_PUT_R2_DEPTH,
+                      put_all.STRONG_PUT_R2_TERM_BUDGET,
+                      put_all.STRONG_PUT_R2_CANDIDATE_BUDGET))
         bad += check("stage4-strong-recipe-fuzz-refute",
                      (args.fuzz_r2_prefilter, args.fuzz_runs,
                       args.fuzz_r2_candidate_budget),
-                     (True, 256, 192))
+                     (True, put_all.STRONG_PUT_FUZZ_RUNS,
+                      put_all.STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET))
         bad += check("stage4-v14-does-not-require-certified-details",
                      put_all.recipe_requires_certified_details(
                          "veriput-strong/14"),
@@ -626,10 +844,16 @@ def main():
                          "unknown")
         finally:
             os.unlink(report_path)
+        with tempfile.NamedTemporaryFile() as selected_esbmc:
+            selected_mtime = int(os.stat(selected_esbmc.name).st_mtime)
+            bad += check("stage4-current-binary-uses-selected-esbmc",
+                         put_all.current_binary_identity(
+                             selected_esbmc.name)["binaryMtime"],
+                         selected_mtime)
         old_run_forge = put_all.run_forge
         old_binary = put_all.current_binary_identity
         try:
-            put_all.current_binary_identity = lambda: {
+            put_all.current_binary_identity = lambda *_args: {
                 "head": "test",
                 "srcDirty": False,
                 "binaryMtime": 123,

@@ -1,0 +1,8 @@
+CORE
+contract.sol
+--contract VaultAdmin --solidity-path-coverage --solidity-max-tx 1 --focus-function getMinimumPoolTokens --path-cov-fixture fixture.json
+^--path-cov-fixture: exact VaultAdmin/getMinimumPoolTokens source matched; retaining [0-9]+ callable body/bodies in the constructor and focused-unit closure
+^--solidity-path-coverage: instrumented 2 complete path\(s\) across 1 unit\(s\)
+^--solidity-path-coverage: 2 of 2 instrumented path claim\(s\) reached the solver across 1 unit\(s\)
+^Path Coverage: 100%
+^VERIFICATION FAILED$

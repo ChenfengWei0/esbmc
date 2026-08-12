@@ -25,6 +25,11 @@ HISTORICAL_SUFFIX_RE = re.compile(
     r"|\.superseded\..+"
     r"|\.adopted_from_.+"
     r"|\.incomplete\..+"
+    r"|\.pre-owned-put\..+"
+    r"|\.pre-valuegate-.+"
+    r"|\.pre_valuegate\..+"
+    r"|\.failed\..+"
+    r"|\.failed_restore\..+"
     r")$")
 
 

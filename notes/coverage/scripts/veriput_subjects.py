@@ -20,9 +20,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-
-VERIPUT_ROOT = Path(os.environ.get(
-    "VERIPUT_ROOT", "/home/samson/workspace/VeriPUT"))
+VERIPUT_ROOT = Path(os.environ.get("VERIPUT_ROOT", "/home/samson/workspace/VeriPUT"))
 DEFAULT_AST_TIMEOUT_S = 60.0
 
 KNOWN_SUBJECT_ROOTS = {
@@ -31,14 +29,8 @@ KNOWN_SUBJECT_ROOTS = {
     "bugfix124": VERIPUT_ROOT / "Results" / "BugFix124" / "subjects",
 }
 FALLBACK_SUBJECT_ROOTS = {
-    "peer182": (
-        VERIPUT_ROOT / "scripts" / "Results" / "workdirs" / "Peer182"
-        / "subjects",
-    ),
-    "bugfix124": (
-        VERIPUT_ROOT / "scripts" / "Results" / "workdirs" / "BugFix124"
-        / "subjects",
-    ),
+    "peer182": (VERIPUT_ROOT / "scripts" / "Results" / "workdirs" / "Peer182" / "subjects", ),
+    "bugfix124": (VERIPUT_ROOT / "scripts" / "Results" / "workdirs" / "BugFix124" / "subjects", ),
 }
 BUGFIX_DATASET_ROOT = VERIPUT_ROOT / "Datasets" / "Patch-Bug-Bench"
 PEER_REQUIRED_SOURCE_SEGMENT = "contracts_080/"
@@ -106,9 +98,8 @@ def _find_subject_in_roots(subject: str, roots: list[Path]) -> list[Path]:
 def _bugfix_dataset_subject_roots() -> tuple[Path, ...]:
     if not BUGFIX_DATASET_ROOT.is_dir():
         return ()
-    return tuple(
-        p for p in sorted(BUGFIX_DATASET_ROOT.iterdir())
-        if p.is_dir() and p.name.startswith("class"))
+    return tuple(p for p in sorted(BUGFIX_DATASET_ROOT.iterdir())
+                 if p.is_dir() and p.name.startswith("class"))
 
 
 def _normalize_dataset_bugfix_meta(meta: dict, d: Path) -> dict:
@@ -133,11 +124,10 @@ def _is_peer_contract080_meta(meta: dict) -> bool:
 
 def _peer_contract080_refusal(meta: dict, d: Path) -> str:
     source_file = meta.get("source_file") or ""
-    return (
-        f"{d} is not a peer contract080 target: expected source_080=true "
-        f"and source_file containing {PEER_REQUIRED_SOURCE_SEGMENT!r}; "
-        f"got source_080={bool(meta.get('source_080'))} "
-        f"source_file={source_file!r}")
+    return (f"{d} is not a peer contract080 target: expected source_080=true "
+            f"and source_file containing {PEER_REQUIRED_SOURCE_SEGMENT!r}; "
+            f"got source_080={bool(meta.get('source_080'))} "
+            f"source_file={source_file!r}")
 
 
 def _rehome_veriput_path(path: str | None) -> str | None:
@@ -170,8 +160,7 @@ def _infer_solc_bin(metadata: dict) -> str | None:
         if isinstance(version_block, dict):
             version = version_block.get("fix") or version_block.get("bug")
     if isinstance(version, str) and version:
-        local = (Path.home() / ".solc-select" / "artifacts"
-                 / f"solc-{version}" / f"solc-{version}")
+        local = (Path.home() / ".solc-select" / "artifacts" / f"solc-{version}" / f"solc-{version}")
         if local.exists():
             return str(local)
     compile_block = metadata.get("compile") or {}
@@ -308,8 +297,7 @@ class UnitEnumeration:
         return record
 
 
-def _subject_dir(subject: str | None, root: str | None,
-                 benchmark: str | None) -> Path:
+def _subject_dir(subject: str | None, root: str | None, benchmark: str | None) -> Path:
     if root:
         base = Path(root).expanduser().resolve()
         if subject:
@@ -323,27 +311,23 @@ def _subject_dir(subject: str | None, root: str | None,
         if p.is_dir():
             return p.resolve()
         roots = subject_roots(benchmark) if benchmark else [
-            root for bench in KNOWN_SUBJECT_ROOTS
-            for root in subject_roots(bench)
+            root for bench in KNOWN_SUBJECT_ROOTS for root in subject_roots(bench)
         ]
         found = _find_subject_in_roots(subject, list(roots))
         if not found:
             raise SubjectError(f"prepared subject {subject!r} was not found")
         if len(found) > 1 and not benchmark:
             names = ", ".join(str(p) for p in found)
-            raise SubjectError(
-                f"prepared subject {subject!r} is ambiguous: {names}")
+            raise SubjectError(f"prepared subject {subject!r} is ambiguous: {names}")
         return found[0].resolve()
     raise SubjectError("pass --subject-dir or --subject-id")
 
 
 def subject_roots(benchmark: str) -> tuple[Path, ...]:
     if benchmark not in KNOWN_SUBJECT_ROOTS:
-        raise SubjectError(
-            f"unknown subject benchmark {benchmark!r}; known: "
-            + ", ".join(sorted(KNOWN_SUBJECT_ROOTS)))
-    roots = [KNOWN_SUBJECT_ROOTS[benchmark],
-             *FALLBACK_SUBJECT_ROOTS.get(benchmark, ())]
+        raise SubjectError(f"unknown subject benchmark {benchmark!r}; known: " +
+                           ", ".join(sorted(KNOWN_SUBJECT_ROOTS)))
+    roots = [KNOWN_SUBJECT_ROOTS[benchmark], *FALLBACK_SUBJECT_ROOTS.get(benchmark, ())]
     if benchmark == "bugfix124":
         roots.extend(_bugfix_dataset_subject_roots())
     return tuple(roots)
@@ -359,14 +343,15 @@ def _solast_for(flat: Path) -> Path:
     return appended
 
 
-def resolve_subject(subject: str | None = None, *, root: str | None = None,
+def resolve_subject(subject: str | None = None,
+                    *,
+                    root: str | None = None,
                     benchmark: str | None = None,
                     unit: str | None = None,
                     require_unit: bool = True) -> PreparedSubject:
     if benchmark and benchmark not in KNOWN_SUBJECT_ROOTS:
-        raise SubjectError(
-            f"unknown subject benchmark {benchmark!r}; known: "
-            + ", ".join(sorted(KNOWN_SUBJECT_ROOTS)))
+        raise SubjectError(f"unknown subject benchmark {benchmark!r}; known: " +
+                           ", ".join(sorted(KNOWN_SUBJECT_ROOTS)))
     d = _subject_dir(subject, root, benchmark)
     meta_path = d / "meta.json"
     if not meta_path.exists():
@@ -381,8 +366,7 @@ def resolve_subject(subject: str | None = None, *, root: str | None = None,
         meta = _normalize_dataset_bugfix_meta(meta, d)
     status = meta.get("status")
     if status is not None and status != "ok":
-        raise SubjectError(
-            f"{d} is not a usable subject: status={meta.get('status')!r}")
+        raise SubjectError(f"{d} is not a usable subject: status={meta.get('status')!r}")
     bench = benchmark or meta.get("benchmark") or d.parent.parent.name.lower()
     if bench == "peer182" and not _is_peer_contract080_meta(meta):
         raise SubjectError(_peer_contract080_refusal(meta, d))
@@ -392,8 +376,7 @@ def resolve_subject(subject: str | None = None, *, root: str | None = None,
     if not contract:
         raise SubjectError(f"{meta_path} has no target contract")
     if require_unit and not unit:
-        raise SubjectError(
-            f"{d} is a contract-level subject; pass an explicit --unit")
+        raise SubjectError(f"{d} is a contract-level subject; pass an explicit --unit")
     return PreparedSubject(
         benchmark=bench,
         subject_id=meta.get("subject_id") or d.name,
@@ -413,25 +396,21 @@ def subject_from_record(record: dict) -> PreparedSubject | None:
     if not isinstance(data, dict):
         return None
     if data.get("schema") != "veriput-subject/v1":
-        raise SubjectError(
-            f"unknown subject schema {data.get('schema')!r} in cert row")
-    required = ("benchmark", "subject_id", "root", "flat_sol", "solast",
-                "contract", "unit")
+        raise SubjectError(f"unknown subject schema {data.get('schema')!r} in cert row")
+    required = ("benchmark", "subject_id", "root", "flat_sol", "solast", "contract", "unit")
     missing = [name for name in required if not data.get(name)]
     if missing:
-        raise SubjectError(
-            "cert row subject block is missing: " + ", ".join(missing))
+        raise SubjectError("cert row subject block is missing: " + ", ".join(missing))
     flat_s = _rehome_veriput_path(data["flat_sol"])
     root_s = _rehome_veriput_path(data["root"])
     solast_s = _rehome_veriput_path(data["solast"])
     flat = Path(flat_s)
     root = Path(root_s)
     if not flat.exists() or not root.exists():
-        resolved = resolve_subject(
-            data["subject_id"],
-            benchmark=data["benchmark"],
-            unit=data["unit"],
-            require_unit=False)
+        resolved = resolve_subject(data["subject_id"],
+                                   benchmark=data["benchmark"],
+                                   unit=data["unit"],
+                                   require_unit=False)
         if solast_s and Path(solast_s).exists():
             resolved = resolved.with_solast_path(solast_s, source="record")
         return resolved
@@ -536,7 +515,7 @@ def _state_getter_signature(var: dict) -> tuple[tuple[str, ...], tuple[str, ...]
         break
     ret = _type_string(leaf) or _type_string(var.get("typeName")) or \
         _type_string(var) or "unknown"
-    return tuple(params), (ret,)
+    return tuple(params), (ret, )
 
 
 def _state_getter_unit_info(var: dict, owner_name: str) -> dict | None:
@@ -568,14 +547,8 @@ def _function_units(contract_node: dict, owner_name: str):
             continue
         kind = node.get("kind", "function")
         visibility = node.get("visibility")
-        name = node.get("name") or ""
-        if kind != "function":
-            if kind in ("fallback", "receive"):
-                yield None, {
-                    "contract": owner_name,
-                    "kind": kind,
-                    "reason": "fallback/receive has no named focus-function",
-                }, None
+        name = node.get("name") or (kind if kind in ("fallback", "receive") else "")
+        if kind not in ("function", "fallback", "receive"):
             continue
         if visibility not in ("public", "external"):
             continue
@@ -584,8 +557,7 @@ def _function_units(contract_node: dict, owner_name: str):
                 "contract": owner_name,
                 "kind": "unimplemented-function",
                 "name": name,
-                "reason": (
-                    "public/external declaration has no FunctionDefinition body"),
+                "reason": ("public/external declaration has no FunctionDefinition body"),
             }, None
             continue
         if not name:
@@ -673,23 +645,25 @@ def _no_unit_diagnostics(contract_node: dict, owner_name: str) -> list[dict]:
     return out
 
 
-def _classify_no_unit_reason(skipped: list[dict]) -> str:
-    kinds = {row.get("kind") for row in skipped}
+def _classify_no_unit_reason(skipped: list[dict], target_contract: str = "") -> str:
+    target_rows = [
+        row for row in skipped
+        if not target_contract or row.get("contract") == target_contract
+    ]
+    kinds = {row.get("kind") for row in (target_rows or skipped)}
     if "library-contract" in kinds:
         return "target contract is a library, so no external transaction unit is schedulable"
     if "interface-contract" in kinds:
         return "target contract is an interface with no executable public/external body"
     if "public-state-getter" in kinds and all(
-            row.get("kind") == "public-state-getter" for row in skipped):
-        return (
-            "target only exposes zero-argument public state getters; "
-            "use structural getter-only concrete fallback")
+            row.get("kind") == "public-state-getter" for row in (target_rows or skipped)):
+        return ("target only exposes zero-argument public state getters; "
+                "use structural getter-only concrete fallback")
     if "fallback" in kinds or "receive" in kinds:
         callable_kinds = {"fallback", "receive", "constructor"}
-        if all(row.get("kind") in callable_kinds for row in skipped):
-            return (
-                "target only exposes constructor/fallback/receive entries, "
-                "which have no named focus-function")
+        if all(row.get("kind") in callable_kinds for row in (target_rows or skipped)):
+            return ("target only exposes constructor/fallback/receive entries, "
+                    "which have no named focus-function")
     if "non-public-function" in kinds:
         return "target functions are not public/external, so no unit is schedulable"
     if "unimplemented-function" in kinds or "abstract-contract" in kinds:
@@ -702,44 +676,41 @@ def _classify_no_unit_reason(skipped: list[dict]) -> str:
 
 
 def enumerate_subject_units(subject: PreparedSubject) -> UnitEnumeration:
-    """Named public/external function units for the target contract.
+    """Named public/external function units callable on the target contract.
 
-    The result is strictly scoped to declarations owned by the target
-    contract.  Inherited declarations belong to the base contract and are not
-    separate target units for this evaluation.  Public state variable getters
+    Solidity exposes implemented public/external base declarations through
+    the derived contract ABI, so the target's linearized bases are part of the
+    evaluation unit.  Public state variable getters
     are reported as skipped rather than invented from source text; they are
     ABI entry points but not `--focus-function` names backed by a
     FunctionDefinition in the AST.
     """
     ast_path = Path(subject.solast)
     if not ast_path.exists():
-        raise SubjectError(
-            f"{ast_path} does not exist; run ensure_solast() before "
-            "enumerating units")
+        raise SubjectError(f"{ast_path} does not exist; run ensure_solast() before "
+                           "enumerating units")
     ast = _read_compact_ast(ast_path)
     contracts = {}
     _walk_contracts(ast, contracts)
-    target_matches = [
-        c for c in contracts.values() if c.get("name") == subject.contract
-    ]
+    target_matches = [c for c in contracts.values() if c.get("name") == subject.contract]
     if not target_matches:
-        names = sorted({
-            c.get("name") for c in contracts.values() if c.get("name")
-        })
-        raise SubjectError(
-            f"target contract {subject.contract!r} is absent from {ast_path}; "
-            f"available contracts: {', '.join(names[:25])}")
+        names = sorted({c.get("name") for c in contracts.values() if c.get("name")})
+        raise SubjectError(f"target contract {subject.contract!r} is absent from {ast_path}; "
+                           f"available contracts: {', '.join(names[:25])}")
     if len(target_matches) > 1:
         ids = ", ".join(str(c.get("id")) for c in target_matches)
-        raise SubjectError(
-            f"target contract {subject.contract!r} is ambiguous in "
-            f"{ast_path}: matching AST ids {ids}")
+        raise SubjectError(f"target contract {subject.contract!r} is ambiguous in "
+                           f"{ast_path}: matching AST ids {ids}")
     target = target_matches[0]
 
-    # The flattened AST contains the complete inheritance graph.  The target
-    # contract is the evaluation unit, so do not silently turn inherited
-    # declarations into target units or instrument their modifiers.
-    ordered_ids = [target.get("id")]
+    # Solidity lists the target first, followed by bases in method-resolution
+    # order.  Keeping that order makes overrides win signature de-duplication.
+    target_id = target.get("id")
+    ordered_ids = [
+        cid for cid in (target.get("linearizedBaseContracts") or [target_id]) if cid in contracts
+    ]
+    if target_id not in ordered_ids:
+        ordered_ids.insert(0, target_id)
     units = []
     unit_info = []
     seen_signatures = set()
@@ -765,49 +736,38 @@ def enumerate_subject_units(subject: PreparedSubject) -> UnitEnumeration:
             if child.get("nodeType") == "VariableDeclaration" and \
                     child.get("visibility") == "public":
                 getter_info = _state_getter_unit_info(child, owner)
-                # Zero-argument public getters are already handled by the
-                # structural getter-only concrete fallback.  Parameterized
-                # getters, especially mappings and arrays, expose calldata
-                # coordinates and must remain schedulable instead of being
-                # dropped before Stage 2.
-                if getter_info and getter_info.get("parameter_count", 0) > 0:
-                    sig = (
+                getter_sig = None
+                if getter_info:
+                    getter_sig = (
                         getter_info["name"],
                         tuple(getter_info.get("parameter_types") or ()),
                     )
-                    if sig not in seen_signatures:
-                        seen_signatures.add(sig)
-                        units.append(getter_info["name"])
-                        unit_info.append(getter_info)
-                    continue
+                if getter_sig is not None:
+                    # Even when its concrete fallback is handled separately,
+                    # a derived getter overrides the same base ABI signature.
+                    seen_signatures.add(getter_sig)
                 skipped.append({
                     "contract": owner,
                     "kind": "public-state-getter",
                     "name": child.get("name"),
-                    "parameter_count": (
-                        getter_info or {}).get("parameter_count", 0),
-                    "parameter_types": (
-                        getter_info or {}).get("parameter_types", []),
-                    "return_count": (
-                        getter_info or {}).get("return_count", 0),
-                    "return_types": (
-                        getter_info or {}).get("return_types", []),
+                    "parameter_count": (getter_info or {}).get("parameter_count", 0),
+                    "parameter_types": (getter_info or {}).get("parameter_types", []),
+                    "return_count": (getter_info or {}).get("return_count", 0),
+                    "return_types": (getter_info or {}).get("return_types", []),
                     "reason": "public state getter is not a FunctionDefinition",
                 })
     if not units:
-        seen_diag = {
-            (row.get("contract"), row.get("kind"), row.get("name"),
-             row.get("visibility"), row.get("reason"))
-            for row in skipped
-        }
+        seen_diag = {(row.get("contract"), row.get("kind"), row.get("name"), row.get("visibility"),
+                      row.get("reason"))
+                     for row in skipped}
         for cid in ordered_ids:
             node = contracts.get(cid)
             if not node:
                 continue
             owner = node.get("name") or f"<contract {cid}>"
             for row in _no_unit_diagnostics(node, owner):
-                key = (row.get("contract"), row.get("kind"), row.get("name"),
-                       row.get("visibility"), row.get("reason"))
+                key = (row.get("contract"), row.get("kind"), row.get("name"), row.get("visibility"),
+                       row.get("reason"))
                 if key not in seen_diag:
                     skipped.append(row)
                     seen_diag.add(key)
@@ -816,7 +776,8 @@ def enumerate_subject_units(subject: PreparedSubject) -> UnitEnumeration:
         units=tuple(units),
         unit_info=tuple(unit_info),
         skipped=tuple(skipped),
-        no_unit_reason=_classify_no_unit_reason(skipped) if not units else "",
+        no_unit_reason=(_classify_no_unit_reason(skipped, subject.contract)
+                        if not units else ""),
     )
 
 
@@ -825,9 +786,8 @@ def subject_dirs(benchmark: str, root: str | None = None):
         base = Path(root).expanduser().resolve()
     else:
         if benchmark not in KNOWN_SUBJECT_ROOTS:
-            raise SubjectError(
-                f"unknown subject benchmark {benchmark!r}; known: "
-                + ", ".join(sorted(KNOWN_SUBJECT_ROOTS)))
+            raise SubjectError(f"unknown subject benchmark {benchmark!r}; known: " +
+                               ", ".join(sorted(KNOWN_SUBJECT_ROOTS)))
         base = next((r for r in subject_roots(benchmark) if r.is_dir()),
                     KNOWN_SUBJECT_ROOTS[benchmark])
     if not base.is_dir():
@@ -863,8 +823,7 @@ def _unlink_quietly(path: Path):
         pass
 
 
-def generate_solast(subject: PreparedSubject,
-                    timeout_s: float = DEFAULT_AST_TIMEOUT_S) -> dict:
+def generate_solast(subject: PreparedSubject, timeout_s: float = DEFAULT_AST_TIMEOUT_S) -> dict:
     """Create a compact AST without leaving corrupt partial output behind."""
     ast = Path(subject.solast)
     if ast.exists():
@@ -876,8 +835,7 @@ def generate_solast(subject: PreparedSubject,
     if not subject.solc_bin and subject.inferred_solc_bin:
         subject = subject.with_inferred_solc_bin()
     if not subject.solc_bin:
-        raise SubjectError(
-            f"{subject.root} has no solc_bin, and {ast} does not exist")
+        raise SubjectError(f"{subject.root} has no solc_bin, and {ast} does not exist")
 
     ast.parent.mkdir(parents=True, exist_ok=True)
     tmp = ast.with_name(f"{ast.name}.tmp.{os.getpid()}.{time.time_ns()}")
@@ -885,30 +843,26 @@ def generate_solast(subject: PreparedSubject,
     start = time.monotonic()
     try:
         with tmp.open("w") as stream:
-            cp = subprocess.run(
-                cmd,
-                stdout=stream,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=timeout_s,
-                check=False)
+            cp = subprocess.run(cmd,
+                                stdout=stream,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                timeout=timeout_s,
+                                check=False)
     except subprocess.TimeoutExpired as exc:
         _unlink_quietly(tmp)
-        raise SubjectError(
-            f"solc --ast-compact-json timed out after {timeout_s:g}s: "
-            f"{subject.flat_sol}") from exc
+        raise SubjectError(f"solc --ast-compact-json timed out after {timeout_s:g}s: "
+                           f"{subject.flat_sol}") from exc
     except OSError as exc:
         _unlink_quietly(tmp)
-        raise SubjectError(
-            f"solc --ast-compact-json could not start: {exc}") from exc
+        raise SubjectError(f"solc --ast-compact-json could not start: {exc}") from exc
 
     wall_s = round(time.monotonic() - start, 3)
     stderr_tail = (cp.stderr or "")[-2000:]
     if cp.returncode:
         _unlink_quietly(tmp)
-        raise SubjectError(
-            f"solc --ast-compact-json failed rc={cp.returncode} "
-            f"after {wall_s}s: {stderr_tail}")
+        raise SubjectError(f"solc --ast-compact-json failed rc={cp.returncode} "
+                           f"after {wall_s}s: {stderr_tail}")
 
     if ast.exists():
         _unlink_quietly(tmp)
@@ -933,7 +887,9 @@ def generate_solast(subject: PreparedSubject,
     }
 
 
-def manifest_for_subject(subject: PreparedSubject, *, generate_ast=False,
+def manifest_for_subject(subject: PreparedSubject,
+                         *,
+                         generate_ast=False,
                          ast_timeout_s: float = DEFAULT_AST_TIMEOUT_S) -> dict:
     try:
         run_subject = subject
@@ -968,24 +924,22 @@ def manifest_for_subject(subject: PreparedSubject, *, generate_ast=False,
         }
 
 
-def unit_manifest(benchmark: str, subjects: list[PreparedSubject], *,
+def unit_manifest(benchmark: str,
+                  subjects: list[PreparedSubject],
+                  *,
                   generate_ast=False,
                   ast_timeout_s: float = DEFAULT_AST_TIMEOUT_S) -> dict:
-    rows = [manifest_for_subject(
-        subject,
-        generate_ast=generate_ast,
-        ast_timeout_s=ast_timeout_s)
-            for subject in subjects]
+    rows = [
+        manifest_for_subject(subject, generate_ast=generate_ast, ast_timeout_s=ast_timeout_s)
+        for subject in subjects
+    ]
     summary = {
         "subjects": len(rows),
         "ok": sum(1 for row in rows if row["status"] == "ok"),
-        "missing_ast": sum(1 for row in rows
-                           if row["status"] == "missing-ast"),
+        "missing_ast": sum(1 for row in rows if row["status"] == "missing-ast"),
         "error": sum(1 for row in rows if row["status"] == "error"),
-        "units": sum(len((row.get("units") or {}).get("units") or [])
-                     for row in rows),
-        "skipped": sum(len((row.get("units") or {}).get("skipped") or [])
-                       for row in rows),
+        "units": sum(len((row.get("units") or {}).get("units") or []) for row in rows),
+        "skipped": sum(len((row.get("units") or {}).get("skipped") or []) for row in rows),
     }
     return {
         "schema": "veriput-unit-manifest/v1",
@@ -998,8 +952,7 @@ def unit_manifest(benchmark: str, subjects: list[PreparedSubject], *,
     }
 
 
-def ensure_solast(subject: PreparedSubject,
-                  timeout_s: float = DEFAULT_AST_TIMEOUT_S) -> bool:
+def ensure_solast(subject: PreparedSubject, timeout_s: float = DEFAULT_AST_TIMEOUT_S) -> bool:
     """Create `<flat.sol>.solast` for a prepared subject if it is absent.
 
     Returns True when it wrote the file and False when it already existed.

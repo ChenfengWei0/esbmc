@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract C --focus-function receive --solidity-max-tx 1
+^VERIFICATION SUCCESSFUL$

@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract C --focus-function fallback --solidity-max-tx 1
+^VERIFICATION FAILED$

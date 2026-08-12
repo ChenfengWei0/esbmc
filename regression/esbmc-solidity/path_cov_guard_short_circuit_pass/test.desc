@@ -1,0 +1,7 @@
+CORE
+contract.sol
+--sol contract.sol --contract C --focus-function gate --solidity-path-coverage --solidity-max-tx 1 --no-standard-checks --unwind 3 --no-unwinding-assertions
+^--solidity-path-coverage: 4 of 4 instrumented path claim\(s\) reached the solver across 1 unit\(s\)
+^Complete Paths : 4$
+^Path Status: F 4, I 0, U 0$
+^VERIFICATION FAILED$

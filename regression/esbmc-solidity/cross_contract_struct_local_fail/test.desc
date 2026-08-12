@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract UseTypes --focus-function check --no-standard-checks
+^VERIFICATION FAILED$

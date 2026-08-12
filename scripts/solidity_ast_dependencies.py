@@ -76,8 +76,11 @@ def _unit_targets(nodes, unit, arity=None, declaration_id=None):
     targets = []
     for owner in nodes:
         for declaration in owner.get("nodes", []) or []:
+            kind = declaration.get("kind", "function")
+            declaration_name = declaration.get("name") or (
+                kind if kind in ("fallback", "receive") else "")
             if (declaration.get("nodeType") == "FunctionDefinition"
-                    and declaration.get("name") == unit
+                    and declaration_name == unit
                     and declaration.get("body") is not None):
                 params = ((declaration.get("parameters") or {}).get("parameters") or [])
                 if declaration_id is not None:
@@ -742,8 +745,11 @@ def unit_mapping_slot_accesses(
             constant_by_id[declaration["id"]] = declaration.get("value")
     for owner in nodes:
         for declaration in owner.get("nodes", []) or []:
+            kind = declaration.get("kind", "function")
+            declaration_name = declaration.get("name") or (
+                kind if kind in ("fallback", "receive") else "")
             if (declaration.get("nodeType") == "FunctionDefinition"
-                    and declaration.get("name") == unit
+                    and declaration_name == unit
                     and declaration.get("body") is not None):
                 params = ((declaration.get("parameters") or {}).get("parameters") or [])
                 if declaration_id is not None:

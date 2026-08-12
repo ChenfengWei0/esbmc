@@ -1,0 +1,6 @@
+CORE
+contract.sol
+--contract BoolFixture --solidity-path-coverage --solidity-max-tx 1 --focus-function initialize --path-cov-fixture fixture.json
+^ERROR: --path-cov-fixture: bool state variable 'BoolFixture\.initialized' must be 0 or 1, got 2
+\A(?!(.|\n)*^Path Status:)
+\A(?!(.|\n)*^VERIFICATION)

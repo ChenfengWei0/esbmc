@@ -109,10 +109,7 @@ void collect_local_ids(const nlohmann::json &node, std::set<int> &ids)
   }
 }
 
-void remap_ids(
-  nlohmann::json &node,
-  const std::set<int> &local_ids,
-  int offset)
+void remap_ids(nlohmann::json &node, const std::set<int> &local_ids, int offset)
 {
   if (node.is_object())
   {
@@ -151,9 +148,7 @@ void remap_ids(
 // called, never assigned/stored/passed through). Returns false if any
 // non-call usage is found. We walk manually so we can distinguish the
 // "expression" child of a FunctionCall from any other containing field.
-bool param_used_only_for_calls(
-  const nlohmann::json &subtree,
-  int target_id)
+bool param_used_only_for_calls(const nlohmann::json &subtree, int target_id)
 {
   if (subtree.is_object())
   {
@@ -252,6 +247,44 @@ void rewrite_indirect_calls(
   }
 }
 
+// Collect local function-pointer aliases whose provenance is explicit in the
+// declaration (`function (...) fn = target`). The caller additionally checks
+// that every use of the alias is a direct call before rewriting it.
+void collect_static_fn_ptr_aliases(
+  const nlohmann::json &subtree,
+  std::vector<std::pair<int, nlohmann::json>> &aliases)
+{
+  if (subtree.is_object())
+  {
+    if (
+      subtree.value("nodeType", "") == "VariableDeclarationStatement" &&
+      subtree.contains("declarations") && subtree["declarations"].is_array() &&
+      subtree["declarations"].size() == 1 &&
+      !subtree["declarations"][0].is_null() && subtree.contains("initialValue"))
+    {
+      const auto &decl = subtree["declarations"][0];
+      const auto &init = subtree["initialValue"];
+      const int target_id = extract_callback_ref(init);
+      if (
+        decl.value("nodeType", "") == "VariableDeclaration" &&
+        !decl.value("stateVariable", false) && decl.contains("id") &&
+        decl["id"].is_number() && decl.contains("typeName") &&
+        decl["typeName"].is_object() &&
+        decl["typeName"].value("nodeType", "") == "FunctionTypeName" &&
+        init.value("nodeType", "") == "Identifier" && target_id > 0)
+        aliases.emplace_back(decl["id"].get<int>(), init);
+    }
+
+    for (const auto &kv : subtree.items())
+      collect_static_fn_ptr_aliases(kv.value(), aliases);
+  }
+  else if (subtree.is_array())
+  {
+    for (const auto &it : subtree)
+      collect_static_fn_ptr_aliases(it, aliases);
+  }
+}
+
 // Locate the ContractDefinition node whose `nodes` array contains `target`
 // transitively. Returns nullptr if target is at source-unit level.
 nlohmann::json *find_enclosing_contract_nodes(
@@ -305,6 +338,23 @@ bool solidity_convertert::monomorphize_fn_ptr_params()
   nlohmann::json &root = src_ast_json;
   if (!root.is_object() || !root.contains("nodes") || !root["nodes"].is_array())
     return false;
+
+  // Resolve immutable local aliases before specializing function-pointer
+  // parameters. This emits an ordinary direct call, so the real callee body
+  // (including assertions and side effects) participates in verification.
+  // Aliases with any non-call use are intentionally left unresolved.
+  std::vector<std::pair<int, nlohmann::json>> aliases;
+  collect_static_fn_ptr_aliases(root["nodes"], aliases);
+  for (const auto &[alias_id, target] : aliases)
+  {
+    const int target_id = extract_callback_ref(target);
+    const auto &target_def = find_node_by_id(root, target_id);
+    if (
+      target_def.is_object() &&
+      target_def.value("nodeType", "") == "FunctionDefinition" &&
+      param_used_only_for_calls(root["nodes"], alias_id))
+      rewrite_indirect_calls(root["nodes"], alias_id, target);
+  }
 
   // Cache (callee_id, cb_ids) -> clone_id so repeated call sites share one
   // specialization.
@@ -424,8 +474,7 @@ bool solidity_convertert::monomorphize_fn_ptr_params()
       }
       const nlohmann::json &cb_def = find_node_by_id(root, cb);
       if (
-        cb_def.empty() ||
-        cb_def.value("nodeType", "") != "FunctionDefinition")
+        cb_def.empty() || cb_def.value("nodeType", "") != "FunctionDefinition")
       {
         resolvable = false;
         break;
@@ -541,7 +590,8 @@ bool solidity_convertert::monomorphize_fn_ptr_params()
     nlohmann::json receiver = nlohmann::json::object();
     bool has_receiver = false;
     if (
-      implicit_self == 1 && callee_expr.value("nodeType", "") == "MemberAccess" &&
+      implicit_self == 1 &&
+      callee_expr.value("nodeType", "") == "MemberAccess" &&
       callee_expr.contains("expression"))
     {
       receiver = callee_expr["expression"];

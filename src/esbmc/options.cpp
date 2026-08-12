@@ -914,6 +914,13 @@ const struct group_opt_templ all_cmd_options[] = {
       "the dropped paths are reported as an absolute count — never silently. "
       "Truncation is the last-resort backstop; it firing at all is reported as "
       "a signal that degradation was not aggressive enough"},
+     {"path-cov-census-json",
+      boost::program_options::value<std::string>()->value_name("file"),
+      "Write the complete-path target census immediately after instrumentation, "
+      "before symbolic execution. The JSON records every enumerated target's "
+      "stable id, ordered decision sequence, exit kind, frozen bounds, "
+      "degraded call sites, and any truncation. Combine with --skip-bmc for a "
+      "solver-free structural export"},
      {"path-cov-claim-timeout",
       boost::program_options::value<int>()->default_value(120)->value_name("N"),
       "Per-CLAIM solver budget in seconds for --solidity-path-coverage "

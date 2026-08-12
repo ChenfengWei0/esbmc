@@ -1,0 +1,7 @@
+{
+  "contract": "VaultAdmin",
+  "skip_constructor": false,
+  "focus_function": "getMinimumPoolTokens",
+  "source_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+  "veriput_fixture_kind": "vault-admin-minimum-pool-tokens-focus-closure-v1"
+}

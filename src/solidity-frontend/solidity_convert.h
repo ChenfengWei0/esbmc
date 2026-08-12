@@ -153,6 +153,8 @@ protected:
   bool convert_ast_nodes(
     const nlohmann::json &contract_def,
     const std::string &cname);
+  bool fixture_allows_evk_cash_focus_pruning(const std::string &cname);
+  bool fixture_allows_vault_admin_focus_pruning(const std::string &cname);
   void get_cname_expr(const std::string &cname, exprt &new_expr);
 
   // conversion functions
@@ -1419,6 +1421,8 @@ protected:
   // dispatches only this public/external function (constructor + state
   // init still run). Empty means feature disabled.
   std::string focus_func;
+  bool fixture_focus_closure_built = false;
+  std::set<int> fixture_focus_closure;
   //smart contract source file
   const std::string &contract_path;
 

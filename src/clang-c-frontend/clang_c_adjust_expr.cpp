@@ -530,7 +530,8 @@ void clang_c_adjust::adjust_index(index_exprt &index)
     if (final_array_type.is_array())
       iw = final_array_type.get("#esbmc_index_width");
     if (!iw.empty())
-      gen_typecast(ns, index_expr, unsignedbv_typet(std::stoul(iw.as_string())));
+      gen_typecast(
+        ns, index_expr, unsignedbv_typet(std::stoul(iw.as_string())));
     else
       gen_typecast(ns, index_expr, index_type());
   }

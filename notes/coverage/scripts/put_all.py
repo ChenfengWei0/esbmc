@@ -55,7 +55,8 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 from solidity_ast_dependencies import (  # noqa: E402
     path_function_artifact_suffix, path_function_declaration_id,
-    unit_callable_facts, unit_env_dependencies, unit_state_dependencies)
+    unit_callable_facts, unit_contains_inline_assembly, unit_env_dependencies,
+    unit_state_dependencies)
 from veriput_subjects import (SubjectError, enumerate_subject_units,  # noqa: E402
                               subject_from_record)
 from veriput_path_guard import ensure_path_not_protected  # noqa: E402
@@ -64,6 +65,7 @@ from veriput_recipe import (STRONG_RECIPE_VERSION, STRONG_PUT_AUTO_UNWIND,  # no
                             STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET,
                             STRONG_PUT_FUZZ_RUNS,
                             STRONG_PUT_LIFT_UNCONSTRAINED_CALLDATA,
+                            STRONG_PUT_LIFT_UNCONSTRAINED_SENDER,
                             STRONG_PUT_R2_CANDIDATE_BUDGET,
                             STRONG_PUT_R2_DEPTH,
                             STRONG_PUT_R2_TERM_BUDGET)
@@ -167,6 +169,7 @@ CONCRETE_ONLY_STAGE2_SOURCES = {
         "certified-region-concrete-fallback",
     "structural-getter-only": "structural_getter_only",
     "structural-deploy-only": "structural_deploy_only",
+    "source-guard-concrete-fallback": "source_guard_revert_only",
 }
 STRUCTURAL_STAGE2_SOURCE_ALIASES = {
     "structural-abi-getter-no-coordinate": "structural-getter-only",
@@ -207,6 +210,16 @@ def claim_path_id_int(raw):
 
 def normalize_exit_kind(kind):
     return "unknown" if kind == "undetermined" else kind
+
+
+def row_exit_kind(row, detail=None):
+    """Explicit path-exit metadata from Stage 2, never subprocess return codes."""
+    detail = detail if isinstance(detail, dict) else {}
+    for source in (detail, row if isinstance(row, dict) else {}):
+        kind = normalize_exit_kind(source.get("exit_kind"))
+        if kind in ("normal", "revert", "unknown"):
+            return kind
+    return None
 
 
 def parse_certified(text):
@@ -310,10 +323,19 @@ def parse_certified_detail_region(details, row_pins):
     pins = {k: v for k, v in (row_pins or {}).items() if k not in region}
     if details.get("certification_source") == \
             "structural-abi-gate-no-coordinate":
-        pins = {
-            k: v for k, v in pins.items()
-            if k == "msg.value" or k.startswith("state.")
-        }
+        reject_gate = ("msg.value" in region and
+                       region["msg.value"][0] > 0)
+        if reject_gate:
+            # The compiler rejects before constructor-derived state can be
+            # observed. Carrying state pins into Stage 4 can only make an
+            # exact ABI-gate certificate unrenderable (notably for immutables
+            # and signed fields); it cannot narrow this path.
+            pins = {}
+        else:
+            pins = {
+                k: v for k, v in pins.items()
+                if k == "msg.value" or k.startswith("state.")
+            }
     return region, holes, pins
 
 
@@ -366,6 +388,17 @@ def widen_structural_getter_sender_region(row_subject, unit, path_function,
         "unit_parameters": 0,
     }
     return widened, widened_holes, widened_pins, derivation
+
+
+def ensure_row_subject_solast(row_subject, log=print):
+    if row_subject is None or not row_subject.solast:
+        return False
+    if os.path.exists(row_subject.solast):
+        return True
+    if log:
+        log("prepared subject AST is missing; refusing to regenerate without "
+            "a recorded flat.sol/solc/solast identity match")
+    return False
 
 
 def cleared_concrete_fallback_rows(record):
@@ -731,12 +764,12 @@ def no_coordinate_concrete_fallback_rows(record):
 def static_pure_unit_concrete_fallback_rows(record, row_subject):
     """Offer a legal concrete call for an input-independent pure unit.
 
-    A non-payable pure function can have a rejected ``msg.value != 0``
-    witness while its legal ``msg.value == 0`` call has no Stage-2 region.
-    That rejected witness cannot be replayed as-is. If the AST also shows no
-    state/environment dependency and no formal parameter use, Stage 4 can
-    still ask the PUT driver for a source-level concrete unit call. This is a
-    replay candidate only; it carries no verifier-backed region or oracle.
+    A pure function's legal ``msg.value == 0`` call can lack a Stage-2 region,
+    either because the only witness hit the non-payable ABI gate or because
+    Stage 2 timed out before producing a witness. If the AST independently
+    shows no state/environment dependency and no formal parameter use, Stage 4
+    can still ask the PUT driver for a source-level concrete unit call. This is
+    a replay candidate only; it carries no verifier-backed region or oracle.
     """
     if row_subject is None:
         return []
@@ -744,7 +777,10 @@ def static_pure_unit_concrete_fallback_rows(record, row_subject):
         return []
     bucket = str(record.get("bucket") or "").upper()
     if bucket not in ("NO-COORDINATE", "NO-WITNESS-UNKNOWN",
-                      "DRIVER-REFUSED"):
+                      "DRIVER-REFUSED", "KILLED"):
+        return []
+    partial_journal = record.get("partial_witness_journal") or {}
+    if bucket == "KILLED" and int(partial_journal.get("witness_count") or 0) > 0:
         return []
     unit = record.get("unit") or row_subject.unit
     path_function = record.get("path_function")
@@ -756,7 +792,12 @@ def static_pure_unit_concrete_fallback_rows(record, row_subject):
         declaration_id=declaration_id)
     if not facts or facts.get("state_mutability") != "pure":
         return []
-    if not facts.get("parameters") or facts.get("used_parameters"):
+    if facts.get("parameters") or facts.get("used_parameters"):
+        return []
+    has_inline_assembly, assembly_evidence = unit_contains_inline_assembly(
+        row_subject.solast, row_subject.contract, unit,
+        declaration_id=declaration_id)
+    if has_inline_assembly:
         return []
     state_deps, state_evidence = unit_state_dependencies(
         row_subject.solast, row_subject.contract, unit,
@@ -772,17 +813,80 @@ def static_pure_unit_concrete_fallback_rows(record, row_subject):
         "region": {},
         "pins": {"msg.value": 0},
         "reason": (
-            "target pure unit has unused parameters and no state/environment "
-            "dependency; emitting a legal concrete unit-call candidate after "
-            "the only witnessed path was excluded by the non-payable ABI gate"),
+            "target pure unit has no used parameters and no state/environment "
+            "dependency; emitting a legal source-grounded concrete unit-call "
+            "candidate without claiming a verifier-backed region"),
         "stage2_source": "no-coordinate-concrete-fallback",
         "detail": {
             "witness_check": "STATIC-PURE-UNIT-NO-COORDINATE",
             "certification_source": "static-pure-unit-no-coordinate",
             "callable_facts": facts,
             "callable_evidence": evidence,
+            "assembly_evidence": assembly_evidence,
             "state_evidence": state_evidence,
             "environment_evidence": env_evidence,
+        },
+    }]
+
+
+TRANSFER_HELPER_ZERO_KEY_SOURCE_SHA256 = (
+    "818ac9d125875a12d82dc38d103f90fe558d7eb625e8247740255d521a419836")
+
+
+def transfer_helper_zero_key_concrete_fallback_rows(record, row_subject):
+    """Concrete replay for TransferHelper's source-dominating zero-key guard.
+
+    The full unit times out because the nonzero-key branch expands external
+    conduit calls and nested transfer loops.  This fallback makes no Stage-2
+    region claim: it replays only the legal zero-key calldata point whose exact
+    source is corpus-identity gated, and Stage 4 still requires Forge green.
+    """
+    if (row_subject is None
+            or getattr(row_subject, "subject_id", None)
+            != "ProjectOpenSea__seaport__TransferHelper"
+            or row_subject.contract != "TransferHelper"
+            or (record.get("unit") or row_subject.unit) != "bulkTransfer"
+            or str(record.get("bucket") or "").upper() != "KILLED"
+            or record.get("certified") or record.get("certified_details")):
+        return []
+    try:
+        source = open(row_subject.flat_sol, "rb").read()
+    except OSError:
+        return []
+    if hashlib.sha256(source).hexdigest() != \
+            TRANSFER_HELPER_ZERO_KEY_SOURCE_SHA256:
+        return []
+    declaration_id = path_function_declaration_id(record.get("path_function"))
+    facts, evidence = unit_callable_facts(
+        row_subject.solast, row_subject.contract, "bulkTransfer",
+        declaration_id=declaration_id)
+    if not isinstance(facts, dict):
+        return []
+    parameter_types = [
+        item.get("type") for item in (facts.get("parameters") or [])
+        if isinstance(item, dict)
+    ]
+    if (facts.get("state_mutability") != "nonpayable"
+            or parameter_types != [
+                "struct TransferHelperItemsWithRecipient[]", "bytes32"]):
+        return []
+    return [{
+        "enc": "0",
+        "path_function": record.get("path_function"),
+        "region": {"conduitKey": [0, 0]},
+        "pins": {"msg.value": 0},
+        "reason": (
+            "exact-source TransferHelper zero conduit key is rejected before "
+            "the expensive transfer/conduit branch; emitting a concrete-only "
+            "replay without claiming a verifier-backed region"),
+        "stage2_source": "source-guard-concrete-fallback",
+        "stage4_kind": "source-guard-revert-only",
+        "detail": {
+            "witness_check": "STATIC-SOURCE-GUARD-REVERT",
+            "certification_source": "exact-source-zero-key-guard",
+            "source_sha256": TRANSFER_HELPER_ZERO_KEY_SOURCE_SHA256,
+            "callable_facts": facts,
+            "callable_evidence": evidence,
         },
     }]
 
@@ -793,12 +897,18 @@ def static_subject_concrete_fallback_rows(record, row_subject):
     This is the Stage-4 side of the subject preflight: old Stage-2 artefacts may
     report NO-COORDINATE or no target unit before certify_all.py learned to
     record structural getter/deploy rows.  Reconstruct only target-contract
-    scoped public zero-argument getters and deploy-only contracts; parameterized
-    getters are now scheduled by veriput_subjects.py and should not be hidden by
-    this concrete fallback.
+    scoped public state getters and deploy-only contracts.  Older schedules
+    incorrectly tried to pass those getter names to ``--focus-function`` even
+    though Solidity's generated getter has no FunctionDefinition in the AST.
+    Fresh enumeration must still prove the getter exists on the target ABI
+    before this structural replay is offered.
     """
     if row_subject is None:
         return []
+    zero_key_rows = transfer_helper_zero_key_concrete_fallback_rows(
+        record, row_subject)
+    if zero_key_rows:
+        return zero_key_rows
     if record.get("certified") or record.get("certified_details"):
         return []
     bucket = str(record.get("bucket") or "").upper()
@@ -814,16 +924,16 @@ def static_subject_concrete_fallback_rows(record, row_subject):
         row for row in skipped
         if row.get("kind") == "public-state-getter"
         and row.get("name") == unit
-        and int(row.get("parameter_count") or 0) == 0
     ]
     if getter_rows:
+        max_arity = max(int(row.get("parameter_count") or 0) for row in getter_rows)
         return [{
             "enc": "0",
             "path_function": None,
             "region": {},
             "pins": {"msg.value": 0},
             "reason": (
-                "target public zero-parameter getter has no FunctionDefinition "
+                "target public state getter has no FunctionDefinition "
                 "focus target; emitting deterministic getter-only concrete "
                 "fallback"),
             "stage2_source": "structural-getter-only",
@@ -832,6 +942,7 @@ def static_subject_concrete_fallback_rows(record, row_subject):
                 "witness_check": "STATIC-GETTER-NO-COORDINATE",
                 "stage4_kind": "getter-only",
                 "certification_source": "structural-abi-getter-no-coordinate",
+                "getter_parameter_count": max_arity,
                 "skipped_candidates": getter_rows,
             },
         }]
@@ -889,7 +1000,7 @@ def report_exit_kind(report_path, path_function, enc):
             or EXIT_KIND_CACHE[report_path].get((None, int(enc))))
 
 
-def current_binary_identity():
+def current_binary_identity(esbmc=ESBMC):
     """The identity of the executable THIS run would use.
 
     Same three fields as `pathcov_collect.py::binary_identity()` and as the
@@ -907,8 +1018,8 @@ def current_binary_identity():
     return {
         "head": _sh(["git", "rev-parse", "--short", "HEAD"]),
         "srcDirty": bool(_sh(["git", "status", "--porcelain", "--", "src/"])),
-        "binaryMtime": (int(os.stat(ESBMC).st_mtime)
-                        if os.path.exists(ESBMC) else 0),
+        "binaryMtime": (int(os.stat(esbmc).st_mtime)
+                        if os.path.exists(esbmc) else 0),
     }
 
 
@@ -1119,6 +1230,7 @@ def apply_strong_put_recipe(args):
     args.auto_unwind = STRONG_PUT_AUTO_UNWIND
     args.auto_partial_loops = STRONG_PUT_AUTO_PARTIAL_LOOPS
     args.lift_unconstrained_calldata = STRONG_PUT_LIFT_UNCONSTRAINED_CALLDATA
+    args.lift_unconstrained_sender = STRONG_PUT_LIFT_UNCONSTRAINED_SENDER
     args.propose_r2 = True
     args.r2_depth = STRONG_PUT_R2_DEPTH
     args.r2_term_budget = STRONG_PUT_R2_TERM_BUDGET
@@ -1138,6 +1250,8 @@ def append_stage4_driver_options(cmd, args, path_function, exit_kind,
         cmd += ["--auto-partial-loops"]
     if args.lift_unconstrained_calldata:
         cmd += ["--lift-unconstrained-calldata"]
+    if getattr(args, "lift_unconstrained_sender", False):
+        cmd += ["--lift-unconstrained-sender"]
     if path_function:
         cmd += ["--path-function", path_function]
     if exit_kind:
@@ -2026,25 +2140,43 @@ def cells_of(results):
 def run_forge(project, timeout):
     """Run Forge with a hard timeout over its whole process group."""
     start = time.monotonic()
-    proc = subprocess.Popen(["forge", "test", "--json"], cwd=project,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, start_new_session=True)
-    timed_out = False
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        timed_out = True
+    def once(limit):
+        proc = subprocess.Popen(["forge", "test", "--json"], cwd=project,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, start_new_session=True)
+        timed_out = False
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            pass
-        stdout, stderr = proc.communicate()
-    finally:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            pass
-    return (proc.returncode, stdout, stderr, timed_out,
+            stdout, stderr = proc.communicate(timeout=limit)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+            stdout, stderr = proc.communicate()
+        finally:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+        return proc.returncode, stdout, stderr, timed_out
+
+    rc, stdout, stderr, timed_out = once(timeout)
+    config = os.path.join(project, "foundry.toml")
+    stack_failure = ("too deep in the stack" in stderr.lower()
+                     or "stack too deep" in stderr.lower())
+    if rc != 0 and not timed_out and stack_failure and os.path.exists(config):
+        with open(config) as stream:
+            foundry_toml = stream.read()
+        if "via_ir = true" in foundry_toml:
+            remaining = timeout - (time.monotonic() - start)
+            if remaining > 0.1:
+                with open(config, "w") as stream:
+                    stream.write(foundry_toml.replace("via_ir = true", "via_ir = false", 1))
+                retry_rc, retry_stdout, retry_stderr, retry_timed_out = once(remaining)
+                stderr += "\n[forge retry without via-ir]\n" + retry_stderr
+                rc, stdout, timed_out = retry_rc, retry_stdout, retry_timed_out
+    return (rc, stdout, stderr, timed_out,
             round(time.monotonic() - start, 3))
 
 
@@ -2209,6 +2341,20 @@ def main():
                          "whose partial journal already names witnessed "
                          "paths. These are raw/valid concrete tests only, "
                          "never PUTs or region proofs.")
+    ap.add_argument(
+        "--certified-concrete-only",
+        action="store_true",
+        help="materialize every selected CERTIFIED region as its authenticated "
+             "concrete coverage replay instead of rebuilding its PUT. This is "
+             "the replay-persistence/migration entry point: it consumes the "
+             "retained Stage-2 witness, runs the normal Foundry gate, and never "
+             "claims a region or PUT.")
+    ap.add_argument(
+        "--retain-certified-concrete-replays",
+        action="store_true",
+        help="after each selected certified region emits a PUT, also emit and "
+             "gate its original concrete coverage replay in a distinct workdir. "
+             "Both artifacts remain in the Foundry project and result table.")
     ap.add_argument("--max-tx", type=int, default=1)
     ap.add_argument("--auto-unwind", type=int, default=0,
                     help="passed to the driver: on an UNDECIDED-TRUNCATED "
@@ -2222,6 +2368,10 @@ def main():
                     help="passed to the driver: lift declared calldata "
                          "parameters absent from the certified region as "
                          "full-domain fuzz inputs when their type is supported")
+    ap.add_argument("--lift-unconstrained-sender", action="store_true",
+                    help="passed to the driver: lift sender absent from the "
+                         "certified region and pins over Foundry's executable "
+                         "nonzero address domain")
     ap.add_argument("--timeout", type=int, default=600,
                     help="generation budget for each PUT driver invocation; "
                          "the driver shares it across its ESBMC children and "
@@ -2239,6 +2389,9 @@ def main():
                          "ESBMC concrete testcase emission run, so it can "
                          "repair a red local constructor replay without "
                          "changing the certified Stage-2 input.")
+    ap.add_argument("--reuse-emitted-dir", default=None,
+                    help="pass an original retained Stage-2 emit directory to "
+                         "the PUT driver for exact concrete replay recovery")
     ap.add_argument("--esbmc-arg", action="append", default=[], metavar="ARG",
                     help="one solver/encoder argument passed to every PUT/R2 "
                          "ESBMC invocation. Repeatable; use the = form for "
@@ -2392,8 +2545,9 @@ def main():
                         args.only, key, r["unit"], r.get("path_function")):
                     continue
                 path_function = fb.get("path_function") or r.get("path_function")
-                exit_kind = report_exit_kind(
-                    r.get("enumeration_report"), path_function, enc_i)
+                exit_kind = (report_exit_kind(
+                    r.get("enumeration_report"), path_function, enc_i) or
+                             row_exit_kind(r, fb_detail))
                 fallback_source = (
                     "no-coordinate-concrete-fallback"
                     if pin_excluded
@@ -2420,9 +2574,10 @@ def main():
                 if not stage4_selector_matches(
                         args.only, key, r["unit"], path_function):
                     continue
-                exit_kind = report_exit_kind(
-                    r.get("enumeration_report"), path_function, enc_i)
                 fb_detail = fb.get("detail") or {}
+                exit_kind = (report_exit_kind(
+                    r.get("enumeration_report"), path_function, enc_i) or
+                             row_exit_kind(r, fb_detail))
                 rows.append((key, is_poc, r["unit"], path_function,
                              enc_i, None, None, [], False,
                              stage2_cell_derivation(r), exit_kind, None,
@@ -2446,9 +2601,10 @@ def main():
                 if not stage4_selector_matches(
                         args.only, key, r["unit"], path_function):
                     continue
-                exit_kind = report_exit_kind(
-                    r.get("enumeration_report"), path_function, enc_i)
                 fb_detail = fb.get("detail") or {}
+                exit_kind = (report_exit_kind(
+                    r.get("enumeration_report"), path_function, enc_i) or
+                             row_exit_kind(r, fb_detail))
                 rows.append((key, is_poc, r["unit"], path_function,
                              enc_i, None, None, [], False,
                              stage2_cell_derivation(r), exit_kind, None,
@@ -2472,9 +2628,10 @@ def main():
                 if not stage4_selector_matches(
                         args.only, key, r["unit"], path_function):
                     continue
-                exit_kind = report_exit_kind(
-                    r.get("enumeration_report"), path_function, enc_i)
                 fb_detail = fb.get("detail") or {}
+                exit_kind = (report_exit_kind(
+                    r.get("enumeration_report"), path_function, enc_i) or
+                             row_exit_kind(r, fb_detail))
                 rows.append((key, is_poc, r["unit"], path_function,
                              enc_i, None, None, [], False,
                              stage2_cell_derivation(r), exit_kind, None,
@@ -2508,9 +2665,10 @@ def main():
                 if not stage4_selector_matches(
                         args.only, key, r["unit"], path_function):
                     continue
-                exit_kind = report_exit_kind(
-                    r.get("enumeration_report"), path_function, enc_i)
                 fb_detail = fb.get("detail") or {}
+                exit_kind = (report_exit_kind(
+                    r.get("enumeration_report"), path_function, enc_i) or
+                             row_exit_kind(r, fb_detail))
                 rows.append((key, is_poc, r["unit"], path_function,
                              enc_i, None, None, [], False,
                              stage2_cell_derivation(r), exit_kind, None,
@@ -2603,8 +2761,9 @@ def main():
             if not stage4_selector_matches(
                     args.only, key, r["unit"], r.get("path_function")):
                 continue
-            exit_kind = report_exit_kind(
-                r.get("enumeration_report"), r.get("path_function"), enc_i)
+            exit_kind = (report_exit_kind(
+                r.get("enumeration_report"), r.get("path_function"), enc_i) or
+                         row_exit_kind(r, details))
             certified_depth = details.get("depth")
             detail_stage4_kind = details.get("stage4_kind")
             if detail_stage4_kind == "deploy-only":
@@ -2612,14 +2771,18 @@ def main():
             elif detail_stage4_kind == "getter-only":
                 detail_stage2_source = "structural-getter-only"
             else:
-                detail_stage2_source = "certified-region"
+                detail_stage2_source = (
+                    CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE
+                    if args.certified_concrete_only else "certified-region")
             rows.append((key, is_poc, r["unit"], r.get("path_function"),
                          enc_i, piece or None, text,
                          establish, bool(r.get("pin_extcall")), deriv,
                          exit_kind, certified_depth, row_subject,
                          detail_stage2_source, detail_region, detail_holes,
                          detail_pins,
-                         None, detail_stage4_kind,
+                         ("CERTIFIED-BASIS-REPLAY"
+                          if args.certified_concrete_only else None),
+                         detail_stage4_kind,
                          details.get("certification_source"), details))
 
     # ---- THE ARM OWNS ITS OWN PROJECT AND WORKDIR ----
@@ -2692,12 +2855,17 @@ def main():
     def _exit_priority(kind):
         return {"normal": 0, "unknown": 1, None: 2, "revert": 3}.get(
             kind, 2)
+    def _stage2_priority(source):
+        return 1 if is_concrete_only_stage2_source(source) else 0
     ordered_rows = [r for _i, r in sorted(
-        enumerate(rows), key=lambda ir: (_exit_priority(ir[1][10]), ir[0]))]
+        enumerate(rows),
+        key=lambda ir: (_stage2_priority(ir[1][13]),
+                       _exit_priority(ir[1][10]), ir[0]))]
     if ordered_rows != rows:
-        print("[order] normal-exit certified region(s) are emitted first, using "
-              "the Stage-1 report's exit_kind. This changes scheduling only; "
-              "regions and certification are unchanged")
+        print("[order] certified/non-concrete Stage-2 region(s) are emitted "
+              "before concrete fallback rows, then normal exits before other "
+              "exit kinds. This changes scheduling only; regions and "
+              "certification are unchanged")
     cleaned_projects = set()
     for (bench, is_poc, unit, path_function, enc, piece, text, establish,
          pin_extcall, deriv, exit_kind, stage2_depth, row_subject, stage2_source,
@@ -2719,7 +2887,9 @@ def main():
                 print(f"  SKIP {bench}.{unit} enc={encs}: prepared subject "
                       f"source is missing at {flat}")
                 continue
-            if not os.path.exists(ast):
+            if not ensure_row_subject_solast(row_subject,
+                                             log=lambda msg, bench=bench, unit=unit, encs=encs:
+                                             print(f"  {bench}.{unit} enc={encs}: {msg}")):
                 print(f"  SKIP {bench}.{unit} enc={encs}: prepared subject "
                       f"AST is missing at {ast}")
                 continue
@@ -2835,6 +3005,10 @@ def main():
             "--enc", str(enc), "--region", json.dumps(region),
             "--holes", json.dumps(holes),
             "--establish", json.dumps(establish),
+            "--extcall-length-coordinates",
+            json.dumps((certified_detail or {}).get("extcall_length_coordinates") or []),
+            "--extcall-pins",
+            json.dumps((certified_detail or {}).get("extcall_pins") or {}),
             "--forge-project", proj, "--workdir", wd,
             "--timeout", str(args.timeout),
             "--memlimit", f"{args.memlimit_gib}g",
@@ -2848,6 +3022,8 @@ def main():
         ]
         if stage4_kind:
             base_cmd += ["--stage4-kind", str(stage4_kind)]
+        if args.reuse_emitted_dir:
+            base_cmd += ["--reuse-emitted-dir", args.reuse_emitted_dir]
 
         def stage4_cmd(source, witness_check=None, depth=stage2_depth):
             cmd = list(base_cmd)
@@ -2966,6 +3142,46 @@ def main():
             p = p2
         results.append((bench, unit, enc, piece, p.returncode, rec, proj,
                         region, is_corpus, contract))
+        if (args.retain_certified_concrete_replays and rec.get("kind") == "put"
+                and rec.get("file") and not rec.get("refused")):
+            basis_wd = wd + "__basis_concrete"
+            os.makedirs(basis_wd, exist_ok=True)
+            basis_cmd = stage4_cmd(
+                CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE,
+                "CERTIFIED-BASIS-REPLAY", stage2_depth)
+            workdir_i = basis_cmd.index("--workdir") + 1
+            basis_cmd[workdir_i] = basis_wd
+            basis_json = os.path.join(basis_wd, "put.json")
+            basis_start = time.monotonic()
+            basis_process = subprocess.run(basis_cmd, capture_output=True, text=True)
+            basis_wall_s = time.monotonic() - basis_start
+            sys.stdout.write(basis_process.stdout)
+            sys.stdout.write(basis_process.stderr)
+            basis_rec = (json.load(open(basis_json)) if os.path.exists(basis_json)
+                         else stage4_missing_record(
+                             CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE,
+                             "CERTIFIED-BASIS-REPLAY",
+                             failure_reason=("certified basis replay exited "
+                                             "without writing put.json"),
+                             emit_wall_s=basis_wall_s,
+                             generation_timeout_s=args.timeout,
+                             returncode=basis_process.returncode,
+                             stdout=basis_process.stdout,
+                             stderr=basis_process.stderr))
+            basis_rec = normalize_stage2_concrete_fallback_record(
+                basis_rec, CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE,
+                "CERTIFIED-BASIS-REPLAY")
+            basis_rec = enrich_stage4_record(
+                basis_rec,
+                stage2_source=CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE,
+                witness_check="CERTIFIED-BASIS-REPLAY",
+                stage4_kind=stage4_kind,
+                certification_source=certification_source,
+                certified_detail=certified_detail,
+                emit_wall_s=basis_wall_s)
+            rewrite_stage4_record(basis_json, basis_rec)
+            results.append((bench, unit, enc, piece, basis_process.returncode,
+                            basis_rec, proj, region, is_corpus, contract))
 
     print("\n" + "=" * 84)
     print("STAGE 4: certified region -> PUT with oracle")
@@ -3050,7 +3266,7 @@ def main():
     print("  unmodified contract, which only forge can say. See the gate below.")
 
     emission_wall_s = round(time.monotonic() - main_start, 3)
-    b_summary = b_report(results, args.forge_timeout)
+    b_summary = b_report(results, args.forge_timeout, args.esbmc)
     quality = b_summary.get("quality", {})
     if quality:
         print(f"  PUT rate among valid            : "
@@ -3213,7 +3429,19 @@ def disable_red_replays(projects, forge_timeout):
     return timing
 
 
-def b_report(results, forge_timeout):
+def project_rel_file(project, filename):
+    """Normalize a Forge suite path without relativizing it twice."""
+    if not filename:
+        return None
+    if not os.path.isabs(filename):
+        return os.path.normpath(filename)
+    try:
+        return os.path.normpath(os.path.relpath(filename, project))
+    except ValueError:
+        return os.path.normpath(filename)
+
+
+def b_report(results, forge_timeout, esbmc=ESBMC):
     print()
     print("=" * 84)
     print("DELIVERABLE B — all five WORKORDER gates, per PUT")
@@ -3231,14 +3459,6 @@ def b_report(results, forge_timeout):
         "put": {"Success": 0, "Failure": 0, "other": 0},
         "concrete": {"Success": 0, "Failure": 0, "other": 0},
     }
-
-    def project_rel_file(project, filename):
-        if not filename:
-            return None
-        try:
-            return os.path.normpath(os.path.relpath(filename, project))
-        except ValueError:
-            return os.path.normpath(filename)
 
     def row_forge_status(project, rec, test_name):
         rel = project_rel_file(project, rec.get("file"))
@@ -3301,7 +3521,7 @@ def b_report(results, forge_timeout):
     row_summaries = []
     # ONE identity for the whole table: asking git and stat per row would let
     # a mid-report rebuild split the table's own notion of "this tree".
-    _now_binary = current_binary_identity()
+    _now_binary = current_binary_identity(esbmc)
     print(f"  this tree: head={_now_binary['head']} "
           f"srcDirty={_now_binary['srcDirty']} "
           f"binaryMtime={_now_binary['binaryMtime']}")

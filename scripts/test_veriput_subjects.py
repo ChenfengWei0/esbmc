@@ -6,14 +6,17 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "notes" / "coverage" / "scripts"))
 
 import veriput_subjects  # noqa: E402
-from veriput_subjects import (SubjectError, enumerate_subject_units,  # noqa: E402
-                              manifest_for_subject, resolve_subject,
-                              subject_from_record, unit_manifest)
+from veriput_subjects import (
+    SubjectError,
+    enumerate_subject_units,  # noqa: E402
+    manifest_for_subject,
+    resolve_subject,
+    subject_from_record,
+    unit_manifest)
 
 
 def check(cond, msg):
@@ -43,13 +46,18 @@ def make_subject(root, sid="repo__C", **meta_overrides):
 
 def compact_ast():
     return {
-        "nodeType": "SourceUnit",
+        "nodeType":
+        "SourceUnit",
         "nodes": [
             {
-                "nodeType": "ContractDefinition",
-                "id": 1,
-                "name": "Base",
-                "contractKind": "contract",
+                "nodeType":
+                "ContractDefinition",
+                "id":
+                1,
+                "name":
+                "Base",
+                "contractKind":
+                "contract",
                 "linearizedBaseContracts": [1],
                 "nodes": [
                     {
@@ -58,10 +66,16 @@ def compact_ast():
                         "name": "baseOnly",
                         "visibility": "public",
                         "stateMutability": "view",
-                        "parameters": {"parameters": []},
-                        "returnParameters": {"parameters": [
-                            {"nodeType": "VariableDeclaration"},
-                        ]},
+                        "parameters": {
+                            "parameters": []
+                        },
+                        "returnParameters": {
+                            "parameters": [
+                                {
+                                    "nodeType": "VariableDeclaration"
+                                },
+                            ]
+                        },
                     },
                     {
                         "nodeType": "FunctionDefinition",
@@ -77,10 +91,14 @@ def compact_ast():
                 ],
             },
             {
-                "nodeType": "ContractDefinition",
-                "id": 3,
-                "name": "Iface",
-                "contractKind": "interface",
+                "nodeType":
+                "ContractDefinition",
+                "id":
+                3,
+                "name":
+                "Iface",
+                "contractKind":
+                "interface",
                 "linearizedBaseContracts": [3],
                 "nodes": [
                     {
@@ -90,18 +108,28 @@ def compact_ast():
                         "visibility": "external",
                         "stateMutability": "view",
                         "implemented": False,
-                        "parameters": {"parameters": []},
-                        "returnParameters": {"parameters": [
-                            {"nodeType": "VariableDeclaration"},
-                        ]},
+                        "parameters": {
+                            "parameters": []
+                        },
+                        "returnParameters": {
+                            "parameters": [
+                                {
+                                    "nodeType": "VariableDeclaration"
+                                },
+                            ]
+                        },
                     },
                 ],
             },
             {
-                "nodeType": "ContractDefinition",
-                "id": 2,
-                "name": "C",
-                "contractKind": "contract",
+                "nodeType":
+                "ContractDefinition",
+                "id":
+                2,
+                "name":
+                "C",
+                "contractKind":
+                "contract",
                 "linearizedBaseContracts": [2, 3, 1],
                 "nodes": [
                     {
@@ -110,10 +138,16 @@ def compact_ast():
                         "name": "own",
                         "visibility": "external",
                         "stateMutability": "nonpayable",
-                        "parameters": {"parameters": [
-                            {"nodeType": "VariableDeclaration"},
-                        ]},
-                        "returnParameters": {"parameters": []},
+                        "parameters": {
+                            "parameters": [
+                                {
+                                    "nodeType": "VariableDeclaration"
+                                },
+                            ]
+                        },
+                        "returnParameters": {
+                            "parameters": []
+                        },
                     },
                     {
                         "nodeType": "FunctionDefinition",
@@ -121,10 +155,16 @@ def compact_ast():
                         "name": "baseOnly",
                         "visibility": "public",
                         "stateMutability": "pure",
-                        "parameters": {"parameters": []},
-                        "returnParameters": {"parameters": [
-                            {"nodeType": "VariableDeclaration"},
-                        ]},
+                        "parameters": {
+                            "parameters": []
+                        },
+                        "returnParameters": {
+                            "parameters": [
+                                {
+                                    "nodeType": "VariableDeclaration"
+                                },
+                            ]
+                        },
                     },
                     {
                         "nodeType": "FunctionDefinition",
@@ -158,8 +198,7 @@ def test_resolve_subject_from_root_and_unit():
     bad = 0
     bad += check(subject.benchmark == "stress243",
                  f"benchmark is read from meta.json: {subject.benchmark}")
-    bad += check(subject.subject_id == "repo__C",
-                 f"subject id is stable: {subject.subject_id}")
+    bad += check(subject.subject_id == "repo__C", f"subject id is stable: {subject.subject_id}")
     bad += check(subject.contract == "C" and subject.unit == "f",
                  f"contract/unit resolved: {subject.contract}.{subject.unit}")
     bad += check(subject.flat_sol.endswith("/repo__C/flat.sol"),
@@ -175,8 +214,7 @@ def test_resolve_subject_requires_explicit_unit():
         try:
             resolve_subject("repo__C", root=td)
         except SubjectError as exc:
-            return check("explicit --unit" in str(exc),
-                         f"missing unit fails closed: {exc}")
+            return check("explicit --unit" in str(exc), f"missing unit fails closed: {exc}")
     print("FAIL: missing unit was accepted")
     return 1
 
@@ -201,8 +239,7 @@ def test_subject_from_cert_record_round_trips():
         restored = subject_from_record(row)
     bad = 0
     bad += check(restored is not None, "subject block is recognized")
-    bad += check(restored.to_record() == subject.to_record(),
-                 "cert row subject block round-trips")
+    bad += check(restored.to_record() == subject.to_record(), "cert row subject block round-trips")
     return bad
 
 
@@ -220,8 +257,10 @@ def test_subject_record_rehomes_veriput_root_paths():
                 "subject_id": "peer__C",
                 "benchmark_key": "peer182__peer__C",
                 "root": "/home/samson/workspace/VeriPUT/Results/Peer182/subjects/peer__C",
-                "flat_sol": "/home/samson/workspace/VeriPUT/Results/Peer182/subjects/peer__C/flat.sol",
-                "solast": "/home/samson/workspace/VeriPUT/Results/Peer182/subjects/peer__C/flat.sol.solast",
+                "flat_sol":
+                "/home/samson/workspace/VeriPUT/Results/Peer182/subjects/peer__C/flat.sol",
+                "solast":
+                "/home/samson/workspace/VeriPUT/Results/Peer182/subjects/peer__C/flat.sol.solast",
                 "contract": "C",
                 "unit": "f",
                 "solc_bin": "/bin/false",
@@ -232,8 +271,7 @@ def test_subject_record_rehomes_veriput_root_paths():
         finally:
             veriput_subjects.VERIPUT_ROOT = old_root
     bad = 0
-    bad += check(restored.root == str(d.resolve()),
-                 f"record root is rehomed: {restored.root}")
+    bad += check(restored.root == str(d.resolve()), f"record root is rehomed: {restored.root}")
     bad += check(restored.flat_sol == str((d / "flat.sol").resolve()),
                  f"record flat.sol is rehomed: {restored.flat_sol}")
     return bad
@@ -243,29 +281,21 @@ def test_subject_record_preserves_inferred_solc_bin():
     with tempfile.TemporaryDirectory() as td:
         solc = str(Path(td) / "toolchain" / "solc-0.8.17")
         make_fake_solc(solc, "exit 0\n")
-        make_subject(
-            td,
-            "repo__C",
-            solc_bin=None,
-            compile={"cmd": f"{solc} --bin flat.sol"})
+        make_subject(td, "repo__C", solc_bin=None, compile={"cmd": f"{solc} --bin flat.sol"})
         subject = resolve_subject("repo__C", root=td, unit="f")
         record = subject.to_record()
         restored = subject_from_record({"subject": record})
     bad = 0
     bad += check(record["solc"] is None,
                  f"compile-only inference does not invent solc version: {record}")
-    bad += check(record["solc_bin_source"] == "inferred",
-                 f"solc source is retained: {record}")
-    bad += check(record["inferred_solc_bin"] == solc,
-                 f"compile command solc is inferred: {record}")
+    bad += check(record["solc_bin_source"] == "inferred", f"solc source is retained: {record}")
+    bad += check(record["inferred_solc_bin"] == solc, f"compile command solc is inferred: {record}")
     promoted = subject.with_inferred_solc_bin().to_record()
-    bad += check(promoted["solc_bin"] == solc,
-                 "inferred solc can be promoted explicitly")
-    bad += check(promoted["solc_bin_source"] == "inferred"
-                 and promoted["inferred_solc_bin"] == solc,
-                 f"promoted inferred solc keeps provenance: {promoted}")
-    bad += check(restored.to_record() == record,
-                 "inferred solc survives manifest round-trip")
+    bad += check(promoted["solc_bin"] == solc, "inferred solc can be promoted explicitly")
+    bad += check(
+        promoted["solc_bin_source"] == "inferred" and promoted["inferred_solc_bin"] == solc,
+        f"promoted inferred solc keeps provenance: {promoted}")
+    bad += check(restored.to_record() == record, "inferred solc survives manifest round-trip")
     return bad
 
 
@@ -277,10 +307,9 @@ def test_resolve_subject_rehomes_missing_solc_select_binary():
         old_home = os.environ.get("HOME")
         os.environ["HOME"] = str(home)
         try:
-            make_subject(
-                td,
-                "repo__C",
-                solc_bin="/home/olduser/.solc-select/artifacts/solc-0.8.29/solc-0.8.29")
+            make_subject(td,
+                         "repo__C",
+                         solc_bin="/home/olduser/.solc-select/artifacts/solc-0.8.29/solc-0.8.29")
             subject = resolve_subject("repo__C", root=td, unit="f")
         finally:
             if old_home is None:
@@ -312,10 +341,9 @@ def test_resolve_subject_uses_bugfix_fallback_root():
         fallback = root / "scripts" / "Results" / "workdirs" / "BugFix124" / "subjects"
         make_subject(fallback, "bugfix__C", benchmark="bugfix124")
         veriput_subjects.KNOWN_SUBJECT_ROOTS["bugfix124"] = primary
-        veriput_subjects.FALLBACK_SUBJECT_ROOTS["bugfix124"] = (fallback,)
+        veriput_subjects.FALLBACK_SUBJECT_ROOTS["bugfix124"] = (fallback, )
         try:
-            subject = resolve_subject(
-                "bugfix__C", benchmark="bugfix124", unit="f")
+            subject = resolve_subject("bugfix__C", benchmark="bugfix124", unit="f")
             dirs = veriput_subjects.subject_dirs("bugfix124")
         finally:
             veriput_subjects.KNOWN_SUBJECT_ROOTS["bugfix124"] = old_primary
@@ -338,21 +366,25 @@ def test_resolve_subject_uses_bugfix_dataset_fix_source():
         dataset = root / "Datasets" / "Patch-Bug-Bench"
         subject_dir = dataset / "class1_RealBug-RealRepair" / "pop_066_LRTDepositPool"
         subject_dir.mkdir(parents=True)
-        (subject_dir / "fix.flat.sol").write_text(
-            "contract LRTDepositPool { function depositAsset() public {} }\n")
+        (subject_dir / "fix.flat.sol"
+         ).write_text("contract LRTDepositPool { function depositAsset() public {} }\n")
         (subject_dir / "fix.flat.sol.solast").write_text("{}\n")
-        (subject_dir / "meta.json").write_text(json.dumps({
-            "id": "pop_066_LRTDepositPool",
-            "target_contract": "LRTDepositPool",
-            "solc_version": {"fix": "0.8.29"},
-            "changed_functions": ["depositAsset"],
-        }) + "\n")
+        (subject_dir / "meta.json").write_text(
+            json.dumps({
+                "id": "pop_066_LRTDepositPool",
+                "target_contract": "LRTDepositPool",
+                "solc_version": {
+                    "fix": "0.8.29"
+                },
+                "changed_functions": ["depositAsset"],
+            }) + "\n")
         veriput_subjects.KNOWN_SUBJECT_ROOTS["bugfix124"] = primary
         veriput_subjects.FALLBACK_SUBJECT_ROOTS["bugfix124"] = ()
         veriput_subjects.BUGFIX_DATASET_ROOT = dataset
         try:
-            subject = resolve_subject(
-                "pop_066_LRTDepositPool", benchmark="bugfix124", unit="depositAsset")
+            subject = resolve_subject("pop_066_LRTDepositPool",
+                                      benchmark="bugfix124",
+                                      unit="depositAsset")
             dirs = veriput_subjects.subject_dirs("bugfix124")
         finally:
             veriput_subjects.KNOWN_SUBJECT_ROOTS["bugfix124"] = old_primary
@@ -363,9 +395,9 @@ def test_resolve_subject_uses_bugfix_dataset_fix_source():
                  f"dataset target_contract resolves: {subject.contract}")
     bad += check(subject.flat_sol.endswith("/pop_066_LRTDepositPool/fix.flat.sol"),
                  f"dataset fix source is used as reference: {subject.flat_sol}")
-    bad += check(subject.metadata.get("source_layout") ==
-                 "patch-bug-bench-dataset",
-                 f"dataset provenance is recorded: {subject.metadata}")
+    bad += check(
+        subject.metadata.get("source_layout") == "patch-bug-bench-dataset",
+        f"dataset provenance is recorded: {subject.metadata}")
     bad += check([p.name for p in dirs] == ["pop_066_LRTDepositPool"],
                  f"bugfix dataset root is scanned: {dirs}")
     return bad
@@ -378,13 +410,22 @@ def test_resolve_subject_prefers_primary_when_benchmark_is_known():
         root = Path(td)
         primary = root / "Results" / "Peer182" / "subjects"
         fallback = root / "scripts" / "Results" / "workdirs" / "Peer182" / "subjects"
-        make_subject(primary, "peer__C", benchmark="peer182", contract="PrimaryC")
-        make_subject(fallback, "peer__C", benchmark="peer182", contract="FallbackC")
+        make_subject(primary,
+                     "peer__C",
+                     benchmark="peer182",
+                     contract="PrimaryC",
+                     source_080=True,
+                     source_file="contracts_080/PrimaryC.sol")
+        make_subject(fallback,
+                     "peer__C",
+                     benchmark="peer182",
+                     contract="FallbackC",
+                     source_080=True,
+                     source_file="contracts_080/FallbackC.sol")
         veriput_subjects.KNOWN_SUBJECT_ROOTS["peer182"] = primary
-        veriput_subjects.FALLBACK_SUBJECT_ROOTS["peer182"] = (fallback,)
+        veriput_subjects.FALLBACK_SUBJECT_ROOTS["peer182"] = (fallback, )
         try:
-            subject = resolve_subject(
-                "peer__C", benchmark="peer182", unit="f")
+            subject = resolve_subject("peer__C", benchmark="peer182", unit="f")
         finally:
             veriput_subjects.KNOWN_SUBJECT_ROOTS["peer182"] = old_primary
             veriput_subjects.FALLBACK_SUBJECT_ROOTS["peer182"] = old_fallback
@@ -403,12 +444,15 @@ def test_resolve_subject_uses_peer_fallback_root():
         root = Path(td)
         primary = root / "Results" / "Peer182" / "subjects"
         fallback = root / "scripts" / "Results" / "workdirs" / "Peer182" / "subjects"
-        make_subject(fallback, "peer__C", benchmark="peer182")
+        make_subject(fallback,
+                     "peer__C",
+                     benchmark="peer182",
+                     source_080=True,
+                     source_file="contracts_080/C.sol")
         veriput_subjects.KNOWN_SUBJECT_ROOTS["peer182"] = primary
-        veriput_subjects.FALLBACK_SUBJECT_ROOTS["peer182"] = (fallback,)
+        veriput_subjects.FALLBACK_SUBJECT_ROOTS["peer182"] = (fallback, )
         try:
-            subject = resolve_subject(
-                "peer__C", benchmark="peer182", unit="f")
+            subject = resolve_subject("peer__C", benchmark="peer182", unit="f")
             dirs = veriput_subjects.subject_dirs("peer182")
         finally:
             veriput_subjects.KNOWN_SUBJECT_ROOTS["peer182"] = old_primary
@@ -416,57 +460,182 @@ def test_resolve_subject_uses_peer_fallback_root():
     bad = 0
     bad += check(subject.root == str((fallback / "peer__C").resolve()),
                  f"peer fallback root resolves subject: {subject.root}")
-    bad += check([p.name for p in dirs] == ["peer__C"],
-                 f"peer fallback root is scanned: {dirs}")
+    bad += check([p.name for p in dirs] == ["peer__C"], f"peer fallback root is scanned: {dirs}")
     return bad
 
 
 def test_ast_unit_enumeration_is_target_contract_scoped():
     with tempfile.TemporaryDirectory() as td:
         d = make_subject(td)
-        (d / "flat.sol.solast").write_text(
-            "JSON AST (compact format):\n\n======= flat.sol =======\n"
-            + json.dumps(compact_ast()) + "\n")
+        (d /
+         "flat.sol.solast").write_text("JSON AST (compact format):\n\n======= flat.sol =======\n" +
+                                       json.dumps(compact_ast()) + "\n")
         subject = resolve_subject("repo__C", root=td, unit="own")
         enum = enumerate_subject_units(subject)
     bad = 0
-    bad += check(enum.units == ("own", "baseOnly"),
+    bad += check(enum.units == ("own", "baseOnly", "receive"),
                  f"target and inherited public/external units: {enum.units}")
     bad += check(not any(u == "hidden" for u in enum.units),
                  "internal inherited function is excluded")
     bad += check(not any(u == "ifaceValue" for u in enum.units),
                  "unimplemented inherited interface declaration is excluded")
-    bad += check(sum(1 for u in enum.units if u == "baseOnly") == 1,
-                 "override/base duplicate unit name is emitted once")
+    bad += check(
+        sum(1 for u in enum.units if u == "baseOnly") == 1,
+        "override/base duplicate unit name is emitted once")
     info = {row["name"]: row for row in enum.unit_info}
-    bad += check(info["own"]["state_mutability"] == "nonpayable"
-                 and info["own"]["parameter_count"] == 1
-                 and info["own"]["return_count"] == 0,
-                 f"target unit metadata is retained: {info}")
-    bad += check(info["baseOnly"]["state_mutability"] == "pure"
-                 and info["baseOnly"]["return_count"] == 1,
-                 f"inherited override metadata is retained: {info}")
+    bad += check(
+        info["own"]["state_mutability"] == "nonpayable" and info["own"]["parameter_count"] == 1
+        and info["own"]["return_count"] == 0, f"target unit metadata is retained: {info}")
+    bad += check(
+        info["baseOnly"]["state_mutability"] == "pure" and info["baseOnly"]["return_count"] == 1,
+        f"inherited override metadata is retained: {info}")
+    bad += check(
+        info["receive"]["state_mutability"] == ""
+        and info["receive"]["visibility"] == "external",
+        f"receive is retained as an external unit: {info}")
     reasons = {row["kind"]: row["reason"] for row in enum.skipped}
-    bad += check(reasons.get("receive") ==
-                 "fallback/receive has no named focus-function",
-                 f"receive is skipped with a reason: {enum.skipped}")
-    bad += check(reasons.get("public-state-getter") ==
-                 "public state getter is not a FunctionDefinition",
-                 f"public getter is skipped with a reason: {enum.skipped}")
-    bad += check(reasons.get("unimplemented-function") ==
-                 "public/external declaration has no FunctionDefinition body",
-                 f"unimplemented inherited declaration is skipped: {enum.skipped}")
+    bad += check(
+        reasons.get("public-state-getter") == "public state getter is not a FunctionDefinition",
+        f"public getter is skipped with a reason: {enum.skipped}")
+    bad += check(
+        reasons.get("unimplemented-function") ==
+        "public/external declaration has no FunctionDefinition body",
+        f"unimplemented inherited declaration is skipped: {enum.skipped}")
+    return bad
+
+
+def test_ast_unit_enumeration_includes_inherited_proxy_functions():
+    ast = compact_ast()
+    base = next(node for node in ast["nodes"] if node.get("name") == "Base")
+    next(node for node in base["nodes"] if node.get("name") == "baseOnly")["id"] = 11
+    target = next(node for node in ast["nodes"] if node.get("name") == "C")
+    target["nodes"] = [
+        node for node in target["nodes"]
+        if node.get("kind") in ("constructor", "fallback", "receive")
+    ]
+    with tempfile.TemporaryDirectory() as td:
+        root = make_subject(td)
+        (root / "flat.sol.solast").write_text(json.dumps(ast))
+        subject = resolve_subject("repo__C", root=td, benchmark="stress243", require_unit=False)
+        enum = enumerate_subject_units(subject)
+
+    bad = 0
+    bad += check(enum.units == ("receive", "baseOnly"),
+                 f"proxy-like target inherits a named callable unit: {enum.units}")
+    info = next(row for row in enum.unit_info if row["name"] == "baseOnly")
+    bad += check(
+        info["contract"] == "Base" and info["path_function"] == "sol:@C@Base@F@baseOnly#11",
+        f"inherited declaration provenance is retained: {info}")
+    return bad
+
+
+def test_public_getter_shadows_inherited_function_signature():
+    ast = compact_ast()
+    target = next(node for node in ast["nodes"] if node.get("name") == "C")
+    target["nodes"] = [{
+        "nodeType": "VariableDeclaration",
+        "name": "baseOnly",
+        "visibility": "public",
+        "typeDescriptions": {
+            "typeString": "uint256",
+        },
+    }]
+    with tempfile.TemporaryDirectory() as td:
+        root = make_subject(td)
+        (root / "flat.sol.solast").write_text(json.dumps(ast))
+        subject = resolve_subject("repo__C", root=td, benchmark="stress243", require_unit=False)
+        enum = enumerate_subject_units(subject)
+
+    bad = 0
+    bad += check(enum.units == (),
+                 f"derived public getter shadows inherited function: {enum.units}")
+    bad += check(
+        any(
+            row.get("kind") == "public-state-getter" and row.get("name") == "baseOnly"
+            for row in enum.skipped), f"shadowing getter stays auditable: {enum.skipped}")
+    return bad
+
+
+def test_parameterized_public_state_getter_is_not_schedulable_unit():
+    ast = compact_ast()
+    target = next(node for node in ast["nodes"] if node.get("name") == "C")
+    target["linearizedBaseContracts"] = [2]
+    target["nodes"] = [{
+        "nodeType": "FunctionDefinition",
+        "kind": "function",
+        "name": "transfer",
+        "visibility": "external",
+        "stateMutability": "nonpayable",
+        "parameters": {
+            "parameters": [{
+                "nodeType": "VariableDeclaration",
+                "typeDescriptions": {
+                    "typeString": "address",
+                },
+            }],
+        },
+        "returnParameters": {
+            "parameters": [{
+                "nodeType": "VariableDeclaration",
+                "typeDescriptions": {
+                    "typeString": "bool",
+                },
+            }],
+        },
+    }, {
+        "nodeType": "VariableDeclaration",
+        "id": 203,
+        "name": "balanceOf",
+        "visibility": "public",
+        "typeDescriptions": {
+            "typeString": "mapping(address => uint256)",
+        },
+        "typeName": {
+            "nodeType": "Mapping",
+            "keyType": {
+                "nodeType": "ElementaryTypeName",
+                "typeDescriptions": {
+                    "typeString": "address",
+                },
+            },
+            "valueType": {
+                "nodeType": "ElementaryTypeName",
+                "typeDescriptions": {
+                    "typeString": "uint256",
+                },
+            },
+        },
+    }]
+    with tempfile.TemporaryDirectory() as td:
+        root = make_subject(td)
+        (root / "flat.sol.solast").write_text(json.dumps(ast))
+        subject = resolve_subject("repo__C", root=td, benchmark="stress243", require_unit=False)
+        enum = enumerate_subject_units(subject)
+
+    bad = 0
+    bad += check(enum.units == ("transfer", ),
+                 f"parameterized public state getter is not schedulable: {enum.units}")
+    bad += check(
+        any(
+            row.get("kind") == "public-state-getter" and row.get("name") == "balanceOf"
+            and row.get("parameter_count") == 1 for row in enum.skipped),
+        f"parameterized getter remains auditable: {enum.skipped}")
     return bad
 
 
 def test_no_unit_enumeration_records_auditable_reasons():
     ast = {
-        "nodeType": "SourceUnit",
+        "nodeType":
+        "SourceUnit",
         "nodes": [{
-            "nodeType": "ContractDefinition",
-            "id": 1,
-            "name": "LibOnly",
-            "contractKind": "library",
+            "nodeType":
+            "ContractDefinition",
+            "id":
+            1,
+            "name":
+            "LibOnly",
+            "contractKind":
+            "library",
             "linearizedBaseContracts": [1],
             "nodes": [{
                 "nodeType": "FunctionDefinition",
@@ -475,8 +644,12 @@ def test_no_unit_enumeration_records_auditable_reasons():
                 "visibility": "internal",
                 "implemented": True,
                 "stateMutability": "nonpayable",
-                "parameters": {"parameters": []},
-                "returnParameters": {"parameters": []},
+                "parameters": {
+                    "parameters": []
+                },
+                "returnParameters": {
+                    "parameters": []
+                },
             }],
         }],
     }
@@ -489,15 +662,57 @@ def test_no_unit_enumeration_records_auditable_reasons():
     reasons = {row["kind"]: row["reason"] for row in enum.skipped}
     bad = 0
     bad += check(enum.units == (), f"library-only target has no units: {enum}")
-    bad += check(reasons.get("library-contract") ==
-                 "library target has no externally callable unit",
-                 f"library target reason is retained: {enum.skipped}")
-    bad += check(reasons.get("non-public-function") ==
-                 "function is not public/external",
-                 f"internal changed function is retained: {enum.skipped}")
-    bad += check(record["schedulable"] is False
-                 and "no public/external" in record["no_unit_reason"],
+    bad += check(
+        reasons.get("library-contract") == "library target has no externally callable unit",
+        f"library target reason is retained: {enum.skipped}")
+    bad += check(
+        reasons.get("non-public-function") == "function is not public/external",
+        f"internal changed function is retained: {enum.skipped}")
+    bad += check(record["schedulable"] is False and "library" in record["no_unit_reason"],
                  f"serialized record carries no-unit status: {record}")
+    return bad
+
+
+def test_constructor_only_concrete_target_ignores_abstract_base_for_reason():
+    ast = {
+        "nodeType": "SourceUnit",
+        "nodes": [{
+            "nodeType": "ContractDefinition",
+            "id": 1,
+            "name": "Cv2",
+            "contractKind": "contract",
+            "abstract": True,
+            "linearizedBaseContracts": [1],
+            "nodes": [],
+        }, {
+            "nodeType": "ContractDefinition",
+            "id": 2,
+            "name": "Dv2",
+            "contractKind": "contract",
+            "abstract": False,
+            "linearizedBaseContracts": [2, 1],
+            "nodes": [{
+                "nodeType": "FunctionDefinition",
+                "kind": "constructor",
+                "name": "",
+                "visibility": "public",
+                "implemented": True,
+            }],
+        }],
+    }
+    with tempfile.TemporaryDirectory() as td:
+        d = make_subject(td, contract="Dv2")
+        (d / "flat.sol.solast").write_text(json.dumps(ast) + "\n")
+        subject = resolve_subject("repo__C", root=td, require_unit=False)
+        enum = enumerate_subject_units(subject)
+
+    bad = 0
+    bad += check(enum.units == (), f"constructor-only target has no named units: {enum.units}")
+    bad += check("constructor-level behavior" in enum.no_unit_reason,
+                 f"selected concrete target determines no-unit reason: {enum.no_unit_reason}")
+    bad += check(any(row.get("kind") == "abstract-contract"
+                     and row.get("contract") == "Cv2" for row in enum.skipped),
+                 f"abstract base diagnostic remains auditable: {enum.skipped}")
     return bad
 
 
@@ -522,124 +737,93 @@ def test_unit_manifest_records_missing_ast_without_solc():
 def test_generate_solast_uses_inferred_solc_bin_directly():
     with tempfile.TemporaryDirectory() as td:
         script = make_fake_solc(
-            Path(td) / "solc-0.8.17",
-            "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
-        d = make_subject(
-            td,
-            "repo__C",
-            solc_bin=None,
-            compile={"cmd": f"{script} --bin flat.sol"})
+            Path(td) / "solc-0.8.17", "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
+        d = make_subject(td, "repo__C", solc_bin=None, compile={"cmd": f"{script} --bin flat.sol"})
         (d / "flat.sol.solast").unlink()
         subject = resolve_subject("repo__C", root=td, require_unit=False)
         row = manifest_for_subject(subject, generate_ast=True)
     bad = 0
-    bad += check(row["status"] == "ok",
-                 f"direct manifest generation uses inferred solc: {row}")
-    bad += check(row["subject"]["solc_bin_source"] == "inferred"
-                 and row["subject"]["solc_bin"] == script,
-                 f"inferred solc provenance is serialized: {row['subject']}")
+    bad += check(row["status"] == "ok", f"direct manifest generation uses inferred solc: {row}")
+    bad += check(
+        row["subject"]["solc_bin_source"] == "inferred" and row["subject"]["solc_bin"] == script,
+        f"inferred solc provenance is serialized: {row['subject']}")
     return bad
 
 
 def test_generate_ast_is_atomic_on_success():
     with tempfile.TemporaryDirectory() as td:
         script = make_fake_solc(
-            Path(td) / "solc-ok",
-            "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
+            Path(td) / "solc-ok", "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
         d = make_subject(td, "repo__C", solc_bin=script)
         (d / "flat.sol.solast").unlink()
         subject = resolve_subject("repo__C", root=td, require_unit=False)
-        row = manifest_for_subject(
-            subject,
-            generate_ast=True,
-            ast_timeout_s=5)
+        row = manifest_for_subject(subject, generate_ast=True, ast_timeout_s=5)
     bad = 0
-    bad += check(row["status"] == "ok",
-                 f"generated AST row is ok: {row}")
+    bad += check(row["status"] == "ok", f"generated AST row is ok: {row}")
     bad += check(row["ast_generated"] is True,
                  f"legacy ast_generated flag is true: {row.get('ast')}")
     bad += check(row["ast"]["generated"] is True,
                  f"structured AST metadata says generated: {row['ast']}")
-    bad += check(row["units"]["units"] == ["own", "baseOnly"],
+    bad += check(row["units"]["units"] == ["own", "baseOnly", "receive"],
                  f"generated AST is enumerated: {row.get('units')}")
     return bad
 
 
 def test_generate_ast_failure_leaves_no_partial_solast():
     with tempfile.TemporaryDirectory() as td:
-        script = make_fake_solc(
-            Path(td) / "solc-fail",
-            "printf '{\"partial\":'\nexit 2\n")
+        script = make_fake_solc(Path(td) / "solc-fail", "printf '{\"partial\":'\nexit 2\n")
         d = make_subject(td, "repo__C", solc_bin=script)
         ast = d / "flat.sol.solast"
         ast.unlink()
         subject = resolve_subject("repo__C", root=td, require_unit=False)
-        row = manifest_for_subject(
-            subject,
-            generate_ast=True,
-            ast_timeout_s=5)
+        row = manifest_for_subject(subject, generate_ast=True, ast_timeout_s=5)
         tmp_left = list(d.glob("*.tmp.*"))
         exists = ast.exists()
     bad = 0
-    bad += check(row["status"] == "error",
-                 f"failed solc is an error row: {row}")
-    bad += check("rc=2" in row["reason"],
-                 f"return code is recorded: {row['reason']}")
-    bad += check(not exists,
-                 "failed solc did not leave flat.sol.solast")
-    bad += check(not tmp_left,
-                 f"failed solc cleaned temp files: {tmp_left}")
+    bad += check(row["status"] == "error", f"failed solc is an error row: {row}")
+    bad += check("rc=2" in row["reason"], f"return code is recorded: {row['reason']}")
+    bad += check(not exists, "failed solc did not leave flat.sol.solast")
+    bad += check(not tmp_left, f"failed solc cleaned temp files: {tmp_left}")
     return bad
 
 
 def test_generate_ast_start_failure_cleans_temp_file():
     with tempfile.TemporaryDirectory() as td:
-        d = make_subject(
-            td,
-            "repo__C",
-            solc_bin=str(Path(td) / "missing-solc"))
+        d = make_subject(td, "repo__C", solc_bin=str(Path(td) / "missing-solc"))
         ast = d / "flat.sol.solast"
         ast.unlink()
         subject = resolve_subject("repo__C", root=td, require_unit=False)
-        row = manifest_for_subject(
-            subject,
-            generate_ast=True,
-            ast_timeout_s=5)
+        row = manifest_for_subject(subject, generate_ast=True, ast_timeout_s=5)
         tmp_left = list(d.glob("*.tmp.*"))
         exists = ast.exists()
     bad = 0
-    bad += check(row["status"] == "error",
-                 f"missing solc is an error row: {row}")
-    bad += check("could not start" in row["reason"],
-                 f"start failure is explicit: {row['reason']}")
-    bad += check(not exists,
-                 "missing solc did not leave flat.sol.solast")
-    bad += check(not tmp_left,
-                 f"missing solc cleaned temp files: {tmp_left}")
+    bad += check(row["status"] == "error", f"missing solc is an error row: {row}")
+    bad += check("could not start" in row["reason"], f"start failure is explicit: {row['reason']}")
+    bad += check(not exists, "missing solc did not leave flat.sol.solast")
+    bad += check(not tmp_left, f"missing solc cleaned temp files: {tmp_left}")
     return bad
 
 
 def test_unit_manifest_cli_generates_ast_with_inferred_solc():
     with tempfile.TemporaryDirectory() as td:
         script = make_fake_solc(
-            Path(td) / "solc-0.8.17",
-            "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
-        d = make_subject(
-            td,
-            "repo__C",
-            solc_bin=None,
-            compile={"cmd": f"{script} --bin flat.sol"})
+            Path(td) / "solc-0.8.17", "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
+        d = make_subject(td, "repo__C", solc_bin=None, compile={"cmd": f"{script} --bin flat.sol"})
         (d / "flat.sol.solast").unlink()
         cp = subprocess.run([
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--benchmark", "stress243",
-            "--subject-root", td,
-            "--subject-id", "repo__C",
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--benchmark",
+            "stress243",
+            "--subject-root",
+            td,
+            "--subject-id",
+            "repo__C",
             "--generate-ast",
             "--use-inferred-solc-bin",
-        ], capture_output=True, text=True)
+        ],
+                            capture_output=True,
+                            text=True)
     if cp.returncode:
         print(cp.stdout)
         print(cp.stderr)
@@ -647,13 +831,13 @@ def test_unit_manifest_cli_generates_ast_with_inferred_solc():
     data = json.loads(cp.stdout)
     row = data["subjects"][0]
     bad = 0
-    bad += check(row["status"] == "ok",
-                 f"inferred solc generated an AST: {row}")
+    bad += check(row["status"] == "ok", f"inferred solc generated an AST: {row}")
     bad += check(row["subject"]["solc_bin"] == script,
                  f"inferred solc was promoted for this run: {row['subject']}")
-    bad += check(row["subject"]["solc_bin_source"] == "inferred"
-                 and row["subject"]["inferred_solc_bin"] == script,
-                 f"promoted solc provenance is explicit: {row['subject']}")
+    bad += check(
+        row["subject"]["solc_bin_source"] == "inferred"
+        and row["subject"]["inferred_solc_bin"] == script,
+        f"promoted solc provenance is explicit: {row['subject']}")
     return bad
 
 
@@ -669,13 +853,18 @@ def test_unit_manifest_cli_reads_ast_cache_without_touching_subject():
         cached_ast.write_text(json.dumps(compact_ast()) + "\n")
         cp = subprocess.run([
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--benchmark", "stress243",
-            "--subject-root", td,
-            "--subject-id", "repo__C",
-            "--ast-cache-root", str(cache),
-        ], capture_output=True, text=True)
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--benchmark",
+            "stress243",
+            "--subject-root",
+            td,
+            "--subject-id",
+            "repo__C",
+            "--ast-cache-root",
+            str(cache),
+        ],
+                            capture_output=True,
+                            text=True)
         prepared_exists = prepared_ast.exists()
     if cp.returncode:
         print(cp.stdout)
@@ -684,22 +873,19 @@ def test_unit_manifest_cli_reads_ast_cache_without_touching_subject():
     data = json.loads(cp.stdout)
     row = data["subjects"][0]
     bad = 0
-    bad += check(row["status"] == "ok",
-                 f"cached AST enumerates units: {row}")
+    bad += check(row["status"] == "ok", f"cached AST enumerates units: {row}")
     bad += check(row["subject"]["solast"] == str(cached_ast.resolve()),
                  f"subject points at cache AST: {row['subject']}")
     bad += check(row["subject"]["solast_source"] == "cache",
                  f"cache provenance is recorded: {row['subject']}")
-    bad += check(not prepared_exists,
-                 "prepared subject AST was not recreated")
+    bad += check(not prepared_exists, "prepared subject AST was not recreated")
     return bad
 
 
 def test_unit_manifest_cli_generates_ast_into_cache_only():
     with tempfile.TemporaryDirectory() as td:
         script = make_fake_solc(
-            Path(td) / "solc-ok",
-            "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
+            Path(td) / "solc-ok", "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
         d = make_subject(td, "repo__C", solc_bin=script)
         prepared_ast = d / "flat.sol.solast"
         prepared_ast.unlink()
@@ -708,14 +894,19 @@ def test_unit_manifest_cli_generates_ast_into_cache_only():
             / "flat.sol.solast"
         cp = subprocess.run([
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--benchmark", "stress243",
-            "--subject-root", td,
-            "--subject-id", "repo__C",
-            "--ast-cache-root", str(cache),
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--benchmark",
+            "stress243",
+            "--subject-root",
+            td,
+            "--subject-id",
+            "repo__C",
+            "--ast-cache-root",
+            str(cache),
             "--generate-ast",
-        ], capture_output=True, text=True)
+        ],
+                            capture_output=True,
+                            text=True)
         prepared_exists = prepared_ast.exists()
         cached_exists = cached_ast.exists()
     if cp.returncode:
@@ -725,13 +916,10 @@ def test_unit_manifest_cli_generates_ast_into_cache_only():
     data = json.loads(cp.stdout)
     row = data["subjects"][0]
     bad = 0
-    bad += check(row["status"] == "ok",
-                 f"cache AST generation row is ok: {row}")
-    bad += check(row["ast"]["generated"] is True,
-                 f"cache AST was generated: {row['ast']}")
+    bad += check(row["status"] == "ok", f"cache AST generation row is ok: {row}")
+    bad += check(row["ast"]["generated"] is True, f"cache AST was generated: {row['ast']}")
     bad += check(cached_exists, "cache AST file was created")
-    bad += check(not prepared_exists,
-                 "prepared subject AST was not written")
+    bad += check(not prepared_exists, "prepared subject AST was not written")
     return bad
 
 
@@ -740,38 +928,40 @@ def test_unit_manifest_cli_refuses_real_results_ast_writes():
         veriput_root = Path(td) / "VeriPUT"
         subjects = veriput_root / "Results" / "Stress243" / "subjects"
         script = make_fake_solc(
-            Path(td) / "solc-ok",
-            "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
+            Path(td) / "solc-ok", "cat <<'JSON'\n" + json.dumps(compact_ast()) + "\nJSON\n")
         d = make_subject(subjects, "repo__C", solc_bin=script)
         (d / "flat.sol.solast").unlink()
         base_cmd = [
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--benchmark", "stress243",
-            "--subject-root", str(subjects),
-            "--subject-id", "repo__C",
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--benchmark",
+            "stress243",
+            "--subject-root",
+            str(subjects),
+            "--subject-id",
+            "repo__C",
             "--generate-ast",
         ]
         env = dict(os.environ)
         env["VERIPUT_ROOT"] = str(veriput_root)
         no_cache = subprocess.run(base_cmd, capture_output=True, text=True, env=env)
         results_cache = subprocess.run(
-            base_cmd + ["--ast-cache-root", str(veriput_root / "Results" / "cache")],
+            base_cmd +
+            ["--ast-cache-root", str(veriput_root / "Results" / "cache")],
             capture_output=True,
             text=True,
             env=env)
         ast_exists = (d / "flat.sol.solast").exists()
     bad = 0
-    bad += check(no_cache.returncode == 1
-                 and "requires external --ast-cache-root" in no_cache.stderr,
-                 f"real Results subject generation without cache is refused: "
-                 f"{no_cache.stderr.strip()}")
-    bad += check(results_cache.returncode == 1
-                 and "--ast-cache-root must not be under" in results_cache.stderr,
-                 f"Results-local AST cache is refused: {results_cache.stderr.strip()}")
-    bad += check(not ast_exists,
-                 "refused real Results generation did not create a prepared AST")
+    bad += check(
+        no_cache.returncode == 1 and "requires external --ast-cache-root" in no_cache.stderr,
+        f"real Results subject generation without cache is refused: "
+        f"{no_cache.stderr.strip()}")
+    bad += check(
+        results_cache.returncode == 1
+        and "--ast-cache-root must not be under" in results_cache.stderr,
+        f"Results-local AST cache is refused: {results_cache.stderr.strip()}")
+    bad += check(not ast_exists, "refused real Results generation did not create a prepared AST")
     return bad
 
 
@@ -782,19 +972,21 @@ def test_unit_manifest_cli_refuses_protected_report_outputs():
         make_subject(root, "repo__C", with_ast=True)
         base_cmd = [
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--benchmark", "stress243",
-            "--subject-root", str(root),
-            "--subject-id", "repo__C",
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--benchmark",
+            "stress243",
+            "--subject-root",
+            str(root),
+            "--subject-id",
+            "repo__C",
         ]
         env = dict(os.environ)
         env["VERIPUT_ROOT"] = str(veriput_root)
-        out = subprocess.run(
-            base_cmd + ["--out", str(veriput_root / "Results" / "manifest.json")],
-            capture_output=True,
-            text=True,
-            env=env)
+        out = subprocess.run(base_cmd +
+                             ["--out", str(veriput_root / "Results" / "manifest.json")],
+                             capture_output=True,
+                             text=True,
+                             env=env)
         journal = subprocess.run(
             base_cmd + ["--journal", str(veriput_root / "Results" / "manifest.jsonl")],
             capture_output=True,
@@ -814,22 +1006,25 @@ def test_unit_manifest_cli_lists_units_without_esbmc():
         (d / "flat.sol.solast").write_text(json.dumps(compact_ast()) + "\n")
         cp = subprocess.run([
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--benchmark", "stress243",
-            "--subject-root", td,
-            "--subject-id", "repo__C",
-        ], capture_output=True, text=True)
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--benchmark",
+            "stress243",
+            "--subject-root",
+            td,
+            "--subject-id",
+            "repo__C",
+        ],
+                            capture_output=True,
+                            text=True)
     if cp.returncode:
         print(cp.stdout)
         print(cp.stderr)
         return 1
     data = json.loads(cp.stdout)
     bad = 0
-    bad += check(data["summary"]["ok"] == 1,
-                 f"CLI manifest has one ok subject: {data['summary']}")
+    bad += check(data["summary"]["ok"] == 1, f"CLI manifest has one ok subject: {data['summary']}")
     units = data["subjects"][0]["units"]["units"]
-    bad += check(units == ["own", "baseOnly"],
+    bad += check(units == ["own", "baseOnly", "receive"],
                  f"CLI manifest carries units: {units}")
     return bad
 
@@ -842,13 +1037,18 @@ def test_unit_manifest_cli_shard_and_resume():
         journal = Path(td) / "manifest.jsonl"
         cp = subprocess.run([
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--benchmark", "stress243",
-            "--subject-root", td,
-            "--shard", "1/2",
-            "--journal", str(journal),
-        ], capture_output=True, text=True)
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--benchmark",
+            "stress243",
+            "--subject-root",
+            td,
+            "--shard",
+            "1/2",
+            "--journal",
+            str(journal),
+        ],
+                            capture_output=True,
+                            text=True)
         if cp.returncode:
             print(cp.stdout)
             print(cp.stderr)
@@ -856,13 +1056,18 @@ def test_unit_manifest_cli_shard_and_resume():
         first = json.loads(cp.stdout)
         cp2 = subprocess.run([
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--benchmark", "stress243",
-            "--subject-root", td,
-            "--shard", "1/2",
-            "--resume-journal", str(journal),
-        ], capture_output=True, text=True)
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--benchmark",
+            "stress243",
+            "--subject-root",
+            td,
+            "--shard",
+            "1/2",
+            "--resume-journal",
+            str(journal),
+        ],
+                             capture_output=True,
+                             text=True)
     if cp2.returncode:
         print(cp2.stdout)
         print(cp2.stderr)
@@ -870,8 +1075,7 @@ def test_unit_manifest_cli_shard_and_resume():
     second = json.loads(cp2.stdout)
     bad = 0
     got_ids = [row["subject"]["subject_id"] for row in first["subjects"]]
-    bad += check(got_ids == ["s1", "s3"],
-                 f"shard 1/2 selects sorted odd positions: {got_ids}")
+    bad += check(got_ids == ["s1", "s3"], f"shard 1/2 selects sorted odd positions: {got_ids}")
     bad += check(first["summary"]["ok"] == 2,
                  f"first shard processed two ok subjects: {first['summary']}")
     bad += check(second["summary"]["subjects"] == 0,
@@ -886,25 +1090,33 @@ def test_unit_manifest_cli_reads_target_manifest_hints():
         d = make_subject(td, "repo__C")
         (d / "flat.sol.solast").write_text(json.dumps(compact_ast()) + "\n")
         target_manifest = Path(td) / "targets.json"
-        target_manifest.write_text(json.dumps({
-            "schema": "veriput-eval/target/v1",
-            "targets": [{
-                "schema": "veriput-eval-target/v1",
-                "benchmark": "stress243",
-                "subject_id": "repo__C",
-                "status": "ok",
-                "contract": "C",
-                "sources": [{"variant": "source", "path": "flat.sol"}],
-                "units_hint": ["own", "missingChanged"],
-            }],
-        }) + "\n")
+        target_manifest.write_text(
+            json.dumps({
+                "schema":
+                "veriput-eval/target/v1",
+                "targets": [{
+                    "schema": "veriput-eval-target/v1",
+                    "benchmark": "stress243",
+                    "subject_id": "repo__C",
+                    "status": "ok",
+                    "contract": "C",
+                    "sources": [{
+                        "variant": "source",
+                        "path": "flat.sol"
+                    }],
+                    "units_hint": ["own", "missingChanged"],
+                }],
+            }) + "\n")
         cp = subprocess.run([
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--target-manifest", str(target_manifest),
-            "--subject-root", td,
-        ], capture_output=True, text=True)
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--target-manifest",
+            str(target_manifest),
+            "--subject-root",
+            td,
+        ],
+                            capture_output=True,
+                            text=True)
     if cp.returncode:
         print(cp.stdout)
         print(cp.stderr)
@@ -927,19 +1139,20 @@ def test_unit_manifest_cli_reads_target_manifest_hints():
 
 def test_unit_manifest_cli_uses_prepared_changed_function_hints():
     with tempfile.TemporaryDirectory() as td:
-        d = make_subject(
-            td,
-            "repo__C",
-            changed_functions=["own", "missingChanged"])
+        d = make_subject(td, "repo__C", changed_functions=["own", "missingChanged"])
         (d / "flat.sol.solast").write_text(json.dumps(compact_ast()) + "\n")
         cp = subprocess.run([
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--benchmark", "stress243",
-            "--subject-root", td,
-            "--subject-id", "repo__C",
-        ], capture_output=True, text=True)
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--benchmark",
+            "stress243",
+            "--subject-root",
+            td,
+            "--subject-id",
+            "repo__C",
+        ],
+                            capture_output=True,
+                            text=True)
     if cp.returncode:
         print(cp.stdout)
         print(cp.stderr)
@@ -965,25 +1178,33 @@ def test_unit_manifest_cli_refuses_target_contract_mismatch():
         d = make_subject(td, "repo__C")
         (d / "flat.sol.solast").write_text(json.dumps(compact_ast()) + "\n")
         target_manifest = Path(td) / "targets.json"
-        target_manifest.write_text(json.dumps({
-            "schema": "veriput-eval/target/v1",
-            "targets": [{
-                "schema": "veriput-eval-target/v1",
-                "benchmark": "stress243",
-                "subject_id": "repo__C",
-                "status": "ok",
-                "contract": "WrongC",
-                "sources": [{"variant": "source", "path": "flat.sol"}],
-                "units_hint": [],
-            }],
-        }) + "\n")
+        target_manifest.write_text(
+            json.dumps({
+                "schema":
+                "veriput-eval/target/v1",
+                "targets": [{
+                    "schema": "veriput-eval-target/v1",
+                    "benchmark": "stress243",
+                    "subject_id": "repo__C",
+                    "status": "ok",
+                    "contract": "WrongC",
+                    "sources": [{
+                        "variant": "source",
+                        "path": "flat.sol"
+                    }],
+                    "units_hint": [],
+                }],
+            }) + "\n")
         cp = subprocess.run([
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--target-manifest", str(target_manifest),
-            "--subject-root", td,
-        ], capture_output=True, text=True)
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--target-manifest",
+            str(target_manifest),
+            "--subject-root",
+            td,
+        ],
+                            capture_output=True,
+                            text=True)
     if cp.returncode:
         print(cp.stdout)
         print(cp.stderr)
@@ -993,10 +1214,8 @@ def test_unit_manifest_cli_refuses_target_contract_mismatch():
     bad = 0
     bad += check(data["summary"]["error"] == 1,
                  f"mismatched target counts as error: {data['summary']}")
-    bad += check("disagrees" in row["reason"],
-                 f"mismatch reason is explicit: {row}")
-    bad += check(row["subject_contract"] == "C",
-                 f"prepared contract is recorded: {row}")
+    bad += check("disagrees" in row["reason"], f"mismatch reason is explicit: {row}")
+    bad += check(row["subject_contract"] == "C", f"prepared contract is recorded: {row}")
     return bad
 
 
@@ -1004,25 +1223,33 @@ def test_unit_manifest_cli_records_unusable_prepared_subject():
     with tempfile.TemporaryDirectory() as td:
         make_subject(td, "repo__C", status="compile-failed")
         target_manifest = Path(td) / "targets.json"
-        target_manifest.write_text(json.dumps({
-            "schema": "veriput-eval/target/v1",
-            "targets": [{
-                "schema": "veriput-eval-target/v1",
-                "benchmark": "stress243",
-                "subject_id": "repo__C",
-                "status": "ok",
-                "contract": "C",
-                "sources": [{"variant": "source", "path": "flat.sol"}],
-                "units_hint": ["f"],
-            }],
-        }) + "\n")
+        target_manifest.write_text(
+            json.dumps({
+                "schema":
+                "veriput-eval/target/v1",
+                "targets": [{
+                    "schema": "veriput-eval-target/v1",
+                    "benchmark": "stress243",
+                    "subject_id": "repo__C",
+                    "status": "ok",
+                    "contract": "C",
+                    "sources": [{
+                        "variant": "source",
+                        "path": "flat.sol"
+                    }],
+                    "units_hint": ["f"],
+                }],
+            }) + "\n")
         cp = subprocess.run([
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--target-manifest", str(target_manifest),
-            "--subject-root", td,
-        ], capture_output=True, text=True)
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--target-manifest",
+            str(target_manifest),
+            "--subject-root",
+            td,
+        ],
+                            capture_output=True,
+                            text=True)
     if cp.returncode:
         print(cp.stdout)
         print(cp.stderr)
@@ -1032,10 +1259,8 @@ def test_unit_manifest_cli_records_unusable_prepared_subject():
     bad = 0
     bad += check(data["summary"]["error"] == 1,
                  f"unusable prepared subject is row-local: {data['summary']}")
-    bad += check("status='compile-failed'" in row["reason"],
-                 f"prepared status is recorded: {row}")
-    bad += check(row["target"]["subject_id"] == "repo__C",
-                 f"target row is retained: {row}")
+    bad += check("status='compile-failed'" in row["reason"], f"prepared status is recorded: {row}")
+    bad += check(row["target"]["subject_id"] == "repo__C", f"target row is retained: {row}")
     return bad
 
 
@@ -1046,11 +1271,14 @@ def test_unit_manifest_cli_continues_after_unusable_scanned_subject():
         (good / "flat.sol.solast").write_text(json.dumps(compact_ast()) + "\n")
         cp = subprocess.run([
             sys.executable,
-            str(ROOT / "notes" / "coverage" / "scripts"
-                / "subject_unit_manifest.py"),
-            "--benchmark", "stress243",
-            "--subject-root", td,
-        ], capture_output=True, text=True)
+            str(ROOT / "notes" / "coverage" / "scripts" / "subject_unit_manifest.py"),
+            "--benchmark",
+            "stress243",
+            "--subject-root",
+            td,
+        ],
+                            capture_output=True,
+                            text=True)
     if cp.returncode:
         print(cp.stdout)
         print(cp.stderr)
@@ -1062,12 +1290,14 @@ def test_unit_manifest_cli_continues_after_unusable_scanned_subject():
                  f"both scanned subjects are represented: {data['summary']}")
     bad += check(data["summary"]["ok"] == 1 and data["summary"]["error"] == 1,
                  f"bad scanned subject is row-local: {data['summary']}")
-    bad += check(rows["bad__C"]["status"] == "error"
-                 and "status='compile-failed'" in rows["bad__C"]["reason"],
-                 f"bad status is recorded without aborting: {rows['bad__C']}")
-    bad += check(rows["good__C"]["status"] == "ok"
-                 and rows["good__C"]["units"]["units"] == ["own", "baseOnly"],
-                 f"good subject after bad one is still enumerated: {rows['good__C']}")
+    bad += check(
+        rows["bad__C"]["status"] == "error"
+        and "status='compile-failed'" in rows["bad__C"]["reason"],
+        f"bad status is recorded without aborting: {rows['bad__C']}")
+    bad += check(
+        rows["good__C"]["status"] == "ok"
+        and rows["good__C"]["units"]["units"] == ["own", "baseOnly", "receive"],
+        f"good subject after bad one is still enumerated: {rows['good__C']}")
     return bad
 
 
@@ -1086,7 +1316,11 @@ def main():
         test_resolve_subject_prefers_primary_when_benchmark_is_known,
         test_resolve_subject_uses_peer_fallback_root,
         test_ast_unit_enumeration_is_target_contract_scoped,
+        test_ast_unit_enumeration_includes_inherited_proxy_functions,
+        test_public_getter_shadows_inherited_function_signature,
+        test_parameterized_public_state_getter_is_not_schedulable_unit,
         test_no_unit_enumeration_records_auditable_reasons,
+        test_constructor_only_concrete_target_ignores_abstract_base_for_reason,
         test_unit_manifest_records_missing_ast_without_solc,
         test_generate_solast_uses_inferred_solc_bin_directly,
         test_generate_ast_is_atomic_on_success,

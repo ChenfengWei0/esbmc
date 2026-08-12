@@ -1809,8 +1809,1059 @@
       "schema": "veriput-rq1-batch-settlement/v1",
       "settled_ts": 1786418389.5161498,
       "start_index": 5
+    },
+    "manual-005-012-novalid-r3": {
+      "batch_id": "manual-005-012-novalid-r3",
+      "bucket_counts": {
+        "NO_VALID": 2,
+        "VALID_NO_PUT": 6,
+        "put": 0,
+        "r1r2": 0,
+        "valid": 6
+      },
+      "case_count": 8,
+      "cases": [
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [],
+          "put_summaries": [],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "MStableYieldSource",
+            "expected_units": [
+              "supplyTokenTo",
+              "redeemToken",
+              "approveMax",
+              "balanceOfToken",
+              "depositToken"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 6,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "approveMax",
+              "redeemToken",
+              "supplyTokenTo",
+              "depositToken",
+              "balanceOfToken",
+              "imBalances"
+            ],
+            "target_unit_hits": [
+              "supplyTokenTo",
+              "redeemToken",
+              "approveMax",
+              "balanceOfToken",
+              "depositToken"
+            ]
+          },
+          "subject": "acfix_fixlink_MStableYieldSource",
+          "valid": 0
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/put/deploy_only/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/put/final_deploy_concrete_fallback/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": null,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "deploy_only",
+              "valid_reference_rows": null
+            },
+            {
+              "b": null,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "final_deploy_concrete_fallback",
+              "valid_reference_rows": null
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "Multicall",
+            "expected_units": [
+              "multicall"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 0,
+            "ok": false,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [],
+            "target_unit_hits": []
+          },
+          "subject": "pop_001_Multicall",
+          "valid": 0
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "VALID_NO_PUT",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/bugfix124__pop_009_PrivatePool__flashFee/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/bugfix124__pop_009_PrivatePool__flashFeeAndProtocolFee/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/bugfix124__pop_009_PrivatePool__setMerkleRoot/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_009_PrivatePool__flashFeeAndProtocolFee",
+              "valid_reference_rows": 1
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_009_PrivatePool__flashFee",
+              "valid_reference_rows": 1
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_009_PrivatePool__setMerkleRoot",
+              "valid_reference_rows": 0
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": true,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "PrivatePool",
+            "expected_units": [
+              "buy",
+              "sell",
+              "execute",
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 23,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setMerkleRoot",
+              "setFeeRate",
+              "setUseStolenNftOracle",
+              "setPayRoyalties",
+              "setVirtualReserves",
+              "setAllParameters",
+              "sell",
+              "withdraw",
+              "execute",
+              "buy",
+              "flashLoan",
+              "deposit",
+              "change",
+              "price",
+              "flashFeeToken",
+              "changeFeeQuote",
+              "buyQuote",
+              "sellQuote",
+              "availableForFlashLoan",
+              "sumWeightsAndValidateProof",
+              "initialize"
+            ],
+            "target_unit_hits": [
+              "buy",
+              "sell",
+              "execute",
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot"
+            ]
+          },
+          "subject": "pop_009_PrivatePool",
+          "valid": 2
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "VALID_NO_PUT",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/put/bugfix124__pop_018_PrivatePool__setFeeRate/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/put/bugfix124__pop_018_PrivatePool__setMerkleRoot/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/put/bugfix124__pop_018_PrivatePool__setPayRoyalties/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/put/bugfix124__pop_018_PrivatePool__setUseStolenNftOracle/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/put/bugfix124__pop_018_PrivatePool__setVirtualReserves/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_018_PrivatePool__setMerkleRoot",
+              "valid_reference_rows": 0
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_018_PrivatePool__setFeeRate",
+              "valid_reference_rows": 3
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_018_PrivatePool__setUseStolenNftOracle",
+              "valid_reference_rows": 1
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_018_PrivatePool__setPayRoyalties",
+              "valid_reference_rows": 1
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_018_PrivatePool__setVirtualReserves",
+              "valid_reference_rows": 1
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "PrivatePool",
+            "expected_units": [
+              "execute",
+              "initialize",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 22,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_018_PrivatePool/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "setMerkleRoot",
+              "setFeeRate",
+              "setUseStolenNftOracle",
+              "setPayRoyalties",
+              "setVirtualReserves",
+              "setAllParameters",
+              "withdraw",
+              "sell",
+              "execute",
+              "deposit",
+              "buy",
+              "flashLoan",
+              "change",
+              "price",
+              "flashFeeToken",
+              "changeFeeQuote",
+              "buyQuote",
+              "sellQuote",
+              "flashFee",
+              "availableForFlashLoan",
+              "sumWeightsAndValidateProof",
+              "initialize"
+            ],
+            "target_unit_hits": [
+              "execute",
+              "initialize",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot"
+            ]
+          },
+          "subject": "pop_018_PrivatePool",
+          "valid": 6
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "VALID_NO_PUT",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_032_PuttyV2/put/final_deploy_concrete_fallback/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": null,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "final_deploy_concrete_fallback",
+              "valid_reference_rows": null
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_032_PuttyV2/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "PuttyV2",
+            "expected_units": [
+              "setBaseURI",
+              "setFee",
+              "fillOrder",
+              "exercise"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 21,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_032_PuttyV2/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "setBaseURI",
+              "setFee",
+              "cancel",
+              "fillOrder",
+              "exercise",
+              "acceptCounterOffer",
+              "withdraw",
+              "batchFillOrder",
+              "withdrawFees",
+              "domainSeparatorV4",
+              "hashOppositeOrder",
+              "hashOrder",
+              "encodeERC20Assets",
+              "encodeERC721Assets",
+              "tokenURI",
+              "cancelledOrders",
+              "positionExpirations",
+              "exercisedPositions",
+              "unclaimedFees",
+              "isWhitelisted",
+              "positionFloorAssetTokenIds"
+            ],
+            "target_unit_hits": [
+              "setBaseURI",
+              "setFee",
+              "fillOrder",
+              "exercise"
+            ]
+          },
+          "subject": "pop_032_PuttyV2",
+          "valid": 1
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "VALID_NO_PUT",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/put/bugfix124__pop_033_PrivatePool__flashFee/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/put/bugfix124__pop_033_PrivatePool__setFeeRate/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/put/bugfix124__pop_033_PrivatePool__setMerkleRoot/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_033_PrivatePool__flashFee",
+              "valid_reference_rows": 1
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_033_PrivatePool__setMerkleRoot",
+              "valid_reference_rows": 0
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_033_PrivatePool__setFeeRate",
+              "valid_reference_rows": 3
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": true,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "PrivatePool",
+            "expected_units": [
+              "initialize",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot",
+              "execute"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 22,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_033_PrivatePool/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "flashFee",
+              "setMerkleRoot",
+              "setFeeRate",
+              "setUseStolenNftOracle",
+              "setPayRoyalties",
+              "setVirtualReserves",
+              "setAllParameters",
+              "withdraw",
+              "sell",
+              "deposit",
+              "execute",
+              "buy",
+              "flashLoan",
+              "change",
+              "price",
+              "flashFeeToken",
+              "changeFeeQuote",
+              "buyQuote",
+              "sellQuote",
+              "availableForFlashLoan",
+              "sumWeightsAndValidateProof",
+              "initialize"
+            ],
+            "target_unit_hits": [
+              "initialize",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot",
+              "execute"
+            ]
+          },
+          "subject": "pop_033_PrivatePool",
+          "valid": 4
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "VALID_NO_PUT",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_042_VaultAdapter/put/bugfix124__pop_042_VaultAdapter__setLimits/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_042_VaultAdapter/put/bugfix124__pop_042_VaultAdapter__setSlopes/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_042_VaultAdapter__setSlopes",
+              "valid_reference_rows": 1
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_042_VaultAdapter__setLimits",
+              "valid_reference_rows": 1
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_042_VaultAdapter/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "VaultAdapter",
+            "expected_units": [
+              "initialize",
+              "rate",
+              "setSlopes",
+              "setLimits"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 4,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_042_VaultAdapter/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "setSlopes",
+              "setLimits",
+              "rate",
+              "initialize"
+            ],
+            "target_unit_hits": [
+              "initialize",
+              "rate",
+              "setSlopes",
+              "setLimits"
+            ]
+          },
+          "subject": "pop_042_VaultAdapter",
+          "valid": 2
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "VALID_NO_PUT",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/put/bugfix124__pop_046_CVXStaker__depositAndStake/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/put/bugfix124__pop_046_CVXStaker__getReward/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/put/bugfix124__pop_046_CVXStaker__recoverToken/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/put/bugfix124__pop_046_CVXStaker__setCvxPoolInfo/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/put/bugfix124__pop_046_CVXStaker__setOperator/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/put/bugfix124__pop_046_CVXStaker__setRewardsRecipient/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_046_CVXStaker__getReward",
+              "valid_reference_rows": 0
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_046_CVXStaker__setOperator",
+              "valid_reference_rows": 2
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_046_CVXStaker__setRewardsRecipient",
+              "valid_reference_rows": 2
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_046_CVXStaker__setCvxPoolInfo",
+              "valid_reference_rows": 2
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_046_CVXStaker__recoverToken",
+              "valid_reference_rows": 0
+            },
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_046_CVXStaker__depositAndStake",
+              "valid_reference_rows": 0
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "CVXStaker",
+            "expected_units": [
+              "getReward"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 13,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "getReward",
+              "setOperator",
+              "setRewardsRecipient",
+              "setCvxPoolInfo",
+              "recoverToken",
+              "depositAndStake",
+              "withdrawAllAndUnwrap",
+              "withdrawAndUnwrap",
+              "isCvxShutdown",
+              "stakedBalance",
+              "earned",
+              "showPositions",
+              "rewardTokens"
+            ],
+            "target_unit_hits": [
+              "getReward"
+            ]
+          },
+          "subject": "pop_046_CVXStaker",
+          "valid": 6
+        }
+      ],
+      "end_index": 12,
+      "inventory": "notes/coverage/rq1_no_valid_each_case.json",
+      "new_put": 0,
+      "new_r1r2": 0,
+      "new_valid": 6,
+      "schema": "veriput-rq1-batch-settlement/v1",
+      "settled_ts": 1786422242.8794599,
+      "start_index": 5
+    },
+    "rolling-novalid-noput-local5-600": {
+      "batch_id": "rolling-novalid-noput-local5-600",
+      "bucket_counts": {
+        "NO_VALID": 4,
+        "VALID_NO_PUT": 1,
+        "put": 0,
+        "r1r2": 0,
+        "valid": 1
+      },
+      "case_count": 5,
+      "cases": [
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [],
+          "put_summaries": [],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "MStableYieldSource",
+            "expected_units": [
+              "supplyTokenTo",
+              "redeemToken",
+              "approveMax",
+              "balanceOfToken",
+              "depositToken"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 6,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "approveMax",
+              "redeemToken",
+              "supplyTokenTo",
+              "depositToken",
+              "balanceOfToken",
+              "imBalances"
+            ],
+            "target_unit_hits": [
+              "supplyTokenTo",
+              "redeemToken",
+              "approveMax",
+              "balanceOfToken",
+              "depositToken"
+            ]
+          },
+          "subject": "acfix_fixlink_MStableYieldSource",
+          "valid": 0
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [],
+          "put_summaries": [],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "Product",
+            "expected_units": [
+              "settle",
+              "settleAccount",
+              "openTake",
+              "closeTake",
+              "openMake",
+              "closeMake"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 27,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "settle",
+              "settleAccount",
+              "openTake",
+              "closeTake",
+              "openMake",
+              "closeMake",
+              "closeAll",
+              "updateClosed",
+              "updateOracle",
+              "openTakeFor",
+              "closeTakeFor",
+              "openMakeFor",
+              "closeMakeFor",
+              "utilizationBuffer",
+              "closed",
+              "pre",
+              "maintenance",
+              "maintenanceNext",
+              "isClosed",
+              "isLiquidating",
+              "position",
+              "latestVersion",
+              "positionAtVersion",
+              "valueAtVersion",
+              "shareAtVersion",
+              "rate",
+              "initialize"
+            ],
+            "target_unit_hits": [
+              "settle",
+              "settleAccount",
+              "openTake",
+              "closeTake",
+              "openMake",
+              "closeMake"
+            ]
+          },
+          "subject": "acfix_fixlink_Product",
+          "valid": 0
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [],
+          "put_summaries": [],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "Product",
+            "expected_units": [
+              "settle",
+              "settleAccount",
+              "openTake",
+              "closeTake",
+              "openMake",
+              "closeMake"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 27,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "settle",
+              "settleAccount",
+              "openTake",
+              "closeTake",
+              "openMake",
+              "closeMake",
+              "closeAll",
+              "updateClosed",
+              "updateOracle",
+              "openTakeFor",
+              "closeTakeFor",
+              "openMakeFor",
+              "closeMakeFor",
+              "utilizationBuffer",
+              "closed",
+              "pre",
+              "maintenance",
+              "maintenanceNext",
+              "isClosed",
+              "isLiquidating",
+              "position",
+              "latestVersion",
+              "positionAtVersion",
+              "valueAtVersion",
+              "shareAtVersion",
+              "rate",
+              "initialize"
+            ],
+            "target_unit_hits": [
+              "settle",
+              "settleAccount",
+              "openTake",
+              "closeTake",
+              "openMake",
+              "closeMake"
+            ]
+          },
+          "subject": "acfix_fixlink_Product2",
+          "valid": 0
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "NO_VALID",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/put/deploy_only/put-summary.json"
+            },
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/put/final_deploy_concrete_fallback/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": null,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "deploy_only",
+              "valid_reference_rows": null
+            },
+            {
+              "b": null,
+              "put_rows": null,
+              "r1r2_rows": null,
+              "unit": "final_deploy_concrete_fallback",
+              "valid_reference_rows": null
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": false,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "Multicall",
+            "expected_units": [
+              "multicall"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 0,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [],
+            "target_unit_hits": []
+          },
+          "subject": "pop_001_Multicall",
+          "valid": 0
+        },
+        {
+          "bench": "bugfix124",
+          "bucket": "VALID_NO_PUT",
+          "oracle_details": [
+            {
+              "assertion_oracles": [],
+              "coordinate_counts": {},
+              "oracle_tag_counts": {},
+              "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/bugfix124__pop_009_PrivatePool__flashFeeAndProtocolFee/put-summary.json"
+            }
+          ],
+          "put_summaries": [
+            {
+              "b": 0,
+              "put_rows": 0,
+              "r1r2_rows": 0,
+              "unit": "bugfix124__pop_009_PrivatePool__flashFeeAndProtocolFee",
+              "valid_reference_rows": 1
+            }
+          ],
+          "put_valid": 0,
+          "r1r2": 0,
+          "recovered_from_stage4_summary": true,
+          "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json",
+          "scheduler_preflight": {
+            "bad_contract_jobs": [],
+            "exists": true,
+            "expected_contract": "PrivatePool",
+            "expected_units": [
+              "buy",
+              "sell",
+              "execute",
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot"
+            ],
+            "internal_target_wrappers": [],
+            "job_count": 23,
+            "ok": true,
+            "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/unit-schedule.json",
+            "schedule_contract": null,
+            "scheduled_units": [
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setMerkleRoot",
+              "setFeeRate",
+              "setUseStolenNftOracle",
+              "setPayRoyalties",
+              "setVirtualReserves",
+              "setAllParameters",
+              "sell",
+              "withdraw",
+              "execute",
+              "buy",
+              "flashLoan",
+              "deposit",
+              "change",
+              "price",
+              "flashFeeToken",
+              "changeFeeQuote",
+              "buyQuote",
+              "sellQuote",
+              "availableForFlashLoan",
+              "sumWeightsAndValidateProof",
+              "initialize"
+            ],
+            "target_unit_hits": [
+              "buy",
+              "sell",
+              "execute",
+              "flashFeeAndProtocolFee",
+              "flashFee",
+              "setFeeRate",
+              "setMerkleRoot"
+            ]
+          },
+          "subject": "pop_009_PrivatePool",
+          "valid": 1
+        }
+      ],
+      "end_index": 12,
+      "inventory": "notes/coverage/rq1_no_valid_each_case.json",
+      "new_put": 0,
+      "new_r1r2": 0,
+      "new_valid": 1,
+      "schema": "veriput-rq1-batch-settlement/v1",
+      "settled_ts": 1786425658.3859107,
+      "start_index": 5
     }
   },
   "schema": "veriput-rq1-batch-ledger/v1",
-  "updated_ts": 1786418389.5217679
+  "updated_ts": 1786425658.3919692
 }

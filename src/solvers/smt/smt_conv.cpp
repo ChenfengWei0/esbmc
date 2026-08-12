@@ -3565,6 +3565,14 @@ smt_astt smt_convt::convert_member(const expr2tc &expr)
     get_member_name_field(member.source_value->type, member.member);
 
   smt_astt src = convert_ast(member.source_value);
+  if (!src)
+  {
+    log_error(
+      "SMT conversion produced no AST for member '{}' source:\n{}",
+      member.member.as_string(),
+      *member.source_value);
+    abort();
+  }
   return src->project(this, idx);
 }
 
@@ -3940,7 +3948,21 @@ smt_astt smt_convt::convert_array_index(const expr2tc &expr)
   }
 
   smt_astt a = convert_ast(src_value);
+  if (!a)
+  {
+    log_error(
+      "SMT conversion produced no AST for array source:\n{}", *src_value);
+    abort();
+  }
   a = a->select(this, newidx);
+  if (!a)
+  {
+    log_error(
+      "SMT array select produced no AST for source:\n{}\nindex:\n{}",
+      *src_value,
+      *newidx);
+    abort();
+  }
 
   const type2tc &arrsubtype = is_vector_type(index.source_value->type)
                                 ? get_vector_subtype(index.source_value->type)

@@ -10,6 +10,7 @@ STRONG_SLOT_COORDS = 20
 STRONG_PUT_AUTO_UNWIND = 2
 STRONG_PUT_AUTO_PARTIAL_LOOPS = True
 STRONG_PUT_LIFT_UNCONSTRAINED_CALLDATA = True
+STRONG_PUT_LIFT_UNCONSTRAINED_SENDER = True
 STRONG_PUT_R2_DEPTH = 1
 STRONG_PUT_R2_TERM_BUDGET = 256
 STRONG_PUT_R2_CANDIDATE_BUDGET = 512
@@ -75,6 +76,7 @@ def strong_put_args():
         "--auto-unwind", str(STRONG_PUT_AUTO_UNWIND),
         "--auto-partial-loops",
         "--lift-unconstrained-calldata",
+        "--lift-unconstrained-sender",
         "--propose-r2",
         "--r2-depth", str(STRONG_PUT_R2_DEPTH),
         "--r2-term-budget", str(STRONG_PUT_R2_TERM_BUDGET),
