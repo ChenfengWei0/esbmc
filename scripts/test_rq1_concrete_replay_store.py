@@ -143,6 +143,42 @@ def main() -> int:
         bad += check(any("does not invoke target" in error for error in
                          deterministic_replay_errors(fake_call, "test_cov_0", "f")),
                      "a target call written only in a string is rejected")
+        normal_exit = root / "NormalExit.t.sol"
+        normal_exit.write_text(
+            'contract NormalExit { function test_cov_0() public { '
+            'bool _veriput_concrete_completed = false; c.f(); '
+            '_veriput_concrete_completed = true; '
+            'assertTrue(_veriput_concrete_completed); } }\n')
+        bad += check(not deterministic_replay_errors(normal_exit, "test_cov_0", "f"),
+                     "the generator completion marker is an explicit normal-exit R0")
+        producer_source = (
+            'contract Produced {\n  function test_cov_0() public {\n'
+            '    C c = new C();\n'
+            '    bool _veriput_concrete_completed = false;\n'
+            '    c.f();\n'
+            '    _veriput_concrete_completed = true;\n'
+            '    assertTrue(_veriput_concrete_completed, '
+            '"fixed witness call must complete");\n  }\n}\n')
+        producer_oracles = [{
+            "class": "R0", "kind": "normal-exit",
+            "observed": "_veriput_concrete_completed", "expected": True,
+            "provenance": "stage2-witness", "target_receiver": "c",
+            "assertion": ('assertTrue(_veriput_concrete_completed, '
+                          '"fixed witness call must complete");'),
+        }]
+        produced = root / "Produced.t.sol"
+        produced.write_text(producer_source)
+        produced_row = {**concrete, "file": str(produced),
+                        "concrete_oracles": producer_oracles}
+        # The source is outside a Foundry project, so dry persistence stops
+        # after the oracle/identity gates. Reuse the fixture project for the
+        # end-to-end persistence check below.
+        produced_project = root / "producer" / "test" / "Produced.t.sol"
+        produced_project.write_text(producer_source)
+        produced_row["file"] = str(produced_project)
+        produced_entry = persist_concrete_replay(subject, produced_row, dry_run=True)
+        bad += check(produced_entry["concrete_oracles"] == producer_oracles,
+                     "producer normal-exit provenance passes the store gate unchanged")
         linked_alias = root / "linked-alias.t.sol"
         os.link(project / entry["test_file"], linked_alias)
         bad += check(any("hard-linked" in error for error in audit_manifest(subject)),

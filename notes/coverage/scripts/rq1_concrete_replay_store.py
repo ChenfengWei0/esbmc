@@ -249,6 +249,13 @@ def deterministic_replay_oracles(test_file: Path, test: str, unit: str) -> tuple
         elif expect_revert is not None:
             errors.append("revert oracle is not immediately before the target call")
         suffix = code[statement_end:]
+        if (re.search(r"\bbool\s+_veriput_concrete_completed\s*=\s*false\s*;",
+                      code[:statement_start]) and
+                re.search(r"^\s*_veriput_concrete_completed\s*=\s*true\s*;\s*"
+                          r"assertTrue\s*\(\s*_veriput_concrete_completed\b",
+                          suffix)):
+            oracles.append({"class": "R0", "kind": "normal-exit",
+                            "source": "generated-completion-marker"})
         fixed_names = set(re.findall(
             r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:true|false|"
             r"0x[0-9A-Fa-f]+|[0-9]+|bytes\d*\s*\([^;]+\))\s*;", code[:statement_start]))
@@ -304,6 +311,54 @@ def _structured_oracle_errors(oracles: object) -> list[str]:
             errors.append(f"concrete oracle {index} lacks its fixed witness expectation")
         if oracle.get("provenance") not in ("stage2-witness", "source-grounded"):
             errors.append(f"concrete oracle {index} lacks witness/source provenance")
+    return errors
+
+
+def _oracle_binding_errors(source: str, test: str, unit: str, oracles: object) -> list[str]:
+    function = _solidity_function(source, test)
+    if function is None or not isinstance(oracles, list):
+        return ["cannot bind concrete oracle provenance to the selected test"]
+    _params, body = function
+    compact_body = re.sub(r"\s+", "", body)
+    errors = []
+    for index, oracle in enumerate(oracles):
+        if not isinstance(oracle, dict):
+            continue
+        assertion = re.sub(r"\s+", "", str(oracle.get("assertion") or ""))
+        receiver = str(oracle.get("target_receiver") or "")
+        if assertion and assertion not in compact_body:
+            errors.append(f"concrete oracle {index} assertion is absent from selected test")
+            continue
+        if receiver and not re.search(
+                r"\b" + re.escape(receiver) + r"\s*\.\s*" + re.escape(unit) +
+                r"\s*\(", body):
+            errors.append(f"concrete oracle {index} is not bound to selected target call")
+        if oracle.get("kind") == "normal-exit":
+            observed = re.sub(r"\s+", "", str(oracle.get("observed") or ""))
+            call_pos = compact_body.find(re.sub(r"\s+", "", f"{receiver}.{unit}("))
+            call_end = compact_body.find(";", call_pos) if call_pos >= 0 else -1
+            assertion_pos = compact_body.find(assertion)
+            initialization = f"bool{observed}=false;"
+            completion = f"{observed}=true;"
+            if (compact_body.count(initialization) != 1
+                    or compact_body.count(completion) != 1
+                    or call_end < 0 or assertion_pos < 0
+                    or compact_body[call_end + 1:assertion_pos] != completion
+                    or not assertion.startswith(f"assertTrue({observed},")):
+                errors.append(
+                    f"concrete oracle {index} is not the strict normal-exit marker shape")
+        elif oracle.get("kind") != "revert":
+            observed = re.sub(r"\s+", "", str(oracle.get("observed") or ""))
+            expected = re.sub(r"\s+", "", str(oracle.get("expected") or ""))
+            if observed not in assertion or expected not in assertion:
+                errors.append(
+                    f"concrete oracle {index} assertion does not encode observed/expected values")
+            call_pos = compact_body.find(re.sub(r"\s+", "", f"{receiver}.{unit}("))
+            assertion_pos = compact_body.find(assertion)
+            between = compact_body[call_pos:assertion_pos] if (
+                call_pos >= 0 and assertion_pos > call_pos) else ""
+            if re.search(r"(?:^|;)" + re.escape(observed) + r"=", between):
+                errors.append(f"concrete oracle {index} observed value is overwritten after call")
     return errors
 
 
@@ -406,23 +461,13 @@ def audit_manifest(subject_dir: Path, manifest: dict | None = None) -> list[str]
                           for error in replay_errors)
         errors.extend(f"{entry.get('replay_id')}: {error}"
                       for error in _structured_oracle_errors(entry.get("concrete_oracles")))
-        if test_file.is_file() and isinstance(entry.get("concrete_oracles"), list):
-            source = test_file.read_text(errors="replace")
-            compact_source = re.sub(r"\s+", "", source)
-            unit = str((entry.get("origin") or {}).get("unit") or "")
-            for index, oracle in enumerate(entry["concrete_oracles"]):
-                if not isinstance(oracle, dict):
-                    continue
-                assertion = re.sub(r"\s+", "", str(oracle.get("assertion") or ""))
-                receiver = str(oracle.get("target_receiver") or "")
-                if assertion and assertion not in compact_source:
-                    errors.append(
-                        f"{entry.get('replay_id')}: concrete oracle {index} assertion is absent")
-                if receiver and unit and not re.search(
-                        r"\b" + re.escape(receiver) + r"\s*\.\s*" +
-                        re.escape(unit) + r"\s*\(", source):
-                    errors.append(
-                        f"{entry.get('replay_id')}: concrete oracle {index} target is absent")
+        if test_file.is_file():
+            errors.extend(f"{entry.get('replay_id')}: {error}" for error in
+                          _oracle_binding_errors(
+                              test_file.read_text(errors="replace"),
+                              str(entry.get("test") or ""),
+                              str((entry.get("origin") or {}).get("unit") or ""),
+                              entry.get("concrete_oracles")))
         replay_log = project / str(entry.get("forge_log") or "")
         if int(entry.get("forge_passed_tests") or 0) < 1:
             errors.append(f"{entry.get('replay_id')}: no executed Forge replay test")
@@ -489,22 +534,9 @@ def persist_concrete_replay(subject_dir: Path, row: dict, *, dry_run: bool = Fal
     record = _load_record(row.get("put_json"))
     replay_oracles = row.get("concrete_oracles") or record.get("concrete_oracles")
     replay_errors.extend(_structured_oracle_errors(replay_oracles))
-    normalized_source = re.sub(r"\s+", "", source_test.read_text(errors="replace"))
-    if isinstance(replay_oracles, list):
-        for index, oracle in enumerate(replay_oracles):
-            if not isinstance(oracle, dict):
-                continue
-            assertion_text = re.sub(r"\s+", "", str(oracle.get("assertion") or ""))
-            receiver = str(oracle.get("target_receiver") or "")
-            if assertion_text and assertion_text not in normalized_source:
-                replay_errors.append(
-                    f"concrete oracle {index} assertion is absent from the retained test")
-            if receiver and not re.search(
-                    r"\b" + re.escape(receiver) + r"\s*\.\s*" +
-                    re.escape(str(identity.get("unit") or "")) + r"\s*\(",
-                    source_test.read_text(errors="replace")):
-                replay_errors.append(
-                    f"concrete oracle {index} is not bound to the target invocation")
+    replay_errors.extend(_oracle_binding_errors(
+        source_test.read_text(errors="replace"), str(row.get("test") or ""),
+        str(identity.get("unit") or ""), replay_oracles))
     if replay_errors:
         raise ReplayPersistenceError("; ".join(replay_errors))
     source_project = _foundry_project(source_test)
@@ -620,7 +652,9 @@ def persistence_coverage(valid_tests: list[dict], entries: list[dict]) -> dict:
              and row.get("valid_reference_test") is True]
     puts = [row for row in valid if row.get("kind") == "put"]
     concretes = [row for row in valid if row.get("kind") == "concrete"]
-    concrete_keys = {_artifact_key(row) for row in concretes}
+    concrete_keys = {_artifact_key(row) for row in concretes
+                     if replay_identity(row).get("path_function")
+                     and replay_identity(row).get("enc") is not None}
     persisted_concrete_tests = set()
     for entry in entries:
         origin = entry.get("origin") if isinstance(entry, dict) else None
@@ -629,12 +663,15 @@ def persistence_coverage(valid_tests: list[dict], entries: list[dict]) -> dict:
                    str(origin.get("unit") or ""),
                    str(origin.get("enc") if origin.get("enc") is not None else ""),
                    str(origin.get("piece") if origin.get("piece") is not None else ""))
-            concrete_keys.add(key)
+            if origin.get("path_function") and origin.get("enc") is not None:
+                concrete_keys.add(key)
             persisted_concrete_tests.add(_entry_test_key(entry))
     missing_puts = []
     for row in puts:
         key = _artifact_key(row)
-        if key not in concrete_keys:
+        identity = replay_identity(row)
+        if (not identity.get("path_function") or identity.get("enc") is None
+                or key not in concrete_keys):
             missing_puts.append({
                 **replay_identity(row),
                 "test": row.get("test"),
