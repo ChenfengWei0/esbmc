@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inventory retained provenance for the fixed RQ1 canonical PUT claims."""
+"""Inventory retained provenance for canonical RQ1 PUT claims."""
 
 from __future__ import annotations
 
@@ -10,8 +10,9 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from rq1_artifact_audit import canonical_subject
 
-DEFAULT_STATE = Path("notes/coverage/rq1_case_state.json")
+
 DEFAULT_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 DEFAULT_JSONL = Path("notes/coverage/rq1_put_provenance_inventory.jsonl")
 DEFAULT_SUMMARY = Path("notes/coverage/rq1_put_provenance_inventory_summary.json")
@@ -131,15 +132,20 @@ def cert_unit_rows(cert_jsonl: Path | None, unit: Any) -> int:
 def main() -> int:  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     """Build the claim-level JSONL inventory and aggregate summary."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--jsonl", type=Path, default=DEFAULT_JSONL)
     parser.add_argument("--summary", type=Path, default=DEFAULT_SUMMARY)
     args = parser.parse_args()
 
-    cases = read_json(args.state).get("cases")
-    if not isinstance(cases, dict) or len(cases) != 205:
-        raise SystemExit("case state must contain the fixed 205 identities")
+    cases = {}
+    for result_path in sorted(args.root.glob("*/subjects/*/result.json")):
+        subject_dir = result_path.parent
+        subject = subject_dir.name
+        canonical, historical = canonical_subject(subject)
+        if historical or canonical != subject:
+            continue
+        bench = subject_dir.parent.parent.name
+        cases[f"{bench}/{subject}"] = {"bench": bench, "subject": subject}
 
     records: list[dict[str, Any]] = []
     subject_gaps: list[dict[str, Any]] = []
@@ -360,7 +366,7 @@ def main() -> int:  # pylint: disable=too-many-locals,too-many-branches,too-many
 
     summary = {
         "schema": "veriput-rq1-put-provenance-summary/v1",
-        "case_state": str(args.state),
+        "result_root": str(args.root),
         "canonical_cases": len(cases),
         "authoritative_put_valid_claims": sum(
             int((read_json(args.root / str(case.get("bench")) / "subjects" /

@@ -40,7 +40,7 @@ from rq1_window_guard import (  # noqa: E402
     WindowGuardError, enforce_rows_in_window,
 )
 from rq1_concrete_replay_store import (  # noqa: E402
-    ReplayPersistenceError, audit_manifest, load_manifest,
+    ReplayPersistenceError, annotate_generalization, audit_manifest, load_manifest,
     invalidation_applies, persist_concrete_replay, persistence_coverage,
 )
 from solidity_path_put import (  # noqa: E402
@@ -663,13 +663,62 @@ def persist_case_concrete_replays(case_dir: Path, put_summary: dict,
                 "file": test.get("file"),
                 "reason": str(exc),
             })
+    try:
+        generalization = annotate_generalization(
+            case_dir, put_summary.get("valid_tests") or [])
+    except ReplayPersistenceError as exc:
+        errors.append({"reason": str(exc), "stage": "generalization-annotation"})
+        generalization = {}
     manifest = load_manifest(case_dir)
     coverage = persistence_coverage(
         put_summary.get("valid_tests") or [], manifest.get("entries") or [])
     coverage["manifest"] = str(case_dir / "concrete-replays" / "manifest.json")
     coverage["manifest_errors"] = audit_manifest(case_dir, manifest)
     coverage["persistence_errors"] = errors
+    coverage["generalization"] = generalization
     return coverage
+
+
+def persistence_publication_failure(coverage: dict) -> str | None:
+    """Return why a valid result cannot be published transactionally."""
+    if coverage.get("invalidated_evidence"):
+        return "valid evidence is quarantined by the frontend pollution audit"
+    errors = list(coverage.get("persistence_errors") or [])
+    manifest_errors = list(coverage.get("manifest_errors") or [])
+    missing = int(coverage.get("put_basis_missing_count") or 0)
+    missing_concrete = int(coverage.get("valid_concrete_missing_count") or 0)
+    if errors:
+        return f"{len(errors)} concrete replay(s) could not be persisted"
+    if manifest_errors:
+        return f"canonical replay manifest has {len(manifest_errors)} error(s)"
+    if missing:
+        return f"{missing} PUT artifact(s) lack an exact concrete basis replay"
+    if missing_concrete:
+        return f"{missing_concrete} valid concrete replay test(s) were not retained"
+    if not coverage.get("complete"):
+        return "canonical concrete replay coverage is incomplete"
+    return None
+
+
+def quarantine_unpersisted_validity(put_summary: dict, reason: str) -> dict:
+    """Keep raw evidence while withholding validity from the published row."""
+    summary = dict(put_summary)
+    withheld = [dict(row) for row in summary.get("valid_tests") or []
+                if isinstance(row, dict)]
+    summary["unpublished_valid_tests"] = withheld
+    summary["persistence_failure_reason"] = reason
+    summary["valid_tests"] = []
+    summary["valid_artifacts"] = []
+    summary["valid"] = 0
+    summary["put_valid"] = 0
+    summary["concrete_valid"] = 0
+    summary["valid_put_with_R1"] = 0
+    summary["valid_put_with_R2"] = 0
+    summary["valid_put_with_R1_or_R2"] = 0
+    summary["valid_put_without_R1R2"] = 0
+    summary["quality_bucket"] = "no-valid"
+    summary["status"] = "persistence-error"
+    return summary
 
 
 def _artifact_summary_row(target_row: dict,
@@ -2366,13 +2415,40 @@ def _static_getter_cert_row(subject: PreparedSubject, getter: str, schedule: dic
         "stage4_kind": "getter-only",
         "verdict": "CERTIFIED",
     }
+    reject_detail = {
+        "box": [{
+            "name": "msg.value",
+            "lo": "1",
+            "hi": str((1 << 256) - 1),
+            "holes": [],
+        }],
+        "ce": {},
+        "certification_source": "structural-abi-gate-no-coordinate",
+        "depth": 0,
+        "enc": 1,
+        "established": [],
+        "extcall_pins": {},
+        "piece": 1,
+        "reason": (
+            "public state getter is nonpayable; Solidity rejects any "
+            "call carrying nonzero msg.value before getter state is read"),
+        "retreated": {},
+        "stage4_kind": "getter-value-gate",
+        "verdict": "CERTIFIED",
+    }
     return {
         "benchmark": getter_subject.benchmark_key,
         "bucket": "CERTIFIED",
         "unit": getter,
         "subject": getter_subject.to_record(),
-        "certified": {"0": "msg.value pinned to 0"},
-        "certified_details": {"0": detail},
+        "certified": {
+            "0": "msg.value pinned to 0",
+            "1": "nonpayable ABI gate rejects msg.value > 0",
+        },
+        "certified_details": {
+            "0": detail,
+            "1": reject_detail,
+        },
         "pins": {"msg.value": "0"},
         "witnessed": 1,
         "synthetic_certified": True,
@@ -2383,6 +2459,64 @@ def _static_getter_cert_row(subject: PreparedSubject, getter: str, schedule: dic
             "reason": reason,
             "synthetic_stage2_kind": "getter-only",
             "skipped_candidates": skipped_candidates,
+        },
+    }
+
+
+def _is_nonpayable_abi_entry_job(job: dict) -> bool:
+    info = job.get("unit_info") or {}
+    visibility = info.get("visibility")
+    mutability = info.get("state_mutability")
+    return bool(job.get("path_function") and visibility in ("public", "external")
+                and mutability in ("nonpayable", "view", "pure"))
+
+
+def _abi_value_gate_cert_row(subject: PreparedSubject, job: dict) -> dict:
+    unit = str(job.get("unit") or "")
+    gate_subject = _subject_with_unit(subject, unit)
+    path_function = str(job.get("path_function") or "")
+    reason = (
+        "public/external nonpayable ABI entry rejects nonzero msg.value before "
+        "executing the function body")
+    return {
+        "benchmark": gate_subject.benchmark_key,
+        "bucket": "CERTIFIED",
+        "unit": unit,
+        "subject": gate_subject.to_record(),
+        "path_function": path_function,
+        "certified": {
+            "1": "nonpayable ABI gate rejects msg.value > 0",
+        },
+        "certified_details": {
+            "1": {
+                "box": [{
+                    "name": "msg.value",
+                    "lo": "1",
+                    "hi": str((1 << 256) - 1),
+                    "holes": [],
+                }],
+                "ce": {},
+                "certification_source": "structural-abi-gate-no-coordinate",
+                "depth": 0,
+                "enc": 1,
+                "established": [],
+                "extcall_pins": {},
+                "piece": 1,
+                "reason": reason,
+                "retreated": {},
+                "stage4_kind": "abi-value-gate",
+                "verdict": "CERTIFIED",
+            },
+        },
+        "pins": {},
+        "witnessed": 1,
+        "synthetic_certified": True,
+        "synthetic_stage2_kind": "abi-value-gate",
+        "tag": "static-abi-value-gate-certified",
+        "driver_diagnostic": {
+            "tag": "static-abi-value-gate-certified",
+            "reason": reason,
+            "synthetic_stage2_kind": "abi-value-gate",
         },
     }
 
@@ -3765,6 +3899,7 @@ def _put_json_artifact_row(rec: dict) -> dict:
         rec.get("oracle_class_combo_counts"),
         "assertion_oracles": (rec.get("assertion_oracles")
                               or (rec.get("stats") or {}).get("assertion_oracles")),
+        "concrete_oracles": rec.get("concrete_oracles"),
         "_from_put_json_only":
         True,
     }
@@ -3939,6 +4074,8 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             "oracle_class_combinations": oracle_class_combinations,
             "oracle_class_combo_counts": oracle_class_combo_counts,
             "assertion_oracles": assertion_details,
+            "concrete_oracles": (row.get("concrete_oracles")
+                                  or rec.get("concrete_oracles")),
             "r2_requested": rec.get("r2_requested"),
             "r2_depth": rec.get("r2_depth"),
             "r2_term_budget": rec.get("r2_term_budget"),
@@ -5140,6 +5277,434 @@ def _balancer_lp_oracle_decimals_fixture_for_job(
     }
 
 
+def _chain_reverse_resolver_supports_feature_fixture_for_job(
+        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+    """Separate the inherited pure feature probe from deployment.
+
+    ChainReverseResolver's constructor initializes several unrelated resolver
+    dependencies.  The inherited supportsFeature(bytes4) body is pure, ignores
+    its argument, and returns false.  Stage 2 can therefore skip construction
+    without changing the focused function; Foundry still deploys the concrete
+    target with legal arguments before replaying the certified call.
+    """
+    unit_info = job.get("unit_info") or {}
+    if (subject.subject_id != "ensdomains__ens-contracts__ChainReverseResolver"
+            or subject.contract != "ChainReverseResolver"
+            or str(job.get("unit") or "") != "supportsFeature"):
+        return None
+    if (unit_info.get("visibility") != "external"
+            or unit_info.get("state_mutability") != "pure"
+            or unit_info.get("parameter_types") != ["bytes4"]
+            or unit_info.get("return_types") != ["bool"]):
+        return None
+    path_function = str(job.get("path_function") or "")
+    match = re.search(r"#([0-9]+)$", path_function)
+    if match is None:
+        return None
+    declaration_id = int(match.group(1))
+    deps, dep_evidence = unit_state_dependencies(
+        subject.solast, subject.contract, "supportsFeature",
+        declaration_id=declaration_id)
+    if deps or dep_evidence:
+        return None
+    try:
+        flat_source = Path(subject.flat_sol).read_text(errors="replace")
+    except OSError:
+        return None
+    target_chunk = _source_contract_chunk(flat_source, subject.contract)
+    base_chunk = _source_contract_chunk(flat_source, "AbstractReverseResolver")
+    if target_chunk is None or base_chunk is None:
+        return None
+    if "AbstractReverseResolver" not in _source_inheritance_names(target_chunk):
+        return None
+    masked_base = _mask_solidity_comments_and_strings(base_chunk)
+    if re.search(
+            r"function\s+supportsFeature\s*\(\s*bytes4\s*\)\s*"
+            r"external\s+pure\s+returns\s*\(\s*bool\s*\)\s*\{\s*"
+            r"return\s+false\s*;\s*\}", masked_base, re.S) is None:
+        return None
+    ctor_params = _source_constructor_params_from_source(
+        flat_source, subject.contract)
+    ctor_types = [typ for _name, typ in ctor_params]
+    if ctor_types != [
+            "address", "uint256", "IStandaloneReverseRegistrar", "address",
+            "IGatewayVerifier", "string[]"]:
+        return None
+    constructor_args = [
+        "address(uint160(1000))",
+        "0",
+        "IStandaloneReverseRegistrar(address(uint160(1002)))",
+        "address(uint160(1003))",
+        "IGatewayVerifier(address(uint160(1004)))",
+        "new string[](0)",
+    ]
+    fixture_dir = case_dir / "cert" / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_path = fixture_dir / (
+        f"{_safe_name(job.get('job_id') or 'supportsFeature')}.path-cov-fixture.json")
+    fixture = {
+        "contract": subject.contract,
+        "skip_constructor": True,
+        "state": {},
+        "foundry": {
+            "skip_constructor": True,
+            "constructor_args": constructor_args,
+        },
+        "veriput_fixture_kind": "chain-reverse-resolver-pure-supports-feature",
+        "source_evidence": {
+            "unit": "supportsFeature",
+            "path_function": path_function,
+            "declaring_contract": "AbstractReverseResolver",
+            "function_body": "return false",
+            "parameter_types": ["bytes4"],
+            "parameter_use": "unused",
+            "state_dependencies": [],
+            "constructor_param_types": ctor_types,
+            "stage2_semantics": "pure unit; constructor-independent",
+            "foundry_replay": "real ChainReverseResolver deployment",
+        },
+    }
+    _write_json(fixture_path, fixture)
+    return {
+        "path": str(fixture_path),
+        "fixture": fixture,
+    }
+
+
+def _universal_sig_validator_wrapper_fixture_for_job(
+        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+    """Keep the small external wrapper separate from its large callee graph."""
+    unit_info = job.get("unit_info") or {}
+    if (subject.subject_id != "ensdomains__ens-contracts__UniversalSigValidator"
+            or subject.contract != "UniversalSigValidator"
+            or str(job.get("unit") or "") != "isValidSigWithSideEffects"):
+        return None
+    if (unit_info.get("visibility") != "external"
+            or unit_info.get("state_mutability") != "nonpayable"
+            or unit_info.get("parameter_types") != ["address", "bytes32", "bytes"]
+            or unit_info.get("return_types") != ["bool"]):
+        return None
+    try:
+        flat_source = Path(subject.flat_sol).read_text(errors="replace")
+    except OSError:
+        return None
+    target_chunk = _source_contract_chunk(flat_source, subject.contract)
+    if target_chunk is None or _source_constructor_params_from_source(
+            flat_source, subject.contract):
+        return None
+    declarations = _source_function_decl_infos(
+        _mask_solidity_comments_and_strings(target_chunk),
+        "isValidSigWithSideEffects")
+    if len(declarations) != 1:
+        return None
+    params, header_tail, body = declarations[0]
+    if ([typ for _name, typ in params] != ["address", "bytes32", "bytes"]
+            or re.search(r"\bexternal\b", header_tail) is None
+            or re.fullmatch(
+                r"\s*return\s+this\s*\.\s*isValidSigImpl\s*\(\s*"
+                r"_signer\s*,\s*_hash\s*,\s*_signature\s*,\s*true\s*\)\s*;\s*",
+                body, re.S) is None):
+        return None
+    path_function = str(job.get("path_function") or unit_info.get("path_function") or "")
+    match = re.search(r"#([0-9]+)$", path_function)
+    if match is None:
+        return None
+    deps, dep_evidence = unit_state_dependencies(
+        subject.solast, subject.contract, "isValidSigWithSideEffects",
+        declaration_id=int(match.group(1)))
+    if deps != ["ERC1271_SUCCESS", "ERC6492_DETECTION_SUFFIX"]:
+        return None
+    masked_target = _mask_solidity_comments_and_strings(target_chunk)
+    if (re.search(
+            r"bytes32\s+private\s+constant\s+ERC6492_DETECTION_SUFFIX\s*=\s*"
+            r"0x6492649264926492649264926492649264926492649264926492649264926492\s*;",
+            masked_target) is None
+            or re.search(
+                r"bytes4\s+private\s+constant\s+ERC1271_SUCCESS\s*=\s*"
+                r"0x1626ba7e\s*;", masked_target) is None):
+        return None
+    fixture_dir = case_dir / "cert" / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_path = fixture_dir / (
+        f"{_safe_name(job.get('job_id') or 'isValidSigWithSideEffects')}"
+        ".path-cov-fixture.json")
+    fixture = {
+        "contract": subject.contract,
+        "skip_constructor": True,
+        "state": {},
+        "foundry": {
+            "skip_constructor": True,
+            "constructor_args": [],
+        },
+        "veriput_fixture_kind": "universal-sig-validator-side-effects-wrapper",
+        "source_evidence": {
+            "unit": "isValidSigWithSideEffects",
+            "path_function": path_function,
+            "function_body": (
+                "return this.isValidSigImpl(_signer, _hash, _signature, true)"),
+            "state_dependencies": deps,
+            "state_dependency_evidence": dep_evidence,
+            "constructor_param_types": [],
+            "stage2_semantics": "external wrapper with bounded callee path identities",
+            "foundry_replay": "real UniversalSigValidator deployment",
+        },
+    }
+    _write_json(fixture_path, fixture)
+    return {
+        "path": str(fixture_path),
+        "fixture": fixture,
+        "argv_value_pairs": [("--probes", "2")],
+        "esbmc_arg_remove_flags": [
+            "--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"
+        ],
+        "esbmc_arg_pairs": [
+            ("--path-cov-max-goals", "2"),
+            ("--unwind", "1"),
+        ],
+    }
+
+
+def _ccip_reader_callback_fixture_for_job(
+        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+    """Bound the callback's large internal decode/call path identity graph."""
+    unit_info = job.get("unit_info") or {}
+    if (subject.subject_id != "ensdomains__ens-contracts__CCIPReader"
+            or subject.contract != "CCIPReader"
+            or str(job.get("unit") or "") != "ccipReadCallback"):
+        return None
+    if (unit_info.get("visibility") != "external"
+            or unit_info.get("state_mutability") != "view"
+            or unit_info.get("parameter_types") != ["bytes", "bytes"]
+            or unit_info.get("return_types") != []):
+        return None
+    try:
+        flat_source = Path(subject.flat_sol).read_text(errors="replace")
+    except OSError:
+        return None
+    target_chunk = _source_contract_chunk(flat_source, subject.contract)
+    if target_chunk is None:
+        return None
+    ctor_params = _source_constructor_params_from_source(
+        flat_source, subject.contract)
+    if ctor_params != [("_unsafeCallGas", "uint256")]:
+        return None
+    masked_target = _mask_solidity_comments_and_strings(target_chunk)
+    if (re.search(
+            r"constructor\s*\(\s*uint256\s+_unsafeCallGas\s*\)\s*\{\s*"
+            r"unsafeCallGas\s*=\s*_unsafeCallGas\s*;\s*\}",
+            masked_target, re.S) is None
+            or re.search(
+                r"function\s+ccipReadCallback\s*\(\s*bytes\s+memory\s+response\s*,\s*"
+                r"bytes\s+memory\s+extraData\s*\)\s*external\s+view\s*\{\s*"
+                r"Context\s+memory\s+ctx\s*=\s*abi\.decode\s*\(\s*extraData\s*,\s*"
+                r"\(\s*Context\s*\)\s*\)\s*;", masked_target, re.S) is None):
+        return None
+    path_function = str(job.get("path_function") or unit_info.get("path_function") or "")
+    match = re.search(r"#([0-9]+)$", path_function)
+    if match is None:
+        return None
+    deps, dep_evidence = unit_state_dependencies(
+        subject.solast, subject.contract, "ccipReadCallback",
+        declaration_id=int(match.group(1)))
+    if deps != ["IDENTITY_FUNCTION", "unsafeCallGas"]:
+        return None
+    fixture_dir = case_dir / "cert" / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_path = fixture_dir / (
+        f"{_safe_name(job.get('job_id') or 'ccipReadCallback')}.path-cov-fixture.json")
+    fixture = {
+        "contract": subject.contract,
+        "skip_constructor": True,
+        "state": {},
+        "foundry": {
+            "skip_constructor": True,
+            "constructor_args": ["50000"],
+        },
+        "veriput_fixture_kind": "ccip-reader-callback-bounded-path-identities",
+        "source_evidence": {
+            "unit": "ccipReadCallback",
+            "path_function": path_function,
+            "entry_decode": "abi.decode(extraData, (Context))",
+            "state_dependencies": deps,
+            "state_dependency_evidence": dep_evidence,
+            "constructor_param_types": ["uint256"],
+            "stage2_semantics": "view callback with bounded internal-call path identities",
+            "foundry_replay": "real CCIPReader(50000) deployment",
+        },
+    }
+    _write_json(fixture_path, fixture)
+    return {
+        "path": str(fixture_path),
+        "fixture": fixture,
+        "argv_value_pairs": [("--probes", "2")],
+        "esbmc_arg_remove_flags": [
+            "--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"
+        ],
+        "esbmc_arg_pairs": [
+            ("--path-cov-max-goals", "2"),
+            ("--unwind", "1"),
+        ],
+    }
+
+
+def _call_and_revert_value_gate_fixture_for_job(
+        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+    """Retain the external ABI gate before the revert-forwarding body."""
+    unit_info = job.get("unit_info") or {}
+    if (subject.subject_id != "balancer__balancer-v3-monorepo__CallAndRevert"
+            or subject.contract != "CallAndRevert"
+            or str(job.get("unit") or "") != "callAndRevertHook"):
+        return None
+    if (unit_info.get("visibility") != "external"
+            or unit_info.get("state_mutability") != "nonpayable"
+            or unit_info.get("parameter_types") != ["address", "bytes"]
+            or unit_info.get("return_types") != []):
+        return None
+    try:
+        flat_source = Path(subject.flat_sol).read_text(errors="replace")
+    except OSError:
+        return None
+    target_chunk = _source_contract_chunk(flat_source, subject.contract)
+    if target_chunk is None or _source_constructor_params_from_source(
+            flat_source, subject.contract):
+        return None
+    masked_target = _mask_solidity_comments_and_strings(target_chunk)
+    if re.search(
+            r"function\s+callAndRevertHook\s*\(\s*address\s+target\s*,\s*"
+            r"bytes\s+memory\s+data\s*\)\s*external\s*\{\s*"
+            r"\(\s*bool\s+success\s*,\s*bytes\s+memory\s+result\s*\)\s*=\s*"
+            r"\(\s*target\s*\)\s*\.\s*call\s*\(\s*data\s*\)\s*;",
+            masked_target, re.S) is None:
+        return None
+    path_function = str(job.get("path_function") or unit_info.get("path_function") or "")
+    match = re.search(r"#([0-9]+)$", path_function)
+    if match is None:
+        return None
+    deps, dep_evidence = unit_state_dependencies(
+        subject.solast, subject.contract, "callAndRevertHook",
+        declaration_id=int(match.group(1)))
+    if deps or dep_evidence:
+        return None
+    fixture_dir = case_dir / "cert" / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_path = fixture_dir / (
+        f"{_safe_name(job.get('job_id') or 'callAndRevertHook')}.path-cov-fixture.json")
+    fixture = {
+        "contract": subject.contract,
+        "skip_constructor": True,
+        "state": {},
+        "foundry": {
+            "skip_constructor": True,
+            "constructor_args": [],
+        },
+        "veriput_fixture_kind": "call-and-revert-abi-value-gate",
+        "source_evidence": {
+            "unit": "callAndRevertHook",
+            "path_function": path_function,
+            "target_call": "target.call(data)",
+            "state_dependencies": [],
+            "constructor_param_types": [],
+            "stage2_semantics": "external ABI value gate",
+            "foundry_replay": "real CallAndRevert deployment",
+        },
+    }
+    _write_json(fixture_path, fixture)
+    return {
+        "path": str(fixture_path),
+        "fixture": fixture,
+        "argv_value_pairs": [("--probes", "2")],
+        "esbmc_arg_remove_flags": [
+            "--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"
+        ],
+        "esbmc_arg_pairs": [
+            ("--path-cov-max-goals", "2"),
+            ("--unwind", "1"),
+        ],
+    }
+
+
+def _putty_whitelist_pure_fixture_for_job(
+        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+    """Bound the constructor-independent empty-whitelist path."""
+    unit_info = job.get("unit_info") or {}
+    if (subject.subject_id != "pop_058_PuttyV2"
+            or subject.contract != "PuttyV2"
+            or str(job.get("unit") or "") != "isWhitelisted"):
+        return None
+    if (unit_info.get("visibility") != "public"
+            or unit_info.get("state_mutability") != "pure"
+            or unit_info.get("parameter_types") != ["address[]", "address"]
+            or unit_info.get("return_types") != ["bool"]):
+        return None
+    try:
+        flat_source = Path(subject.flat_sol).read_text(errors="replace")
+    except OSError:
+        return None
+    target_chunk = _source_contract_chunk(flat_source, subject.contract)
+    if target_chunk is None or _source_constructor_params_from_source(
+            flat_source, subject.contract) != [
+                ("_baseURI", "string"), ("_fee", "uint256"),
+                ("_weth", "address")]:
+        return None
+    masked_target = _mask_solidity_comments_and_strings(target_chunk)
+    if re.search(
+            r"function\s+isWhitelisted\s*\(\s*address\[\]\s+memory\s+"
+            r"whitelist\s*,\s*address\s+target\s*\)\s*public\s+pure\s+"
+            r"returns\s*\(\s*bool\s*\)\s*\{\s*for\s*\(\s*uint256\s+i\s*"
+            r"=\s*0\s*;\s*i\s*<\s*whitelist\.length\s*;\s*i\+\+\s*\)\s*"
+            r"\{\s*if\s*\(\s*target\s*==\s*whitelist\[i\]\s*\)\s*"
+            r"return\s+true\s*;\s*\}\s*return\s+false\s*;\s*\}",
+            masked_target, re.S) is None:
+        return None
+    path_function = str(job.get("path_function") or unit_info.get("path_function") or "")
+    match = re.search(r"#([0-9]+)$", path_function)
+    if match is None:
+        return None
+    deps, dep_evidence = unit_state_dependencies(
+        subject.solast, subject.contract, "isWhitelisted",
+        declaration_id=int(match.group(1)))
+    if deps or dep_evidence:
+        return None
+    fixture_dir = case_dir / "cert" / "fixtures"
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    fixture_path = fixture_dir / (
+        f"{_safe_name(job.get('job_id') or 'isWhitelisted')}.path-cov-fixture.json")
+    fixture = {
+        "contract": subject.contract,
+        "skip_constructor": True,
+        "state": {},
+        "foundry": {
+            "constructor_args": ["\"VeriPUT1000\"", "0",
+                                 "address(uint160(1002))"],
+        },
+        "veriput_fixture_kind": "putty-whitelist-pure-empty-array",
+        "source_evidence": {
+            "unit": "isWhitelisted",
+            "path_function": path_function,
+            "empty_array_return": False,
+            "state_dependencies": [],
+            "environment_dependencies": [],
+            "constructor_param_types": ["string", "uint256", "address"],
+            "stage2_semantics": "constructor-independent public pure loop",
+            "foundry_replay": "real PuttyV2 deployment",
+        },
+    }
+    _write_json(fixture_path, fixture)
+    return {
+        "path": str(fixture_path),
+        "fixture": fixture,
+        "argv_remove_flags": ["--pin-agreed-establishable-env"],
+        "argv_value_pairs": [("--probes", "2")],
+        "esbmc_arg_remove_flags": [
+            "--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"
+        ],
+        "esbmc_arg_pairs": [
+            ("--path-cov-max-goals", "2"),
+            ("--unwind", "1"),
+        ],
+    }
+
+
 def _transfer_helper_zero_key_fixture_for_job(
         subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
     """Retain TransferHelper's source-dominating zero-conduit rejection."""
@@ -5449,6 +6014,16 @@ def apply_source_stage2_fixtures(schedule: dict,
                    or _euler_cash_zero_storage_fixture_for_job(subject, job, case_dir)
                    or _balancer_lp_oracle_decimals_fixture_for_job(
                        subject, job, case_dir)
+                   or _chain_reverse_resolver_supports_feature_fixture_for_job(
+                       subject, job, case_dir)
+                   or _universal_sig_validator_wrapper_fixture_for_job(
+                       subject, job, case_dir)
+                   or _ccip_reader_callback_fixture_for_job(
+                       subject, job, case_dir)
+                   or _call_and_revert_value_gate_fixture_for_job(
+                       subject, job, case_dir)
+                   or _putty_whitelist_pure_fixture_for_job(
+                       subject, job, case_dir)
                    or _peg_stability_module_foundry_fixture_for_job(
                        subject, job, case_dir)
                    or _transfer_helper_zero_key_fixture_for_job(
@@ -5461,6 +6036,14 @@ def apply_source_stage2_fixtures(schedule: dict,
             jobs.append(job)
             continue
         patched = copy.deepcopy(job)
+        for flag in fixture.get("argv_remove_flags") or []:
+            patched["certify_argv"] = [
+                arg for arg in patched.get("certify_argv") or [] if arg != flag
+            ]
+            if patched.get("dry_run_argv"):
+                patched["dry_run_argv"] = [
+                    arg for arg in patched["dry_run_argv"] if arg != flag
+                ]
         for flag, value in fixture.get("argv_remove_pairs") or []:
             patched["certify_argv"] = _remove_argv_pair(
                 [str(arg) for arg in patched.get("certify_argv") or []], flag, value)
@@ -5473,6 +6056,15 @@ def apply_source_stage2_fixtures(schedule: dict,
             if patched.get("dry_run_argv"):
                 patched["dry_run_argv"] = _argv_with_value(
                     [str(arg) for arg in patched["dry_run_argv"]], flag, value)
+        for flag in fixture.get("esbmc_arg_remove_flags") or []:
+            token = f"--esbmc-arg={flag}"
+            patched["certify_argv"] = [
+                arg for arg in patched.get("certify_argv") or [] if arg != token
+            ]
+            if patched.get("dry_run_argv"):
+                patched["dry_run_argv"] = [
+                    arg for arg in patched["dry_run_argv"] if arg != token
+                ]
         patched["certify_argv"] = _append_esbmc_arg_pair(
             [str(arg) for arg in patched.get("certify_argv") or []],
             "--path-cov-fixture", fixture["path"])
@@ -6693,6 +7285,36 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                                            n_complete_witness_fallback + n_partial_journal_fallback)
                     if n_stage4_candidates > 0:
                         retry_stage["stage2_soft_timeout_stage4_candidates_retained"] = True
+        if n_stage4_candidates <= 0 and _is_nonpayable_abi_entry_job(job):
+            abi_gate_row = _abi_value_gate_cert_row(subject, job)
+            _append_jsonl(cert_path, abi_gate_row)
+            stages.append({
+                "stage":
+                "static-abi-value-gate-certification",
+                "unit":
+                unit,
+                "path_function":
+                path_function,
+                "job_id":
+                job.get("job_id"),
+                "status":
+                "ok",
+                "cert_canonical_jsonl":
+                str(cert_path),
+                "reason":
+                abi_gate_row["driver_diagnostic"]["reason"],
+            })
+            n_certified = _certified_count(cert_path, subject.benchmark_key, unit, path_function)
+            n_cleared_fallback = _cleared_concrete_fallback_count(cert_path, subject.benchmark_key,
+                                                                  unit, path_function)
+            n_timeout_fallback = _timeout_concrete_fallback_count(cert_path, subject.benchmark_key,
+                                                                  unit, path_function)
+            n_complete_witness_fallback = _complete_witness_concrete_fallback_count(
+                cert_path, subject.benchmark_key, unit, path_function)
+            n_partial_journal_fallback = _partial_journal_concrete_fallback_count(
+                cert_path, subject.benchmark_key, unit, path_function)
+            n_stage4_candidates = (n_certified + n_cleared_fallback + n_timeout_fallback +
+                                   n_complete_witness_fallback + n_partial_journal_fallback)
         concrete_only_stage4 = _is_concrete_only_stage4(n_certified, n_cleared_fallback,
                                                         n_timeout_fallback,
                                                         n_complete_witness_fallback,
@@ -7095,6 +7717,15 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         put_summary = summarize_put_artifacts(case_dir / "put")
     concrete_replay_persistence = persist_case_concrete_replays(
         case_dir, put_summary, f"{dataset_label}/{subject_id}")
+    persistence_failure = None
+    if put_summary["valid"] > 0:
+        persistence_failure = persistence_publication_failure(
+            concrete_replay_persistence)
+        if persistence_failure:
+            put_summary = quarantine_unpersisted_validity(
+                put_summary, persistence_failure)
+            result_status = "persistence-error"
+            failure_reason = persistence_failure
     wall_total_s = round(time.monotonic() - start, 3)
     completion_status = result_status
     partial_failure_reason = None
@@ -7408,6 +8039,23 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     if not getattr(args, "ce_replay_only", False):
         stale_row = _best_stale_artifact_row(target_row, dataset_label, case_dir, row)
         row = _adopt_stale_artifacts(row, stale_row)
+    final_valid_tests = [test for test in row.get("valid_tests") or []
+                         if isinstance(test, dict)]
+    if final_valid_tests:
+        final_replay_persistence = persist_case_concrete_replays(
+            case_dir, {"valid_tests": final_valid_tests},
+            f"{dataset_label}/{subject_id}")
+        final_persistence_failure = persistence_publication_failure(
+            final_replay_persistence)
+        concrete_replay_persistence = final_replay_persistence
+        if final_persistence_failure:
+            row = quarantine_unpersisted_validity(row, final_persistence_failure)
+            put_summary = quarantine_unpersisted_validity(
+                put_summary, final_persistence_failure)
+            row["status"] = "persistence-error"
+            row["reason"] = final_persistence_failure
+            row = _annotate_result_accounting(row)
+            persistence_failure = final_persistence_failure
     detail = {
         "schema": "veriput-rq1-case-result/v1",
         "row": row,
@@ -7438,6 +8086,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "certification": cert_summary,
         "put": put_summary,
         "concrete_replay_persistence": concrete_replay_persistence,
+        "persistence_publication_failure": persistence_failure,
         "stale_artifact_adoption": {
             "adopted": bool(row.get("adopted_stale_artifacts")),
             "source": row.get("stale_artifact_root"),

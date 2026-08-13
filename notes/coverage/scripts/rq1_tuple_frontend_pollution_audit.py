@@ -6,6 +6,8 @@ import json
 import re
 from pathlib import Path
 
+from rq1_artifact_audit import canonical_subject
+
 
 SCHEMA = "veriput-rq1-tuple-frontend-pollution-audit/v1"
 TUPLE_ERRORS = (
@@ -193,13 +195,19 @@ def fallback_source_scan(case_dir):
     }
 
 
-def audit(state_path):  # pylint: disable=too-many-locals
-    """Audit exactly the fixed canonical inventory in ``state_path``."""
-    state = json.loads(state_path.read_text(encoding="utf-8"))
-    cases = state.get("cases", {})
-    if len(cases) != 205:
-        raise SystemExit(
-            f"refusing non-canonical inventory: expected 205 cases, got {len(cases)}")
+def audit(result_root):  # pylint: disable=too-many-locals
+    """Audit canonical subjects discovered from ``result_root``."""
+    cases = {}
+    for result_path in sorted(result_root.glob("*/subjects/*/result.json")):
+        subject_dir = result_path.parent
+        subject = subject_dir.name
+        canonical, historical = canonical_subject(subject)
+        if historical or canonical != subject:
+            continue
+        bench = subject_dir.parent.parent.name
+        cases[f"{bench}/{subject}"] = {
+            "last_result_subject_dir": str(subject_dir),
+        }
 
     ast_audited = 0
     ast_missing = []
@@ -313,13 +321,13 @@ def main():
     """Render the audit as stable, machine-readable JSON."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--state",
+        "--root",
         type=Path,
-        default=Path("notes/coverage/rq1_case_state.json"),
+        default=Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT"),
     )
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    report = audit(args.state)
+    report = audit(args.root)
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.write_text(rendered, encoding="utf-8")

@@ -21,7 +21,8 @@ REPO = HERE.parents[2]
 sys.path.insert(0, str(HERE))
 
 from rq1_concrete_replay_store import (  # noqa: E402
-    DEFAULT_INVALIDATION_LEDGER, ReplayPersistenceError, audit_manifest,
+    DEFAULT_INVALIDATION_LEDGER, ReplayPersistenceError, annotate_generalization,
+    audit_manifest,
     invalidated_cases, invalidation_applies, load_manifest,
     persist_concrete_replay, persistence_coverage, replay_identity,
     repair_manifest_independence,
@@ -31,6 +32,7 @@ from rq1_case_batch import (  # noqa: E402
     _is_valid_reference_test as strict_valid_reference_test,
     result_numbers as strict_result_numbers,
 )
+from rq1_artifact_audit import canonical_subject  # noqa: E402
 from rq1_veriput_run import (  # noqa: E402
     _forge_json_has_successful_test, _is_valid_reference_test,
     summarize_put_artifacts,
@@ -42,7 +44,6 @@ from solidity_path_put import (  # noqa: E402
 
 
 DEFAULT_RESULT_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
-DEFAULT_CASE_STATE = REPO / "notes" / "coverage" / "rq1_case_state.json"
 PUT_ALL = HERE / "put_all.py"
 
 
@@ -63,14 +64,17 @@ def _atomic_json(path: Path, doc: dict) -> None:
     os.replace(tmp, path)
 
 
-def _case_dirs(case_state: Path, result_root: Path) -> list[tuple[str, Path]]:
-    cases = _read_json(case_state).get("cases") or {}
+def _case_dirs(result_root: Path) -> list[tuple[str, Path]]:
+    """Discover canonical RQ1 subjects from the result tree itself."""
     rows = []
-    for key, state in sorted(cases.items()):
-        if not isinstance(state, dict) or "/" not in key:
+    for result_path in sorted(result_root.glob("*/subjects/*/result.json")):
+        subject_dir = result_path.parent
+        bench = subject_dir.parent.parent.name
+        subject = subject_dir.name
+        canonical, historical = canonical_subject(subject)
+        if historical or canonical != subject:
             continue
-        bench, subject = key.split("/", 1)
-        rows.append((key, result_root / bench / "subjects" / subject))
+        rows.append((f"{bench}/{subject}", subject_dir))
     return rows
 
 
@@ -181,7 +185,18 @@ def _function_parameter_span(source: str, name: str) -> tuple[int, int, int] | N
 
 
 def _specialize_put_basis(subject_dir: Path, put_row: dict, args) -> tuple[dict | None, dict]:
-    """Forge-check a deterministic zero-argument instance of one green PUT."""
+    """Refuse default-value specialization: it is not a witness replay."""
+    return None, {
+        "status": "unrecoverable",
+        "strategy": "witness-required",
+        "reason": ("a PUT cannot be converted to a concrete replay by choosing "
+                   "default arguments; recover its exact Stage-2 witness instead"),
+        "identity": replay_identity(put_row),
+    }
+
+
+def _unsafe_specialize_put_basis(subject_dir: Path, put_row: dict, args) -> tuple[dict | None, dict]:
+    """Legacy implementation retained temporarily for forensic comparison only."""
     source_test = Path(str(put_row.get("file") or ""))
     test_name = str(put_row.get("test") or "")
     try:
@@ -412,9 +427,25 @@ def migrate_case(case: str, subject_dir: Path, args) -> dict:
                 shutil.rmtree(Path(generation_root), ignore_errors=True)
                 generation["generation_root_cleaned"] = True
 
+    if args.apply:
+        try:
+            report["generalization"] = annotate_generalization(
+                subject_dir, valid_tests)
+        except ReplayPersistenceError as exc:
+            report["actions"].append({
+                "action": "refused",
+                "reason": str(exc),
+                "stage": "generalization-annotation",
+            })
     report["coverage"] = coverage
+    manifest = load_manifest(subject_dir)
     report["manifest_errors_after"] = audit_manifest(subject_dir, manifest)
-    report["status"] = "complete" if coverage["complete"] else "incomplete"
+    refused = any(action.get("action") == "refused" for action in report["actions"])
+    failed_generation = any(item.get("status") not in ("ok", "skipped")
+                            for item in report["generation"])
+    complete = (coverage["complete"] and not report["manifest_errors_after"]
+                and not refused and not failed_generation)
+    report["status"] = "complete" if complete else "incomplete"
     if args.apply:
         _annotate_result(subject_dir, coverage)
     return report
@@ -439,6 +470,10 @@ def _summary(reports: list[dict], *, total_cases: int, mode: str,
         "migration_errors": sum(row["status"] == "migration-error" for row in reports),
         "put_basis_missing": sum(row["coverage"]["put_basis_missing_count"]
                                  for row in reports),
+        "valid_concrete_missing": sum(
+            row["coverage"].get("valid_concrete_missing_count", 0) for row in reports),
+        "manifest_errors": sum(len(row.get("manifest_errors_after") or [])
+                               for row in reports),
         "reports": sorted(reports, key=lambda row: row["case"]),
     }
 
@@ -446,7 +481,6 @@ def _summary(reports: list[dict], *, total_cases: int, mode: str,
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--result-root", type=Path, default=DEFAULT_RESULT_ROOT)
-    parser.add_argument("--case-state", type=Path, default=DEFAULT_CASE_STATE)
     parser.add_argument("--case", action="append", default=[])
     parser.add_argument("--apply", action="store_true",
                         help="persist artifacts; without this flag the command is a dry-run")
@@ -464,7 +498,7 @@ def main() -> int:
     args.invalidated_cases = invalidated_cases(args.invalidation_ledger)
     wanted = set(args.case)
     selected = [(case, path) for case, path in
-                _case_dirs(args.case_state, args.result_root)
+                _case_dirs(args.result_root)
                 if not wanted or case in wanted]
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
@@ -496,7 +530,8 @@ def main() -> int:
     if args.report:
         _atomic_json(args.report, summary)
     sys.stdout.write(text)
-    return 1 if summary["incomplete_cases"] else 0
+    return 1 if (summary["incomplete_cases"] or summary["migration_errors"]
+                 or summary["manifest_errors"] or summary["invalidated_cases"]) else 0
 
 
 if __name__ == "__main__":

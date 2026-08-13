@@ -13,7 +13,9 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "notes" / "coverage" / "scripts"))
 
 from rq1_concrete_replay_store import (  # noqa: E402
-    audit_manifest, invalidation_applies, load_manifest, persist_concrete_replay,
+    ReplayPersistenceError, annotate_generalization, audit_manifest,
+    deterministic_replay_errors,
+    invalidation_applies, load_manifest, persist_concrete_replay,
     persistence_coverage, repair_manifest_independence,
 )
 
@@ -33,14 +35,17 @@ def fixture(root: Path) -> tuple[Path, dict]:
     (project / "foundry.toml").write_text(
         '[profile.default]\nsrc = "src"\ntest = "test"\nlibs = ["lib"]\n')
     (project / "src" / "flat.sol").write_text(
-        "pragma solidity >=0.8.0; contract C { function f() public {} }\n")
+        "pragma solidity >=0.8.0; contract C { uint256 public x; "
+        "function f() public { x = 1; } }\n")
     (project / "lib" / "forge-std" / "src" / "Test.sol").write_text(
-        "pragma solidity >=0.8.0; contract Test {}\n")
+        "pragma solidity >=0.8.0; contract Test { "
+        "function assertTrue(bool value) internal pure { require(value); } "
+        "function assertEq(uint256 a, uint256 b) internal pure { require(a == b); } }\n")
     test = project / "test" / "CReplay.t.sol"
     test.write_text(
         'pragma solidity >=0.8.0; import {Test} from "forge-std/Test.sol"; '
         'import {C} from "../src/flat.sol"; contract CReplay is Test { '
-        'function test_cov_0() public { C c = new C(); c.f(); } }\n')
+        'function test_cov_0() public { C c = new C(); c.f(); assertEq(c.x(), 1); } }\n')
     put_json = project / "put.json"
     put_json.write_text(json.dumps({
         "kind": "concrete", "unit": "f", "enc": 2,
@@ -51,6 +56,12 @@ def fixture(root: Path) -> tuple[Path, dict]:
         "kind": "concrete", "valid_reference_test": True,
         "forge_status": "Success", "unit": "f", "enc": 2,
         "test": "test_cov_0", "file": str(test), "put_json": str(put_json),
+        "concrete_oracles": [{
+            "class": "concrete-value", "kind": "post-state",
+            "observed": "c.x()", "expected": "1",
+            "provenance": "stage2-witness", "target_receiver": "c",
+            "assertion": "assertEq(c.x(), 1);",
+        }],
     }
 
 
@@ -80,6 +91,58 @@ def main() -> int:
         bad += check((project / "lib" / "forge-std" / "src" / "Test.sol").is_file(),
                      "forge-std is vendored, not a temporary symlink")
         bad += check(not audit_manifest(subject, manifest), "manifest hashes and paths audit")
+
+        fuzz = root / "Fuzz.t.sol"
+        fuzz.write_text(
+            'contract Fuzz { function test_cov_0(uint256 x) public { '
+            'C c = new C(); c.f(); assert(x == x); } }\n')
+        bad += check(any("fuzz parameters" in error for error in
+                         deterministic_replay_errors(fuzz, "test_cov_0", "f")),
+                     "a parameterized Forge fuzz test is not a concrete replay")
+        assertion_free = root / "AssertionFree.t.sol"
+        assertion_free.write_text(
+            'contract AssertionFree { function test_cov_0() public { '
+            'C c = new C(); c.f(); } }\n')
+        bad += check(any("no execution-result assertion" in error for error in
+                         deterministic_replay_errors(
+                             assertion_free, "test_cov_0", "f")),
+                     "an assertion-free call is not a concrete replay")
+        invalid = {**concrete, "file": str(assertion_free)}
+        try:
+            persist_concrete_replay(subject, invalid)
+        except ReplayPersistenceError:
+            pass
+        else:
+            bad += check(False, "invalid concrete replay is rejected before persistence")
+        unrelated = root / "Unrelated.t.sol"
+        unrelated.write_text(
+            'contract Unrelated { function test_cov_0() public { '
+            'C c = new C(); c.f(); assertEq(1, 1); } }\n')
+        bad += check(any("not data-dependent" in error for error in
+                         deterministic_replay_errors(unrelated, "test_cov_0", "f")),
+                     "a constant assertion cannot masquerade as an execution oracle")
+        self_comparison = root / "SelfComparison.t.sol"
+        self_comparison.write_text(
+            'contract SelfComparison { function test_cov_0() public { '
+            'C c = new C(); c.f(); assertEq(c.x(), c.x()); } }\n')
+        bad += check(any("not data-dependent" in error for error in
+                         deterministic_replay_errors(
+                             self_comparison, "test_cov_0", "f")),
+                     "an observable compared only with itself is not an exact witness oracle")
+        wrong_revert = root / "WrongRevert.t.sol"
+        wrong_revert.write_text(
+            'contract WrongRevert { function test_cov_0() public { '
+            'C c = new C(); c.f(); vm.expectRevert(); c.f(); } }\n')
+        bad += check(any("not immediately before" in error for error in
+                         deterministic_replay_errors(wrong_revert, "test_cov_0", "f")),
+                     "expectRevert armed after the selected call is rejected")
+        fake_call = root / "FakeCall.t.sol"
+        fake_call.write_text(
+            'contract FakeCall { function test_cov_0() public { '
+            'string memory s = "c.f()"; assertTrue(bytes(s).length > 0); } }\n')
+        bad += check(any("does not invoke target" in error for error in
+                         deterministic_replay_errors(fake_call, "test_cov_0", "f")),
+                     "a target call written only in a string is rejected")
         linked_alias = root / "linked-alias.t.sol"
         os.link(project / entry["test_file"], linked_alias)
         bad += check(any("hard-linked" in error for error in audit_manifest(subject)),
@@ -115,6 +178,18 @@ def main() -> int:
         coverage = persistence_coverage([valid_put, concrete], manifest["entries"])
         bad += check(coverage["complete"],
                      "same-path canonical concrete replay covers the PUT basis")
+        generalized = annotate_generalization(subject, [valid_put, concrete])
+        classified = load_manifest(subject)["entries"][0]
+        bad += check(generalized["generalized_to_put"] == 1
+                     and classified["generalization_status"] == "generalized-to-put"
+                     and classified["matching_put_tests"] == ["test_put_f"],
+                     "an exact-path concrete replay records the PUT it was generalized into")
+        not_generalized = annotate_generalization(subject, [concrete])
+        classified = load_manifest(subject)["entries"][0]
+        bad += check(not_generalized["not_generalized"] == 1
+                     and classified["generalization_status"] == "not-generalized"
+                     and not classified["matching_put_tests"],
+                     "a concrete replay without an exact PUT is explicitly classified")
         other_path = {**valid_put, "enc": 3}
         bad += check(persistence_coverage(
             [other_path, concrete], manifest["entries"])["put_basis_missing_count"] == 1,
@@ -122,6 +197,17 @@ def main() -> int:
         missing = persistence_coverage([valid_put], [])
         bad += check(missing["put_basis_missing_count"] == 1 and not missing["complete"],
                      "a PUT without retained concrete provenance is an explicit gap")
+        missing_concrete = persistence_coverage([concrete], [])
+        bad += check(missing_concrete["valid_concrete_missing_count"] == 1
+                     and not missing_concrete["complete"],
+                     "every valid concrete test must itself be retained")
+        same_name_different_file = root / "producer" / "test" / "CReplay2.t.sol"
+        same_name_different_file.write_text(Path(concrete["file"]).read_text() + "// second\n")
+        second_concrete = {**concrete, "file": str(same_name_different_file)}
+        duplicate_name_coverage = persistence_coverage(
+            [concrete, second_concrete], manifest["entries"])
+        bad += check(duplicate_name_coverage["valid_concrete_missing_count"] == 1,
+                     "same-name tests with different content require separate retention")
 
         copied_test = project / entry["test_file"]
         copied_test.write_text(copied_test.read_text() + "// changed\n")

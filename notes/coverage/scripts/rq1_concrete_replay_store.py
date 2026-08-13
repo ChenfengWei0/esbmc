@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -118,7 +119,7 @@ def replay_identity(row: dict) -> dict:
         "unit": row.get("unit") or record.get("unit"),
         "enc": row.get("enc") if row.get("enc") is not None else record.get("enc"),
         "piece": row.get("piece") if row.get("piece") is not None else record.get("piece"),
-        "path_function": record.get("path_function"),
+        "path_function": row.get("path_function") or record.get("path_function"),
         "stage2_source": row.get("stage2_source") or record.get("stage2_source"),
         "stage2_witness_check": (row.get("stage2_witness_check") or
                                  record.get("stage2_witness_check")),
@@ -148,6 +149,162 @@ def _artifact_key(row: dict) -> tuple:
             str(identity.get("unit") or ""),
             str(identity.get("enc") if identity.get("enc") is not None else ""),
             str(identity.get("piece") if identity.get("piece") is not None else ""))
+
+
+def _concrete_test_key(row: dict) -> tuple:
+    """Identify one concrete test, not merely its path or Solidity name."""
+    test_file = Path(str(row.get("file") or ""))
+    flat_file = test_file.parent.parent / "src" / "flat.sol"
+    return (_artifact_key(row), str(row.get("test") or ""),
+            _sha256(test_file) if test_file.is_file() else None,
+            _sha256(flat_file) if flat_file.is_file() else None)
+
+
+def _entry_test_key(entry: dict) -> tuple:
+    origin = entry.get("origin") if isinstance(entry, dict) else {}
+    origin = origin if isinstance(origin, dict) else {}
+    key = (str(origin.get("path_function") or ""), str(origin.get("unit") or ""),
+           str(origin.get("enc") if origin.get("enc") is not None else ""),
+           str(origin.get("piece") if origin.get("piece") is not None else ""))
+    return (key, str(entry.get("test") or ""), entry.get("test_sha256"),
+            entry.get("flat_sha256"))
+
+
+def _solidity_function(source: str, name: str) -> tuple[str, str] | None:
+    """Return one generated test's parameter list and body."""
+    match = re.search(r"\bfunction\s+" + re.escape(name) + r"\s*\(", source)
+    if match is None:
+        return None
+    start = match.end()
+    depth = 1
+    index = start
+    while index < len(source) and depth:
+        depth += (source[index] == "(") - (source[index] == ")")
+        index += 1
+    if depth:
+        return None
+    params = source[start:index - 1]
+    body_start = source.find("{", index)
+    if body_start < 0:
+        return None
+    depth = 1
+    body_end = body_start + 1
+    while body_end < len(source) and depth:
+        depth += (source[body_end] == "{") - (source[body_end] == "}")
+        body_end += 1
+    if depth:
+        return None
+    return params, source[body_start + 1:body_end - 1]
+
+
+def deterministic_replay_oracles(test_file: Path, test: str, unit: str) -> tuple[list[dict], list[str]]:
+    """Conservatively identify assertions tied to the target invocation."""
+    try:
+        source = test_file.read_text(errors="replace")
+    except OSError as exc:
+        return [], [f"cannot read replay test: {exc}"]
+    function = _solidity_function(source, test)
+    if function is None:
+        return [], [f"replay function is absent or malformed: {test}"]
+    params, body = function
+    errors = []
+    if params.strip():
+        errors.append("replay function has Forge fuzz parameters")
+    code = re.sub(r"/\*.*?\*/|//[^\n]*", "", body, flags=re.S)
+    code = re.sub(r'"(?:\\.|[^"\\])*"', '""', code)
+    assertion = re.search(r"\bassert(?:Eq|True|False|Gt|Ge|Lt|Le)?\s*\(", code)
+    expect_revert = re.search(r"\bvm\s*\.\s*expectRevert\s*\(", code)
+    oracles = []
+    if re.search(r"\bassertTrue\s*\(\s*true\s*(?:,|\))", code):
+        errors.append("replay uses a tautological assertion instead of an execution result")
+    if unit == "__deploy__":
+        invoked = re.search(r"\bnew\s+[A-Za-z_$][A-Za-z0-9_$.]*\s*\(", code)
+    elif unit in ("fallback", "receive"):
+        invoked = re.search(r"\.\s*(?:call|send|transfer)\s*(?:\{|\()", code)
+    else:
+        invoked = re.search(r"\.\s*" + re.escape(unit) + r"\s*\(", code)
+        if invoked is None:
+            invoked = re.search(
+                r"abi\s*\.\s*encode(?:Call|WithSignature|WithSelector)\s*\([^;]*\b" +
+                re.escape(unit) + r"\b", code, re.S)
+    if invoked is None:
+        errors.append(f"replay does not invoke target unit {unit}")
+    if invoked is not None:
+        statement_start = code.rfind(";", 0, invoked.start()) + 1
+        statement_end = code.find(";", invoked.end())
+        statement_end = len(code) if statement_end < 0 else statement_end + 1
+        statement = code[statement_start:statement_end]
+        receiver = re.search(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" +
+                             re.escape(unit) + r"\s*\(", statement)
+        assigned = set(re.findall(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\b\s*(?:,|\))?\s*=",
+                                  statement[:max(0, invoked.start() - statement_start)]))
+        low_level = re.search(r"\b(bool\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:,|\))?\s*=.*\.call",
+                              statement, re.S)
+        if low_level:
+            assigned.add(low_level.group(2))
+        prefix = code[:statement_start]
+        armed = re.search(r"vm\s*\.\s*expectRevert\s*\([^;]*\)\s*;\s*$", prefix, re.S)
+        if armed:
+            oracles.append({"class": "R0", "kind": "revert", "source": "expectRevert"})
+        elif expect_revert is not None:
+            errors.append("revert oracle is not immediately before the target call")
+        suffix = code[statement_end:]
+        fixed_names = set(re.findall(
+            r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:true|false|"
+            r"0x[0-9A-Fa-f]+|[0-9]+|bytes\d*\s*\([^;]+\))\s*;", code[:statement_start]))
+        for match in re.finditer(
+                r"\b(assert(?:Eq|True|False|Gt|Ge|Lt|Le)?)\s*\((.*?)\)\s*;",
+                suffix, re.S):
+            expression = match.group(2)
+            observes_return = any(re.search(r"\b" + re.escape(name) + r"\b", expression)
+                                  for name in assigned)
+            observes_state = bool(receiver and re.search(
+                r"\b" + re.escape(receiver.group(1)) +
+                r"\s*\.\s*[A-Za-z_$][A-Za-z0-9_$]*\s*\(", expression))
+            fixed_expected = bool(re.search(
+                r"(?:^|[,=!<>\s(])(?:true|false|0x[0-9A-Fa-f]+|[0-9]+|"
+                r"bytes\d*\s*\([^)]*\))(?=$|[,=!<>\s)])", expression))
+            fixed_expected = fixed_expected or any(
+                re.search(r"\b" + re.escape(name) + r"\b", expression)
+                for name in fixed_names)
+            boolean_status = (match.group(1) in ("assertTrue", "assertFalse")
+                              and observes_return)
+            if observes_return and (fixed_expected or boolean_status):
+                oracles.append({"class": "R0", "kind": "return-or-call-status",
+                                "source": match.group(1)})
+            elif observes_state and fixed_expected:
+                oracles.append({"class": "concrete-value", "kind": "post-state",
+                                "source": match.group(1)})
+    if assertion is None and expect_revert is None:
+        errors.append("replay has no execution-result assertion or revert oracle")
+    if not oracles:
+        errors.append("replay assertions are not data-dependent on the target result")
+    return oracles, errors
+
+
+def deterministic_replay_errors(test_file: Path, test: str, unit: str) -> list[str]:
+    return deterministic_replay_oracles(test_file, test, unit)[1]
+
+
+def _structured_oracle_errors(oracles: object) -> list[str]:
+    if not isinstance(oracles, list) or not oracles:
+        return ["concrete replay lacks structured witness oracle provenance"]
+    errors = []
+    for index, oracle in enumerate(oracles):
+        if not isinstance(oracle, dict):
+            errors.append(f"concrete oracle {index} is not an object")
+            continue
+        if oracle.get("class") not in ("R0", "concrete-value"):
+            errors.append(f"concrete oracle {index} has no supported class")
+        if not oracle.get("kind") or not oracle.get("observed"):
+            errors.append(f"concrete oracle {index} lacks its observed boundary value")
+        if not oracle.get("target_receiver") or not oracle.get("assertion"):
+            errors.append(f"concrete oracle {index} lacks its target-bound assertion")
+        if oracle.get("kind") != "normal-exit" and oracle.get("expected") is None:
+            errors.append(f"concrete oracle {index} lacks its fixed witness expectation")
+        if oracle.get("provenance") not in ("stage2-witness", "source-grounded"):
+            errors.append(f"concrete oracle {index} lacks witness/source provenance")
+    return errors
 
 
 def _entry_project(subject_dir: Path, entry: dict) -> Path:
@@ -241,6 +398,43 @@ def audit_manifest(subject_dir: Path, manifest: dict | None = None) -> list[str]
             errors.append(f"{entry.get('replay_id')}: missing foundry.toml")
         if not (project / "lib" / "forge-std" / "src" / "Test.sol").is_file():
             errors.append(f"{entry.get('replay_id')}: forge-std is not vendored")
+        if test_file.is_file():
+            replay_errors = deterministic_replay_errors(
+                test_file, str(entry.get("test") or ""),
+                str((entry.get("origin") or {}).get("unit") or ""))
+            errors.extend(f"{entry.get('replay_id')}: {error}"
+                          for error in replay_errors)
+        errors.extend(f"{entry.get('replay_id')}: {error}"
+                      for error in _structured_oracle_errors(entry.get("concrete_oracles")))
+        if test_file.is_file() and isinstance(entry.get("concrete_oracles"), list):
+            source = test_file.read_text(errors="replace")
+            compact_source = re.sub(r"\s+", "", source)
+            unit = str((entry.get("origin") or {}).get("unit") or "")
+            for index, oracle in enumerate(entry["concrete_oracles"]):
+                if not isinstance(oracle, dict):
+                    continue
+                assertion = re.sub(r"\s+", "", str(oracle.get("assertion") or ""))
+                receiver = str(oracle.get("target_receiver") or "")
+                if assertion and assertion not in compact_source:
+                    errors.append(
+                        f"{entry.get('replay_id')}: concrete oracle {index} assertion is absent")
+                if receiver and unit and not re.search(
+                        r"\b" + re.escape(receiver) + r"\s*\.\s*" +
+                        re.escape(unit) + r"\s*\(", source):
+                    errors.append(
+                        f"{entry.get('replay_id')}: concrete oracle {index} target is absent")
+        replay_log = project / str(entry.get("forge_log") or "")
+        if int(entry.get("forge_passed_tests") or 0) < 1:
+            errors.append(f"{entry.get('replay_id')}: no executed Forge replay test")
+        elif not replay_log.is_file():
+            errors.append(f"{entry.get('replay_id')}: missing Forge replay log")
+        elif entry.get("forge_log_sha256") != _sha256(replay_log):
+            errors.append(f"{entry.get('replay_id')}: Forge replay log hash mismatch")
+        if entry.get("generalization_status") not in (
+                "generalized-to-put", "not-generalized"):
+            errors.append(f"{entry.get('replay_id')}: missing generalization classification")
+        if not entry.get("concrete_oracles"):
+            errors.append(f"{entry.get('replay_id')}: missing concrete execution oracle metadata")
         linked = [path.relative_to(project).as_posix() for path in project.rglob("*")
                   if path.is_file() and not path.is_symlink()
                   and path.stat().st_nlink > 1]
@@ -275,13 +469,44 @@ def repair_manifest_independence(subject_dir: Path, manifest: dict | None = None
     return errors
 
 
-def persist_concrete_replay(subject_dir: Path, row: dict, *, dry_run: bool = False) -> dict:
+def persist_concrete_replay(subject_dir: Path, row: dict, *, dry_run: bool = False,
+                            forge_timeout: int = 20) -> dict:
     """Atomically adopt one already-green concrete artifact."""
     if row.get("kind") != "concrete" or row.get("valid_reference_test") is not True:
         raise ReplayPersistenceError("only a valid concrete reference test may be persisted")
     source_test = Path(str(row.get("file") or "")).expanduser().resolve()
     if not source_test.is_file():
         raise ReplayPersistenceError(f"concrete test is not retained: {source_test}")
+    identity = replay_identity(row)
+    if not identity.get("unit"):
+        raise ReplayPersistenceError("concrete replay identity has no unit")
+    if identity.get("stage2_source") != "source-grounded-manual-concrete-replay" and (
+            not identity.get("path_function") or identity.get("enc") is None):
+        raise ReplayPersistenceError(
+            "verifier-derived concrete replay lacks exact path_function/enc identity")
+    _detected_oracles, replay_errors = deterministic_replay_oracles(
+        source_test, str(row.get("test") or ""), str(identity.get("unit") or ""))
+    record = _load_record(row.get("put_json"))
+    replay_oracles = row.get("concrete_oracles") or record.get("concrete_oracles")
+    replay_errors.extend(_structured_oracle_errors(replay_oracles))
+    normalized_source = re.sub(r"\s+", "", source_test.read_text(errors="replace"))
+    if isinstance(replay_oracles, list):
+        for index, oracle in enumerate(replay_oracles):
+            if not isinstance(oracle, dict):
+                continue
+            assertion_text = re.sub(r"\s+", "", str(oracle.get("assertion") or ""))
+            receiver = str(oracle.get("target_receiver") or "")
+            if assertion_text and assertion_text not in normalized_source:
+                replay_errors.append(
+                    f"concrete oracle {index} assertion is absent from the retained test")
+            if receiver and not re.search(
+                    r"\b" + re.escape(receiver) + r"\s*\.\s*" +
+                    re.escape(str(identity.get("unit") or "")) + r"\s*\(",
+                    source_test.read_text(errors="replace")):
+                replay_errors.append(
+                    f"concrete oracle {index} is not bound to the target invocation")
+    if replay_errors:
+        raise ReplayPersistenceError("; ".join(replay_errors))
     source_project = _foundry_project(source_test)
     try:
         test_relative = source_test.relative_to(source_project)
@@ -290,7 +515,6 @@ def persist_concrete_replay(subject_dir: Path, row: dict, *, dry_run: bool = Fal
     flat_source = source_project / "src" / "flat.sol"
     if not flat_source.is_file():
         raise ReplayPersistenceError(f"Foundry project has no src/flat.sol: {source_project}")
-    identity = replay_identity(row)
     digest_seed = json.dumps({
         "identity": identity,
         "test": row.get("test"),
@@ -314,6 +538,9 @@ def persist_concrete_replay(subject_dir: Path, row: dict, *, dry_run: bool = Fal
                           "--match-path", test_relative.as_posix()],
         "forge_status": row.get("forge_status"),
         "valid_reference_test": True,
+        "generalization_status": "not-generalized",
+        "matching_put_tests": [],
+        "concrete_oracles": replay_oracles,
         "origin": {
             **identity,
             "test_file": _relative_provenance(subject_dir, source_test),
@@ -345,6 +572,31 @@ def persist_concrete_replay(subject_dir: Path, row: dict, *, dry_run: bool = Fal
             shutil.rmtree(staging_root, ignore_errors=True)
     _privatize_tree(destination)
 
+    try:
+        completed = subprocess.run(
+            entry["forge_command"], cwd=destination, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            timeout=forge_timeout, check=False)
+    except subprocess.TimeoutExpired as exc:
+        raise ReplayPersistenceError(
+            f"canonical concrete replay timed out after {forge_timeout}s") from exc
+    output = completed.stdout or ""
+    passed = max((int(count) for count in re.findall(r"\b(\d+) passed\b", output)),
+                 default=0)
+    if completed.returncode != 0 or passed < 1 or "No tests found" in output:
+        raise ReplayPersistenceError(
+            "canonical concrete replay did not execute a passing test: " +
+            output[-1000:])
+    replay_log = destination / "forge-replay.log"
+    replay_log.write_text(output)
+    entry.update({
+        "forge_status": "Success",
+        "forge_passed_tests": passed,
+        "forge_log": replay_log.relative_to(destination).as_posix(),
+        "forge_log_sha256": _sha256(replay_log),
+        "forge_verified_at": time.time(),
+    })
+
     manifest = load_manifest(subject_dir)
     entries = {item.get("replay_id"): item for item in manifest["entries"]
                if isinstance(item, dict) and item.get("replay_id")}
@@ -369,13 +621,16 @@ def persistence_coverage(valid_tests: list[dict], entries: list[dict]) -> dict:
     puts = [row for row in valid if row.get("kind") == "put"]
     concretes = [row for row in valid if row.get("kind") == "concrete"]
     concrete_keys = {_artifact_key(row) for row in concretes}
+    persisted_concrete_tests = set()
     for entry in entries:
         origin = entry.get("origin") if isinstance(entry, dict) else None
         if isinstance(origin, dict):
-            concrete_keys.add((str(origin.get("path_function") or ""),
-                               str(origin.get("unit") or ""),
-                               str(origin.get("enc") if origin.get("enc") is not None else ""),
-                               str(origin.get("piece") if origin.get("piece") is not None else "")))
+            key = (str(origin.get("path_function") or ""),
+                   str(origin.get("unit") or ""),
+                   str(origin.get("enc") if origin.get("enc") is not None else ""),
+                   str(origin.get("piece") if origin.get("piece") is not None else ""))
+            concrete_keys.add(key)
+            persisted_concrete_tests.add(_entry_test_key(entry))
     missing_puts = []
     for row in puts:
         key = _artifact_key(row)
@@ -384,6 +639,15 @@ def persistence_coverage(valid_tests: list[dict], entries: list[dict]) -> dict:
                 **replay_identity(row),
                 "test": row.get("test"),
                 "put_json": row.get("put_json"),
+            })
+    missing_concretes = []
+    for row in concretes:
+        identity = _concrete_test_key(row)
+        if identity not in persisted_concrete_tests:
+            missing_concretes.append({
+                **replay_identity(row),
+                "test": row.get("test"),
+                "file": row.get("file"),
             })
     return {
         "schema": "veriput-rq1-concrete-replay-coverage/v1",
@@ -394,5 +658,48 @@ def persistence_coverage(valid_tests: list[dict], entries: list[dict]) -> dict:
         "valid_concrete_count": len(concretes),
         "put_basis_missing_count": len(missing_puts),
         "put_basis_missing": missing_puts,
-        "complete": bool(valid) and bool(entries) and not missing_puts,
+        "valid_concrete_missing_count": len(missing_concretes),
+        "valid_concrete_missing": missing_concretes,
+        "complete": (bool(valid) and bool(entries) and not missing_puts
+                     and not missing_concretes),
     }
+
+
+def annotate_generalization(subject_dir: Path, valid_tests: list[dict]) -> dict:
+    """Classify every retained concrete replay against exact valid PUT identities."""
+    put_tests = {}
+    for row in valid_tests:
+        if (not isinstance(row, dict) or row.get("kind") != "put"
+                or row.get("valid_reference_test") is not True):
+            continue
+        identity = replay_identity(row)
+        if not identity.get("path_function") or identity.get("enc") is None:
+            continue
+        put_tests.setdefault(_artifact_key(row), []).append(str(row.get("test") or ""))
+    manifest = load_manifest(subject_dir)
+    counts = {"generalized-to-put": 0, "not-generalized": 0}
+    for entry in manifest.get("entries") or []:
+        origin = entry.get("origin") if isinstance(entry, dict) else None
+        if not isinstance(origin, dict):
+            continue
+        key = (str(origin.get("path_function") or ""),
+               str(origin.get("unit") or ""),
+               str(origin.get("enc") if origin.get("enc") is not None else ""),
+               str(origin.get("piece") if origin.get("piece") is not None else ""))
+        exact_identity = bool(origin.get("path_function") and origin.get("enc") is not None)
+        matching = sorted(set(put_tests.get(key) or [])) if exact_identity else []
+        status = "generalized-to-put" if matching else "not-generalized"
+        entry["generalization_status"] = status
+        entry["matching_put_tests"] = matching
+        counts[status] += 1
+    manifest["generalization"] = {
+        "schema": "veriput-rq1-concrete-generalization/v1",
+        "generalized_to_put": counts["generalized-to-put"],
+        "not_generalized": counts["not-generalized"],
+    }
+    manifest["updated_at"] = time.time()
+    errors = audit_manifest(subject_dir, manifest)
+    if errors:
+        raise ReplayPersistenceError("; ".join(errors))
+    _atomic_json(subject_dir / STORE_DIR / MANIFEST_NAME, manifest)
+    return manifest["generalization"]

@@ -3058,10 +3058,57 @@ def test_no_unit_getter_fallback_selects_only_fresh_zero_arg_getters():
     bad += check(cert_rows[0]["tag"] == "static-abi-getter-certified"
                  and cert_rows[0]["certified_details"]["0"]["stage4_kind"] == "getter-only",
                  f"getter cert row is structural getter-only: {cert_rows}")
+    bad += check(
+        cert_rows[0]["certified_details"]["1"]["certification_source"] ==
+        "structural-abi-gate-no-coordinate"
+        and cert_rows[0]["certified_details"]["1"]["stage4_kind"] == "getter-value-gate"
+        and cert_rows[0]["certified_details"]["1"]["box"][0]["name"] == "msg.value"
+        and cert_rows[0]["certified_details"]["1"]["box"][0]["lo"] == "1",
+        f"getter cert row also exposes nonpayable ABI gate: {cert_rows}")
     bad += check(summary["valid"] == 1 and summary["concrete_valid"] == 1
                  and summary["put_valid"] == 0
                  and summary["quality_bucket"] == "valid-no-PUT",
                  f"getter artifact is valid concrete, not deploy-only or PUT: {summary}")
+    return bad
+
+
+def test_abi_value_gate_cert_row_requires_nonpayable_entry():
+    with tempfile.TemporaryDirectory() as td:
+        subject = _prepared_subject_for_getter_test(Path(td))
+        base_job = {
+            "unit": "run",
+            "path_function": "sol:@C@C@F@run#7",
+            "unit_info": {
+                "visibility": "external",
+                "state_mutability": "nonpayable",
+            },
+        }
+        row = rq1_veriput_run._abi_value_gate_cert_row(subject, base_job)
+    bad = 0
+    bad += check(rq1_veriput_run._is_nonpayable_abi_entry_job(base_job),
+                 "external nonpayable function accepts ABI value-gate fallback")
+    bad += check(not rq1_veriput_run._is_nonpayable_abi_entry_job({
+        **base_job,
+        "unit_info": {
+            **base_job["unit_info"],
+            "state_mutability": "payable",
+        },
+    }), "payable function rejects ABI value-gate fallback")
+    bad += check(not rq1_veriput_run._is_nonpayable_abi_entry_job({
+        **base_job,
+        "path_function": "",
+    }), "missing path_function rejects ABI value-gate fallback")
+    detail = row["certified_details"]["1"]
+    bad += check(row["tag"] == "static-abi-value-gate-certified"
+                 and detail["stage4_kind"] == "abi-value-gate"
+                 and detail["certification_source"] == "structural-abi-gate-no-coordinate",
+                 f"ABI gate cert has distinct provenance: {row}")
+    bad += check(detail["box"] == [{
+        "name": "msg.value",
+        "lo": "1",
+        "hi": str((1 << 256) - 1),
+        "holes": [],
+    }], f"ABI gate cert covers nonzero msg.value: {detail}")
     return bad
 
 
@@ -3790,6 +3837,169 @@ def test_euler_risk_manager_fixture_retains_proxy_auth_rejection():
                  and job["certify_argv"][job["certify_argv"].index("--probes") + 1] == "0",
                  f"exact concrete fixture skips sender generalisation and probe pre-run: "
                  f"{job['certify_argv']}")
+    return bad
+
+
+def test_bounded_wrapper_fixtures_remove_extra_arithmetic_checks():
+    specs = [
+        {
+            "subject": "ensdomains__ens-contracts__UniversalSigValidator",
+            "contract": "UniversalSigValidator",
+            "unit": "isValidSigWithSideEffects",
+            "path_function": (
+                "sol:@C@UniversalSigValidator@F@isValidSigWithSideEffects#246"),
+            "parameter_types": ["address", "bytes32", "bytes"],
+            "return_types": ["bool"],
+            "mutability": "nonpayable",
+            "constructor_args": [],
+        },
+        {
+            "subject": "ensdomains__ens-contracts__CCIPReader",
+            "contract": "CCIPReader",
+            "unit": "ccipReadCallback",
+            "path_function": "sol:@C@CCIPReader@F@ccipReadCallback#202",
+            "parameter_types": ["bytes", "bytes"],
+            "return_types": [],
+            "mutability": "view",
+            "constructor_args": ["50000"],
+        },
+        {
+            "subject": "balancer__balancer-v3-monorepo__CallAndRevert",
+            "contract": "CallAndRevert",
+            "unit": "callAndRevertHook",
+            "path_function": "sol:@C@CallAndRevert@F@callAndRevertHook#99",
+            "parameter_types": ["address", "bytes"],
+            "return_types": [],
+            "mutability": "nonpayable",
+            "constructor_args": [],
+        },
+    ]
+    bad = 0
+    for spec in specs:
+        subject_dir = Path("/home/samson/workspace/VeriPUT/Results/Stress243/subjects") / spec["subject"]
+        solast = (Path("/tmp/veriput_rq1_ast_cache/stress243") /
+                  f"stress243__{spec['subject']}/flat.sol.solast")
+        if not subject_dir.exists() or not solast.exists():
+            print(f"skip: {spec['subject']} prepared subject or AST cache is absent")
+            continue
+        subject = rq1_veriput_run.PreparedSubject(
+            benchmark="stress243",
+            subject_id=spec["subject"],
+            root=str(subject_dir),
+            flat_sol=str(subject_dir / "flat.sol"),
+            solast=str(solast),
+            contract=spec["contract"],
+            unit=spec["unit"],
+            solc_bin=None,
+            solc_extra=(),
+            metadata={},
+        )
+        base_argv = [
+            "python3", "certify_all.py",
+            "--esbmc-arg=--overflow-check",
+            "--esbmc-arg=--div-by-zero-check",
+            "--esbmc-arg=--path-cov-arith-resolve",
+            "--probes", "8",
+        ]
+        schedule = {
+            "schema": "veriput-unit-schedule/v1",
+            "summary": {},
+            "jobs": [{
+                "job_id": spec["unit"],
+                "unit": spec["unit"],
+                "path_function": spec["path_function"],
+                "certify_argv": list(base_argv),
+                "dry_run_argv": [*base_argv, "--dry-run"],
+                "unit_info": {
+                    "visibility": "external",
+                    "parameter_types": spec["parameter_types"],
+                    "return_types": spec["return_types"],
+                    "state_mutability": spec["mutability"],
+                },
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            out = rq1_veriput_run.apply_source_stage2_fixtures(
+                schedule, subject, Path(tmp))
+            job = out["jobs"][0]
+            fixture = json.loads(Path(job["source_stage2_fixture_path"]).read_text())
+        argv = job["certify_argv"]
+        bad += check(fixture["foundry"]["constructor_args"] == spec["constructor_args"],
+                     f"{spec['unit']} replays the expected real constructor")
+        bad += check(all(f"--esbmc-arg={flag}" not in argv for flag in (
+            "--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve")),
+                     f"{spec['unit']} drops unrelated arithmetic VCCs: {argv}")
+        bad += check("--esbmc-arg=--path-cov-max-goals" in argv
+                     and "--esbmc-arg=2" in argv
+                     and "--esbmc-arg=--unwind" in argv
+                     and "--esbmc-arg=1" in argv,
+                     f"{spec['unit']} applies the measured path bound: {argv}")
+        bad += check(argv[argv.index("--probes") + 1] == "2",
+                     f"{spec['unit']} keeps the small probe budget: {argv}")
+    return bad
+
+
+def test_putty_pure_fixture_avoids_irrelevant_environment_pins():
+    subject_id = "pop_058_PuttyV2"
+    subject_dir = (Path("/home/samson/workspace/VeriPUT/scripts/Results/workdirs/") /
+                   "BugFix124/subjects" / subject_id)
+    solast = (Path("/tmp/veriput_rq1_ast_cache/bugfix124") /
+              f"bugfix124__{subject_id}/flat.sol.solast")
+    if not subject_dir.exists() or not solast.exists():
+        print("skip: PuttyV2 prepared subject or AST cache is absent")
+        return 0
+    subject = rq1_veriput_run.PreparedSubject(
+        benchmark="bugfix124",
+        subject_id=subject_id,
+        root=str(subject_dir),
+        flat_sol=str(subject_dir / "flat.sol"),
+        solast=str(solast),
+        contract="PuttyV2",
+        unit="isWhitelisted",
+        solc_bin=None,
+        solc_extra=(),
+        metadata={},
+    )
+    base_argv = [
+        "python3", "certify_all.py", "--pin-agreed-establishable-env",
+        "--esbmc-arg=--overflow-check", "--probes", "8",
+    ]
+    schedule = {
+        "schema": "veriput-unit-schedule/v1",
+        "summary": {},
+        "jobs": [{
+            "job_id": "putty-whitelist",
+            "unit": "isWhitelisted",
+            "path_function": "sol:@C@PuttyV2@F@isWhitelisted#3964",
+            "certify_argv": list(base_argv),
+            "dry_run_argv": [*base_argv, "--dry-run"],
+            "unit_info": {
+                "visibility": "public",
+                "parameter_types": ["address[]", "address"],
+                "return_types": ["bool"],
+                "state_mutability": "pure",
+            },
+        }],
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        out = rq1_veriput_run.apply_source_stage2_fixtures(
+            schedule, subject, Path(tmp))
+        job = out["jobs"][0]
+        fixture = json.loads(Path(job["source_stage2_fixture_path"]).read_text())
+    argv = job["certify_argv"]
+    bad = 0
+    bad += check(fixture["foundry"]["constructor_args"] == [
+        '"VeriPUT1000"', "0", "address(uint160(1002))"
+    ], "PuttyV2 fixture uses the real three-argument constructor")
+    bad += check("--pin-agreed-establishable-env" not in argv,
+                 "pure predicate drops irrelevant environment pins")
+    bad += check("--esbmc-arg=--overflow-check" not in argv,
+                 "pure ABI gate drops unrelated arithmetic VCCs")
+    bad += check("--esbmc-arg=--path-cov-max-goals" in argv
+                 and "--esbmc-arg=2" in argv
+                 and "--esbmc-arg=--unwind" in argv
+                 and "--esbmc-arg=1" in argv,
+                 "PuttyV2 fixture applies the measured path bound")
     return bad
 
 
@@ -5528,6 +5738,41 @@ def test_valid_saturated_concrete_only_stage4_skip_preserves_put_budget():
     return bad
 
 
+def test_persistence_failure_withholds_validity_from_publication():
+    bad = 0
+    complete = {
+        "complete": True,
+        "put_basis_missing_count": 0,
+        "persistence_errors": [],
+        "manifest_errors": [],
+    }
+    bad += check(
+        rq1_veriput_run.persistence_publication_failure(complete) is None,
+        "complete deterministic replay coverage permits publication")
+    missing = {**complete, "complete": False, "put_basis_missing_count": 1}
+    reason = rq1_veriput_run.persistence_publication_failure(missing)
+    bad += check(reason is not None and "exact concrete basis" in reason,
+                 "a PUT without its exact concrete replay basis is rejected")
+    summary = {
+        "valid": 2,
+        "put_valid": 1,
+        "concrete_valid": 1,
+        "valid_put_with_R1": 1,
+        "valid_put_with_R2": 0,
+        "valid_put_with_R1_or_R2": 1,
+        "valid_put_without_R1R2": 0,
+        "valid_tests": [{"kind": "put"}, {"kind": "concrete"}],
+        "valid_artifacts": [{"kind": "put"}, {"kind": "concrete"}],
+    }
+    quarantined = rq1_veriput_run.quarantine_unpersisted_validity(summary, reason)
+    bad += check(quarantined["valid"] == 0 and not quarantined["valid_tests"]
+                 and len(quarantined["unpublished_valid_tests"]) == 2
+                 and quarantined["quality_bucket"] == "no-valid"
+                 and quarantined["status"] == "persistence-error",
+                 "failed persistence retains evidence without publishing validity")
+    return bad
+
+
 def main():
     tests = [
         test_latest_rows_coalesces_legacy_and_canonical_subject_keys,
@@ -5576,6 +5821,7 @@ def main():
         test_no_unit_constructor_revert_fallback_is_behavioral_valid,
         test_constructor_arg_repair_deploy_is_still_smoke_only,
         test_no_unit_getter_fallback_selects_only_fresh_zero_arg_getters,
+        test_abi_value_gate_cert_row_requires_nonpayable_entry,
         test_no_unit_getter_fallback_rejects_non_no_unit_schedule,
         test_ownable_owner_stage2_fixture_uses_esbmc_store_name,
         test_ownable_msg_sender_owner_stage2_fixture_uses_esbmc_store_name,
@@ -5587,6 +5833,8 @@ def main():
         test_transfer_helper_fixture_retains_zero_conduit_rejection,
         test_euler_initialize_fixture_rebuilds_direct_deploy_guard,
         test_euler_risk_manager_fixture_retains_proxy_auth_rejection,
+        test_bounded_wrapper_fixtures_remove_extra_arithmetic_checks,
+        test_putty_pure_fixture_avoids_irrelevant_environment_pins,
         test_run_subject_records_no_unit_deploy_fallback_schema,
         test_valid_reference_rejects_deploy_and_creation_aliases,
         test_real203_cache_uses_prepared_benchmark_namespace,
@@ -5621,6 +5869,7 @@ def main():
         test_low_budget_timeout_only_stage4_skip_is_candidate_sensitive,
         test_put_saturated_concrete_only_stage4_skip_keeps_put_work,
         test_valid_saturated_concrete_only_stage4_skip_preserves_put_budget,
+        test_persistence_failure_withholds_validity_from_publication,
     ]
     bad = 0
     for test in tests:

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Build a strict, evidence-grounded inventory of canonical RQ1 no-PUT cases.
 
-This is deliberately a read-only audit.  It uses the fixed 205-case state file
-as scope, reads only each case's canonical result, and validates replay
+This is deliberately a read-only audit. It discovers canonical subjects from
+the RQ1 result tree and validates replay
 manifests from their retained files rather than trusting cached counters.
 """
 
@@ -27,10 +27,11 @@ from rq1_concrete_replay_store import (
     load_manifest,
     persistence_coverage,
 )
+from rq1_artifact_audit import canonical_subject
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_STATE = HERE.parent / "rq1_case_state.json"
+DEFAULT_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 DEFAULT_JSON = HERE.parent / "rq1_no_put_inventory.json"
 DEFAULT_TSV = HERE.parent / "rq1_no_put_inventory.tsv"
 
@@ -288,12 +289,21 @@ def classify(result: dict, subject_dir: Path, valid_tests: list[dict],
 
 
 def build(args: argparse.Namespace) -> dict:
-    """Build a current snapshot over exactly the fixed RQ1 identities."""
+    """Build a current snapshot over canonical RQ1 result directories."""
     # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    state = read_json(args.state)
-    cases = state.get("cases") if isinstance(state.get("cases"), dict) else {}
-    if len(cases) != 205:
-        raise SystemExit(f"fixed RQ1 state has {len(cases)} cases, expected 205")
+    cases = {}
+    for result_path in sorted(args.root.glob("*/subjects/*/result.json")):
+        subject_dir = result_path.parent
+        subject = subject_dir.name
+        canonical, historical = canonical_subject(subject)
+        if historical or canonical != subject:
+            continue
+        bench = subject_dir.parent.parent.name
+        cases[f"{bench}/{subject}"] = {
+            "bench": bench,
+            "subject": subject,
+            "last_result_json": str(result_path),
+        }
     rows = []
     replay_rows = []
     quality_counts = Counter()
@@ -377,8 +387,8 @@ def build(args: argparse.Namespace) -> dict:
         "schema": "veriput-rq1-no-put-inventory/v1",
         "generated_at": time.time(),
         "scope": {
-            "state": str(args.state),
-            "fixed_case_count": len(cases),
+            "result_root": str(args.root),
+            "canonical_case_count": len(cases),
             "quality_counts": dict(sorted(quality_counts.items())),
             "strict_valid_count": len(replay_rows),
             "no_put_count": len(rows),
@@ -434,7 +444,7 @@ def write_tsv(path: Path, rows: list[dict]) -> None:
 def main() -> None:
     """Parse paths and materialize both machine-readable outputs."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--state", type=Path, default=DEFAULT_STATE)
+    parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--json", type=Path, default=DEFAULT_JSON)
     parser.add_argument("--tsv", type=Path, default=DEFAULT_TSV)
     args = parser.parse_args()

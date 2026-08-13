@@ -404,7 +404,7 @@ def reconcile_history(rows: list[dict], alerts: Path,
             row.update({
                 "classification": "ledger-contamination",
                 "ledger_contamination": True,
-                "contamination_reason": "subject is not strict-valid in fixed RQ1 scope",
+                "contamination_reason": "subject is not strict-valid in canonical RQ1 scope",
                 "quality_regressed": False,
                 "regressed": False,
             })
@@ -487,9 +487,8 @@ def terminate_group(proc: subprocess.Popen) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--canonical-root", type=Path, required=True)
-    parser.add_argument("--case-state", type=Path,
-                        default=Path(__file__).resolve().parents[1] /
-                        "rq1_case_state.json")
+    parser.add_argument("--case-state", type=Path, default=None,
+                        help=argparse.SUPPRESS)
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--run-root", type=Path, required=True)
     parser.add_argument("--runner", type=Path, required=True)

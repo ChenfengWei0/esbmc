@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a fixed RQ1 no-valid batch through the repo-managed supervisor."""
+"""Run an RQ1 case batch through the repo-managed supervisor."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ DEFAULT_REMOTE_HOST = "invmut-w2"
 DEFAULT_RESULTS_ROOT = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
 DEFAULT_MANUAL_MD = Path("notes/coverage/rq1_no_valid_manual_root_causes.md")
 DEFAULT_LEDGER = Path("notes/coverage/rq1_batch_ledger.json")
-DEFAULT_CASE_STATE = Path("notes/coverage/rq1_case_state.json")
+DEFAULT_CASE_STATE = Path("/tmp/veriput_rq1_case_state.json")
 DEFAULT_REPAIR_TICKETS = Path("/tmp/veriput_rq1_repair_tickets.jsonl")
 DEFAULT_REMOTE_ESBMC = Path("/home/administrator/veriput_esbmc/repo")
 DEFAULT_REMOTE_VERIPUT = Path("/home/administrator/VeriPUT")
