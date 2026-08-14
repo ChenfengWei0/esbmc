@@ -1,0 +1,6 @@
+CORE
+contract.sol
+--contract Roles --solidity-path-coverage --solidity-max-tx 1 --focus-function getRoleAdmin --path-cov-assert spec.json --goto-functions-only
+^--path-cov-assert: unit '.*getRoleAdmin.*' -- established 0 relation-backed entry assignment\(s\), assumed 1 region bound\(s\) \(0 hole\(s\) punched\) at entry and emitted 2 candidate assertion\(s\), 1 of them over the unit's own RETURN VALUE
+\A(?!(.|\n)*NOT ONE candidate assertion could be formed)
+\A(?!(.|\n)*INTERNAL DEFECT)

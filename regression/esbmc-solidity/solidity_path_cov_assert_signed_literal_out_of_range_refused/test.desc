@@ -1,0 +1,5 @@
+CORE
+contract.sol
+--contract SignedReturn --solidity-path-coverage --solidity-max-tx 1 --focus-function value --path-cov-assert spec.json
+^--path-cov-assert: return: return == 255  REFUTED.*$
+0 && path_ret.* == 0

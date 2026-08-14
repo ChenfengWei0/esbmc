@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import sys
@@ -282,6 +283,152 @@ def test_candidate_pools() -> int:
         return bad
 
 
+def _write_manifest_replay(root: Path, dataset: str, subject: str, *,
+                           quality_bucket: str, test_name: str = "test_exact",
+                           project_value: str = "concrete-replays/projects/exact",
+                           test_value: str = "test/Exact.t.sol") -> None:
+    subject_dir = root / dataset / "subjects" / subject
+    project = subject_dir / project_value
+    test_file = project / test_value
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    (project / "foundry.toml").write_text("[profile.default]\n")
+    forge_std = project / "lib" / "forge-std" / "src" / "Test.sol"
+    forge_std.parent.mkdir(parents=True, exist_ok=True)
+    forge_std.write_text("contract Test {}\n")
+    flat_file = project / "src" / "flat.sol"
+    flat_file.parent.mkdir(parents=True, exist_ok=True)
+    flat_file.write_text("contract C {}\n")
+    test_file.write_text(f"contract T {{ function {test_name}() public {{}} }}\n")
+    kind = "concrete" if quality_bucket == "valid-no-PUT" else "put"
+    _write_result(root, dataset, subject, {
+        "row": {"quality_bucket": quality_bucket, "raw_artifacts": [{
+            "kind": kind, "unit": "f", "valid_reference_test": True,
+        }]},
+    })
+    manifest = {
+        "schema": "veriput-rq1-concrete-replay-manifest/v1",
+        "entries": [{
+            "schema": "veriput-rq1-concrete-replay/v1",
+            "replay_id": f"{subject}-exact",
+            "project": project_value,
+            "test_file": test_value,
+            "flat_source": "src/flat.sol",
+            "test_sha256": hashlib.sha256(test_file.read_bytes()).hexdigest(),
+            "flat_sha256": hashlib.sha256(flat_file.read_bytes()).hexdigest(),
+            "test": test_name,
+            "valid_reference_test": True,
+            "forge_status": "Success",
+            "forge_command": ["forge", "test", "--match-test",
+                              f"^{test_name}\\(", "--match-path", test_value],
+            "origin": {"unit": "f"},
+        }],
+    }
+    path = subject_dir / "concrete-replays" / "manifest.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(manifest) + "\n")
+
+
+def test_manifest_replay_only_candidates() -> int:
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        _write_manifest_replay(root, "bugfix124", "bug", quality_bucket="valid-no-PUT")
+        _write_manifest_replay(root, "peer182", "peer",
+                               quality_bucket="valid-PUT-no-R1R2")
+        _write_manifest_replay(root, "real203", "real",
+                               quality_bucket="valid-PUT-with-R1R2")
+        _write_manifest_replay(root, "real203", "archived.failed.1",
+                               quality_bucket="valid-PUT-with-R1R2")
+        _write_manifest_replay(root, "peer182", "empty-match",
+                               quality_bucket="valid-PUT-no-R1R2",
+                               test_name="")
+        _write_manifest_replay(root, "bugfix124", "outside",
+                               quality_bucket="valid-no-PUT",
+                               project_value="../outside-project")
+        _write_manifest_replay(root, "real203", "extra-argument",
+                               quality_bucket="valid-PUT-with-R1R2")
+        extra_manifest = (root / "real203" / "subjects" / "extra-argument" /
+                          "concrete-replays" / "manifest.json")
+        extra_doc = json.loads(extra_manifest.read_text())
+        extra_doc["entries"][0]["forge_command"].extend(["--contracts", "/outside"])
+        extra_manifest.write_text(json.dumps(extra_doc) + "\n")
+        _write_manifest_replay(root, "real203", "hash-mismatch",
+                               quality_bucket="valid-PUT-with-R1R2")
+        hash_test = (root / "real203" / "subjects" / "hash-mismatch" /
+                     "concrete-replays" / "projects" / "exact" / "test" / "Exact.t.sol")
+        hash_test.write_text("contract Changed {}\n")
+
+        pools = MONITOR.manifest_replay_candidates(root)
+        rows = [item for pool in pools.values() for item in pool]
+        by_subject = {item["subject_id"]: item for item in rows}
+        bad = 0
+        bad += check(set(by_subject) == {"bug", "peer", "real"},
+                     "replay-only discovery filters archives and unsafe manifests")
+        bad += check({item["dataset"] for item in rows} ==
+                     {"bugfix124", "peer182", "real203"},
+                     "replay-only discovery covers all three datasets")
+        bad += check(all(item["validation_mode"] == "manifest-replay"
+                         for item in rows),
+                     "replay-only candidates cannot invoke the ESBMC runner")
+        command = MONITOR.build_replay_command(
+            Namespace(forge=Path("/usr/bin/forge")), by_subject["peer"],
+            root / "isolated-run")
+        bad += check(command[command.index("--match-test") + 1] == "^test_exact\\("
+                     and command[command.index("--match-path") + 1] ==
+                     "test/Exact.t.sol",
+                     "manifest replay preserves exact match-test and match-path")
+        bad += check("--root" in command and "--out" in command
+                     and "--cache-path" in command and "--no-cache" in command,
+                     "manifest replay isolates Forge outputs from canonical artifacts")
+        return bad
+
+
+def test_manifest_retry_preserves_exact_command() -> int:
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        result = root / "result.json"
+        log = root / "sample.log"
+        result.write_text("{}\n")
+        log.write_text("PermissionError: denied\n")
+        command = ["forge", "test", "--match-test", "^test_exact\\(",
+                   "--match-path", "test/Exact.t.sol"]
+        row = {
+            "sequence": 7, "dataset": "real203", "subject_id": "exact",
+            "unit": "f", "old_quality": "valid-PUT-no-R1R2",
+            "validation_mode": "manifest-replay", "forge_command": command,
+            "replay_id": "exact-id", "replay_file": "/project/test/Exact.t.sol",
+            "replay_test": "test_exact", "forge_root": "/project",
+            "run_result": str(result), "log": str(log), "regressed": False,
+        }
+        _, pending = MONITOR.reconcile_history(
+            [row], root / "alerts.jsonl", root / "infrastructure.jsonl",
+            {("real203", "exact")})
+        return check(pending is not None and pending.get("forge_command") == command
+                     and pending.get("replay_id") == "exact-id",
+                     "manifest infrastructure retry preserves exact replay identity")
+
+
+def test_manifest_retry_rebinds_to_current_candidate() -> int:
+    old = {
+        "dataset": "real203", "subject_id": "same", "replay_id": "removed",
+        "validation_mode": "manifest-replay", "forge_command": ["old"],
+        "retry_of_sequence": 11,
+    }
+    current = {
+        "dataset": "real203", "subject_id": "same", "replay_id": "current",
+        "validation_mode": "manifest-replay", "forge_command": ["current"],
+    }
+    pools = {"real203:put": [current]}
+    removed = MONITOR.current_replay_retry(old, pools)
+    old["replay_id"] = "current"
+    rebound = MONITOR.current_replay_retry(old, pools)
+    bad = check(removed is None,
+                "removed manifest replay cannot retry through another subject entry")
+    bad += check(rebound is not None and rebound["forge_command"] == ["current"]
+                 and rebound["retry_of_sequence"] == 11,
+                 "manifest retry rebinds to the currently validated candidate")
+    return bad
+
+
 def test_forge_replay_requires_a_test() -> int:
     with tempfile.TemporaryDirectory() as raw:
         log = Path(raw) / "forge.log"
@@ -357,6 +504,9 @@ def main() -> int:
     bad += test_false_valid_history_becomes_contamination()
     bad += test_retained_replay_reclassifies_generation_failure()
     bad += test_candidate_pools()
+    bad += test_manifest_replay_only_candidates()
+    bad += test_manifest_retry_preserves_exact_command()
+    bad += test_manifest_retry_rebinds_to_current_candidate()
     bad += test_forge_replay_requires_a_test()
     bad += test_runner_forge_budget_stays_inside_case_cap()
     bad += test_startup_rejects_historical_zero_test_pass()

@@ -1,0 +1,6 @@
+CORE
+contract.sol
+--contract Bytes32State --solidity-path-coverage --solidity-max-tx 1 --focus-function set --path-cov-assert spec.json --goto-functions-only
+^--path-cov-assert: unit '.*set.*' -- established 0 relation-backed entry assignment\(s\), assumed 1 region bound\(s\) \(0 hole\(s\) punched\) at entry and emitted 1 candidate assertion\(s\)
+\A(?!(.|\n)*responseHash \(it resolves to an AGGREGATE)
+\A(?!(.|\n)*NOT ONE candidate assertion could be formed)

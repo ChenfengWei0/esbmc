@@ -2726,13 +2726,31 @@ def prepared_subject_static_stage2_result(subject, enum):
         detail = _static_structural_detail(
             0, "structural-abi-getter-no-coordinate", reason,
             stage4_kind="getter-only")
+        reject_reason = (
+            "public state getter is nonpayable; Solidity rejects any call "
+            "carrying nonzero msg.value before getter state is read")
+        reject_detail = _static_structural_detail(
+            1, "structural-abi-gate-no-coordinate", reject_reason,
+            stage4_kind="getter-value-gate")
+        reject_detail["box"] = [{
+            "name": "msg.value",
+            "lo": "1",
+            "hi": str((1 << 256) - 1),
+            "holes": [],
+        }]
         return {
             "tag": "static-abi-getter-certified",
             "reason": reason,
             "synthetic_certified": True,
             "synthetic_stage2_kind": "getter-only",
-            "certified": {"0": "msg.value pinned to 0"},
-            "certified_details": {"0": detail},
+            "certified": {
+                "0": "msg.value pinned to 0",
+                "1": "nonpayable ABI gate rejects msg.value > 0",
+            },
+            "certified_details": {
+                "0": detail,
+                "1": reject_detail,
+            },
             "pins": {"msg.value": "0"},
             "witnessed": 1,
             "available_units": list(enum.units),

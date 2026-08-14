@@ -1,0 +1,1 @@
+{"unit":"getRoleAdmin","enc":3,"depth":1,"region":[{"name":"msg.value","lo":"0","hi":"0"}],"candidate_policy":"exact","vars":[{"name":"roles[role].adminRole","equals":[{"id":"frame","term":{"kind":"pre"}}]}]}

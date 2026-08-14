@@ -1439,7 +1439,7 @@ static std::string path_cov_structural_refusal(
   return std::string();
 }
 
-// Does a decimal from a spec fit an unsigned bit-vector coordinate?
+// Does a non-negative decimal from a spec fit its bit-vector coordinate?
 //
 // Every constant in these queries is built with constant_int2tc ON THE
 // COORDINATE'S OWN TYPE, so a decimal above the type's maximum WRAPS and the
@@ -1467,7 +1467,9 @@ static bool path_cov_fits_type(
     return v >= 0 && v <= 1;
   }
   BigInt tmax = 1;
-  for (unsigned w = 0; w < t->get_width(); ++w)
+  const unsigned value_bits =
+    is_signedbv_type(t) ? t->get_width() - 1 : t->get_width();
+  for (unsigned w = 0; w < value_bits; ++w)
     tmax *= 2;
   tmax -= 1;
   tmax_out = integer2string(tmax);
@@ -6532,7 +6534,14 @@ void goto_coveraget::solidity_path_coverage()
         const expr2tc rv = to_code_return2t(rit->code).operand;
         if (is_nil_expr(rv))
           continue;
-        const type2tc rt = rv->type;
+        type2tc rt = rv->type;
+        expr2tc rvalue = rv;
+        if (path_cov_is_bytes_static_type(ns, rt))
+        {
+          if (!path_cov_bytes_static_to_uint_expr(ns, rvalue, false))
+            continue;
+          rt = get_uint_type(256);
+        }
         if (
           !is_unsignedbv_type(rt) && !is_signedbv_type(rt) && !is_bool_type(rt))
           continue;
@@ -6578,7 +6587,8 @@ void goto_coveraget::solidity_path_coverage()
         ra.type = ASSIGN;
         ra.code = code_assign2tc(
           ret_ghost,
-          ret_ghost->type == rt ? rv : typecast2tc(ret_ghost->type, rv));
+          ret_ghost->type == rt ? rvalue
+                                : typecast2tc(ret_ghost->type, rvalue));
         ra.location = rit->location;
         ra.location.property("skipped");
         ra.function = rit->location.get_function();
@@ -10272,6 +10282,18 @@ void goto_coveraget::solidity_path_coverage()
           exit(1);
         }
         const bool bool_structured = is_bool_type(ty);
+        auto all_equals_are_literals = [&]() {
+          if (spec == nullptr || spec->equals.empty())
+            return false;
+          for (const auto &candidate : spec->equals)
+          {
+            if (
+              !candidate.term.is_object() ||
+              candidate.term.value("kind", std::string()) != "literal")
+              return false;
+          }
+          return true;
+        };
         if (bool_structured && (!spec->abs.empty() || !spec->deltas.empty()))
         {
           log_error(
@@ -10283,7 +10305,12 @@ void goto_coveraget::solidity_path_coverage()
             owner);
           exit(1);
         }
-        if (!bool_structured && !is_unsignedbv_type(ty))
+        const bool signed_literal_equality_only =
+          is_signedbv_type(ty) && spec != nullptr && spec->abs.empty() &&
+          spec->deltas.empty() && all_equals_are_literals();
+        if (
+          !bool_structured && !is_unsignedbv_type(ty) &&
+          !signed_literal_equality_only)
         {
           log_error(
             "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: candidate "
@@ -10595,7 +10622,19 @@ void goto_coveraget::solidity_path_coverage()
               "field walk, so no post-state expression can be built for it";
             continue;
           }
-          const type2tc vt = live->type;
+          type2tc vt = live->type;
+          if (path_cov_is_bytes_static_type(ns, vt))
+          {
+            if (!path_cov_bytes_static_to_uint_expr(ns, live, false))
+            {
+              path_cov_refused_coords[oname] =
+                "BytesStatic component expression cannot be scalarized, "
+                "although its type was recognized. Refused rather than "
+                "compared as an aggregate";
+              continue;
+            }
+            vt = get_uint_type(256);
+          }
 
           // ---- (F): coord_expressible is the EQUALITY gate, NOT the interval one
           //
@@ -11006,6 +11045,9 @@ void goto_coveraget::solidity_path_coverage()
             exit(1);
           }
         }
+        const bool bytes_static_value = path_cov_is_bytes_static_type(ns, et);
+        if (bytes_static_value)
+          et = get_uint_type(256);
 
         // Same two-gate split as the component loop at (F): the whitelist is
         // the EQUALITY gate, and the ordering rungs additionally require a
@@ -11194,6 +11236,19 @@ void goto_coveraget::solidity_path_coverage()
             "path of '{}' resolved as a TYPE but not as an EXPRESSION. The two "
             "walks disagree, which would put the gate on one field and the "
             "snapshot on another",
+            uid,
+            v.name);
+          exit(1);
+        }
+        if (
+          bytes_static_value &&
+          !path_cov_bytes_static_to_uint_expr(ns, live, false))
+        {
+          log_error(
+            "--path-cov-assert: unit '{}' -- REFUSING THE LADDER: the "
+            "BytesStatic member expression for '{}' cannot be scalarized, "
+            "although its type was recognized. Refused rather than compared "
+            "as an aggregate",
             uid,
             v.name);
           exit(1);

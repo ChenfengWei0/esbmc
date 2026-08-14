@@ -48,11 +48,16 @@ def test_dataset_manifest_excludes_deploy_only_validity():
         journal = dataset / "results.jsonl"
         journal.write_text(
             json.dumps({
-                "key": "subject",
-                "subject_id": "subject",
-                "valid": 1,
-                "concrete_valid": 1,
-                "quality_bucket": "valid-no-PUT",
+                "key":
+                "subject",
+                "subject_id":
+                "subject",
+                "valid":
+                1,
+                "concrete_valid":
+                1,
+                "quality_bucket":
+                "valid-no-PUT",
                 "valid_tests": [{
                     "kind": "concrete",
                     "stage2_source": "no_unit_deploy_fallback",
@@ -102,12 +107,18 @@ def write_minimal_schedule(case_dir,
     if ast_cache_root is not None:
         certify_argv.extend(["--ast-cache-root", str(ast_cache_root)])
     schedule = {
-        "schema": "veriput-unit-schedule/v1",
-        "generated_at": generated_at,
-        "recipe_version": "veriput-strong/27-proof-budgeted-r2",
-        "selection_strategy": "priority",
-        "limit": None,
-        "shard": None,
+        "schema":
+        "veriput-unit-schedule/v1",
+        "generated_at":
+        generated_at,
+        "recipe_version":
+        "veriput-strong/27-proof-budgeted-r2",
+        "selection_strategy":
+        "priority",
+        "limit":
+        None,
+        "shard":
+        None,
         "source": {
             "schema": "veriput-unit-manifest/v1",
             "benchmark": "peer182",
@@ -166,21 +177,19 @@ def verifier_input_identity(subject_dir, *, solast_path=None):
         "schema":
         "veriput-verifier-input-identity/v1",
         "inputs": [{
-            "subject_dir":
-            str(Path(subject_dir).resolve()),
-            "flat":
-            str((Path(subject_dir) / "flat.sol").resolve()),
-            "flat_sha256":
-            rq1_veriput_run._sha256_file(Path(subject_dir) / "flat.sol"),
-            "solast":
-            str(solast.resolve()),
-            "solast_sha256":
-            rq1_veriput_run._sha256_file(solast),
+            "subject_dir": str(Path(subject_dir).resolve()),
+            "flat": str((Path(subject_dir) / "flat.sol").resolve()),
+            "flat_sha256": rq1_veriput_run._sha256_file(Path(subject_dir) / "flat.sol"),
+            "solast": str(solast.resolve()),
+            "solast_sha256": rq1_veriput_run._sha256_file(solast),
         }],
     }
 
 
-def stage4_toolchain_identity(*, forge_sha="forge-sha", solc_sha="solc-sha", forge_std_sha="std-sha"):
+def stage4_toolchain_identity(*,
+                              forge_sha="forge-sha",
+                              solc_sha="solc-sha",
+                              forge_std_sha="std-sha"):
     return {
         "schema": "veriput-stage4-toolchain-identity/v1",
         "forge": {
@@ -287,9 +296,10 @@ def test_pipeline_identity_includes_dependency_modules():
     }
     missing = sorted(required - suffixes)
     missing_hashes = sorted(path for path, digest in files.items() if not digest)
-    return check(not missing and not missing_hashes,
-                 f"pipeline identity covers dependency modules: missing={missing}, "
-                 f"missing_hashes={missing_hashes}")
+    return check(
+        not missing and not missing_hashes,
+        f"pipeline identity covers dependency modules: missing={missing}, "
+        f"missing_hashes={missing_hashes}")
 
 
 def test_stage4_toolchain_identity_uses_foundry_prepend_path():
@@ -302,11 +312,9 @@ def test_stage4_toolchain_identity_uses_foundry_prepend_path():
         foundry_forge = home / ".foundry" / "bin" / "forge"
         parent_forge = parent_bin / "forge"
         parent_solc = parent_bin / "solc"
-        write_executable(foundry_forge,
-                         "#!/bin/sh\nprintf 'forge Version: foundry-prepended\\n'\n")
+        write_executable(foundry_forge, "#!/bin/sh\nprintf 'forge Version: foundry-prepended\\n'\n")
         write_executable(parent_forge, "#!/bin/sh\nprintf 'forge Version: parent-path\\n'\n")
-        write_executable(parent_solc,
-                         "#!/bin/sh\nprintf 'solc, test\\nVersion: parent-solc\\n'\n")
+        write_executable(parent_solc, "#!/bin/sh\nprintf 'solc, test\\nVersion: parent-solc\\n'\n")
         os.environ["HOME"] = str(home)
         os.environ["PATH"] = str(parent_bin)
         try:
@@ -320,8 +328,9 @@ def test_stage4_toolchain_identity_uses_foundry_prepend_path():
                 os.environ.pop("PATH", None)
             else:
                 os.environ["PATH"] = old_path
-    return check(identity.get("forge", {}).get("path") == str(foundry_forge.resolve()),
-                 f"Stage4 identity uses Foundry-prepended forge path: {identity.get('forge')}")
+    return check(
+        identity.get("forge", {}).get("path") == str(foundry_forge.resolve()),
+        f"Stage4 identity uses Foundry-prepended forge path: {identity.get('forge')}")
 
 
 def test_put_artifact_summary_counts_raw_valid_and_oracle_classes():
@@ -1600,13 +1609,14 @@ def test_resource_killed_zero_valid_run_can_adopt_stale_valid_artifacts():
         old_home = os.environ.get("HOME")
         old_path = os.environ.get("PATH")
         fake_home = root / "fake-home"
-        write_executable(fake_home / ".foundry" / "bin" / "forge",
-                         "#!/bin/sh\nprintf '{\"test/TokenCovTest.t.sol:Suite\":{\"test_cov\":{\"status\":\"Success\"}}}\\n'\n")
+        write_executable(
+            fake_home / ".foundry" / "bin" / "forge",
+            "#!/bin/sh\nprintf '{\"test/TokenCovTest.t.sol:Suite\":{\"test_cov\":{\"status\":\"Success\"}}}\\n'\n"
+        )
         os.environ["HOME"] = str(fake_home)
         os.environ["PATH"] = ""
         try:
-            stale = rq1_veriput_run._best_stale_artifact_row(
-                target, "peer182", case_dir, current)
+            stale = rq1_veriput_run._best_stale_artifact_row(target, "peer182", case_dir, current)
         finally:
             if old_home is None:
                 os.environ.pop("HOME", None)
@@ -1616,9 +1626,8 @@ def test_resource_killed_zero_valid_run_can_adopt_stale_valid_artifacts():
                 os.environ.pop("PATH", None)
             else:
                 os.environ["PATH"] = old_path
-    return check(
-        stale is not None and stale.get("valid") == 1,
-        f"resource-killed zero-valid run can adopt stronger stale artifacts: {stale}")
+    return check(stale is not None and stale.get("valid") == 1,
+                 f"resource-killed zero-valid run can adopt stronger stale artifacts: {stale}")
 
 
 def test_resource_killed_zero_valid_rejects_stale_when_replay_fails():
@@ -1682,13 +1691,11 @@ def test_resource_killed_zero_valid_rejects_stale_when_replay_fails():
         old_home = os.environ.get("HOME")
         old_path = os.environ.get("PATH")
         fake_home = root / "fake-home"
-        write_executable(fake_home / ".foundry" / "bin" / "forge",
-                         "#!/bin/sh\nexit 1\n")
+        write_executable(fake_home / ".foundry" / "bin" / "forge", "#!/bin/sh\nexit 1\n")
         os.environ["HOME"] = str(fake_home)
         os.environ["PATH"] = ""
         try:
-            stale = rq1_veriput_run._best_stale_artifact_row(
-                target, "peer182", case_dir, current)
+            stale = rq1_veriput_run._best_stale_artifact_row(target, "peer182", case_dir, current)
         finally:
             if old_home is None:
                 os.environ.pop("HOME", None)
@@ -1745,8 +1752,7 @@ def test_stale_replay_runs_and_matches_exact_function_signature():
         test_file = project / "test" / "TokenCovTest.t.sol"
         test_file.parent.mkdir(parents=True)
         (project / "foundry.toml").write_text("[profile.default]\n")
-        test_file.write_text(
-            "contract T { function test_cov(uint256 value) public {} }\n")
+        test_file.write_text("contract T { function test_cov(uint256 value) public {} }\n")
         row = {
             "valid_tests": [{
                 "test": "test_cov",
@@ -1801,7 +1807,8 @@ def test_stale_replay_rejects_similar_test_name_collision():
         fake_home = root / "fake-home"
         write_executable(
             fake_home / ".foundry" / "bin" / "forge",
-            "#!/bin/sh\nprintf '{\"test/TokenCovTest.t.sol:Suite\":{\"test_cov_extra\":{\"status\":\"Success\"}}}\\n'\n")
+            "#!/bin/sh\nprintf '{\"test/TokenCovTest.t.sol:Suite\":{\"test_cov_extra\":{\"status\":\"Success\"}}}\\n'\n"
+        )
         os.environ["HOME"] = str(fake_home)
         os.environ["PATH"] = ""
         try:
@@ -1989,8 +1996,7 @@ def test_resource_killed_zero_valid_requires_schedule_identity():
             "benchmark": "peer182",
             "contract": "Token",
         }
-        stale = rq1_veriput_run._best_stale_artifact_row(
-            target, "peer182", case_dir, current)
+        stale = rq1_veriput_run._best_stale_artifact_row(target, "peer182", case_dir, current)
     return check(stale is None,
                  f"resource-killed stale adoption requires schedule identity: {stale}")
 
@@ -2056,10 +2062,8 @@ def test_resource_killed_zero_valid_rejects_newer_source():
             "benchmark": "peer182",
             "contract": "Token",
         }
-        stale = rq1_veriput_run._best_stale_artifact_row(
-            target, "peer182", case_dir, current)
-    return check(stale is None,
-                 f"resource-killed stale adoption rejects newer source: {stale}")
+        stale = rq1_veriput_run._best_stale_artifact_row(target, "peer182", case_dir, current)
+    return check(stale is None, f"resource-killed stale adoption rejects newer source: {stale}")
 
 
 def test_resource_killed_zero_valid_rejects_different_source_digest():
@@ -2125,8 +2129,7 @@ def test_resource_killed_zero_valid_rejects_different_source_digest():
             "benchmark": "peer182",
             "contract": "Token",
         }
-        stale = rq1_veriput_run._best_stale_artifact_row(
-            target, "peer182", case_dir, current)
+        stale = rq1_veriput_run._best_stale_artifact_row(target, "peer182", case_dir, current)
     return check(stale is None,
                  f"resource-killed stale adoption rejects source digest mismatch: {stale}")
 
@@ -2181,8 +2184,7 @@ def test_resource_killed_zero_valid_rejects_different_solast_digest():
             "benchmark": "peer182",
             "contract": "Token",
         }
-        stale = rq1_veriput_run._best_stale_artifact_row(
-            target, "peer182", case_dir, current)
+        stale = rq1_veriput_run._best_stale_artifact_row(target, "peer182", case_dir, current)
     return check(stale is None,
                  f"resource-killed stale adoption rejects solast digest mismatch: {stale}")
 
@@ -2245,8 +2247,7 @@ def test_resource_killed_zero_valid_rejects_different_cached_solast_digest():
             "benchmark": "peer182",
             "contract": "Token",
         }
-        stale = rq1_veriput_run._best_stale_artifact_row(
-            target, "peer182", case_dir, current)
+        stale = rq1_veriput_run._best_stale_artifact_row(target, "peer182", case_dir, current)
     return check(stale is None,
                  f"resource-killed stale adoption rejects cached solast mismatch: {stale}")
 
@@ -2297,8 +2298,7 @@ def test_resource_killed_zero_valid_rejects_binary_mismatch():
             "benchmark": "peer182",
             "contract": "Token",
         }
-        stale = rq1_veriput_run._best_stale_artifact_row(
-            target, "peer182", case_dir, current)
+        stale = rq1_veriput_run._best_stale_artifact_row(target, "peer182", case_dir, current)
     return check(stale is None,
                  f"resource-killed stale adoption rejects ESBMC binary mismatch: {stale}")
 
@@ -2349,8 +2349,7 @@ def test_resource_killed_zero_valid_rejects_pipeline_mismatch():
             "benchmark": "peer182",
             "contract": "Token",
         }
-        stale = rq1_veriput_run._best_stale_artifact_row(
-            target, "peer182", case_dir, current)
+        stale = rq1_veriput_run._best_stale_artifact_row(target, "peer182", case_dir, current)
     return check(stale is None,
                  f"resource-killed stale adoption rejects pipeline mismatch: {stale}")
 
@@ -2399,8 +2398,7 @@ def test_resource_killed_zero_valid_rejects_stage4_toolchain_mismatch():
             "benchmark": "peer182",
             "contract": "Token",
         }
-        stale = rq1_veriput_run._best_stale_artifact_row(
-            target, "peer182", case_dir, current)
+        stale = rq1_veriput_run._best_stale_artifact_row(target, "peer182", case_dir, current)
     return check(stale is None,
                  f"resource-killed stale adoption rejects Stage4 toolchain mismatch: {stale}")
 
@@ -2553,7 +2551,8 @@ def test_empty_schedule_status_preserves_preparation_failures():
             "subject": {
                 "contract": "Dv2",
             },
-            "reason": "target only has constructor-level behavior and no named callable unit",
+            "reason":
+            "target only has constructor-level behavior and no named callable unit",
             "skipped": [{
                 "kind": "constructor",
                 "contract": "Dv2",
@@ -2605,7 +2604,10 @@ def test_no_unit_deploy_source_rejects_abstract_selected_target():
         unit="",
         solc_bin="solc",
         solc_extra=(),
-        metadata={"status": "ok", "solc": "0.8.20"},
+        metadata={
+            "status": "ok",
+            "solc": "0.8.20"
+        },
     )
     source, refusal = rq1_veriput_run._no_unit_deploy_test_source(
         subject, "abstract contract Cv2 { constructor(int256) {} }")
@@ -2623,7 +2625,10 @@ def test_no_unit_deploy_source_rejects_abstract_selected_target():
         unit="",
         solc_bin="solc",
         solc_extra=(),
-        metadata={"status": "ok", "solc": "0.8.20"},
+        metadata={
+            "status": "ok",
+            "solc": "0.8.20"
+        },
     )
     revert_source, revert_refusal = rq1_veriput_run._constructor_revert_test_source(
         concrete, "contract C { constructor() {} function f() public { assert(false); } }")
@@ -2841,25 +2846,30 @@ contract C is Base {
             status = "Success" if test_name.endswith("_constructor_revert") else "Failure"
             return status, False, 0.01, json.dumps({"test": test_name, "status": status})
 
-        stage = rq1_veriput_run.emit_no_unit_deploy_fallback(
-            subject, root / "case", schedule, 1, forge_runner=fake_forge)
+        stage = rq1_veriput_run.emit_no_unit_deploy_fallback(subject,
+                                                             root / "case",
+                                                             schedule,
+                                                             1,
+                                                             forge_runner=fake_forge)
         summary = rq1_veriput_run.summarize_put_artifacts(root / "case" / "put")
         test_text = Path(stage["test_file"]).read_text()
         put_json = json.loads(next((root / "case" / "put").glob("*/_wd/*/put.json")).read_text())
     bad = 0
-    bad += check(calls[0].endswith("_deploy_only")
-                 and any("_constructor_repair_" in name for name in calls),
-                 f"deployment and source-derived argument repair run first: {calls}")
+    bad += check(
+        calls[0].endswith("_deploy_only") and any("_constructor_repair_" in name for name in calls),
+        f"deployment and source-derived argument repair run first: {calls}")
     bad += check(calls[-1].endswith("_constructor_revert"),
                  f"negative constructor oracle is the final behavioral retry: {calls}")
     bad += check("vm.expectRevert();" in test_text and "new C(int256(1));" in test_text,
                  f"negative oracle replays the exact concrete constructor call: {test_text}")
-    bad += check(stage["status"] == "ok" and summary["valid"] == 1
-                 and summary["concrete_valid"] == 1 and summary["put_valid"] == 0,
-                 f"behavioral constructor oracle is valid concrete, not PUT: {summary}")
-    bad += check(put_json["stage4_kind"] == "constructor-revert-only"
-                 and put_json["stage2_source"] == "source_constructor_revert_fallback",
-                 f"behavioral fallback has a distinct auditable provenance: {put_json}")
+    bad += check(
+        stage["status"] == "ok" and summary["valid"] == 1 and summary["concrete_valid"] == 1
+        and summary["put_valid"] == 0,
+        f"behavioral constructor oracle is valid concrete, not PUT: {summary}")
+    bad += check(
+        put_json["stage4_kind"] == "constructor-revert-only"
+        and put_json["stage2_source"] == "source_constructor_revert_fallback",
+        f"behavioral fallback has a distinct auditable provenance: {put_json}")
     return bad
 
 
@@ -2884,10 +2894,18 @@ def test_constructor_arg_repair_deploy_is_still_smoke_only():
         )
         schedule = {
             "jobs": [],
-            "summary": {"jobs": 0, "no_unit_rows": 1},
+            "summary": {
+                "jobs": 0,
+                "no_unit_rows": 1
+            },
             "no_unit_rows": [{
-                "subject": {"contract": "C"},
-                "skipped": [{"contract": "C", "kind": "constructor"}],
+                "subject": {
+                    "contract": "C"
+                },
+                "skipped": [{
+                    "contract": "C",
+                    "kind": "constructor"
+                }],
             }],
         }
         calls = []
@@ -2897,8 +2915,11 @@ def test_constructor_arg_repair_deploy_is_still_smoke_only():
             status = "Success" if "constructor_repair" in test_name else "Failure"
             return status, False, 0.01, ""
 
-        rq1_veriput_run.emit_no_unit_deploy_fallback(
-            subject, root / "case", schedule, 7, forge_runner=fake_forge)
+        rq1_veriput_run.emit_no_unit_deploy_fallback(subject,
+                                                     root / "case",
+                                                     schedule,
+                                                     7,
+                                                     forge_runner=fake_forge)
         summary = rq1_veriput_run.summarize_put_artifacts(root / "case" / "put")
         put_json = json.loads(next((root / "case" / "put").glob("*/_wd/*/put.json")).read_text())
     bad = 0
@@ -2915,7 +2936,8 @@ def _prepared_subject_for_getter_test(root):
     subj_root = root / "subject"
     subj_root.mkdir(parents=True, exist_ok=True)
     flat = subj_root / "flat.sol"
-    flat.write_text("contract C { uint256 public value; mapping(address => uint256) public balance; }\n")
+    flat.write_text(
+        "contract C { uint256 public value; mapping(address => uint256) public balance; }\n")
     return rq1_veriput_run.PreparedSubject(
         benchmark="peer182",
         subject_id="getter_subject",
@@ -2932,7 +2954,8 @@ def _prepared_subject_for_getter_test(root):
 
 def _no_unit_getter_schedule(*skipped, jobs=None):
     return {
-        "jobs": list(jobs or []),
+        "jobs":
+        list(jobs or []),
         "summary": {
             "jobs": len(jobs or []),
             "no_unit_rows": 1,
@@ -2944,7 +2967,7 @@ def _no_unit_getter_schedule(*skipped, jobs=None):
     }
 
 
-def test_no_unit_getter_fallback_selects_only_fresh_zero_arg_getters():
+def test_no_unit_getter_fallback_selects_only_fresh_zero_arg_getters_without_filter():
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         subject = _prepared_subject_for_getter_test(root)
@@ -2965,6 +2988,7 @@ def test_no_unit_getter_fallback_selects_only_fresh_zero_arg_getters():
                 "parameter_count": 0,
             },
         )
+
         class GetterEnum:
             skipped = (
                 {
@@ -3037,38 +3061,115 @@ def test_no_unit_getter_fallback_selects_only_fresh_zero_arg_getters():
 
         rq1_veriput_run.run_command = fake_run_command
         try:
-            stages = rq1_veriput_run.emit_no_unit_getter_fallbacks(
-                subject, root / "case", schedule, 30, 12, 3)
+            stages = rq1_veriput_run.emit_no_unit_getter_fallbacks(subject, root / "case", schedule,
+                                                                   30, 12, 3)
         finally:
             rq1_veriput_run.enumerate_subject_units = old_enum
             rq1_veriput_run.run_command = old_run
 
         cert_rows = [
-            json.loads(line) for line in
-            (root / "case" / "put" / "structural_getter__value" /
-             "static-getter-cert.jsonl").read_text().splitlines() if line.strip()
+            json.loads(line) for line in (root / "case" / "put" / "structural_getter__value" /
+                                          "static-getter-cert.jsonl").read_text().splitlines()
+            if line.strip()
         ]
         summary = rq1_veriput_run.summarize_put_artifacts(root / "case" / "put")
 
     bad = 0
     bad += check([stage.get("unit") for stage in stages] == ["value"],
                  f"only fresh zero-arg getter is attempted: {stages}")
-    bad += check(len(calls) == 1 and calls[0][0][calls[0][0].index("--only") + 1].endswith(".value"),
-                 f"getter Stage4 selector is name-scoped: {calls}")
-    bad += check(cert_rows[0]["tag"] == "static-abi-getter-certified"
-                 and cert_rows[0]["certified_details"]["0"]["stage4_kind"] == "getter-only",
-                 f"getter cert row is structural getter-only: {cert_rows}")
     bad += check(
-        cert_rows[0]["certified_details"]["1"]["certification_source"] ==
-        "structural-abi-gate-no-coordinate"
+        len(calls) == 1 and calls[0][0][calls[0][0].index("--only") + 1].endswith(".value"),
+        f"getter Stage4 selector is name-scoped: {calls}")
+    bad += check(
+        cert_rows[0]["tag"] == "static-abi-getter-certified"
+        and cert_rows[0]["certified_details"]["0"]["stage4_kind"] == "getter-only",
+        f"getter cert row is structural getter-only: {cert_rows}")
+    bad += check(
+        cert_rows[0]["certified_details"]["1"]["certification_source"]
+        == "structural-abi-gate-no-coordinate"
         and cert_rows[0]["certified_details"]["1"]["stage4_kind"] == "getter-value-gate"
         and cert_rows[0]["certified_details"]["1"]["box"][0]["name"] == "msg.value"
         and cert_rows[0]["certified_details"]["1"]["box"][0]["lo"] == "1",
         f"getter cert row also exposes nonpayable ABI gate: {cert_rows}")
-    bad += check(summary["valid"] == 1 and summary["concrete_valid"] == 1
-                 and summary["put_valid"] == 0
-                 and summary["quality_bucket"] == "valid-no-PUT",
-                 f"getter artifact is valid concrete, not deploy-only or PUT: {summary}")
+    bad += check(
+        summary["valid"] == 1 and summary["concrete_valid"] == 1 and summary["put_valid"] == 0
+        and summary["quality_bucket"] == "valid-no-PUT",
+        f"getter artifact is valid concrete, not deploy-only or PUT: {summary}")
+    return bad
+
+
+def test_no_unit_getter_fallback_selects_filtered_parameterized_getter():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subject = _prepared_subject_for_getter_test(root)
+        schedule = _no_unit_getter_schedule(
+            {
+                "kind": "public-state-getter",
+                "name": "value",
+                "parameter_count": 0,
+            },
+            {
+                "kind": "public-state-getter",
+                "name": "isAllowed",
+                "parameter_count": 2,
+            },
+        )
+        schedule["summary"]["unit_filter"] = ["isAllowed"]
+
+        class GetterEnum:
+            skipped = (
+                {
+                    "kind": "public-state-getter",
+                    "name": "value",
+                    "parameter_count": 0,
+                },
+                {
+                    "kind": "public-state-getter",
+                    "name": "isAllowed",
+                    "parameter_count": 2,
+                },
+            )
+
+        enum = GetterEnum()
+        calls = []
+        old_enum = rq1_veriput_run.enumerate_subject_units
+        old_run = rq1_veriput_run.run_command
+        rq1_veriput_run.enumerate_subject_units = lambda _subject: enum
+
+        def fake_run_command(argv, timeout_s, log_prefix):
+            calls.append((argv, timeout_s, log_prefix))
+            return {
+                "argv": argv,
+                "rc": 0,
+                "status": "ok",
+                "timed_out": False,
+                "wall_s": 0.1,
+            }
+
+        rq1_veriput_run.run_command = fake_run_command
+        try:
+            stages = rq1_veriput_run.emit_no_unit_getter_fallbacks(subject, root / "case", schedule,
+                                                                   30, 12, 3)
+        finally:
+            rq1_veriput_run.enumerate_subject_units = old_enum
+            rq1_veriput_run.run_command = old_run
+
+        cert_rows = [
+            json.loads(line) for line in (root / "case" / "put" /
+                                          "structural_getter__isAllowed" /
+                                          "static-getter-cert.jsonl").read_text().splitlines()
+            if line.strip()
+        ]
+
+    bad = 0
+    bad += check([stage.get("unit") for stage in stages] == ["isAllowed"],
+                 f"unit-filtered parameterized getter is attempted: {stages}")
+    bad += check(
+        len(calls) == 1 and calls[0][0][calls[0][0].index("--only") + 1].endswith(".isAllowed"),
+        f"filtered getter Stage4 selector is name-scoped: {calls}")
+    bad += check(cert_rows[0]["unit"] == "isAllowed"
+                 and cert_rows[0]["driver_diagnostic"]["skipped_candidates"][0]["parameter_count"]
+                 == 2, f"parameterized getter provenance is retained: {cert_rows}")
     return bad
 
 
@@ -3087,28 +3188,32 @@ def test_abi_value_gate_cert_row_requires_nonpayable_entry():
     bad = 0
     bad += check(rq1_veriput_run._is_nonpayable_abi_entry_job(base_job),
                  "external nonpayable function accepts ABI value-gate fallback")
-    bad += check(not rq1_veriput_run._is_nonpayable_abi_entry_job({
-        **base_job,
-        "unit_info": {
-            **base_job["unit_info"],
-            "state_mutability": "payable",
-        },
-    }), "payable function rejects ABI value-gate fallback")
-    bad += check(not rq1_veriput_run._is_nonpayable_abi_entry_job({
-        **base_job,
-        "path_function": "",
-    }), "missing path_function rejects ABI value-gate fallback")
+    bad += check(
+        not rq1_veriput_run._is_nonpayable_abi_entry_job({
+            **base_job,
+            "unit_info": {
+                **base_job["unit_info"],
+                "state_mutability": "payable",
+            },
+        }), "payable function rejects ABI value-gate fallback")
+    bad += check(
+        not rq1_veriput_run._is_nonpayable_abi_entry_job({
+            **base_job,
+            "path_function": "",
+        }), "missing path_function rejects ABI value-gate fallback")
     detail = row["certified_details"]["1"]
-    bad += check(row["tag"] == "static-abi-value-gate-certified"
-                 and detail["stage4_kind"] == "abi-value-gate"
-                 and detail["certification_source"] == "structural-abi-gate-no-coordinate",
-                 f"ABI gate cert has distinct provenance: {row}")
-    bad += check(detail["box"] == [{
-        "name": "msg.value",
-        "lo": "1",
-        "hi": str((1 << 256) - 1),
-        "holes": [],
-    }], f"ABI gate cert covers nonzero msg.value: {detail}")
+    bad += check(
+        row["tag"] == "static-abi-value-gate-certified"
+        and detail["stage4_kind"] == "abi-value-gate"
+        and detail["certification_source"] == "structural-abi-gate-no-coordinate",
+        f"ABI gate cert has distinct provenance: {row}")
+    bad += check(
+        detail["box"] == [{
+            "name": "msg.value",
+            "lo": "1",
+            "hi": str((1 << 256) - 1),
+            "holes": [],
+        }], f"ABI gate cert covers nonzero msg.value: {detail}")
     return bad
 
 
@@ -3130,8 +3235,8 @@ def test_no_unit_getter_fallback_rejects_non_no_unit_schedule():
         rq1_veriput_run.enumerate_subject_units = lambda _subject: (_ for _ in ()).throw(
             AssertionError("getter enumeration must not run for non-no-unit schedule"))
         try:
-            stages = rq1_veriput_run.emit_no_unit_getter_fallbacks(
-                subject, root / "case", schedule, 30, 12, 3)
+            stages = rq1_veriput_run.emit_no_unit_getter_fallbacks(subject, root / "case", schedule,
+                                                                   30, 12, 3)
         finally:
             rq1_veriput_run.enumerate_subject_units = old_enum
     return check(stages == [], f"existing jobs disable getter fallback: {stages}")
@@ -3143,71 +3248,86 @@ def _ownable_fixture_subject(root, source, contract):
     flat_sol = subject_dir / "flat.sol"
     flat_sol.write_text(source)
     solast = subject_dir / "flat.sol.solast"
-    solast.write_text(json.dumps({
-        "nodeType": "SourceUnit",
-        "nodes": [{
-            "nodeType": "ContractDefinition",
-            "id": 10,
-            "name": "Ownable",
-            "linearizedBaseContracts": [10],
+    solast.write_text(
+        json.dumps({
+            "nodeType":
+            "SourceUnit",
             "nodes": [{
-                "nodeType": "VariableDeclaration",
-                "id": 39,
-                "name": "_owner",
-                "stateVariable": True,
-                "visibility": "private",
-                "typeDescriptions": {"typeString": "address"},
+                "nodeType":
+                "ContractDefinition",
+                "id":
+                10,
+                "name":
+                "Ownable",
+                "linearizedBaseContracts": [10],
+                "nodes": [{
+                    "nodeType": "VariableDeclaration",
+                    "id": 39,
+                    "name": "_owner",
+                    "stateVariable": True,
+                    "visibility": "private",
+                    "typeDescriptions": {
+                        "typeString": "address"
+                    },
+                }, {
+                    "nodeType": "FunctionDefinition",
+                    "id": 93,
+                    "name": "owner",
+                    "stateMutability": "view",
+                    "parameters": {
+                        "parameters": []
+                    },
+                    "body": {
+                        "nodeType":
+                        "Block",
+                        "statements": [{
+                            "nodeType": "Return",
+                            "expression": {
+                                "nodeType": "Identifier",
+                                "name": "_owner",
+                                "referencedDeclaration": 39,
+                            },
+                        }],
+                    },
+                }],
             }, {
-                "nodeType": "FunctionDefinition",
-                "id": 93,
-                "name": "owner",
-                "stateMutability": "view",
-                "parameters": {"parameters": []},
-                "body": {
-                    "nodeType": "Block",
-                    "statements": [{
-                        "nodeType": "Return",
-                        "expression": {
-                            "nodeType": "Identifier",
-                            "name": "_owner",
-                            "referencedDeclaration": 39,
-                        },
-                    }],
-                },
+                "nodeType": "ContractDefinition",
+                "id": 20,
+                "name": contract,
+                "linearizedBaseContracts": [20, 10],
+                "nodes": [],
             }],
-        }, {
-            "nodeType": "ContractDefinition",
-            "id": 20,
-            "name": contract,
-            "linearizedBaseContracts": [20, 10],
-            "nodes": [],
-        }],
-    }))
-    return rq1_veriput_run.PreparedSubject(
-        benchmark="stress243",
-        subject_id=f"self-contained__{contract}",
-        root=str(subject_dir),
-        flat_sol=str(flat_sol),
-        solast=str(solast),
-        contract=contract,
-        unit="owner",
-        solc_bin=None,
-        solc_extra=(),
-        metadata={})
+        }))
+    return rq1_veriput_run.PreparedSubject(benchmark="stress243",
+                                           subject_id=f"self-contained__{contract}",
+                                           root=str(subject_dir),
+                                           flat_sol=str(flat_sol),
+                                           solast=str(solast),
+                                           contract=contract,
+                                           unit="owner",
+                                           solc_bin=None,
+                                           solc_extra=(),
+                                           metadata={})
 
 
 def _ownable_fixture_schedule(job_id):
     return {
-        "schema": "veriput-unit-schedule/v1",
+        "schema":
+        "veriput-unit-schedule/v1",
         "summary": {},
         "jobs": [{
-            "job_id": job_id,
-            "unit": "owner",
-            "path_function": "sol:@C@Ownable@F@owner#93",
-            "certify_argv": ["python3", "certify_all.py", "--probes", "8",
-                             "--env-coord", "msg.sender"],
-            "dry_run_argv": ["python3", "certify_all.py", "--dry-run",
-                              "--probes", "8", "--env-coord", "msg.sender"],
+            "job_id":
+            job_id,
+            "unit":
+            "owner",
+            "path_function":
+            "sol:@C@Ownable@F@owner#93",
+            "certify_argv":
+            ["python3", "certify_all.py", "--probes", "8", "--env-coord", "msg.sender"],
+            "dry_run_argv": [
+                "python3", "certify_all.py", "--dry-run", "--probes", "8", "--env-coord",
+                "msg.sender"
+            ],
             "unit_info": {
                 "parameter_count": 0,
                 "return_types": ["address"],
@@ -3248,26 +3368,25 @@ contract GatewayProvider is Ownable, IGatewayProvider {
         root = Path(tmp)
         subject = _ownable_fixture_subject(root, source, "GatewayProvider")
         schedule = _ownable_fixture_schedule("gateway-owner")
-        out = rq1_veriput_run.apply_source_stage2_fixtures(
-            schedule, subject, root / "case")
+        out = rq1_veriput_run.apply_source_stage2_fixtures(schedule, subject, root / "case")
         job = out["jobs"][0]
         fixture_path = Path(job["source_stage2_fixture_path"])
         fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
     bad = 0
     bad += check(fixture["contract"] == "GatewayProvider",
                  f"fixture names exact target contract: {fixture}")
-    bad += check(fixture["skip_constructor"] is True,
-                 f"fixture skips ESBMC constructor: {fixture}")
-    bad += check(fixture["state"] == {
-        "_owner$39": "0x00000000000000000000000000000000000003e8"
-    }, f"fixture uses ESBMC store name, not source name: {fixture}")
-    bad += check(fixture["foundry"]["constructor_args"] == [
-        "address(uint160(1000))",
-        "new string[](0)",
-    ], f"Foundry replay uses legal constructor args: {fixture}")
-    bad += check("--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
-                 and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
-                 f"certify argv carries fixture: {job['certify_argv']}")
+    bad += check(fixture["skip_constructor"] is True, f"fixture skips ESBMC constructor: {fixture}")
+    bad += check(fixture["state"] == {"_owner$39": "0x00000000000000000000000000000000000003e8"},
+                 f"fixture uses ESBMC store name, not source name: {fixture}")
+    bad += check(
+        fixture["foundry"]["constructor_args"] == [
+            "address(uint160(1000))",
+            "new string[](0)",
+        ], f"Foundry replay uses legal constructor args: {fixture}")
+    bad += check(
+        "--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
+        and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
+        f"certify argv carries fixture: {job['certify_argv']}")
     bad += check("--esbmc-arg=--path-cov-fixture" in job["dry_run_argv"],
                  f"dry-run argv carries fixture: {job['dry_run_argv']}")
     bad += check(out["summary"]["source_stage2_fixture_count"] == 1,
@@ -3299,28 +3418,25 @@ contract OwnedResolver is Ownable {}
         root = Path(tmp)
         subject = _ownable_fixture_subject(root, source, "OwnedResolver")
         schedule = _ownable_fixture_schedule("owned-resolver-owner")
-        out = rq1_veriput_run.apply_source_stage2_fixtures(
-            schedule, subject, root / "case")
+        out = rq1_veriput_run.apply_source_stage2_fixtures(schedule, subject, root / "case")
         job = out["jobs"][0]
         fixture_path = Path(job["source_stage2_fixture_path"])
         fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
     bad = 0
-    bad += check(fixture["state"] == {
-        "_owner$39": "0x00000000000000000000000000000000000003e8"
-    }, f"fixture uses inherited Ownable store name: {fixture}")
+    bad += check(fixture["state"] == {"_owner$39": "0x00000000000000000000000000000000000003e8"},
+                 f"fixture uses inherited Ownable store name: {fixture}")
     bad += check(fixture["foundry"]["constructor_args"] == [],
                  f"Foundry replay preserves zero-argument deployment: {fixture}")
-    bad += check(
-        fixture["veriput_fixture_kind"] ==
-        "ownable-owner-msg-sender-constructor-state",
-        f"fixture records the source-backed constructor shape: {fixture}")
+    bad += check(fixture["veriput_fixture_kind"] == "ownable-owner-msg-sender-constructor-state",
+                 f"fixture records the source-backed constructor shape: {fixture}")
     bad += check(
         fixture["source_evidence"]["constructor_initialization"] ==
         "_transferOwnership(_msgSender())",
         f"fixture records the constructor initialization evidence: {fixture}")
-    bad += check("--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
-                 and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
-                 f"certify argv carries fixture: {job['certify_argv']}")
+    bad += check(
+        "--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
+        and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
+        f"certify argv carries fixture: {job['certify_argv']}")
     return bad
 
 
@@ -3345,8 +3461,7 @@ contract GuardedResolver is Ownable {
         root = Path(tmp)
         subject = _ownable_fixture_subject(root, source, "GuardedResolver")
         schedule = _ownable_fixture_schedule("guarded-resolver-owner")
-        out = rq1_veriput_run.apply_source_stage2_fixtures(
-            schedule, subject, root / "case")
+        out = rq1_veriput_run.apply_source_stage2_fixtures(schedule, subject, root / "case")
     bad = 0
     bad += check("source_stage2_fixture_path" not in out["jobs"][0],
                  f"unrelated address guard cannot synthesize owner state: {out}")
@@ -3403,11 +3518,11 @@ def test_transparent_proxy_stage2_fixture_uses_zero_storage_runtime():
                  f"proxy fixture skips only the exact target constructor: {fixture}")
     bad += check(fixture["state"] == {},
                  f"proxy fixture does not confuse slot constants with values: {fixture}")
-    bad += check(fixture["foundry"] == {
-        "skip_constructor": True,
-        "target_call_mode": "low-level-success",
-    },
-                 f"Foundry mirrors zero storage through runtime etching: {fixture}")
+    bad += check(
+        fixture["foundry"] == {
+            "skip_constructor": True,
+            "target_call_mode": "low-level-success",
+        }, f"Foundry mirrors zero storage through runtime etching: {fixture}")
     bad += check(fixture["veriput_fixture_kind"] == "transparent-proxy-zero-storage-runtime",
                  f"fixture records its narrow source-backed kind: {fixture}")
     bad += check(fixture["source_evidence"]["state_dependencies"] == ["_ADMIN_SLOT"],
@@ -3444,7 +3559,8 @@ def test_asset_list_stage2_fixture_uses_empty_array_revert_path():
         metadata={},
     )
     schedule = {
-        "schema": "veriput-unit-schedule/v1",
+        "schema":
+        "veriput-unit-schedule/v1",
         "summary": {},
         "jobs": [{
             "job_id": "asset-list-get-asset-info",
@@ -3469,22 +3585,26 @@ def test_asset_list_stage2_fixture_uses_empty_array_revert_path():
                  f"AssetList fixture skips only its expensive ESBMC deployment: {fixture}")
     bad += check(fixture["state"] == {"numAssets": 0},
                  f"empty-list state uses the exact ESBMC immutable store name: {fixture}")
-    bad += check(fixture["foundry"] == {
-        "skip_constructor": True,
-        "constructor_args": ["new CometConfiguration.AssetConfig[](0)"],
-    }, f"Foundry replays the legal source-level empty-array deployment: {fixture}")
+    bad += check(
+        fixture["foundry"] == {
+            "skip_constructor": True,
+            "constructor_args": ["new CometConfiguration.AssetConfig[](0)"],
+        }, f"Foundry replays the legal source-level empty-array deployment: {fixture}")
     bad += check(fixture["veriput_fixture_kind"] == "asset-list-empty-array-revert",
                  f"fixture records its narrow source-backed kind: {fixture}")
-    bad += check(fixture["source_evidence"]["constructor_packed_slots"] == 24
-                 and fixture["source_evidence"]["dominating_guard"] == "i >= numAssets",
-                 f"fixture records the constructor and dominating guard evidence: {fixture}")
-    bad += check("--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
-                 and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
-                 f"certify argv carries AssetList fixture: {job['certify_argv']}")
-    bad += check("--esbmc-arg=--path-cov-max-goals" in job["certify_argv"]
-                 and "--esbmc-arg=2" in job["certify_argv"],
-                 f"AssetList fixture retains its ABI gate and dominating revert goal: "
-                 f"{job['certify_argv']}")
+    bad += check(
+        fixture["source_evidence"]["constructor_packed_slots"] == 24
+        and fixture["source_evidence"]["dominating_guard"] == "i >= numAssets",
+        f"fixture records the constructor and dominating guard evidence: {fixture}")
+    bad += check(
+        "--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
+        and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
+        f"certify argv carries AssetList fixture: {job['certify_argv']}")
+    bad += check(
+        "--esbmc-arg=--path-cov-max-goals" in job["certify_argv"]
+        and "--esbmc-arg=2" in job["certify_argv"],
+        f"AssetList fixture retains its ABI gate and dominating revert goal: "
+        f"{job['certify_argv']}")
     bad += check(out["summary"]["source_stage2_fixture_count"] == 1,
                  f"schedule records AssetList fixture application: {out}")
     return bad
@@ -3511,7 +3631,8 @@ def test_euler_cash_stage2_fixture_uses_proxy_entry_zero_storage():
         metadata={},
     )
     schedule = {
-        "schema": "veriput-unit-schedule/v1",
+        "schema":
+        "veriput-unit-schedule/v1",
         "summary": {},
         "jobs": [{
             "job_id": "euler-borrowing-cash",
@@ -3539,12 +3660,14 @@ def test_euler_cash_stage2_fixture_uses_proxy_entry_zero_storage():
                  f"ESBMC and Foundry both use fresh runtime zero storage: {fixture}")
     bad += check(fixture["veriput_fixture_kind"] == "evk-cash-proxy-entry-zero-storage",
                  f"fixture records its narrow EVK source-backed kind: {fixture}")
-    bad += check(fixture["source_evidence"]["state_dependencies"] == ["vaultStorage"]
-                 and fixture["source_evidence"]["direct_base"] == "BorrowingModule",
-                 f"fixture records the exact storage and inheritance evidence: {fixture}")
-    bad += check("--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
-                 and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
-                 f"certify argv carries Euler fixture: {job['certify_argv']}")
+    bad += check(
+        fixture["source_evidence"]["state_dependencies"] == ["vaultStorage"]
+        and fixture["source_evidence"]["direct_base"] == "BorrowingModule",
+        f"fixture records the exact storage and inheritance evidence: {fixture}")
+    bad += check(
+        "--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
+        and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
+        f"certify argv carries Euler fixture: {job['certify_argv']}")
     bad += check(out["summary"]["source_stage2_fixture_count"] == 1,
                  f"schedule records Euler fixture application: {out}")
     return bad
@@ -3572,7 +3695,8 @@ def test_peg_stability_module_fixture_uses_legal_foundry_constructor():
         metadata={},
     )
     schedule = {
-        "schema": "veriput-unit-schedule/v1",
+        "schema":
+        "veriput-unit-schedule/v1",
         "summary": {},
         "jobs": [{
             "job_id": "psm-quote-to-synth-given-in",
@@ -3589,33 +3713,34 @@ def test_peg_stability_module_fixture_uses_legal_foundry_constructor():
         }],
     }
     with tempfile.TemporaryDirectory() as tmp:
-        out = rq1_veriput_run.apply_source_stage2_fixtures(
-            schedule, subject, Path(tmp))
+        out = rq1_veriput_run.apply_source_stage2_fixtures(schedule, subject, Path(tmp))
         job = out["jobs"][0]
         fixture_path = Path(job["source_stage2_fixture_path"])
         fixture = json.loads(fixture_path.read_text())
     bad = 0
     bad += check("skip_constructor" not in fixture,
                  f"PSM fixture must not alter Stage-2 constructor semantics: {fixture}")
-    bad += check(fixture["foundry"]["constructor_args"] == [
-        "address(uint160(1000))",
-        "address(uint160(1001))",
-        "address(uint160(1002))",
-        "0",
-        "0",
-        "1e18",
-    ], f"PSM Foundry deployment satisfies all exact constructor guards: {fixture}")
-    bad += check(fixture["veriput_fixture_kind"] ==
-                 "psm-legal-foundry-constructor",
+    bad += check(
+        fixture["foundry"]["constructor_args"] == [
+            "address(uint160(1000))",
+            "address(uint160(1001))",
+            "address(uint160(1002))",
+            "0",
+            "0",
+            "1e18",
+        ], f"PSM Foundry deployment satisfies all exact constructor guards: {fixture}")
+    bad += check(fixture["veriput_fixture_kind"] == "psm-legal-foundry-constructor",
                  f"fixture records its narrow source-backed kind: {fixture}")
     evidence = fixture["source_evidence"]
-    bad += check(evidence["conversion_price_guard"] == "_conversionPrice != 0"
-                 and evidence["stage2_semantics"] == "unchanged",
-                 f"fixture records the exact replay-only repair: {fixture}")
-    bad += check("--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
-                 and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
-                 f"Stage 4 can recover the Foundry fixture from the cert job: "
-                 f"{job['certify_argv']}")
+    bad += check(
+        evidence["conversion_price_guard"] == "_conversionPrice != 0"
+        and evidence["stage2_semantics"] == "unchanged",
+        f"fixture records the exact replay-only repair: {fixture}")
+    bad += check(
+        "--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
+        and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
+        f"Stage 4 can recover the Foundry fixture from the cert job: "
+        f"{job['certify_argv']}")
     return bad
 
 
@@ -3640,7 +3765,8 @@ def test_transfer_helper_fixture_retains_zero_conduit_rejection():
         metadata={},
     )
     schedule = {
-        "schema": "veriput-unit-schedule/v1",
+        "schema":
+        "veriput-unit-schedule/v1",
         "summary": {},
         "jobs": [{
             "job_id": "transfer-helper-bulk-transfer",
@@ -3650,35 +3776,35 @@ def test_transfer_helper_fixture_retains_zero_conduit_rejection():
             "dry_run_argv": ["python3", "certify_all.py", "--dry-run"],
             "unit_info": {
                 "visibility": "external",
-                "parameter_types": [
-                    "struct TransferHelperItemsWithRecipient[]", "bytes32"],
+                "parameter_types": ["struct TransferHelperItemsWithRecipient[]", "bytes32"],
                 "return_types": ["bytes4"],
                 "state_mutability": "nonpayable",
             },
         }],
     }
     with tempfile.TemporaryDirectory() as tmp:
-        out = rq1_veriput_run.apply_source_stage2_fixtures(
-            schedule, subject, Path(tmp))
+        out = rq1_veriput_run.apply_source_stage2_fixtures(schedule, subject, Path(tmp))
         job = out["jobs"][0]
         fixture_path = Path(job["source_stage2_fixture_path"])
         fixture = json.loads(fixture_path.read_text())
     bad = 0
     bad += check("skip_constructor" not in fixture,
                  f"TransferHelper keeps constructor semantics: {fixture}")
-    bad += check(fixture["foundry"] == {
-        "constructor_args": ["address(uint160(1000))"],
-        "expected_revert_signature": "InvalidConduit(bytes32,address)",
-    }, f"Foundry legally deploys and asserts exact zero-key rejection: {fixture}")
+    bad += check(
+        fixture["foundry"] == {
+            "constructor_args": ["address(uint160(1000))"],
+            "expected_revert_signature": "InvalidConduit(bytes32,address)",
+        }, f"Foundry legally deploys and asserts exact zero-key rejection: {fixture}")
     evidence = fixture["source_evidence"]
-    bad += check(evidence["dominating_guard"] == "conduitKey == bytes32(0)"
-                 and evidence["precedes"] ==
-                 "_performTransfersWithConduit(items, conduitKey)",
-                 f"fixture records source dominance: {fixture}")
-    bad += check("--esbmc-arg=--path-cov-max-goals" in job["certify_argv"]
-                 and "--esbmc-arg=2" in job["certify_argv"],
-                 f"fixture shards to the ABI gate and dominating source goal: "
-                 f"{job['certify_argv']}")
+    bad += check(
+        evidence["dominating_guard"] == "conduitKey == bytes32(0)"
+        and evidence["precedes"] == "_performTransfersWithConduit(items, conduitKey)",
+        f"fixture records source dominance: {fixture}")
+    bad += check(
+        "--esbmc-arg=--path-cov-max-goals" in job["certify_argv"]
+        and "--esbmc-arg=2" in job["certify_argv"],
+        f"fixture shards to the ABI gate and dominating source goal: "
+        f"{job['certify_argv']}")
     return bad
 
 
@@ -3703,7 +3829,8 @@ def test_euler_initialize_fixture_rebuilds_direct_deploy_guard():
         metadata={},
     )
     schedule = {
-        "schema": "veriput-unit-schedule/v1",
+        "schema":
+        "veriput-unit-schedule/v1",
         "summary": {},
         "jobs": [{
             "job_id": "euler-initialize",
@@ -3725,37 +3852,39 @@ def test_euler_initialize_fixture_rebuilds_direct_deploy_guard():
         fixture_path = Path(job["source_stage2_fixture_path"])
         fixture = json.loads(fixture_path.read_text())
     bad = 0
-    bad += check(fixture["contract"] == "Initialize"
-                 and fixture["skip_constructor"] is True,
+    bad += check(fixture["contract"] == "Initialize" and fixture["skip_constructor"] is True,
                  f"Initialize fixture skips only its expensive direct deployment: {fixture}")
     bad += check(fixture["state"] == {"initialized$397": 1},
                  f"fixture rebuilds the exact inherited ESBMC store: {fixture}")
-    bad += check(fixture["foundry"] == {
-        "skip_constructor": True,
-        "constructor_args": [
-            "Base.Integrations({evc: address(uint160(1000)), protocolConfig: "
-            "address(uint160(1001)), sequenceRegistry: address(uint160(1002)), "
-            "balanceTracker: address(uint160(1003)), permit2: address(uint160(1004))})",
-        ],
-        "target_call_mode": "low-level-revert",
-        "target_call_signature": "initialize(address)",
-    },
-                 f"Foundry legally deploys then asserts the target revert: {fixture}")
-    bad += check(fixture["veriput_fixture_kind"] ==
-                 "evk-initialize-direct-deploy-guard",
+    bad += check(
+        fixture["foundry"] == {
+            "skip_constructor":
+            True,
+            "constructor_args": [
+                "Base.Integrations({evc: address(uint160(1000)), protocolConfig: "
+                "address(uint160(1001)), sequenceRegistry: address(uint160(1002)), "
+                "balanceTracker: address(uint160(1003)), permit2: address(uint160(1004))})",
+            ],
+            "target_call_mode":
+            "low-level-revert",
+            "target_call_signature":
+            "initialize(address)",
+        }, f"Foundry legally deploys then asserts the target revert: {fixture}")
+    bad += check(fixture["veriput_fixture_kind"] == "evk-initialize-direct-deploy-guard",
                  f"fixture records its narrow EVK source-backed kind: {fixture}")
-    bad += check(fixture["source_evidence"]["constructor_initialization"] ==
-                 "initialized = true"
-                 and fixture["source_evidence"]["dominating_guard"] ==
-                 "if (initialized) revert E_Initialized()",
-                 f"fixture records constructor-to-guard evidence: {fixture}")
-    bad += check("--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
-                 and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
-                 f"certify argv carries Initialize fixture: {job['certify_argv']}")
-    bad += check("--esbmc-arg=--path-cov-max-goals" in job["certify_argv"]
-                 and "--esbmc-arg=2" in job["certify_argv"],
-                 f"fixture retains only the ABI gate and dominating revert: "
-                 f"{job['certify_argv']}")
+    bad += check(
+        fixture["source_evidence"]["constructor_initialization"] == "initialized = true" and
+        fixture["source_evidence"]["dominating_guard"] == "if (initialized) revert E_Initialized()",
+        f"fixture records constructor-to-guard evidence: {fixture}")
+    bad += check(
+        "--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
+        and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
+        f"certify argv carries Initialize fixture: {job['certify_argv']}")
+    bad += check(
+        "--esbmc-arg=--path-cov-max-goals" in job["certify_argv"]
+        and "--esbmc-arg=2" in job["certify_argv"],
+        f"fixture retains only the ABI gate and dominating revert: "
+        f"{job['certify_argv']}")
     return bad
 
 
@@ -3780,7 +3909,8 @@ def test_euler_risk_manager_fixture_retains_proxy_auth_rejection():
         metadata={},
     )
     schedule = {
-        "schema": "veriput-unit-schedule/v1",
+        "schema":
+        "veriput-unit-schedule/v1",
         "summary": {},
         "jobs": [{
             "job_id": "euler-risk-manager-check-vault-status",
@@ -3802,41 +3932,39 @@ def test_euler_risk_manager_fixture_retains_proxy_auth_rejection():
         fixture_path = Path(job["source_stage2_fixture_path"])
         fixture = json.loads(fixture_path.read_text())
     bad = 0
-    bad += check(fixture["contract"] == "RiskManager"
-                 and fixture["skip_constructor"] is True,
+    bad += check(fixture["contract"] == "RiskManager" and fixture["skip_constructor"] is True,
                  f"RiskManager fixture uses proxy-entry runtime state: {fixture}")
-    bad += check(fixture["state"] == {}
-                 and fixture["foundry"]["skip_constructor"] is True
-                 and fixture["foundry"]["expected_revert_signature"] ==
-                 "E_CheckUnauthorized()"
-                 and "Base.Integrations" in
-                 fixture["foundry"]["constructor_args"][0],
-                 f"Foundry uses a legal deployment and exact auth revert: {fixture}")
-    bad += check(fixture["veriput_fixture_kind"] ==
-                 "evk-risk-manager-proxy-auth-rejection",
+    bad += check(
+        fixture["state"] == {} and fixture["foundry"]["skip_constructor"] is True
+        and fixture["foundry"]["expected_revert_signature"] == "E_CheckUnauthorized()"
+        and "Base.Integrations" in fixture["foundry"]["constructor_args"][0],
+        f"Foundry uses a legal deployment and exact auth revert: {fixture}")
+    bad += check(fixture["veriput_fixture_kind"] == "evk-risk-manager-proxy-auth-rejection",
                  f"fixture records its narrow EVK source-backed kind: {fixture}")
     evidence = fixture["source_evidence"]
-    bad += check(evidence["state_dependencies"] == ["evc", "snapshot", "vaultStorage"]
-                 and evidence["dominating_guard"] ==
-                 "msg.sender != address(evc) || !evc.areChecksInProgress()",
-                 f"fixture records exact AST dependencies and source guard: {fixture}")
-    bad += check("--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
-                 and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
-                 f"certify argv carries RiskManager fixture: {job['certify_argv']}")
-    bad += check("--esbmc-arg=--path-cov-max-goals" in job["certify_argv"]
-                 and "--esbmc-arg=2" in job["certify_argv"],
-                 f"fixture retains only ABI gate and auth rejection: "
-                 f"{job['certify_argv']}")
-    bad += check("--esbmc-arg=--unwind" in job["certify_argv"]
-                 and "--esbmc-arg=1" in job["certify_argv"]
-                 and evidence["unwind_boundary"] ==
-                 "1; retained guard exits before any external call or loop",
-                 f"fixture records and applies the retained path's unwind boundary: "
-                 f"{job['certify_argv']}")
-    bad += check("msg.sender" not in job["certify_argv"]
-                 and job["certify_argv"][job["certify_argv"].index("--probes") + 1] == "0",
-                 f"exact concrete fixture skips sender generalisation and probe pre-run: "
-                 f"{job['certify_argv']}")
+    bad += check(
+        evidence["state_dependencies"] == ["evc", "snapshot", "vaultStorage"] and
+        evidence["dominating_guard"] == "msg.sender != address(evc) || !evc.areChecksInProgress()",
+        f"fixture records exact AST dependencies and source guard: {fixture}")
+    bad += check(
+        "--esbmc-arg=--path-cov-fixture" in job["certify_argv"]
+        and f"--esbmc-arg={fixture_path}" in job["certify_argv"],
+        f"certify argv carries RiskManager fixture: {job['certify_argv']}")
+    bad += check(
+        "--esbmc-arg=--path-cov-max-goals" in job["certify_argv"]
+        and "--esbmc-arg=2" in job["certify_argv"],
+        f"fixture retains only ABI gate and auth rejection: "
+        f"{job['certify_argv']}")
+    bad += check(
+        "--esbmc-arg=--unwind" in job["certify_argv"] and "--esbmc-arg=1" in job["certify_argv"] and
+        evidence["unwind_boundary"] == "1; retained guard exits before any external call or loop",
+        f"fixture records and applies the retained path's unwind boundary: "
+        f"{job['certify_argv']}")
+    bad += check(
+        "msg.sender" not in job["certify_argv"]
+        and job["certify_argv"][job["certify_argv"].index("--probes") + 1] == "0",
+        f"exact concrete fixture skips sender generalisation and probe pre-run: "
+        f"{job['certify_argv']}")
     return bad
 
 
@@ -3846,8 +3974,7 @@ def test_bounded_wrapper_fixtures_remove_extra_arithmetic_checks():
             "subject": "ensdomains__ens-contracts__UniversalSigValidator",
             "contract": "UniversalSigValidator",
             "unit": "isValidSigWithSideEffects",
-            "path_function": (
-                "sol:@C@UniversalSigValidator@F@isValidSigWithSideEffects#246"),
+            "path_function": ("sol:@C@UniversalSigValidator@F@isValidSigWithSideEffects#246"),
             "parameter_types": ["address", "bytes32", "bytes"],
             "return_types": ["bool"],
             "mutability": "nonpayable",
@@ -3876,7 +4003,8 @@ def test_bounded_wrapper_fixtures_remove_extra_arithmetic_checks():
     ]
     bad = 0
     for spec in specs:
-        subject_dir = Path("/home/samson/workspace/VeriPUT/Results/Stress243/subjects") / spec["subject"]
+        subject_dir = Path(
+            "/home/samson/workspace/VeriPUT/Results/Stress243/subjects") / spec["subject"]
         solast = (Path("/tmp/veriput_rq1_ast_cache/stress243") /
                   f"stress243__{spec['subject']}/flat.sol.solast")
         if not subject_dir.exists() or not solast.exists():
@@ -3895,14 +4023,17 @@ def test_bounded_wrapper_fixtures_remove_extra_arithmetic_checks():
             metadata={},
         )
         base_argv = [
-            "python3", "certify_all.py",
+            "python3",
+            "certify_all.py",
             "--esbmc-arg=--overflow-check",
             "--esbmc-arg=--div-by-zero-check",
             "--esbmc-arg=--path-cov-arith-resolve",
-            "--probes", "8",
+            "--probes",
+            "8",
         ]
         schedule = {
-            "schema": "veriput-unit-schedule/v1",
+            "schema":
+            "veriput-unit-schedule/v1",
             "summary": {},
             "jobs": [{
                 "job_id": spec["unit"],
@@ -3919,21 +4050,21 @@ def test_bounded_wrapper_fixtures_remove_extra_arithmetic_checks():
             }],
         }
         with tempfile.TemporaryDirectory() as tmp:
-            out = rq1_veriput_run.apply_source_stage2_fixtures(
-                schedule, subject, Path(tmp))
+            out = rq1_veriput_run.apply_source_stage2_fixtures(schedule, subject, Path(tmp))
             job = out["jobs"][0]
             fixture = json.loads(Path(job["source_stage2_fixture_path"]).read_text())
         argv = job["certify_argv"]
         bad += check(fixture["foundry"]["constructor_args"] == spec["constructor_args"],
                      f"{spec['unit']} replays the expected real constructor")
-        bad += check(all(f"--esbmc-arg={flag}" not in argv for flag in (
-            "--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve")),
-                     f"{spec['unit']} drops unrelated arithmetic VCCs: {argv}")
-        bad += check("--esbmc-arg=--path-cov-max-goals" in argv
-                     and "--esbmc-arg=2" in argv
-                     and "--esbmc-arg=--unwind" in argv
-                     and "--esbmc-arg=1" in argv,
-                     f"{spec['unit']} applies the measured path bound: {argv}")
+        bad += check(
+            all(f"--esbmc-arg={flag}" not in argv
+                for flag in ("--overflow-check", "--div-by-zero-check",
+                             "--path-cov-arith-resolve")),
+            f"{spec['unit']} drops unrelated arithmetic VCCs: {argv}")
+        bad += check(
+            "--esbmc-arg=--path-cov-max-goals" in argv and "--esbmc-arg=2" in argv
+            and "--esbmc-arg=--unwind" in argv and "--esbmc-arg=1" in argv,
+            f"{spec['unit']} applies the measured path bound: {argv}")
         bad += check(argv[argv.index("--probes") + 1] == "2",
                      f"{spec['unit']} keeps the small probe budget: {argv}")
     return bad
@@ -3961,11 +4092,16 @@ def test_putty_pure_fixture_avoids_irrelevant_environment_pins():
         metadata={},
     )
     base_argv = [
-        "python3", "certify_all.py", "--pin-agreed-establishable-env",
-        "--esbmc-arg=--overflow-check", "--probes", "8",
+        "python3",
+        "certify_all.py",
+        "--pin-agreed-establishable-env",
+        "--esbmc-arg=--overflow-check",
+        "--probes",
+        "8",
     ]
     schedule = {
-        "schema": "veriput-unit-schedule/v1",
+        "schema":
+        "veriput-unit-schedule/v1",
         "summary": {},
         "jobs": [{
             "job_id": "putty-whitelist",
@@ -3982,24 +4118,22 @@ def test_putty_pure_fixture_avoids_irrelevant_environment_pins():
         }],
     }
     with tempfile.TemporaryDirectory() as tmp:
-        out = rq1_veriput_run.apply_source_stage2_fixtures(
-            schedule, subject, Path(tmp))
+        out = rq1_veriput_run.apply_source_stage2_fixtures(schedule, subject, Path(tmp))
         job = out["jobs"][0]
         fixture = json.loads(Path(job["source_stage2_fixture_path"]).read_text())
     argv = job["certify_argv"]
     bad = 0
-    bad += check(fixture["foundry"]["constructor_args"] == [
-        '"VeriPUT1000"', "0", "address(uint160(1002))"
-    ], "PuttyV2 fixture uses the real three-argument constructor")
+    bad += check(
+        fixture["foundry"]["constructor_args"] == ['"VeriPUT1000"', "0", "address(uint160(1002))"],
+        "PuttyV2 fixture uses the real three-argument constructor")
     bad += check("--pin-agreed-establishable-env" not in argv,
                  "pure predicate drops irrelevant environment pins")
     bad += check("--esbmc-arg=--overflow-check" not in argv,
                  "pure ABI gate drops unrelated arithmetic VCCs")
-    bad += check("--esbmc-arg=--path-cov-max-goals" in argv
-                 and "--esbmc-arg=2" in argv
-                 and "--esbmc-arg=--unwind" in argv
-                 and "--esbmc-arg=1" in argv,
-                 "PuttyV2 fixture applies the measured path bound")
+    bad += check(
+        "--esbmc-arg=--path-cov-max-goals" in argv and "--esbmc-arg=2" in argv
+        and "--esbmc-arg=--unwind" in argv and "--esbmc-arg=1" in argv,
+        "PuttyV2 fixture applies the measured path bound")
     return bad
 
 
@@ -4102,39 +4236,36 @@ def test_run_subject_records_no_unit_deploy_fallback_schema():
     bad += check(row["no_unit_deploy_fallback_statuses"] == ["ok"],
                  f"fallback status is retained in row: {row}")
     bad += check(row["foundry_replay_wall_s"] == 0.03, f"fallback replay timing is retained: {row}")
-    bad += check(any(stage.get("stage") == "no-unit-deploy-fallback"
-                     for stage in (detail.get("stages") or [])),
-                 f"fallback stage is retained in detail: {detail}")
+    bad += check(
+        any(
+            stage.get("stage") == "no-unit-deploy-fallback"
+            for stage in (detail.get("stages") or [])),
+        f"fallback stage is retained in detail: {detail}")
     return bad
 
 
 def test_valid_reference_rejects_deploy_and_creation_aliases():
     bad = 0
-    for source in ("no_unit_deploy_fallback", "structural_deploy_only",
-                   "structural-deploy-only"):
+    for source in ("no_unit_deploy_fallback", "structural_deploy_only", "structural-deploy-only"):
         bad += check(
             rq1_veriput_run._is_valid_reference_test({
                 "kind": "concrete",
                 "valid_reference_test": True,
                 "stage2_source": source,
-            }) is False,
-            f"stage2 deploy-only source is not valid: {source}")
-    for kind in ("deploy_only", "deploy-only", "creation_code_only",
-                 "creation-code-only"):
+            }) is False, f"stage2 deploy-only source is not valid: {source}")
+    for kind in ("deploy_only", "deploy-only", "creation_code_only", "creation-code-only"):
         bad += check(
             rq1_veriput_run._is_valid_reference_test({
                 "kind": "concrete",
                 "valid_reference_test": True,
                 "stage4_kind": kind,
-            }) is False,
-            f"stage4 deploy/creation kind is not valid: {kind}")
+            }) is False, f"stage4 deploy/creation kind is not valid: {kind}")
     bad += check(
         rq1_veriput_run._is_valid_reference_test({
             "kind": "concrete",
             "valid_reference_test": True,
             "stage4_kind": "getter-only",
-        }) is True,
-        "getter-only concrete remains a valid reference test")
+        }) is True, "getter-only concrete remains a valid reference test")
     return bad
 
 
@@ -4432,8 +4563,10 @@ def test_cleared_concrete_fallbacks_trigger_stage4():
                     },
                 },
                 "partial_witness_journal": {
-                    "partial": True,
-                    "witness_count": 1,
+                    "partial":
+                    True,
+                    "witness_count":
+                    1,
                     "paths": [{
                         "path_id": "8",
                         "path_function": "sol:@C@Token@F@approve#972",
@@ -4606,10 +4739,17 @@ def test_cleared_concrete_fallbacks_trigger_stage4():
                                                path_function="sol:@C@C@F@approve#77",
                                                emit_concrete_fallbacks=False,
                                                foundry_fixture="/tmp/fixture.json")
+    ablation_argv = rq1_veriput_run._put_argv(cert,
+                                              "approve",
+                                              "bench",
+                                              Path("/tmp/out"),
+                                              600,
+                                              4,
+                                              180,
+                                              concrete_replay_only=True)
     bad = 0
-    bad += check(
-        cleared_count == 3,
-        "explicit UNKNOWN concrete fallback survives the occupied-journal boundary")
+    bad += check(cleared_count == 3,
+                 "explicit UNKNOWN concrete fallback survives the occupied-journal boundary")
     bad += check(timeout_count == 2,
                  "timed-out witnessed certification rows skip only occupied encs")
     bad += check(complete_count == 3,
@@ -4624,6 +4764,8 @@ def test_cleared_concrete_fallbacks_trigger_stage4():
                  "certified Stage 4 skips unrelated concrete fallback work")
     bad += check(certified_argv[-2:] == ["--foundry-fixture", "/tmp/fixture.json"],
                  f"Stage 4 receives the source-checked fixture: {certified_argv}")
+    bad += check("--certified-concrete-only" in ablation_argv,
+                 "RQ3 ablation forces certified regions through concrete-only emission")
     only_idx = certified_argv.index("--only")
     bad += check(certified_argv[only_idx + 1] == "bench.sol:@C@C@F@approve#77",
                  "overloaded Stage 4 selects the exact path-function")
@@ -5533,6 +5675,7 @@ def test_tool_failures_do_not_count_as_no_candidate_stop_evidence():
 
 
 def test_weak_stage2_requeue_preserves_mutator_priority_and_prefers_scalar_abi():
+
     def job(name, priority, parameter_types, ordinal):
         return {
             "job_id": f"job-{name}",
@@ -5556,10 +5699,9 @@ def test_weak_stage2_requeue_preserves_mutator_priority_and_prefers_scalar_abi()
         job("setAddr", 1, ["bytes32", "address"], 3),
         job("name", 2, ["bytes32"], 4),
     ]
-    result = rq1_veriput_run._requeue_weak_stage2_suffix(
-        jobs, 1, {
-            "bucket": "NO-WITNESS-UNDECIDED",
-        })
+    result = rq1_veriput_run._requeue_weak_stage2_suffix(jobs, 1, {
+        "bucket": "NO-WITNESS-UNDECIDED",
+    })
     got = [row["unit"] for row in jobs]
     bad = 0
     bad += check(got == ["failed", "setAddr", "setText", "owner", "name"],
@@ -5761,15 +5903,24 @@ def test_persistence_failure_withholds_validity_from_publication():
         "valid_put_with_R2": 0,
         "valid_put_with_R1_or_R2": 1,
         "valid_put_without_R1R2": 0,
-        "valid_tests": [{"kind": "put"}, {"kind": "concrete"}],
-        "valid_artifacts": [{"kind": "put"}, {"kind": "concrete"}],
+        "valid_tests": [{
+            "kind": "put"
+        }, {
+            "kind": "concrete"
+        }],
+        "valid_artifacts": [{
+            "kind": "put"
+        }, {
+            "kind": "concrete"
+        }],
     }
     quarantined = rq1_veriput_run.quarantine_unpersisted_validity(summary, reason)
-    bad += check(quarantined["valid"] == 0 and not quarantined["valid_tests"]
-                 and len(quarantined["unpublished_valid_tests"]) == 2
-                 and quarantined["quality_bucket"] == "no-valid"
-                 and quarantined["status"] == "persistence-error",
-                 "failed persistence retains evidence without publishing validity")
+    bad += check(
+        quarantined["valid"] == 0 and not quarantined["valid_tests"]
+        and len(quarantined["unpublished_valid_tests"]) == 2
+        and quarantined["quality_bucket"] == "no-valid"
+        and quarantined["status"] == "persistence-error",
+        "failed persistence retains evidence without publishing validity")
     return bad
 
 
@@ -5820,7 +5971,8 @@ def main():
         test_no_unit_deploy_fallback_uses_prepared_source_fallback,
         test_no_unit_constructor_revert_fallback_is_behavioral_valid,
         test_constructor_arg_repair_deploy_is_still_smoke_only,
-        test_no_unit_getter_fallback_selects_only_fresh_zero_arg_getters,
+        test_no_unit_getter_fallback_selects_only_fresh_zero_arg_getters_without_filter,
+        test_no_unit_getter_fallback_selects_filtered_parameterized_getter,
         test_abi_value_gate_cert_row_requires_nonpayable_entry,
         test_no_unit_getter_fallback_rejects_non_no_unit_schedule,
         test_ownable_owner_stage2_fixture_uses_esbmc_store_name,

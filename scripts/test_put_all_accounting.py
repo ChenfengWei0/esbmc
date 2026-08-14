@@ -46,6 +46,71 @@ def main():
     bad = check("forge-relative-suite-path-is-not-relativized-twice",
                 put_all.project_rel_file("/tmp/Project", "test/Probe.t.sol"),
                 "test/Probe.t.sol")
+    witness_record = {
+        "pins": {"msg.sender": 7},
+        "partial_witness_journal": {
+            "paths": [{
+                "path_id": "3",
+                "path_function": "sol:@C@Oracle@F@decimals#480",
+                "witness_count": 1,
+                "ce": {"x": "2", "msg.sender": "7", "return": "0"},
+            }],
+        },
+    }
+    certified_detail = {
+        "box": [{"name": "x", "lo": "0", "hi": "4", "holes": []}],
+        "ce": {"x": "2", "msg.sender": "7"},
+    }
+    bad += check("exact-stage2-path-supplies-return-witness",
+                 put_all.stage2_witness_return(
+                     witness_record, 3,
+                     "sol:@C@Oracle@F@decimals#480", certified_detail), "0")
+    bad += check("different-path-function-cannot-supply-return-witness",
+                 put_all.stage2_witness_return(
+                     witness_record, 3,
+                     "sol:@C@Other@F@decimals#480", certified_detail), None)
+    conflicting_witness_record = json.loads(json.dumps(witness_record))
+    conflicting_witness_record["partial_witness_journal"]["paths"].append({
+        "path_id": 3,
+        "path_function": "sol:@C@Oracle@F@decimals#480",
+        "witness_count": 1,
+        "ce": {"x": "2", "msg.sender": "7", "return": "1"},
+    })
+    bad += check("conflicting-stage2-returns-fail-closed",
+                 put_all.stage2_witness_return(
+                     conflicting_witness_record, 3,
+                     "sol:@C@Oracle@F@decimals#480", certified_detail), None)
+    mismatched_witness_record = json.loads(json.dumps(witness_record))
+    mismatched_witness_record["partial_witness_journal"]["paths"][0]["ce"]["x"] = "3"
+    bad += check("different-piece-point-cannot-supply-return-witness",
+                 put_all.stage2_witness_return(
+                     mismatched_witness_record, 3,
+                     "sol:@C@Oracle@F@decimals#480", certified_detail), None)
+    unwitnessed_record = json.loads(json.dumps(witness_record))
+    unwitnessed_record["partial_witness_journal"]["paths"][0]["witness_count"] = 0
+    bad += check("zero-count-path-cannot-supply-return-witness",
+                 put_all.stage2_witness_return(
+                     unwitnessed_record, 3,
+                     "sol:@C@Oracle@F@decimals#480", certified_detail), None)
+    holed_detail = json.loads(json.dumps(certified_detail))
+    holed_detail["box"][0]["holes"] = ["2"]
+    bad += check("witness-in-certified-hole-is-rejected",
+                 put_all.stage2_witness_return(
+                     witness_record, 3,
+                     "sol:@C@Oracle@F@decimals#480", holed_detail), None)
+    unknown_coord_record = json.loads(json.dumps(witness_record))
+    unknown_coord_record["partial_witness_journal"]["paths"][0]["ce"][
+        "unowned.input"] = "9"
+    bad += check("unowned-witness-coordinate-is-rejected",
+                 put_all.stage2_witness_return(
+                     unknown_coord_record, 3,
+                     "sol:@C@Oracle@F@decimals#480", certified_detail), None)
+    missing_piece_coord_record = json.loads(json.dumps(witness_record))
+    del missing_piece_coord_record["partial_witness_journal"]["paths"][0]["ce"]["x"]
+    bad += check("missing-piece-coordinate-is-rejected",
+                 put_all.stage2_witness_return(
+                     missing_piece_coord_record, 3,
+                     "sol:@C@Oracle@F@decimals#480", certified_detail), None)
     bad += check("forge-absolute-suite-path-is-project-relative",
                  put_all.project_rel_file(
                      "/tmp/Project", "/tmp/Project/test/Probe.t.sol"),

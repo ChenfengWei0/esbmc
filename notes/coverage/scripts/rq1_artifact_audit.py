@@ -79,16 +79,32 @@ def _detailed_test_rows(result: dict) -> list[dict]:
     return list(deduped.values())
 
 
+def _test_oracle_classes(test: dict) -> set[str]:
+    classes: set[str] = set()
+    for key in ("oracle_classes", "oracle_tags"):
+        value = test.get(key)
+        if isinstance(value, list):
+            classes.update(str(item) for item in value)
+    combo = test.get("oracle_combo_tag")
+    if isinstance(combo, str):
+        classes.update(part.strip() for part in combo.split("+") if part.strip())
+    for oracle in test.get("assertion_oracles") or []:
+        if not isinstance(oracle, dict):
+            continue
+        classes.update(str(item) for item in oracle.get("classes") or [])
+    return classes
+
+
 def metric_counts(result: dict) -> dict:
     detailed = _detailed_test_rows(result)
     if detailed:
         valid = [test for test in detailed if _valid_reference_test(test)]
         valid_puts = [test for test in valid if test.get("kind") == "put"]
-        with_r1 = [test for test in valid_puts if "R1" in (test.get("oracle_classes") or [])]
-        with_r2 = [test for test in valid_puts if "R2" in (test.get("oracle_classes") or [])]
+        with_r1 = [test for test in valid_puts if "R1" in _test_oracle_classes(test)]
+        with_r2 = [test for test in valid_puts if "R2" in _test_oracle_classes(test)]
         with_r1r2 = [
             test for test in valid_puts
-            if {"R1", "R2"} & set(test.get("oracle_classes") or [])
+            if {"R1", "R2"} & _test_oracle_classes(test)
         ]
         return {
             "raw": len(detailed),
@@ -168,12 +184,14 @@ def subject_dirs(root: Path) -> list[Path]:
     return sorted(path.parent for path in root.glob("*/subjects/*/result.json"))
 
 
-def choose_canonical(root: Path) -> dict[tuple[str, str], dict]:
+def choose_canonical(root: Path, evidence_scope: str = "canonical-current") -> dict[tuple[str, str], dict]:
     chosen: dict[tuple[str, str], dict] = {}
     for subject_dir in subject_dirs(root):
         bench = subject_dir.parent.parent.name
         subject = subject_dir.name
         canonical, historical = canonical_subject(subject)
+        if evidence_scope == "canonical-current" and historical:
+            continue
         result = read_json(subject_dir / "result.json")
         counts = metric_counts(result)
         score = (
@@ -250,7 +268,8 @@ def adoption_summary(item: dict, row: dict) -> dict:
 
 
 def audit(args: argparse.Namespace) -> dict:
-    chosen = choose_canonical(args.results_root)
+    evidence_scope = getattr(args, "evidence_scope", "canonical-current")
+    chosen = choose_canonical(args.results_root, evidence_scope)
     rows = []
     by_dataset: dict[str, list[dict]] = {}
     mismatches = []
@@ -318,10 +337,76 @@ def audit(args: argparse.Namespace) -> dict:
             "put_no_r1r2": sum(1 for row in bench_rows
                                if row["put_valid"] and not row["r1r2"]),
         }
+    case_counts = {
+        "inventory_cases": len(rows),
+        "valid_cases": sum(row["valid"] for row in rows),
+        "no_valid_cases": sum(1 for row in rows if not row["valid"]),
+        "valid_no_put_cases": sum(
+            1 for row in rows if row["valid"] and not row["put_valid"]),
+        "put_no_r1r2_cases": sum(
+            1 for row in rows if row["put_valid"] and not row["r1r2"]),
+        "put_with_r1r2_cases": sum(row["r1r2"] for row in rows),
+    }
+    artifact_counts = {
+        "valid_artifacts": sum(row["valid_count"] for row in rows),
+        "valid_put_artifacts": sum(row["put_valid_count"] for row in rows),
+        "valid_put_with_r1r2_artifacts": sum(row["r1r2_count"] for row in rows),
+    }
+    artifact_counts["valid_concrete_artifacts"] = (
+        artifact_counts["valid_artifacts"] - artifact_counts["valid_put_artifacts"])
+    consistency_checks = {
+        "case_inventory_partition": (
+            case_counts["inventory_cases"] == case_counts["valid_cases"] +
+            case_counts["no_valid_cases"]),
+        "valid_case_bucket_partition": (
+            case_counts["valid_cases"] == case_counts["valid_no_put_cases"] +
+            case_counts["put_no_r1r2_cases"] +
+            case_counts["put_with_r1r2_cases"]),
+        "valid_artifact_partition": (
+            artifact_counts["valid_artifacts"] ==
+            artifact_counts["valid_put_artifacts"] +
+            artifact_counts["valid_concrete_artifacts"]),
+    }
     return {
         "schema": "veriput-rq1-artifact-audit/v1",
         "results_root": str(args.results_root),
+        "evidence_scope": evidence_scope,
         "rewritten": bool(args.rewrite),
+        "case_counts": case_counts,
+        "artifact_counts": artifact_counts,
+        "definitions": {
+            "case_counts": {
+                "grain": "target case (one of 509 canonical RQ1 targets)",
+                "scope": (
+                    "Current canonical subject directories only." if evidence_scope ==
+                    "canonical-current" else
+                    "Strongest canonical or retained historical result selected per target."),
+                "valid_no_put_cases": (
+                    "Valid cases with zero valid PUT artifacts. This is a case count, "
+                    "not a concrete replay count."),
+                "put_no_r1r2_cases": (
+                    "Cases with at least one valid PUT but no valid PUT carrying R1 or R2."),
+                "put_with_r1r2_cases": (
+                    "Cases with at least one valid PUT carrying R1 or R2."),
+                "partition": (
+                    "valid_no_put_cases, put_no_r1r2_cases, and put_with_r1r2_cases "
+                    "are mutually exclusive and partition valid_cases."),
+            },
+            "artifact_counts": {
+                "grain": "deduplicated valid artifact row, not target case",
+                "scope": (
+                    "Artifact rows from current canonical subject directories." if
+                    evidence_scope == "canonical-current" else
+                    "Artifact rows belonging to the strongest historical result selected by "
+                    "this audit; do not combine with canonical-strict counts."),
+                "valid_put_artifacts": "Valid parameterized PUT artifact rows.",
+                "valid_concrete_artifacts": "Valid fixed-input concrete artifact rows.",
+                "note": (
+                    "This audit does not infer replay generalization. Use the concrete "
+                    "replay migration report for exact PUT-to-basis pairing."),
+            },
+        },
+        "consistency_checks": consistency_checks,
         "total": len(rows),
         "valid": sum(row["valid"] for row in rows),
         "put": sum(row["put_valid"] for row in rows),
@@ -343,14 +428,24 @@ def main() -> int:
     parser.add_argument("--out", type=Path,
                         default=Path("notes/coverage/rq1_artifact_audit.json"))
     parser.add_argument("--rewrite", action="store_true")
+    parser.add_argument("--evidence-scope",
+                        choices=("canonical-current", "historical-best"),
+                        default="canonical-current")
     args = parser.parse_args()
     doc = audit(args)
     atomic_write_json(args.out, doc)
     print(json.dumps({
-        key: doc[key]
-        for key in ("total", "valid", "put", "r1r2", "no_valid",
-                    "valid_no_put", "put_no_r1r2",
-                    "adoption_mismatch_count", "rewritten")
+        "case_counts": doc["case_counts"],
+        "artifact_counts": doc["artifact_counts"],
+        "definitions": doc["definitions"],
+        "consistency_checks": doc["consistency_checks"],
+        "compatibility_aliases": {
+            key: doc[key]
+            for key in ("total", "valid", "put", "r1r2", "no_valid",
+                        "valid_no_put", "put_no_r1r2")
+        },
+        "adoption_mismatch_count": doc["adoption_mismatch_count"],
+        "rewritten": doc["rewritten"],
     }, indent=2, sort_keys=True))
     print(json.dumps(doc["by_benchmark"], indent=2, sort_keys=True))
     return 0

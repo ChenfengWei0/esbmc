@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -15,11 +16,13 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from rq1_artifact_audit import canonical_subject
 from rq1_case_batch import (
     _detailed_test_rows as strict_detailed_test_rows,
     _is_valid_reference_test as strict_valid_reference_test,
     result_numbers as strict_result_numbers,
 )
+from rq1_concrete_replay_store import load_manifest
 
 DATASETS = ("peer182", "bugfix124", "real203")
 QUALITY_RANK = {
@@ -198,10 +201,133 @@ def canonical_candidates(canonical_root: Path,
     return result
 
 
+def _single_option(command: list[str], option: str) -> str | None:
+    positions = [index for index, value in enumerate(command) if value == option]
+    if len(positions) != 1 or positions[0] + 1 >= len(command):
+        return None
+    value = command[positions[0] + 1]
+    return value if value and not value.startswith("--") else None
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _manifest_replay(subject_dir: Path, entry: dict) -> dict | None:
+    project_value = str(entry.get("project") or "")
+    test_value = str(entry.get("test_file") or "")
+    command = entry.get("forge_command")
+    if (not project_value or not test_value or Path(project_value).is_absolute()
+            or Path(test_value).is_absolute() or not isinstance(command, list)
+            or not all(isinstance(value, str) for value in command)):
+        return None
+    project = (subject_dir / project_value).resolve()
+    test_file = (project / test_value).resolve()
+    try:
+        project.relative_to((subject_dir / "concrete-replays").resolve())
+        test_file.relative_to(project)
+    except ValueError:
+        return None
+    flat_value = str(entry.get("flat_source") or "")
+    flat_file = (project / flat_value).resolve()
+    try:
+        flat_file.relative_to(project)
+    except ValueError:
+        return None
+    if (not (project / "foundry.toml").is_file() or not test_file.is_file()
+            or not flat_value or not flat_file.is_file()
+            or not (project / "lib" / "forge-std" / "src" / "Test.sol").is_file()
+            or entry.get("test_sha256") != _sha256(test_file)
+            or entry.get("flat_sha256") != _sha256(flat_file)):
+        return None
+    if len(command) < 2 or Path(command[0]).name != "forge" or command[1] != "test":
+        return None
+    match_path = _single_option(command, "--match-path")
+    match_test = _single_option(command, "--match-test")
+    test_name = str(entry.get("test") or "")
+    expected_match_test = f"^{re.escape(test_name)}\\("
+    if (match_path != test_value or not test_name
+            or match_test != expected_match_test):
+        return None
+    if len(command) != 6 or set(command[2::2]) != {"--match-path", "--match-test"}:
+        return None
+    return {
+        "unit": str((entry.get("origin") or {}).get("unit") or "__deploy__"),
+        "validation_mode": "manifest-replay",
+        "replay_id": str(entry.get("replay_id") or ""),
+        "replay_file": str(test_file),
+        "replay_test": test_name,
+        "forge_root": str(project),
+        "forge_command": command,
+    }
+
+
+def manifest_replay_candidates(canonical_root: Path) -> dict[str, list[dict]]:
+    """Discover only self-contained exact replays from canonical subjects."""
+    result = {f"{dataset}:{quality_class}": []
+              for dataset in DATASETS for quality_class in QUALITY_CLASSES}
+    for dataset in DATASETS:
+        subject_root = canonical_root / dataset / "subjects"
+        for result_path in sorted(subject_root.glob("*/result.json")):
+            subject_id, historical = canonical_subject(result_path.parent.name)
+            if historical or subject_id != result_path.parent.name:
+                continue
+            subject_dir = result_path.parent
+            old_quality = quality(load_json(result_path))
+            quality_rank = QUALITY_RANK.get(old_quality, 0)
+            if quality_rank < 1:
+                continue
+            quality_class = "put" if quality_rank >= 2 else "concrete"
+            manifest = load_manifest(subject_dir)
+            for entry in manifest.get("entries") or []:
+                if (not isinstance(entry, dict)
+                        or entry.get("valid_reference_test") is not True
+                        or entry.get("forge_status") != "Success"):
+                    continue
+                detail = _manifest_replay(subject_dir, entry)
+                if detail is None:
+                    continue
+                result[f"{dataset}:{quality_class}"].append({
+                    "dataset": dataset,
+                    "subject_id": subject_id,
+                    "old_quality": old_quality,
+                    "old_result": str(result_path),
+                    "historical_generation_wall_s": generation_wall(
+                        load_json(result_path)),
+                    "quality_class": quality_class,
+                    "pool_key": f"{dataset}:{quality_class}",
+                    **detail,
+                })
+    return result
+
+
 def pool_lanes(pools: dict[str, list[dict]]) -> list[str]:
     return [f"{dataset}:{quality_class}" for dataset in DATASETS
             for quality_class in QUALITY_CLASSES
             if pools.get(f"{dataset}:{quality_class}")]
+
+
+def current_replay_retry(retry_sample: dict | None,
+                         pools: dict[str, list[dict]]) -> dict | None:
+    if retry_sample is None:
+        return None
+    retry_key = (str(retry_sample.get("dataset") or ""),
+                 str(retry_sample.get("subject_id") or ""),
+                 str(retry_sample.get("replay_id") or ""))
+    current_replays = {
+        (item["dataset"], item["subject_id"], item["replay_id"]): item
+        for pool in pools.values() for item in pool
+    }
+    current = current_replays.get(retry_key)
+    if current is None:
+        return None
+    rebound = dict(current)
+    rebound["retry_of_sequence"] = retry_sample.get("retry_of_sequence")
+    return rebound
 
 
 def history_pool_key(row: dict) -> str:
@@ -237,8 +363,14 @@ def build_replay_command(args, sample: dict, run_root: Path) -> list[str]:
     root = Path(sample["forge_root"])
     test_file = Path(sample["replay_file"])
     relative = test_file.relative_to(root)
-    return [str(args.forge), "test", "--root", str(root),
-            "--match-path", str(relative), "--fuzz-runs", "1", "--no-cache",
+    retained = sample.get("forge_command")
+    if retained is not None:
+        retained = list(retained)
+        command = [str(args.forge), *retained[1:], "--root", str(root)]
+    else:
+        command = [str(args.forge), "test", "--root", str(root),
+                   "--match-path", str(relative)]
+    return [*command, "--fuzz-runs", "1", "--no-cache",
             "--out", str(run_root / "forge-out"),
             "--cache-path", str(run_root / "forge-cache")]
 
@@ -390,7 +522,8 @@ def reconcile_history(rows: list[dict], alerts: Path,
             if evidence:
                 infra = True
                 reasons = evidence
-        replay_mode = row.get("validation_mode") in ("put-replay", "concrete-replay")
+        replay_mode = row.get("validation_mode") in (
+            "put-replay", "concrete-replay", "manifest-replay")
         replay_tests_passed = forge_replay_passed_count(log_path) if replay_mode else None
         if replay_mode:
             row["replay_tests_passed"] = replay_tests_passed
@@ -422,6 +555,14 @@ def reconcile_history(rows: list[dict], alerts: Path,
                 "quality_regressed": False,
                 "regressed": False,
             })
+        elif infra:
+            row.update({
+                "classification": "infrastructure-error",
+                "infrastructure_error": True,
+                "infrastructure_reasons": sorted(set(reasons)),
+                "quality_regressed": False,
+                "regressed": False,
+            })
         elif replay_invalid:
             row.update({
                 "classification": "regression",
@@ -431,14 +572,6 @@ def reconcile_history(rows: list[dict], alerts: Path,
                 "regressed": True,
                 "rerun_failure_reason":
                 "retained Forge replay did not execute at least one passing test",
-            })
-        elif infra:
-            row.update({
-                "classification": "infrastructure-error",
-                "infrastructure_error": True,
-                "infrastructure_reasons": sorted(set(reasons)),
-                "quality_regressed": False,
-                "regressed": False,
             })
         elif row.get("regressed"):
             row["classification"] = "regression"
@@ -459,7 +592,8 @@ def reconcile_history(rows: list[dict], alerts: Path,
                 key: row[key]
                 for key in ("dataset", "subject_id", "unit", "old_quality", "old_result",
                             "historical_generation_wall_s", "quality_class", "pool_key",
-                            "validation_mode", "replay_file", "replay_test", "forge_root")
+                            "validation_mode", "replay_file", "replay_test", "forge_root",
+                            "forge_command", "replay_id")
                 if key in row
             }
             pending["retry_of_sequence"] = sequence
@@ -491,15 +625,19 @@ def main() -> int:
                         help=argparse.SUPPRESS)
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--run-root", type=Path, required=True)
-    parser.add_argument("--runner", type=Path, required=True)
-    parser.add_argument("--esbmc", type=Path, required=True)
+    parser.add_argument("--runner", type=Path)
+    parser.add_argument("--esbmc", type=Path)
     parser.add_argument("--forge", type=Path, default=shutil.which("forge"))
     parser.add_argument("--case-timeout", type=int, default=120)
     parser.add_argument("--sleep", type=int, default=5)
     parser.add_argument("--memlimit-gib", type=int, default=6)
     parser.add_argument("--binary-stable-s", type=float, default=10.0)
     parser.add_argument("--candidate-refresh-s", type=float, default=30.0)
+    parser.add_argument("--replay-only", action="store_true",
+                        help="sample exact canonical manifest replays only")
     args = parser.parse_args()
+    if not args.replay_only and (args.runner is None or args.esbmc is None):
+        parser.error("--runner and --esbmc are required outside --replay-only")
 
     args.state_root.mkdir(parents=True, exist_ok=True)
     args.run_root.mkdir(parents=True, exist_ok=True)
@@ -510,7 +648,8 @@ def main() -> int:
     runner_generation = args.state_root / "runner-generation-regressions.jsonl"
     resolutions = args.state_root / "resolutions.jsonl"
     state_path = args.state_root / "state.json"
-    pools = canonical_candidates(args.canonical_root, args.case_state)
+    pools = (manifest_replay_candidates(args.canonical_root) if args.replay_only
+             else canonical_candidates(args.canonical_root, args.case_state))
     lanes = pool_lanes(pools)
     if not lanes:
         raise SystemExit("no canonical valid regression candidates")
@@ -523,6 +662,8 @@ def main() -> int:
     history, retry_sample = reconcile_history(
         load_history(journal), alerts, infrastructure, eligible_subjects,
         load_history(resolutions))
+    if args.replay_only and retry_sample is not None:
+        retry_sample = current_replay_retry(retry_sample, pools)
     write_jsonl(journal, history)
     write_jsonl(contamination,
                 [row for row in history if row.get("ledger_contamination")])
@@ -542,7 +683,9 @@ def main() -> int:
         nonlocal pools, lanes, candidates_refreshed_at
         if time.monotonic() - candidates_refreshed_at < args.candidate_refresh_s:
             return
-        refreshed = canonical_candidates(args.canonical_root, args.case_state)
+        refreshed = (manifest_replay_candidates(args.canonical_root)
+                     if args.replay_only else
+                     canonical_candidates(args.canonical_root, args.case_state))
         refreshed_lanes = pool_lanes(refreshed)
         if refreshed_lanes:
             pools = refreshed
@@ -585,9 +728,11 @@ def main() -> int:
             sample = dict(pool[position])
         dataset = sample["dataset"]
         runner_mode = sample.get("validation_mode", "runner") == "runner"
+        if args.replay_only and runner_mode:
+            raise RuntimeError("replay-only monitor selected a runner candidate")
         binary_before = (wait_for_stable_binary(args.esbmc, args.binary_stable_s, 1.0,
                                                 waiting_heartbeat)
-                         if runner_mode else binary_identity(args.esbmc))
+                         if runner_mode else None)
         sequence += 1
         run_id = f"{sequence:06d}-{dataset}-{sample['subject_id']}"
         run_root = args.run_root / run_id
@@ -652,7 +797,7 @@ def main() -> int:
             result_path.parent.mkdir(parents=True, exist_ok=True)
             result_path.write_text(json.dumps(rerun_doc, indent=2, sort_keys=True) + "\n")
         rerun_row = rerun_doc.get("row") or {}
-        binary_after = binary_identity(args.esbmc)
+        binary_after = binary_identity(args.esbmc) if runner_mode else None
         infrastructure_error, infrastructure_reasons = classify_infrastructure(
             result_path, log_path, binary_before, binary_after,
             check_binary=runner_mode)

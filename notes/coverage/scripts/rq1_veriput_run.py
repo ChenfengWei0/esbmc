@@ -44,11 +44,9 @@ from rq1_concrete_replay_store import (  # noqa: E402
     invalidation_applies, persist_concrete_replay, persistence_coverage,
 )
 from solidity_path_put import (  # noqa: E402
-    _constructor_body_text, _constructor_initializer_calls,
-    _mask_solidity_comments_and_strings, _norm_ty,
-    _source_constructor_params_from_source, _source_contract_chunk,
-    _source_function_decl_infos, _source_inheritance_names,
-    _source_type_default_expr,
+    _constructor_body_text, _constructor_initializer_calls, _mask_solidity_comments_and_strings,
+    _norm_ty, _source_constructor_params_from_source, _source_contract_chunk,
+    _source_function_decl_infos, _source_inheritance_names, _source_type_default_expr,
 )
 from solidity_ast_dependencies import (  # noqa: E402
     contract_state_esbmc_store_names, unit_state_dependencies,
@@ -161,10 +159,17 @@ def _is_under(path: Path, root: Path) -> bool:
         return False
 
 
-def validate_roots(veriput_root: Path, result_root: Path, ast_cache_root: Path) -> None:
-    allowed_result = veriput_root / "Results" / "RQ1" / "VeriPUT"
-    if not _is_under(result_root, allowed_result):
-        raise RQ1RunError(f"--result-root must be under {allowed_result}; got {result_root}")
+def validate_roots(veriput_root: Path,
+                   result_root: Path,
+                   ast_cache_root: Path,
+                   *,
+                   concrete_replay_only_ablation: bool = False) -> None:
+    allowed_results = [veriput_root / "Results" / "RQ1" / "VeriPUT"]
+    if concrete_replay_only_ablation:
+        allowed_results.append(veriput_root / "Results" / "RQ3" / "VeriExploit" / "No_Cer_Reg")
+    if not any(_is_under(result_root, allowed) for allowed in allowed_results):
+        allowed_text = ", ".join(str(path) for path in allowed_results)
+        raise RQ1RunError(f"--result-root must be under one of {allowed_text}; got {result_root}")
     for protected in (veriput_root / "Datasets", veriput_root / "Results"):
         if _is_under(ast_cache_root, protected):
             raise RQ1RunError(
@@ -473,9 +478,8 @@ def _latest_rows(path: Path) -> dict[str, dict]:
             continue
         subject_id = row.get("subject_id")
         if subject_id:
-            key = _run_key(
-                str(subject_id),
-                ce_collection_only=path.name == "ce-collection-results.jsonl")
+            key = _run_key(str(subject_id),
+                           ce_collection_only=path.name == "ce-collection-results.jsonl")
         else:
             key = row.get("key")
         if key:
@@ -533,9 +537,10 @@ def _load_subject_result_row(case_dir: Path) -> dict | None:
     certification = doc.get("certification") if isinstance(doc, dict) else None
     if isinstance(certification, dict):
         _merge_certification_summary_fields(row, certification)
-    _merge_certification_summary_fields(
-        row, summarize_certification(case_dir / "cert" / "certify-results.jsonl"),
-        authoritative=True)
+    cert_sidecar = case_dir / "cert" / "certify-results.jsonl"
+    if cert_sidecar.is_file():
+        _merge_certification_summary_fields(
+            row, summarize_certification(cert_sidecar), authoritative=True)
     row = _normalize_result_row(row)
     row["artifact_root"] = str(case_dir)
     row["result_json"] = str(path)
@@ -545,8 +550,10 @@ def _load_subject_result_row(case_dir: Path) -> dict | None:
     return row
 
 
-def _merge_certification_summary_fields(row: dict, cert_summary: dict | None,
-                                        *, authoritative: bool = False) -> dict:
+def _merge_certification_summary_fields(row: dict,
+                                        cert_summary: dict | None,
+                                        *,
+                                        authoritative: bool = False) -> dict:
     if not isinstance(cert_summary, dict):
         return row
     mapping = {
@@ -637,13 +644,13 @@ def _merge_put_summary_into_row(row: dict, case_dir: Path) -> dict:
     return _annotate_result_accounting(row)
 
 
-def persist_case_concrete_replays(case_dir: Path, put_summary: dict,
+def persist_case_concrete_replays(case_dir: Path,
+                                  put_summary: dict,
                                   case_key: str | None = None) -> dict:
     """Adopt every green concrete test before a valid result is published."""
-    valid_tests = [test for test in put_summary.get("valid_tests") or []
-                   if isinstance(test, dict)]
+    valid_tests = [test for test in put_summary.get("valid_tests") or [] if isinstance(test, dict)]
     if case_key and invalidation_applies(case_key, valid_tests):
-        coverage = persistence_coverage([], [])
+        coverage = persistence_coverage([], [], case_dir)
         coverage.update({
             "invalidated_evidence": True,
             "invalidated_case": case_key,
@@ -664,14 +671,14 @@ def persist_case_concrete_replays(case_dir: Path, put_summary: dict,
                 "reason": str(exc),
             })
     try:
-        generalization = annotate_generalization(
-            case_dir, put_summary.get("valid_tests") or [])
+        generalization = annotate_generalization(case_dir, put_summary.get("valid_tests") or [])
     except ReplayPersistenceError as exc:
         errors.append({"reason": str(exc), "stage": "generalization-annotation"})
         generalization = {}
     manifest = load_manifest(case_dir)
     coverage = persistence_coverage(
-        put_summary.get("valid_tests") or [], manifest.get("entries") or [])
+        put_summary.get("valid_tests") or [],
+        manifest.get("entries") or [], case_dir)
     coverage["manifest"] = str(case_dir / "concrete-replays" / "manifest.json")
     coverage["manifest_errors"] = audit_manifest(case_dir, manifest)
     coverage["persistence_errors"] = errors
@@ -703,8 +710,7 @@ def persistence_publication_failure(coverage: dict) -> str | None:
 def quarantine_unpersisted_validity(put_summary: dict, reason: str) -> dict:
     """Keep raw evidence while withholding validity from the published row."""
     summary = dict(put_summary)
-    withheld = [dict(row) for row in summary.get("valid_tests") or []
-                if isinstance(row, dict)]
+    withheld = [dict(row) for row in summary.get("valid_tests") or [] if isinstance(row, dict)]
     summary["unpublished_valid_tests"] = withheld
     summary["persistence_failure_reason"] = reason
     summary["valid_tests"] = []
@@ -904,8 +910,7 @@ def _row_needs_normalized_adoption(current: dict | None, candidate: dict) -> boo
             return True
     candidate_replay = candidate.get("concrete_replay_persistence") or {}
     current_replay = current.get("concrete_replay_persistence") or {}
-    if (candidate_replay.get("complete") and
-            candidate_replay != current_replay):
+    if (candidate_replay.get("complete") and candidate_replay != current_replay):
         return True
     for key in (
             "stage4_generation_wall_s",
@@ -1017,8 +1022,7 @@ def _normalised_certify_argv(argv: list) -> list[str]:
 
 
 def _schedule_identity(schedule: dict) -> dict:
-    source = schedule.get("source") if isinstance(schedule.get("source"),
-                                                  dict) else {}
+    source = schedule.get("source") if isinstance(schedule.get("source"), dict) else {}
     runtime = schedule.get("rq1_stage2_runtime_policy")
     if not isinstance(runtime, dict):
         runtime = {}
@@ -1027,44 +1031,40 @@ def _schedule_identity(schedule: dict) -> dict:
         budget = {}
     return {
         "schema":
-            schedule.get("schema"),
+        schedule.get("schema"),
         "recipe_version":
-            schedule.get("recipe_version"),
+        schedule.get("recipe_version"),
         "selection_strategy":
-            schedule.get("selection_strategy"),
+        schedule.get("selection_strategy"),
         "shard":
-            schedule.get("shard"),
+        schedule.get("shard"),
         "limit":
-            schedule.get("limit"),
-        "source":
-            {
-                key: source.get(key)
-                for key in ("schema", "benchmark", "generate_ast",
-                            "target_manifest")
-            },
-        "runtime":
-            {
-                key: runtime.get(key)
-                for key in (
-                    "stage2_unit_timeout_cap_s",
-                    "adaptive_stage2_unit_timeout_cap_s",
-                    "stage2_stage4_reserve_s",
-                    "stage4_reserve_boundary_enforced",
-                    "bounded_holds_retry",
-                    "bounded_holds_retry_max_tx",
-                    "bounded_holds_retry_unwind",
-                    "bounded_holds_retry_max_initial_wall_s",
-                )
-            },
-        "budget":
-            {
-                key: budget.get(key)
-                for key in ("timeout_s", "run_timeout_s", "memlimit_gib")
-            },
+        schedule.get("limit"),
+        "source": {
+            key: source.get(key)
+            for key in ("schema", "benchmark", "generate_ast", "target_manifest")
+        },
+        "runtime": {
+            key: runtime.get(key)
+            for key in (
+                "stage2_unit_timeout_cap_s",
+                "adaptive_stage2_unit_timeout_cap_s",
+                "stage2_stage4_reserve_s",
+                "stage4_reserve_boundary_enforced",
+                "bounded_holds_retry",
+                "bounded_holds_retry_max_tx",
+                "bounded_holds_retry_unwind",
+                "bounded_holds_retry_max_initial_wall_s",
+            )
+        },
+        "budget": {
+            key: budget.get(key)
+            for key in ("timeout_s", "run_timeout_s", "memlimit_gib")
+        },
         "jobs":
-            sorted(_schedule_job_identity(job)
-                   for job in schedule.get("jobs") or []
-                   if isinstance(job, dict)),
+        sorted(
+            _schedule_job_identity(job) for job in schedule.get("jobs") or []
+            if isinstance(job, dict)),
     }
 
 
@@ -1073,8 +1073,7 @@ def _schedule_generated_ts(schedule: dict) -> float | None:
     if not isinstance(generated, str) or not generated:
         return None
     try:
-        return datetime.fromisoformat(generated.replace("Z",
-                                                        "+00:00")).timestamp()
+        return datetime.fromisoformat(generated.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return None
 
@@ -1241,8 +1240,7 @@ def _pipeline_code_identity_matches(stale: dict | None, current: dict | None) ->
         return False
     stale_files = stale_identity.get("files")
     current_files = current_identity.get("files")
-    return bool(isinstance(stale_files, dict) and stale_files
-                and stale_files == current_files)
+    return bool(isinstance(stale_files, dict) and stale_files and stale_files == current_files)
 
 
 def _stage4_toolchain_identity_matches(stale: dict | None, current: dict | None) -> bool:
@@ -1291,8 +1289,8 @@ def _forge_json_has_successful_test(data, test_name: str, expected_path: str) ->
             for key, child in value.items():
                 key_s = str(key)
                 child_path_matches = path_matches or expected_norm in key_s.replace("\\", "/")
-                if ((key_s == test_name or key_s.startswith(f"{test_name}("))
-                        and child_path_matches and success(child)):
+                if ((key_s == test_name or key_s.startswith(f"{test_name}(")) and child_path_matches
+                        and success(child)):
                     return True
                 if visit(child, child_path_matches):
                     return True
@@ -1333,8 +1331,8 @@ def _stale_valid_artifacts_replay_current_toolchain(row: dict | None) -> bool:
     for project, test_name, rel_path in tests:
         try:
             completed = subprocess.run([
-                "forge", "test", "--json", "--match-test",
-                f"^{re.escape(test_name)}\\(", "--match-path", rel_path
+                "forge", "test", "--json", "--match-test", f"^{re.escape(test_name)}\\(",
+                "--match-path", rel_path
             ],
                                        cwd=project,
                                        text=True,
@@ -1482,8 +1480,7 @@ def _schedule_source_not_newer_than(schedule: dict) -> bool:
     return True
 
 
-def _stale_schedule_identity_matches_current(old_dir: Path,
-                                             case_dir: Path) -> bool:
+def _stale_schedule_identity_matches_current(old_dir: Path, case_dir: Path) -> bool:
     old_schedule = _load_schedule(old_dir / "unit-schedule.json")
     current_schedule = _load_schedule(case_dir / "unit-schedule.json")
     if old_schedule is None or current_schedule is None:
@@ -1518,8 +1515,9 @@ def _zero_valid_row_is_authoritative(row: dict | None) -> bool:
             str(tag).startswith("path-coverage-partial-journal")
             for tag, count in diagnostics.items() if int(count or 0) > 0):
         return False
-    return bool(row.get("cert_jsonl") or row.get("cert_bucket_counts")
-                or row.get("completion_status") == "ok")
+    return bool(
+        row.get("cert_jsonl") or row.get("cert_bucket_counts")
+        or row.get("completion_status") == "ok")
 
 
 def _resource_degraded_zero_valid_row(row: dict | None) -> bool:
@@ -1527,9 +1525,9 @@ def _resource_degraded_zero_valid_row(row: dict | None) -> bool:
         return False
     if _zero_valid_row_is_authoritative(row):
         return False
-    return bool(row.get("cert_jsonl") or row.get("cert_bucket_counts")
-                or row.get("cert_timed_out_units") or row.get("cert_oom_units")
-                or row.get("driver_diagnostic_tags"))
+    return bool(
+        row.get("cert_jsonl") or row.get("cert_bucket_counts") or row.get("cert_timed_out_units")
+        or row.get("cert_oom_units") or row.get("driver_diagnostic_tags"))
 
 
 def _best_stale_artifact_row(target_row: dict, dataset_label: str, case_dir: Path,
@@ -1841,15 +1839,13 @@ def _no_unit_schedule_allows_deploy_fallback(schedule: dict) -> bool:
         target_contract = str(subject.get("contract") or target.get("contract") or "")
         skipped = row.get("skipped") if isinstance(row, dict) else []
         target_skipped = [
-            item for item in skipped or []
-            if isinstance(item, dict)
-            and (not target_contract or item.get("contract") == target_contract)
+            item for item in skipped or [] if isinstance(item, dict) and (
+                not target_contract or item.get("contract") == target_contract)
         ]
         if any(item.get("kind") in blocked_kinds for item in target_skipped):
             return False
         reason = str(row.get("reason") or "").lower() if isinstance(row, dict) else ""
-        if (not target_contract
-                and ("library" in reason or "not public/external" in reason)):
+        if (not target_contract and ("library" in reason or "not public/external" in reason)):
             return False
     return True
 
@@ -2007,11 +2003,10 @@ def _run_forge_json(project: Path, test_name: str,
     return status, timed_out, wall_s, (stdout or "") + (stderr or "")
 
 
-def _no_unit_deploy_test_source(
-        subject: PreparedSubject,
-        source: str,
-        constructor_args: list[str] | None = None,
-        test_suffix: str = "deploy_only") -> tuple[str | None, str | None]:
+def _no_unit_deploy_test_source(subject: PreparedSubject,
+                                source: str,
+                                constructor_args: list[str] | None = None,
+                                test_suffix: str = "deploy_only") -> tuple[str | None, str | None]:
     kind, is_abstract = _contract_decl_kind(source, subject.contract)
     if kind != "contract" or is_abstract:
         reason = "deploy-only fallback supports only concrete contract targets"
@@ -2369,7 +2364,13 @@ def _subject_with_unit(subject: PreparedSubject, unit: str) -> PreparedSubject:
     )
 
 
-def _no_unit_zero_arg_getters(schedule: dict) -> list[str]:
+def _no_unit_getter_unit_filter(schedule: dict) -> set[str]:
+    summary = schedule.get("summary") if isinstance(schedule.get("summary"), dict) else {}
+    return {str(unit) for unit in (summary.get("unit_filter") or []) if unit}
+
+
+def _no_unit_selected_getters(schedule: dict) -> list[str]:
+    unit_filter = _no_unit_getter_unit_filter(schedule)
     getters = []
     seen = set()
     for row in schedule.get("no_unit_rows") or []:
@@ -2380,9 +2381,14 @@ def _no_unit_zero_arg_getters(schedule: dict) -> list[str]:
                 continue
             if skipped.get("kind") != "public-state-getter":
                 continue
-            if int(skipped.get("parameter_count") or 0) != 0:
-                continue
             name = str(skipped.get("name") or "")
+            if not name:
+                continue
+            if unit_filter:
+                if name not in unit_filter:
+                    continue
+            elif int(skipped.get("parameter_count") or 0) != 0:
+                continue
             if name and name not in seen:
                 seen.add(name)
                 getters.append(name)
@@ -2394,13 +2400,11 @@ def _static_getter_cert_row(subject: PreparedSubject, getter: str, schedule: dic
     skipped_candidates = []
     for row in schedule.get("no_unit_rows") or []:
         for skipped in (row or {}).get("skipped") or []:
-            if (isinstance(skipped, dict)
-                    and skipped.get("kind") == "public-state-getter"
+            if (isinstance(skipped, dict) and skipped.get("kind") == "public-state-getter"
                     and skipped.get("name") == getter):
                 skipped_candidates.append(skipped)
-    reason = (
-        "public state getter is an ABI entry point but not a FunctionDefinition "
-        "focus target; Stage 2 statically certifies the getter-only no-coordinate slice")
+    reason = ("public state getter is an ABI entry point but not a FunctionDefinition "
+              "focus target; Stage 2 statically certifies the getter-only no-coordinate slice")
     detail = {
         "box": [],
         "ce": {},
@@ -2423,18 +2427,23 @@ def _static_getter_cert_row(subject: PreparedSubject, getter: str, schedule: dic
             "holes": [],
         }],
         "ce": {},
-        "certification_source": "structural-abi-gate-no-coordinate",
-        "depth": 0,
-        "enc": 1,
+        "certification_source":
+        "structural-abi-gate-no-coordinate",
+        "depth":
+        0,
+        "enc":
+        1,
         "established": [],
         "extcall_pins": {},
-        "piece": 1,
-        "reason": (
-            "public state getter is nonpayable; Solidity rejects any "
-            "call carrying nonzero msg.value before getter state is read"),
+        "piece":
+        1,
+        "reason": ("public state getter is nonpayable; Solidity rejects any "
+                   "call carrying nonzero msg.value before getter state is read"),
         "retreated": {},
-        "stage4_kind": "getter-value-gate",
-        "verdict": "CERTIFIED",
+        "stage4_kind":
+        "getter-value-gate",
+        "verdict":
+        "CERTIFIED",
     }
     return {
         "benchmark": getter_subject.benchmark_key,
@@ -2449,7 +2458,9 @@ def _static_getter_cert_row(subject: PreparedSubject, getter: str, schedule: dic
             "0": detail,
             "1": reject_detail,
         },
-        "pins": {"msg.value": "0"},
+        "pins": {
+            "msg.value": "0"
+        },
         "witnessed": 1,
         "synthetic_certified": True,
         "synthetic_stage2_kind": "getter-only",
@@ -2467,17 +2478,17 @@ def _is_nonpayable_abi_entry_job(job: dict) -> bool:
     info = job.get("unit_info") or {}
     visibility = info.get("visibility")
     mutability = info.get("state_mutability")
-    return bool(job.get("path_function") and visibility in ("public", "external")
-                and mutability in ("nonpayable", "view", "pure"))
+    return bool(
+        job.get("path_function") and visibility in ("public", "external")
+        and mutability in ("nonpayable", "view", "pure"))
 
 
 def _abi_value_gate_cert_row(subject: PreparedSubject, job: dict) -> dict:
     unit = str(job.get("unit") or "")
     gate_subject = _subject_with_unit(subject, unit)
     path_function = str(job.get("path_function") or "")
-    reason = (
-        "public/external nonpayable ABI entry rejects nonzero msg.value before "
-        "executing the function body")
+    reason = ("public/external nonpayable ABI entry rejects nonzero msg.value before "
+              "executing the function body")
     return {
         "benchmark": gate_subject.benchmark_key,
         "bucket": "CERTIFIED",
@@ -2540,11 +2551,11 @@ def emit_no_unit_getter_fallbacks(subject: PreparedSubject,
             "reason": f"could not enumerate subject getters: {exc}",
         }]
     enum_getters = {
-        str(row.get("name")) for row in enum.skipped
+        str(row.get("name"))
+        for row in enum.skipped
         if row.get("kind") == "public-state-getter"
-        and int(row.get("parameter_count") or 0) == 0
     }
-    getters = [name for name in _no_unit_zero_arg_getters(schedule) if name in enum_getters]
+    getters = [name for name in _no_unit_selected_getters(schedule) if name in enum_getters]
     for getter in getters:
         budget = max(1, int(remaining_s))
         if budget <= 0:
@@ -2659,8 +2670,8 @@ def emit_no_unit_deploy_fallback(subject: PreparedSubject,
             retry_source, retry_name = _library_link_test_source(test_source, subject, unit_name)
             stage4_kind = "library-link-only"
         else:
-            for repair_idx, repair_args in enumerate(
-                    _constructor_repair_arg_sets(subject, source), 1):
+            for repair_idx, repair_args in enumerate(_constructor_repair_arg_sets(subject, source),
+                                                     1):
                 repair_source, _repair_refusal = _no_unit_deploy_test_source(
                     subject,
                     source,
@@ -2767,17 +2778,24 @@ def emit_no_unit_deploy_fallback(subject: PreparedSubject,
         "deploy_smoke_success":
         deploy_smoke_success,
         "stats": {
-            "fuzz_params": 0,
+            "fuzz_params":
+            0,
             "lifted": [],
             "rendered_width": {},
             "wide_fuzz_coords": [],
             "dynamic_fuzz_coords": [],
-            "asserts": int(stage4_kind == "constructor-revert-only"),
-            "verifier_asserts": 0,
-            "state_asserts": 0,
-            "return_asserts": 0,
-            "exit_kind_asserts": int(stage4_kind == "constructor-revert-only"),
-            "guarded_asserts": 0,
+            "asserts":
+            int(stage4_kind == "constructor-revert-only"),
+            "verifier_asserts":
+            0,
+            "state_asserts":
+            0,
+            "return_asserts":
+            0,
+            "exit_kind_asserts":
+            int(stage4_kind == "constructor-revert-only"),
+            "guarded_asserts":
+            0,
             "oracle_classes": [],
             "oracle_class_counts": {},
             "oracle_class_combinations": [],
@@ -2791,12 +2809,11 @@ def emit_no_unit_deploy_fallback(subject: PreparedSubject,
                 "guarded": False,
             }] if stage4_kind == "constructor-revert-only" else []),
         },
-        "notes": ([
-            "source-grounded constructor replay is concrete, not a PUT"
-        ] if valid_reference_test else [
-            "deploy-only fallback is concrete, not a PUT, and carries no "
-            "verifier-backed oracle beyond Foundry deployment success"
-        ]),
+        "notes": (["source-grounded constructor replay is concrete, not a PUT"]
+                  if valid_reference_test else [
+                      "deploy-only fallback is concrete, not a PUT, and carries no "
+                      "verifier-backed oracle beyond Foundry deployment success"
+                  ]),
     }
     (wd / "put.json").write_text(json.dumps(put_json, indent=2, sort_keys=True))
     wall_s = round(time.monotonic() - start, 3)
@@ -3018,7 +3035,7 @@ def _unit_hints(row: dict, units: list[str]) -> dict:
 
 def build_subject_schedule(subject: PreparedSubject, target_row: dict, ast_cache_root: Path,
                            case_dir: Path, *, timeout_s: int, run_timeout_s: int,
-                           memlimit_gib: int) -> dict:
+                           memlimit_gib: int, cert_path: Path | None = None) -> dict:
     row = subject_unit_manifest.manifest_for_subject(subject, generate_ast=True, ast_timeout_s=60.0)
     if row.get("status") == "ok":
         units = (row.get("units") or {}).get("units") or []
@@ -3038,14 +3055,17 @@ def build_subject_schedule(subject: PreparedSubject, target_row: dict, ast_cache
         },
         "subjects": [row],
     }
-    cert_out = str((case_dir / "cert" / "certify-results.jsonl").resolve())
+    cert_path = cert_path or (case_dir / "cert" / "certify-results.jsonl")
+    cert_path = cert_path.resolve()
+    cert_root = cert_path.parent
+    cert_out = str(cert_path)
     return unit_schedule.build_schedule(manifest,
                                         selection_strategy="priority",
                                         cert_out=cert_out,
                                         timeout_s=timeout_s,
                                         run_timeout_s=run_timeout_s,
                                         memlimit_gib=memlimit_gib,
-                                        workdir=str((case_dir / "cert" / "work").resolve()))
+                                        workdir=str((cert_root / "work").resolve()))
 
 
 def filter_schedule_units(schedule: dict, units: list[str]) -> dict:
@@ -3899,7 +3919,8 @@ def _put_json_artifact_row(rec: dict) -> dict:
         rec.get("oracle_class_combo_counts"),
         "assertion_oracles": (rec.get("assertion_oracles")
                               or (rec.get("stats") or {}).get("assertion_oracles")),
-        "concrete_oracles": rec.get("concrete_oracles"),
+        "concrete_oracles":
+        rec.get("concrete_oracles"),
         "_from_put_json_only":
         True,
     }
@@ -4074,8 +4095,7 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             "oracle_class_combinations": oracle_class_combinations,
             "oracle_class_combo_counts": oracle_class_combo_counts,
             "assertion_oracles": assertion_details,
-            "concrete_oracles": (row.get("concrete_oracles")
-                                  or rec.get("concrete_oracles")),
+            "concrete_oracles": (row.get("concrete_oracles") or rec.get("concrete_oracles")),
             "r2_requested": rec.get("r2_requested"),
             "r2_depth": rec.get("r2_depth"),
             "r2_term_budget": rec.get("r2_term_budget"),
@@ -4588,23 +4608,19 @@ def _remove_argv_pair(argv: list[str], flag: str, value: str) -> list[str]:
 def _ownable_source_shape(source: str) -> tuple[str, dict] | None:
     """Prove the narrow Ownable getter/write shape used by the fixture."""
     ownable_chunk = _source_contract_chunk(source, "Ownable")
-    if (ownable_chunk is None or re.match(
-            r"\s*(?:abstract\s+)?contract\s+Ownable\b",
-            ownable_chunk) is None):
+    if (ownable_chunk is None
+            or re.match(r"\s*(?:abstract\s+)?contract\s+Ownable\b", ownable_chunk) is None):
         return None
     owner_decls = _source_function_decl_infos(ownable_chunk, "owner")
-    transfer_decls = _source_function_decl_infos(
-        ownable_chunk, "_transferOwnership")
+    transfer_decls = _source_function_decl_infos(ownable_chunk, "_transferOwnership")
     if len(owner_decls) != 1 or len(transfer_decls) != 1:
         return None
     if (len(_source_function_decl_infos(source, "owner")) != 1
-            or len(_source_function_decl_infos(
-                source, "_transferOwnership")) != 1):
+            or len(_source_function_decl_infos(source, "_transferOwnership")) != 1):
         return None
     owner_params, _owner_header, owner_body = owner_decls[0]
-    if owner_params or re.fullmatch(
-            r"\s*return\s+_owner\s*;\s*",
-            _mask_solidity_comments_and_strings(owner_body), re.S) is None:
+    if owner_params or re.fullmatch(r"\s*return\s+_owner\s*;\s*",
+                                    _mask_solidity_comments_and_strings(owner_body), re.S) is None:
         return None
     transfer_params, _transfer_header, transfer_body = transfer_decls[0]
     if len(transfer_params) != 1:
@@ -4613,14 +4629,12 @@ def _ownable_source_shape(source: str) -> tuple[str, dict] | None:
     if _norm_ty(transfer_type) != "address":
         return None
     name = re.escape(transfer_name)
-    transfer_pattern = (
-        r"\s*(?:address\s+([A-Za-z_]\w*)\s*=\s*_owner\s*;\s*)?"
-        r"_owner\s*=\s*" + name + r"\s*;\s*"
-        r"(?:emit\s+OwnershipTransferred\s*\(\s*"
-        r"(?:\1|_owner)\s*,\s*" + name + r"\s*\)\s*;\s*)?")
-    if re.fullmatch(
-            transfer_pattern,
-            _mask_solidity_comments_and_strings(transfer_body), re.S) is None:
+    transfer_pattern = (r"\s*(?:address\s+([A-Za-z_]\w*)\s*=\s*_owner\s*;\s*)?"
+                        r"_owner\s*=\s*" + name + r"\s*;\s*"
+                        r"(?:emit\s+OwnershipTransferred\s*\(\s*"
+                        r"(?:\1|_owner)\s*,\s*" + name + r"\s*\)\s*;\s*)?")
+    if re.fullmatch(transfer_pattern, _mask_solidity_comments_and_strings(transfer_body),
+                    re.S) is None:
         return None
     return ownable_chunk, {
         "owner_getter": "return _owner",
@@ -4628,14 +4642,12 @@ def _ownable_source_shape(source: str) -> tuple[str, dict] | None:
     }
 
 
-def _ownable_address_constructor_source_evidence(
-        source: str, contract: str) -> dict | None:
+def _ownable_address_constructor_source_evidence(source: str, contract: str) -> dict | None:
     """Trace one target address parameter to Ownable's `_owner` write."""
     target_chunk = _source_contract_chunk(source, contract)
     ownable_shape = _ownable_source_shape(source)
     if (target_chunk is None or ownable_shape is None or re.match(
-            r"\s*(?:abstract\s+)?contract\s+" + re.escape(contract) + r"\b",
-            target_chunk) is None):
+            r"\s*(?:abstract\s+)?contract\s+" + re.escape(contract) + r"\b", target_chunk) is None):
         return None
     inheritance = _source_inheritance_names(target_chunk)
     if inheritance.count("Ownable") != 1:
@@ -4648,33 +4660,24 @@ def _ownable_address_constructor_source_evidence(
     if len(ownable_params) != 1 or _norm_ty(ownable_params[0][1]) != "address":
         return None
     ownable_param = ownable_params[0][0]
-    ctor_body = _mask_solidity_comments_and_strings(
-        _constructor_body_text(ownable_chunk))
+    ctor_body = _mask_solidity_comments_and_strings(_constructor_body_text(ownable_chunk))
     param = re.escape(ownable_param)
-    zero_guard = (
-        r"if\s*\(\s*" + param +
-        r"\s*==\s*address\s*\(\s*0\s*\)\s*\)\s*"
-        r"\{\s*revert\s+[^;]+;\s*\}\s*")
-    if re.fullmatch(
-            r"\s*" + zero_guard + r"_transferOwnership\s*\(\s*" +
-            param + r"\s*\)\s*;\s*", ctor_body, re.S) is None:
+    zero_guard = (r"if\s*\(\s*" + param + r"\s*==\s*address\s*\(\s*0\s*\)\s*\)\s*"
+                  r"\{\s*revert\s+[^;]+;\s*\}\s*")
+    if re.fullmatch(r"\s*" + zero_guard + r"_transferOwnership\s*\(\s*" + param + r"\s*\)\s*;\s*",
+                    ctor_body, re.S) is None:
         return None
     ownable_calls = [
-        args for name, args in _constructor_initializer_calls(target_chunk)
-        if name == "Ownable"
+        args for name, args in _constructor_initializer_calls(target_chunk) if name == "Ownable"
     ]
     if len(ownable_calls) != 1 or len(ownable_calls[0]) != 1:
         return None
-    target_ctor_body = _mask_solidity_comments_and_strings(
-        _constructor_body_text(target_chunk))
-    if re.search(r"\b(?:_owner|_transferOwnership|transferOwnership)\b",
-                 target_ctor_body):
+    target_ctor_body = _mask_solidity_comments_and_strings(_constructor_body_text(target_chunk))
+    if re.search(r"\b(?:_owner|_transferOwnership|transferOwnership)\b", target_ctor_body):
         return None
     target_name = ownable_calls[0][0].strip()
-    matches = [
-        (idx, name, typ) for idx, (name, typ) in enumerate(target_params)
-        if name == target_name and _norm_ty(typ) == "address"
-    ]
+    matches = [(idx, name, typ) for idx, (name, typ) in enumerate(target_params)
+               if name == target_name and _norm_ty(typ) == "address"]
     if len(matches) != 1:
         return None
     idx, name, typ = matches[0]
@@ -4688,14 +4691,12 @@ def _ownable_address_constructor_source_evidence(
     }
 
 
-def _ownable_sender_constructor_source_evidence(
-        source: str, contract: str) -> dict | None:
+def _ownable_sender_constructor_source_evidence(source: str, contract: str) -> dict | None:
     """Prove direct inheritance from the exact no-arg sender Ownable shape."""
     target_chunk = _source_contract_chunk(source, contract)
     ownable_shape = _ownable_source_shape(source)
     if (target_chunk is None or ownable_shape is None or re.match(
-            r"\s*(?:abstract\s+)?contract\s+" + re.escape(contract) + r"\b",
-            target_chunk) is None):
+            r"\s*(?:abstract\s+)?contract\s+" + re.escape(contract) + r"\b", target_chunk) is None):
         return None
     if _source_inheritance_names(target_chunk).count("Ownable") != 1:
         return None
@@ -4704,11 +4705,9 @@ def _ownable_sender_constructor_source_evidence(
     ownable_chunk, common_evidence = ownable_shape
     if _source_constructor_params_from_source(source, "Ownable"):
         return None
-    ctor_body = _mask_solidity_comments_and_strings(
-        _constructor_body_text(ownable_chunk))
-    if re.fullmatch(
-            r"\s*_transferOwnership\s*\(\s*_msgSender\s*\(\s*\)\s*\)"
-            r"\s*;\s*", ctor_body, re.S) is None:
+    ctor_body = _mask_solidity_comments_and_strings(_constructor_body_text(ownable_chunk))
+    if re.fullmatch(r"\s*_transferOwnership\s*\(\s*_msgSender\s*\(\s*\)\s*\)"
+                    r"\s*;\s*", ctor_body, re.S) is None:
         return None
     return {
         **common_evidence,
@@ -4717,8 +4716,7 @@ def _ownable_sender_constructor_source_evidence(
     }
 
 
-def _ownable_owner_fixture_for_job(subject: PreparedSubject,
-                                   job: dict,
+def _ownable_owner_fixture_for_job(subject: PreparedSubject, job: dict,
                                    case_dir: Path) -> dict | None:
     """Source-checked deployment fixture for inherited Ownable.owner().
 
@@ -4746,19 +4744,19 @@ def _ownable_owner_fixture_for_job(subject: PreparedSubject,
         match = re.search(r"#([0-9]+)$", str(path_function))
         if match:
             declaration_id = int(match.group(1))
-    deps, _dep_evidence = unit_state_dependencies(
-        subject.solast, subject.contract, unit, declaration_id=declaration_id)
+    deps, _dep_evidence = unit_state_dependencies(subject.solast,
+                                                  subject.contract,
+                                                  unit,
+                                                  declaration_id=declaration_id)
     if deps != ["_owner"]:
         return None
     try:
-        flat_source = Path(subject.flat_sol).read_text(
-            encoding="utf-8", errors="replace")
+        flat_source = Path(subject.flat_sol).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
     masked_source = _mask_solidity_comments_and_strings(flat_source)
     ctor_params = _source_constructor_params_from_source(masked_source, subject.contract)
-    address_evidence = _ownable_address_constructor_source_evidence(
-        masked_source, subject.contract)
+    address_evidence = _ownable_address_constructor_source_evidence(masked_source, subject.contract)
     source_evidence = address_evidence
     fixture_kind = "ownable-owner-nonzero-constructor-state"
     if address_evidence is not None:
@@ -4766,8 +4764,8 @@ def _ownable_owner_fixture_for_job(subject: PreparedSubject,
         if not ctor_params or param_index >= len(ctor_params):
             return None
     else:
-        source_evidence = _ownable_sender_constructor_source_evidence(
-            masked_source, subject.contract)
+        source_evidence = _ownable_sender_constructor_source_evidence(masked_source,
+                                                                      subject.contract)
         if ctor_params or source_evidence is None:
             return None
         fixture_kind = "ownable-owner-msg-sender-constructor-state"
@@ -4797,13 +4795,16 @@ def _ownable_owner_fixture_for_job(subject: PreparedSubject,
         },
         "veriput_fixture_kind": fixture_kind,
         "source_evidence": {
-            "unit": unit,
-            "path_function": path_function,
-            "state_dependency": "_owner",
-            "esbmc_state_store": store_names["_owner"],
-            "constructor_initialization": (
-                "nonzero-address-parameter" if address_evidence is not None else
-                "_transferOwnership(_msgSender())"),
+            "unit":
+            unit,
+            "path_function":
+            path_function,
+            "state_dependency":
+            "_owner",
+            "esbmc_state_store":
+            store_names["_owner"],
+            "constructor_initialization": ("nonzero-address-parameter" if address_evidence
+                                           is not None else "_transferOwnership(_msgSender())"),
             **source_evidence,
         },
     }
@@ -4870,22 +4871,29 @@ def _transparent_proxy_fixture_for_job(subject: PreparedSubject, job: dict,
         "skip_constructor": True,
         "state": {},
         "foundry": {
-            "skip_constructor": True,
-            **({"target_call_mode": "low-level-success"}
-               if unit in {"admin", "implementation"} else {}),
+            "skip_constructor":
+            True,
+            **({
+                "target_call_mode": "low-level-success"
+            } if unit in {"admin", "implementation"} else {}),
         },
         "veriput_fixture_kind": "transparent-proxy-zero-storage-runtime",
         "source_evidence": {
-            "unit": unit,
-            "path_function": path_function,
-            "direct_base": "TransparentUpgradeableProxy",
+            "unit":
+            unit,
+            "path_function":
+            path_function,
+            "direct_base":
+            "TransparentUpgradeableProxy",
             "constructor_param_types": [typ for _name, typ in ctor_params],
-            "state_dependencies": deps,
-            "state_dependency_evidence": dep_evidence,
-            "foundry_replay": "etch-runtime-with-zero-storage",
-            "target_call_mode": ("low-level-success"
-                                 if unit in {"admin", "implementation"}
-                                 else "high-level"),
+            "state_dependencies":
+            deps,
+            "state_dependency_evidence":
+            dep_evidence,
+            "foundry_replay":
+            "etch-runtime-with-zero-storage",
+            "target_call_mode":
+            ("low-level-success" if unit in {"admin", "implementation"} else "high-level"),
         },
     }
     _write_json(fixture_path, fixture)
@@ -4950,8 +4958,7 @@ def _asset_list_empty_fixture_for_job(subject: PreparedSubject, job: dict,
     path_function = job.get("path_function")
     fixture_dir = case_dir / "cert" / "fixtures"
     fixture_dir.mkdir(parents=True, exist_ok=True)
-    fixture_path = fixture_dir / (
-        f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
+    fixture_path = fixture_dir / (f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
     constructor_arg = _source_type_default_expr(ctor_params[0][1], flat_source)
     if constructor_arg != "new CometConfiguration.AssetConfig[](0)":
         return None
@@ -4993,9 +5000,8 @@ def _asset_list_empty_fixture_for_job(subject: PreparedSubject, job: dict,
     }
 
 
-def _euler_cash_zero_storage_fixture_for_job(subject: PreparedSubject,
-                                               job: dict,
-                                               case_dir: Path) -> dict | None:
+def _euler_cash_zero_storage_fixture_for_job(subject: PreparedSubject, job: dict,
+                                             case_dir: Path) -> dict | None:
     """Use the EVK proxy-entry zero state for its storage-only cash view.
 
     Direct deployment validates five integration addresses, but the exact
@@ -5025,8 +5031,8 @@ def _euler_cash_zero_storage_fixture_for_job(subject: PreparedSubject,
         return None
     if _source_inheritance_names(target_chunk) != ["BorrowingModule"]:
         return None
-    if _source_constructor_params_from_source(flat_source, subject.contract) != [
-            ("integrations", "Integrations")]:
+    if _source_constructor_params_from_source(flat_source, subject.contract) != [("integrations",
+                                                                                  "Integrations")]:
         return None
     masked_target = _mask_solidity_comments_and_strings(target_chunk)
     if not re.search(
@@ -5049,21 +5055,21 @@ def _euler_cash_zero_storage_fixture_for_job(subject: PreparedSubject,
     if not re.search(
             r"function\s+cash\s*\(\s*\)\s+public\s+view\s+virtual\s+"
             r"nonReentrantView\s+returns\s*\(\s*uint256\s*\)\s*\{\s*"
-            r"return\s+vaultStorage\.cash\.toUint\s*\(\s*\)\s*;\s*\}",
-            masked_borrowing):
+            r"return\s+vaultStorage\.cash\.toUint\s*\(\s*\)\s*;\s*\}", masked_borrowing):
         return None
     path_function = job.get("path_function")
     declaration_id = _path_function_declaration_id(path_function or "")
     if declaration_id is not None:
         declaration_id = int(declaration_id)
-    deps, dep_evidence = unit_state_dependencies(
-        subject.solast, subject.contract, unit, declaration_id=declaration_id)
+    deps, dep_evidence = unit_state_dependencies(subject.solast,
+                                                 subject.contract,
+                                                 unit,
+                                                 declaration_id=declaration_id)
     if deps != ["vaultStorage"]:
         return None
     fixture_dir = case_dir / "cert" / "fixtures"
     fixture_dir.mkdir(parents=True, exist_ok=True)
-    fixture_path = fixture_dir / (
-        f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
+    fixture_path = fixture_dir / (f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
     fixture = {
         "contract": subject.contract,
         "skip_constructor": True,
@@ -5090,8 +5096,8 @@ def _euler_cash_zero_storage_fixture_for_job(subject: PreparedSubject,
     }
 
 
-def _peg_stability_module_foundry_fixture_for_job(
-        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+def _peg_stability_module_foundry_fixture_for_job(subject: PreparedSubject, job: dict,
+                                                  case_dir: Path) -> dict | None:
     """Replay PSM quote witnesses with a legal source-level deployment.
 
     The generic constructor synthesizer uses zero for uint256 parameters, but
@@ -5110,8 +5116,7 @@ def _peg_stability_module_foundry_fixture_for_job(
     if (subject.subject_id != "euler-xyz__euler-vault-kit__PegStabilityModule"
             or subject.contract != "PegStabilityModule" or unit not in quote_units):
         return None
-    if (unit_info.get("visibility") != "public"
-            or unit_info.get("state_mutability") != "view"
+    if (unit_info.get("visibility") != "public" or unit_info.get("state_mutability") != "view"
             or unit_info.get("parameter_types") != ["uint256"]
             or unit_info.get("return_types") != ["uint256"]):
         return None
@@ -5122,10 +5127,9 @@ def _peg_stability_module_foundry_fixture_for_job(
     target_chunk = _source_contract_chunk(flat_source, subject.contract)
     if target_chunk is None:
         return None
-    ctor_params = _source_constructor_params_from_source(
-        flat_source, subject.contract)
-    if [typ for _name, typ in ctor_params] != [
-            "address", "address", "address", "uint256", "uint256", "uint256"]:
+    ctor_params = _source_constructor_params_from_source(flat_source, subject.contract)
+    if [typ for _name, typ in ctor_params
+        ] != ["address", "address", "address", "uint256", "uint256", "uint256"]:
         return None
     masked = _mask_solidity_comments_and_strings(target_chunk)
     required_source = (
@@ -5144,8 +5148,7 @@ def _peg_stability_module_foundry_fixture_for_job(
         return None
     fixture_dir = case_dir / "cert" / "fixtures"
     fixture_dir.mkdir(parents=True, exist_ok=True)
-    fixture_path = fixture_dir / (
-        f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
+    fixture_path = fixture_dir / (f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
     constructor_args = [
         "address(uint160(1000))",
         "address(uint160(1001))",
@@ -5178,8 +5181,8 @@ def _peg_stability_module_foundry_fixture_for_job(
     }
 
 
-def _balancer_lp_oracle_decimals_fixture_for_job(
-        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+def _balancer_lp_oracle_decimals_fixture_for_job(subject: PreparedSubject, job: dict,
+                                                 case_dir: Path) -> dict | None:
     """Separate the pure LP-oracle decimals getter from deployment.
 
     These three contracts require a non-empty feed array and several live
@@ -5197,10 +5200,8 @@ def _balancer_lp_oracle_decimals_fixture_for_job(
     unit_info = job.get("unit_info") or {}
     if subject.subject_id not in allowed or str(job.get("unit") or "") != "decimals":
         return None
-    if (unit_info.get("visibility") != "external"
-            or unit_info.get("state_mutability") != "pure"
-            or unit_info.get("parameter_count") != 0
-            or unit_info.get("return_types") != ["uint8"]):
+    if (unit_info.get("visibility") != "external" or unit_info.get("state_mutability") != "pure"
+            or unit_info.get("parameter_count") != 0 or unit_info.get("return_types") != ["uint8"]):
         return None
     try:
         flat_source = Path(subject.flat_sol).read_text(errors="replace")
@@ -5219,17 +5220,13 @@ def _balancer_lp_oracle_decimals_fixture_for_job(
     target_bases = _source_inheritance_names(target_chunk)
     if ("LPOracleBase" not in target_bases
             and not (subject.contract == "DynamicWeightedLPOracle"
-                     and target_bases == ["IWeightedLPOracle", "WeightedLPOracle"]
-                     and re.search(
+                     and target_bases == ["IWeightedLPOracle", "WeightedLPOracle"] and re.search(
                          r"contract\s+WeightedLPOracle\s+is\s+"
-                         r"IWeightedLPOracle\s*,\s*LPOracleBase\b",
-                         flat_source) is not None)):
+                         r"IWeightedLPOracle\s*,\s*LPOracleBase\b", flat_source) is not None)):
         return None
-    ctor_params = _source_constructor_params_from_source(
-        flat_source, subject.contract)
+    ctor_params = _source_constructor_params_from_source(flat_source, subject.contract)
     if not ctor_params or not any(
-            _norm_ty(typ) == "AggregatorV3Interface[]"
-            for _name, typ in ctor_params):
+            _norm_ty(typ) == "AggregatorV3Interface[]" for _name, typ in ctor_params):
         return None
     constructor_args = []
     feed_param = None
@@ -5277,8 +5274,8 @@ def _balancer_lp_oracle_decimals_fixture_for_job(
     }
 
 
-def _chain_reverse_resolver_supports_feature_fixture_for_job(
-        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+def _chain_reverse_resolver_supports_feature_fixture_for_job(subject: PreparedSubject, job: dict,
+                                                             case_dir: Path) -> dict | None:
     """Separate the inherited pure feature probe from deployment.
 
     ChainReverseResolver's constructor initializes several unrelated resolver
@@ -5292,8 +5289,7 @@ def _chain_reverse_resolver_supports_feature_fixture_for_job(
             or subject.contract != "ChainReverseResolver"
             or str(job.get("unit") or "") != "supportsFeature"):
         return None
-    if (unit_info.get("visibility") != "external"
-            or unit_info.get("state_mutability") != "pure"
+    if (unit_info.get("visibility") != "external" or unit_info.get("state_mutability") != "pure"
             or unit_info.get("parameter_types") != ["bytes4"]
             or unit_info.get("return_types") != ["bool"]):
         return None
@@ -5302,9 +5298,10 @@ def _chain_reverse_resolver_supports_feature_fixture_for_job(
     if match is None:
         return None
     declaration_id = int(match.group(1))
-    deps, dep_evidence = unit_state_dependencies(
-        subject.solast, subject.contract, "supportsFeature",
-        declaration_id=declaration_id)
+    deps, dep_evidence = unit_state_dependencies(subject.solast,
+                                                 subject.contract,
+                                                 "supportsFeature",
+                                                 declaration_id=declaration_id)
     if deps or dep_evidence:
         return None
     try:
@@ -5323,12 +5320,12 @@ def _chain_reverse_resolver_supports_feature_fixture_for_job(
             r"external\s+pure\s+returns\s*\(\s*bool\s*\)\s*\{\s*"
             r"return\s+false\s*;\s*\}", masked_base, re.S) is None:
         return None
-    ctor_params = _source_constructor_params_from_source(
-        flat_source, subject.contract)
+    ctor_params = _source_constructor_params_from_source(flat_source, subject.contract)
     ctor_types = [typ for _name, typ in ctor_params]
     if ctor_types != [
-            "address", "uint256", "IStandaloneReverseRegistrar", "address",
-            "IGatewayVerifier", "string[]"]:
+            "address", "uint256", "IStandaloneReverseRegistrar", "address", "IGatewayVerifier",
+            "string[]"
+    ]:
         return None
     constructor_args = [
         "address(uint160(1000))",
@@ -5371,8 +5368,8 @@ def _chain_reverse_resolver_supports_feature_fixture_for_job(
     }
 
 
-def _universal_sig_validator_wrapper_fixture_for_job(
-        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+def _universal_sig_validator_wrapper_fixture_for_job(subject: PreparedSubject, job: dict,
+                                                     case_dir: Path) -> dict | None:
     """Keep the small external wrapper separate from its large callee graph."""
     unit_info = job.get("unit_info") or {}
     if (subject.subject_id != "ensdomains__ens-contracts__UniversalSigValidator"
@@ -5389,29 +5386,28 @@ def _universal_sig_validator_wrapper_fixture_for_job(
     except OSError:
         return None
     target_chunk = _source_contract_chunk(flat_source, subject.contract)
-    if target_chunk is None or _source_constructor_params_from_source(
-            flat_source, subject.contract):
+    if target_chunk is None or _source_constructor_params_from_source(flat_source,
+                                                                      subject.contract):
         return None
-    declarations = _source_function_decl_infos(
-        _mask_solidity_comments_and_strings(target_chunk),
-        "isValidSigWithSideEffects")
+    declarations = _source_function_decl_infos(_mask_solidity_comments_and_strings(target_chunk),
+                                               "isValidSigWithSideEffects")
     if len(declarations) != 1:
         return None
     params, header_tail, body = declarations[0]
     if ([typ for _name, typ in params] != ["address", "bytes32", "bytes"]
-            or re.search(r"\bexternal\b", header_tail) is None
-            or re.fullmatch(
+            or re.search(r"\bexternal\b", header_tail) is None or re.fullmatch(
                 r"\s*return\s+this\s*\.\s*isValidSigImpl\s*\(\s*"
-                r"_signer\s*,\s*_hash\s*,\s*_signature\s*,\s*true\s*\)\s*;\s*",
-                body, re.S) is None):
+                r"_signer\s*,\s*_hash\s*,\s*_signature\s*,\s*true\s*\)\s*;\s*", body,
+                re.S) is None):
         return None
     path_function = str(job.get("path_function") or unit_info.get("path_function") or "")
     match = re.search(r"#([0-9]+)$", path_function)
     if match is None:
         return None
-    deps, dep_evidence = unit_state_dependencies(
-        subject.solast, subject.contract, "isValidSigWithSideEffects",
-        declaration_id=int(match.group(1)))
+    deps, dep_evidence = unit_state_dependencies(subject.solast,
+                                                 subject.contract,
+                                                 "isValidSigWithSideEffects",
+                                                 declaration_id=int(match.group(1)))
     if deps != ["ERC1271_SUCCESS", "ERC6492_DETECTION_SUFFIX"]:
         return None
     masked_target = _mask_solidity_comments_and_strings(target_chunk)
@@ -5419,15 +5415,13 @@ def _universal_sig_validator_wrapper_fixture_for_job(
             r"bytes32\s+private\s+constant\s+ERC6492_DETECTION_SUFFIX\s*=\s*"
             r"0x6492649264926492649264926492649264926492649264926492649264926492\s*;",
             masked_target) is None
-            or re.search(
-                r"bytes4\s+private\s+constant\s+ERC1271_SUCCESS\s*=\s*"
-                r"0x1626ba7e\s*;", masked_target) is None):
+            or re.search(r"bytes4\s+private\s+constant\s+ERC1271_SUCCESS\s*=\s*"
+                         r"0x1626ba7e\s*;", masked_target) is None):
         return None
     fixture_dir = case_dir / "cert" / "fixtures"
     fixture_dir.mkdir(parents=True, exist_ok=True)
-    fixture_path = fixture_dir / (
-        f"{_safe_name(job.get('job_id') or 'isValidSigWithSideEffects')}"
-        ".path-cov-fixture.json")
+    fixture_path = fixture_dir / (f"{_safe_name(job.get('job_id') or 'isValidSigWithSideEffects')}"
+                                  ".path-cov-fixture.json")
     fixture = {
         "contract": subject.contract,
         "skip_constructor": True,
@@ -5440,8 +5434,7 @@ def _universal_sig_validator_wrapper_fixture_for_job(
         "source_evidence": {
             "unit": "isValidSigWithSideEffects",
             "path_function": path_function,
-            "function_body": (
-                "return this.isValidSigImpl(_signer, _hash, _signature, true)"),
+            "function_body": ("return this.isValidSigImpl(_signer, _hash, _signature, true)"),
             "state_dependencies": deps,
             "state_dependency_evidence": dep_evidence,
             "constructor_param_types": [],
@@ -5451,12 +5444,13 @@ def _universal_sig_validator_wrapper_fixture_for_job(
     }
     _write_json(fixture_path, fixture)
     return {
-        "path": str(fixture_path),
-        "fixture": fixture,
+        "path":
+        str(fixture_path),
+        "fixture":
+        fixture,
         "argv_value_pairs": [("--probes", "2")],
-        "esbmc_arg_remove_flags": [
-            "--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"
-        ],
+        "esbmc_arg_remove_flags":
+        ["--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"],
         "esbmc_arg_pairs": [
             ("--path-cov-max-goals", "2"),
             ("--unwind", "1"),
@@ -5464,16 +5458,15 @@ def _universal_sig_validator_wrapper_fixture_for_job(
     }
 
 
-def _ccip_reader_callback_fixture_for_job(
-        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+def _ccip_reader_callback_fixture_for_job(subject: PreparedSubject, job: dict,
+                                          case_dir: Path) -> dict | None:
     """Bound the callback's large internal decode/call path identity graph."""
     unit_info = job.get("unit_info") or {}
     if (subject.subject_id != "ensdomains__ens-contracts__CCIPReader"
             or subject.contract != "CCIPReader"
             or str(job.get("unit") or "") != "ccipReadCallback"):
         return None
-    if (unit_info.get("visibility") != "external"
-            or unit_info.get("state_mutability") != "view"
+    if (unit_info.get("visibility") != "external" or unit_info.get("state_mutability") != "view"
             or unit_info.get("parameter_types") != ["bytes", "bytes"]
             or unit_info.get("return_types") != []):
         return None
@@ -5484,15 +5477,13 @@ def _ccip_reader_callback_fixture_for_job(
     target_chunk = _source_contract_chunk(flat_source, subject.contract)
     if target_chunk is None:
         return None
-    ctor_params = _source_constructor_params_from_source(
-        flat_source, subject.contract)
+    ctor_params = _source_constructor_params_from_source(flat_source, subject.contract)
     if ctor_params != [("_unsafeCallGas", "uint256")]:
         return None
     masked_target = _mask_solidity_comments_and_strings(target_chunk)
     if (re.search(
             r"constructor\s*\(\s*uint256\s+_unsafeCallGas\s*\)\s*\{\s*"
-            r"unsafeCallGas\s*=\s*_unsafeCallGas\s*;\s*\}",
-            masked_target, re.S) is None
+            r"unsafeCallGas\s*=\s*_unsafeCallGas\s*;\s*\}", masked_target, re.S) is None
             or re.search(
                 r"function\s+ccipReadCallback\s*\(\s*bytes\s+memory\s+response\s*,\s*"
                 r"bytes\s+memory\s+extraData\s*\)\s*external\s+view\s*\{\s*"
@@ -5503,9 +5494,10 @@ def _ccip_reader_callback_fixture_for_job(
     match = re.search(r"#([0-9]+)$", path_function)
     if match is None:
         return None
-    deps, dep_evidence = unit_state_dependencies(
-        subject.solast, subject.contract, "ccipReadCallback",
-        declaration_id=int(match.group(1)))
+    deps, dep_evidence = unit_state_dependencies(subject.solast,
+                                                 subject.contract,
+                                                 "ccipReadCallback",
+                                                 declaration_id=int(match.group(1)))
     if deps != ["IDENTITY_FUNCTION", "unsafeCallGas"]:
         return None
     fixture_dir = case_dir / "cert" / "fixtures"
@@ -5534,12 +5526,13 @@ def _ccip_reader_callback_fixture_for_job(
     }
     _write_json(fixture_path, fixture)
     return {
-        "path": str(fixture_path),
-        "fixture": fixture,
+        "path":
+        str(fixture_path),
+        "fixture":
+        fixture,
         "argv_value_pairs": [("--probes", "2")],
-        "esbmc_arg_remove_flags": [
-            "--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"
-        ],
+        "esbmc_arg_remove_flags":
+        ["--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"],
         "esbmc_arg_pairs": [
             ("--path-cov-max-goals", "2"),
             ("--unwind", "1"),
@@ -5547,8 +5540,8 @@ def _ccip_reader_callback_fixture_for_job(
     }
 
 
-def _call_and_revert_value_gate_fixture_for_job(
-        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+def _call_and_revert_value_gate_fixture_for_job(subject: PreparedSubject, job: dict,
+                                                case_dir: Path) -> dict | None:
     """Retain the external ABI gate before the revert-forwarding body."""
     unit_info = job.get("unit_info") or {}
     if (subject.subject_id != "balancer__balancer-v3-monorepo__CallAndRevert"
@@ -5565,24 +5558,24 @@ def _call_and_revert_value_gate_fixture_for_job(
     except OSError:
         return None
     target_chunk = _source_contract_chunk(flat_source, subject.contract)
-    if target_chunk is None or _source_constructor_params_from_source(
-            flat_source, subject.contract):
+    if target_chunk is None or _source_constructor_params_from_source(flat_source,
+                                                                      subject.contract):
         return None
     masked_target = _mask_solidity_comments_and_strings(target_chunk)
     if re.search(
             r"function\s+callAndRevertHook\s*\(\s*address\s+target\s*,\s*"
             r"bytes\s+memory\s+data\s*\)\s*external\s*\{\s*"
             r"\(\s*bool\s+success\s*,\s*bytes\s+memory\s+result\s*\)\s*=\s*"
-            r"\(\s*target\s*\)\s*\.\s*call\s*\(\s*data\s*\)\s*;",
-            masked_target, re.S) is None:
+            r"\(\s*target\s*\)\s*\.\s*call\s*\(\s*data\s*\)\s*;", masked_target, re.S) is None:
         return None
     path_function = str(job.get("path_function") or unit_info.get("path_function") or "")
     match = re.search(r"#([0-9]+)$", path_function)
     if match is None:
         return None
-    deps, dep_evidence = unit_state_dependencies(
-        subject.solast, subject.contract, "callAndRevertHook",
-        declaration_id=int(match.group(1)))
+    deps, dep_evidence = unit_state_dependencies(subject.solast,
+                                                 subject.contract,
+                                                 "callAndRevertHook",
+                                                 declaration_id=int(match.group(1)))
     if deps or dep_evidence:
         return None
     fixture_dir = case_dir / "cert" / "fixtures"
@@ -5610,12 +5603,13 @@ def _call_and_revert_value_gate_fixture_for_job(
     }
     _write_json(fixture_path, fixture)
     return {
-        "path": str(fixture_path),
-        "fixture": fixture,
+        "path":
+        str(fixture_path),
+        "fixture":
+        fixture,
         "argv_value_pairs": [("--probes", "2")],
-        "esbmc_arg_remove_flags": [
-            "--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"
-        ],
+        "esbmc_arg_remove_flags":
+        ["--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"],
         "esbmc_arg_pairs": [
             ("--path-cov-max-goals", "2"),
             ("--unwind", "1"),
@@ -5623,16 +5617,14 @@ def _call_and_revert_value_gate_fixture_for_job(
     }
 
 
-def _putty_whitelist_pure_fixture_for_job(
-        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+def _putty_whitelist_pure_fixture_for_job(subject: PreparedSubject, job: dict,
+                                          case_dir: Path) -> dict | None:
     """Bound the constructor-independent empty-whitelist path."""
     unit_info = job.get("unit_info") or {}
-    if (subject.subject_id != "pop_058_PuttyV2"
-            or subject.contract != "PuttyV2"
+    if (subject.subject_id != "pop_058_PuttyV2" or subject.contract != "PuttyV2"
             or str(job.get("unit") or "") != "isWhitelisted"):
         return None
-    if (unit_info.get("visibility") != "public"
-            or unit_info.get("state_mutability") != "pure"
+    if (unit_info.get("visibility") != "public" or unit_info.get("state_mutability") != "pure"
             or unit_info.get("parameter_types") != ["address[]", "address"]
             or unit_info.get("return_types") != ["bool"]):
         return None
@@ -5642,9 +5634,8 @@ def _putty_whitelist_pure_fixture_for_job(
         return None
     target_chunk = _source_contract_chunk(flat_source, subject.contract)
     if target_chunk is None or _source_constructor_params_from_source(
-            flat_source, subject.contract) != [
-                ("_baseURI", "string"), ("_fee", "uint256"),
-                ("_weth", "address")]:
+            flat_source, subject.contract) != [("_baseURI", "string"), ("_fee", "uint256"),
+                                               ("_weth", "address")]:
         return None
     masked_target = _mask_solidity_comments_and_strings(target_chunk)
     if re.search(
@@ -5653,16 +5644,16 @@ def _putty_whitelist_pure_fixture_for_job(
             r"returns\s*\(\s*bool\s*\)\s*\{\s*for\s*\(\s*uint256\s+i\s*"
             r"=\s*0\s*;\s*i\s*<\s*whitelist\.length\s*;\s*i\+\+\s*\)\s*"
             r"\{\s*if\s*\(\s*target\s*==\s*whitelist\[i\]\s*\)\s*"
-            r"return\s+true\s*;\s*\}\s*return\s+false\s*;\s*\}",
-            masked_target, re.S) is None:
+            r"return\s+true\s*;\s*\}\s*return\s+false\s*;\s*\}", masked_target, re.S) is None:
         return None
     path_function = str(job.get("path_function") or unit_info.get("path_function") or "")
     match = re.search(r"#([0-9]+)$", path_function)
     if match is None:
         return None
-    deps, dep_evidence = unit_state_dependencies(
-        subject.solast, subject.contract, "isWhitelisted",
-        declaration_id=int(match.group(1)))
+    deps, dep_evidence = unit_state_dependencies(subject.solast,
+                                                 subject.contract,
+                                                 "isWhitelisted",
+                                                 declaration_id=int(match.group(1)))
     if deps or dep_evidence:
         return None
     fixture_dir = case_dir / "cert" / "fixtures"
@@ -5674,8 +5665,7 @@ def _putty_whitelist_pure_fixture_for_job(
         "skip_constructor": True,
         "state": {},
         "foundry": {
-            "constructor_args": ["\"VeriPUT1000\"", "0",
-                                 "address(uint160(1002))"],
+            "constructor_args": ["\"VeriPUT1000\"", "0", "address(uint160(1002))"],
         },
         "veriput_fixture_kind": "putty-whitelist-pure-empty-array",
         "source_evidence": {
@@ -5691,13 +5681,14 @@ def _putty_whitelist_pure_fixture_for_job(
     }
     _write_json(fixture_path, fixture)
     return {
-        "path": str(fixture_path),
-        "fixture": fixture,
+        "path":
+        str(fixture_path),
+        "fixture":
+        fixture,
         "argv_remove_flags": ["--pin-agreed-establishable-env"],
         "argv_value_pairs": [("--probes", "2")],
-        "esbmc_arg_remove_flags": [
-            "--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"
-        ],
+        "esbmc_arg_remove_flags":
+        ["--overflow-check", "--div-by-zero-check", "--path-cov-arith-resolve"],
         "esbmc_arg_pairs": [
             ("--path-cov-max-goals", "2"),
             ("--unwind", "1"),
@@ -5705,8 +5696,8 @@ def _putty_whitelist_pure_fixture_for_job(
     }
 
 
-def _transfer_helper_zero_key_fixture_for_job(
-        subject: PreparedSubject, job: dict, case_dir: Path) -> dict | None:
+def _transfer_helper_zero_key_fixture_for_job(subject: PreparedSubject, job: dict,
+                                              case_dir: Path) -> dict | None:
     """Retain TransferHelper's source-dominating zero-conduit rejection."""
     unit = str(job.get("unit") or "")
     unit_info = job.get("unit_info") or {}
@@ -5714,9 +5705,8 @@ def _transfer_helper_zero_key_fixture_for_job(
             or subject.contract != "TransferHelper" or unit != "bulkTransfer"):
         return None
     if (unit_info.get("visibility") != "external"
-            or unit_info.get("state_mutability") != "nonpayable"
-            or unit_info.get("parameter_types") != [
-                "struct TransferHelperItemsWithRecipient[]", "bytes32"]
+            or unit_info.get("state_mutability") != "nonpayable" or unit_info.get("parameter_types")
+            != ["struct TransferHelperItemsWithRecipient[]", "bytes32"]
             or unit_info.get("return_types") != ["bytes4"]):
         return None
     try:
@@ -5726,8 +5716,9 @@ def _transfer_helper_zero_key_fixture_for_job(
     target_chunk = _source_contract_chunk(flat_source, subject.contract)
     if target_chunk is None:
         return None
-    if _source_constructor_params_from_source(
-            flat_source, subject.contract) != [("conduitController", "address")]:
+    if _source_constructor_params_from_source(flat_source, subject.contract) != [
+        ("conduitController", "address")
+    ]:
         return None
     masked = _mask_solidity_comments_and_strings(target_chunk)
     required_source = (
@@ -5748,8 +5739,7 @@ def _transfer_helper_zero_key_fixture_for_job(
         return None
     fixture_dir = case_dir / "cert" / "fixtures"
     fixture_dir.mkdir(parents=True, exist_ok=True)
-    fixture_path = fixture_dir / (
-        f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
+    fixture_path = fixture_dir / (f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
     fixture = {
         "contract": subject.contract,
         "foundry": {
@@ -5775,9 +5765,8 @@ def _transfer_helper_zero_key_fixture_for_job(
     }
 
 
-def _euler_initialize_direct_deploy_fixture_for_job(subject: PreparedSubject,
-                                                     job: dict,
-                                                     case_dir: Path) -> dict | None:
+def _euler_initialize_direct_deploy_fixture_for_job(subject: PreparedSubject, job: dict,
+                                                    case_dir: Path) -> dict | None:
     """Rebuild the one constructor field that dominates EVK initialize().
 
     ``Initialize`` is an implementation contract whose constructor disables
@@ -5809,8 +5798,8 @@ def _euler_initialize_direct_deploy_fixture_for_job(subject: PreparedSubject,
         return None
     if _source_inheritance_names(target_chunk) != ["InitializeModule"]:
         return None
-    if _source_constructor_params_from_source(flat_source, "Initialize") != [
-            ("integrations", "Integrations")]:
+    if _source_constructor_params_from_source(flat_source,
+                                              "Initialize") != [("integrations", "Integrations")]:
         return None
     masked_target = _mask_solidity_comments_and_strings(target_chunk)
     if not re.search(
@@ -5835,15 +5824,13 @@ def _euler_initialize_direct_deploy_fixture_for_job(subject: PreparedSubject,
         declaration_id=(int(declaration_id) if declaration_id is not None else None))
     if "initialized" not in deps:
         return None
-    store_names, store_evidence = contract_state_esbmc_store_names(
-        subject.solast, subject.contract)
+    store_names, store_evidence = contract_state_esbmc_store_names(subject.solast, subject.contract)
     initialized_store = store_names.get("initialized")
     if store_evidence or initialized_store is None:
         return None
     fixture_dir = case_dir / "cert" / "fixtures"
     fixture_dir.mkdir(parents=True, exist_ok=True)
-    fixture_path = fixture_dir / (
-        f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
+    fixture_path = fixture_dir / (f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
     fixture = {
         "contract": subject.contract,
         "skip_constructor": True,
@@ -5851,15 +5838,18 @@ def _euler_initialize_direct_deploy_fixture_for_job(subject: PreparedSubject,
             initialized_store: 1,
         },
         "foundry": {
-            "skip_constructor": True,
+            "skip_constructor":
+            True,
             "constructor_args": [
                 "Base.Integrations({evc: address(uint160(1000)), "
                 "protocolConfig: address(uint160(1001)), sequenceRegistry: "
                 "address(uint160(1002)), balanceTracker: address(uint160(1003)), "
                 "permit2: address(uint160(1004))})",
             ],
-            "target_call_mode": "low-level-revert",
-            "target_call_signature": "initialize(address)",
+            "target_call_mode":
+            "low-level-revert",
+            "target_call_signature":
+            "initialize(address)",
         },
         "veriput_fixture_kind": "evk-initialize-direct-deploy-guard",
         "source_evidence": {
@@ -5883,9 +5873,8 @@ def _euler_initialize_direct_deploy_fixture_for_job(subject: PreparedSubject,
     }
 
 
-def _euler_risk_manager_unauthorized_fixture_for_job(subject: PreparedSubject,
-                                                      job: dict,
-                                                      case_dir: Path) -> dict | None:
+def _euler_risk_manager_unauthorized_fixture_for_job(subject: PreparedSubject, job: dict,
+                                                     case_dir: Path) -> dict | None:
     """Retain RiskManager.checkVaultStatus's proxy-entry auth rejection.
 
     The full authorised body expands into 1,343 complete-path goals, while the
@@ -5921,8 +5910,8 @@ def _euler_risk_manager_unauthorized_fixture_for_job(subject: PreparedSubject,
         return None
     if _source_inheritance_names(target_chunk) != ["RiskManagerModule"]:
         return None
-    if _source_constructor_params_from_source(flat_source, "RiskManager") != [
-            ("integrations", "Integrations")]:
+    if _source_constructor_params_from_source(flat_source,
+                                              "RiskManager") != [("integrations", "Integrations")]:
         return None
     masked_target = _mask_solidity_comments_and_strings(target_chunk)
     if not re.search(
@@ -5940,8 +5929,7 @@ def _euler_risk_manager_unauthorized_fixture_for_job(subject: PreparedSubject,
             r"modifier\s+onlyEVCChecks\s*\(\s*\)\s*\{\s*"
             r"if\s*\(\s*msg\.sender\s*!=\s*address\s*\(\s*evc\s*\)\s*\|\|\s*"
             r"!\s*evc\.areChecksInProgress\s*\(\s*\)\s*\)\s*\{\s*"
-            r"revert\s+E_CheckUnauthorized\s*\(\s*\)\s*;",
-            masked_client, re.S):
+            r"revert\s+E_CheckUnauthorized\s*\(\s*\)\s*;", masked_client, re.S):
         return None
     path_function = job.get("path_function")
     declaration_id = _path_function_declaration_id(path_function or "")
@@ -5954,38 +5942,44 @@ def _euler_risk_manager_unauthorized_fixture_for_job(subject: PreparedSubject,
         return None
     fixture_dir = case_dir / "cert" / "fixtures"
     fixture_dir.mkdir(parents=True, exist_ok=True)
-    fixture_path = fixture_dir / (
-        f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
+    fixture_path = fixture_dir / (f"{_safe_name(job.get('job_id') or unit)}.path-cov-fixture.json")
     fixture = {
         "contract": subject.contract,
         "skip_constructor": True,
         "state": {},
         "foundry": {
-            "skip_constructor": True,
+            "skip_constructor":
+            True,
             "constructor_args": [
                 "Base.Integrations({evc: address(this), protocolConfig: address(this), "
                 "sequenceRegistry: address(this), balanceTracker: address(0), "
                 "permit2: address(0)})",
             ],
-            "expected_revert_signature": "E_CheckUnauthorized()",
+            "expected_revert_signature":
+            "E_CheckUnauthorized()",
         },
         "veriput_fixture_kind": "evk-risk-manager-proxy-auth-rejection",
         "source_evidence": {
-            "unit": unit,
-            "path_function": path_function,
-            "direct_base": "RiskManagerModule",
-            "constructor": "Integrations memory integrations -> Base(integrations)",
-            "state_entry": "fresh proxy runtime with zero storage and zero immutables",
-            "dominating_guard": (
-                "msg.sender != address(evc) || !evc.areChecksInProgress()"),
-            "retained_path": "nonzero caller rejected before updateVault()",
-            "unwind_boundary": (
-                "1; retained guard exits before any external call or loop"),
-            "state_dependencies": deps,
-            "state_dependency_evidence": dep_evidence,
-            "foundry_replay": (
-                "legal Integrations deployment; address(0) caller differs from "
-                "immutable evc=address(this) and reverts E_CheckUnauthorized"),
+            "unit":
+            unit,
+            "path_function":
+            path_function,
+            "direct_base":
+            "RiskManagerModule",
+            "constructor":
+            "Integrations memory integrations -> Base(integrations)",
+            "state_entry":
+            "fresh proxy runtime with zero storage and zero immutables",
+            "dominating_guard": ("msg.sender != address(evc) || !evc.areChecksInProgress()"),
+            "retained_path":
+            "nonzero caller rejected before updateVault()",
+            "unwind_boundary": ("1; retained guard exits before any external call or loop"),
+            "state_dependencies":
+            deps,
+            "state_dependency_evidence":
+            dep_evidence,
+            "foundry_replay": ("legal Integrations deployment; address(0) caller differs from "
+                               "immutable evc=address(this) and reverts E_CheckUnauthorized"),
         },
     }
     _write_json(fixture_path, fixture)
@@ -6001,9 +5995,7 @@ def _euler_risk_manager_unauthorized_fixture_for_job(subject: PreparedSubject,
     }
 
 
-def apply_source_stage2_fixtures(schedule: dict,
-                                 subject: PreparedSubject,
-                                 case_dir: Path) -> dict:
+def apply_source_stage2_fixtures(schedule: dict, subject: PreparedSubject, case_dir: Path) -> dict:
     updated = copy.deepcopy(schedule)
     jobs = []
     applied = []
@@ -6012,26 +6004,17 @@ def apply_source_stage2_fixtures(schedule: dict,
                    or _transparent_proxy_fixture_for_job(subject, job, case_dir)
                    or _asset_list_empty_fixture_for_job(subject, job, case_dir)
                    or _euler_cash_zero_storage_fixture_for_job(subject, job, case_dir)
-                   or _balancer_lp_oracle_decimals_fixture_for_job(
-                       subject, job, case_dir)
+                   or _balancer_lp_oracle_decimals_fixture_for_job(subject, job, case_dir)
                    or _chain_reverse_resolver_supports_feature_fixture_for_job(
                        subject, job, case_dir)
-                   or _universal_sig_validator_wrapper_fixture_for_job(
-                       subject, job, case_dir)
-                   or _ccip_reader_callback_fixture_for_job(
-                       subject, job, case_dir)
-                   or _call_and_revert_value_gate_fixture_for_job(
-                       subject, job, case_dir)
-                   or _putty_whitelist_pure_fixture_for_job(
-                       subject, job, case_dir)
-                   or _peg_stability_module_foundry_fixture_for_job(
-                       subject, job, case_dir)
-                   or _transfer_helper_zero_key_fixture_for_job(
-                       subject, job, case_dir)
-                   or _euler_initialize_direct_deploy_fixture_for_job(
-                       subject, job, case_dir)
-                   or _euler_risk_manager_unauthorized_fixture_for_job(
-                       subject, job, case_dir))
+                   or _universal_sig_validator_wrapper_fixture_for_job(subject, job, case_dir)
+                   or _ccip_reader_callback_fixture_for_job(subject, job, case_dir)
+                   or _call_and_revert_value_gate_fixture_for_job(subject, job, case_dir)
+                   or _putty_whitelist_pure_fixture_for_job(subject, job, case_dir)
+                   or _peg_stability_module_foundry_fixture_for_job(subject, job, case_dir)
+                   or _transfer_helper_zero_key_fixture_for_job(subject, job, case_dir)
+                   or _euler_initialize_direct_deploy_fixture_for_job(subject, job, case_dir)
+                   or _euler_risk_manager_unauthorized_fixture_for_job(subject, job, case_dir))
         if not fixture:
             jobs.append(job)
             continue
@@ -6041,9 +6024,7 @@ def apply_source_stage2_fixtures(schedule: dict,
                 arg for arg in patched.get("certify_argv") or [] if arg != flag
             ]
             if patched.get("dry_run_argv"):
-                patched["dry_run_argv"] = [
-                    arg for arg in patched["dry_run_argv"] if arg != flag
-                ]
+                patched["dry_run_argv"] = [arg for arg in patched["dry_run_argv"] if arg != flag]
         for flag, value in fixture.get("argv_remove_pairs") or []:
             patched["certify_argv"] = _remove_argv_pair(
                 [str(arg) for arg in patched.get("certify_argv") or []], flag, value)
@@ -6062,22 +6043,19 @@ def apply_source_stage2_fixtures(schedule: dict,
                 arg for arg in patched.get("certify_argv") or [] if arg != token
             ]
             if patched.get("dry_run_argv"):
-                patched["dry_run_argv"] = [
-                    arg for arg in patched["dry_run_argv"] if arg != token
-                ]
+                patched["dry_run_argv"] = [arg for arg in patched["dry_run_argv"] if arg != token]
         patched["certify_argv"] = _append_esbmc_arg_pair(
-            [str(arg) for arg in patched.get("certify_argv") or []],
-            "--path-cov-fixture", fixture["path"])
+            [str(arg) for arg in patched.get("certify_argv") or []], "--path-cov-fixture",
+            fixture["path"])
         for flag, value in fixture.get("esbmc_arg_pairs") or []:
-            patched["certify_argv"] = _append_esbmc_arg_pair(
-                patched["certify_argv"], flag, value)
+            patched["certify_argv"] = _append_esbmc_arg_pair(patched["certify_argv"], flag, value)
         if patched.get("dry_run_argv"):
             patched["dry_run_argv"] = _append_esbmc_arg_pair(
-                [str(arg) for arg in patched.get("dry_run_argv") or []],
-                "--path-cov-fixture", fixture["path"])
+                [str(arg) for arg in patched.get("dry_run_argv") or []], "--path-cov-fixture",
+                fixture["path"])
             for flag, value in fixture.get("esbmc_arg_pairs") or []:
-                patched["dry_run_argv"] = _append_esbmc_arg_pair(
-                    patched["dry_run_argv"], flag, value)
+                patched["dry_run_argv"] = _append_esbmc_arg_pair(patched["dry_run_argv"], flag,
+                                                                 value)
         patched["source_stage2_fixture"] = fixture["fixture"]
         patched["source_stage2_fixture_path"] = fixture["path"]
         jobs.append(patched)
@@ -6453,10 +6431,9 @@ def _abi_composite_count(job: dict) -> int:
     info = job.get("unit_info") or {}
     types = list(info.get("parameter_types") or [])
     types.extend(info.get("return_types") or [])
-    return sum(
-        1 for value in types
-        if (str(value).strip() in ("bytes", "string") or "[" in str(value)
-            or str(value).lstrip().startswith(("tuple", "struct", "mapping"))))
+    return sum(1 for value in types
+               if (str(value).strip() in ("bytes", "string") or "[" in str(value)
+                   or str(value).lstrip().startswith(("tuple", "struct", "mapping"))))
 
 
 def _continuation_semantic_rank(job: dict) -> int:
@@ -6666,7 +6643,8 @@ def _put_argv(cert_path: Path,
               path_function: str | None = None,
               esbmc_bin: str | None = None,
               emit_concrete_fallbacks: bool = True,
-              foundry_fixture: str | None = None) -> list[str]:
+              foundry_fixture: str | None = None,
+              concrete_replay_only: bool = False) -> list[str]:
     budget = max(1, int(remaining_s))
     selector = (f"{benchmark_key}.{path_function}" if path_function else f"{benchmark_key}.{unit}")
     argv = [
@@ -6687,6 +6665,8 @@ def _put_argv(cert_path: Path,
         str(out_root),
         "--retain-certified-concrete-replays",
     ]
+    if concrete_replay_only:
+        argv.append("--certified-concrete-only")
     if emit_concrete_fallbacks:
         argv.append("--emit-cleared-concrete-fallbacks")
     if foundry_fixture:
@@ -6777,8 +6757,12 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     # canonical result directory while collecting refutation-only evidence.
     prepare_case_dir(case_dir,
                      force_fresh=bool(args.redo and not getattr(args, "ce_collection_only", False)))
-    cert_path = case_dir / "cert" / "certify-results.jsonl"
     ast_cache_root = Path(args.ast_cache_root).expanduser().resolve()
+    if getattr(args, "concrete_replay_only_ablation", False):
+        cert_path = (ast_cache_root / "rq3-no-cer-reg-cert" / dataset_label /
+                     _safe_name(subject_id) / str(time.time_ns()) / "certify-results.jsonl")
+    else:
+        cert_path = case_dir / "cert" / "certify-results.jsonl"
     subject = subject_unit_manifest.resolve_subject(subject_id,
                                                     benchmark=target_row["benchmark"],
                                                     require_unit=False)
@@ -6816,7 +6800,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                                           case_dir,
                                           timeout_s=args.timeout,
                                           run_timeout_s=args.esbmc_run_timeout,
-                                          memlimit_gib=args.memlimit_gib)
+                                          memlimit_gib=args.memlimit_gib,
+                                          cert_path=cert_path)
         schedule = filter_schedule_units(schedule, getattr(args, "unit", []))
         schedule = apply_source_stage2_fixtures(schedule, subject, case_dir)
         annotate_stage2_runtime_policy(schedule, args)
@@ -6896,14 +6881,10 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             and not getattr(args, "ce_replay_only", False)):
         result_status, failure_reason = _empty_schedule_status_reason(schedule)
         if result_status == "no-units" and not getattr(args, "ce_replay_only", False):
-            getter_stages = emit_no_unit_getter_fallbacks(
-                subject,
-                case_dir,
-                schedule,
-                _remaining(deadline),
-                args.memlimit_gib,
-                args.forge_timeout,
-                getattr(args, "esbmc", "") or None)
+            getter_stages = emit_no_unit_getter_fallbacks(subject, case_dir, schedule,
+                                                          _remaining(deadline), args.memlimit_gib,
+                                                          args.forge_timeout,
+                                                          getattr(args, "esbmc", "") or None)
             stages.extend(getter_stages)
             partial_put = summarize_put_artifacts(case_dir / "put")
             if partial_put["valid"] > 0:
@@ -7289,20 +7270,13 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             abi_gate_row = _abi_value_gate_cert_row(subject, job)
             _append_jsonl(cert_path, abi_gate_row)
             stages.append({
-                "stage":
-                "static-abi-value-gate-certification",
-                "unit":
-                unit,
-                "path_function":
-                path_function,
-                "job_id":
-                job.get("job_id"),
-                "status":
-                "ok",
-                "cert_canonical_jsonl":
-                str(cert_path),
-                "reason":
-                abi_gate_row["driver_diagnostic"]["reason"],
+                "stage": "static-abi-value-gate-certification",
+                "unit": unit,
+                "path_function": path_function,
+                "job_id": job.get("job_id"),
+                "status": "ok",
+                "cert_canonical_jsonl": str(cert_path),
+                "reason": abi_gate_row["driver_diagnostic"]["reason"],
             })
             n_certified = _certified_count(cert_path, subject.benchmark_key, unit, path_function)
             n_cleared_fallback = _cleared_concrete_fallback_count(cert_path, subject.benchmark_key,
@@ -7617,7 +7591,9 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                              path_function,
                              getattr(args, "esbmc", "") or None,
                              emit_concrete_fallbacks=concrete_only_stage4,
-                             foundry_fixture=job.get("source_stage2_fixture_path"))
+                             foundry_fixture=job.get("source_stage2_fixture_path"),
+                             concrete_replay_only=bool(
+                                 getattr(args, "concrete_replay_only_ablation", False)))
         # Stage 4's ESBMC/emission work is budgeted by --timeout and the
         # remaining case deadline passed above.  put_all.py then runs Foundry
         # as a second, refutation-only replay oracle; let that finish outside
@@ -7715,15 +7691,13 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         fallback_stage["raw_before_fallback"] = put_summary["raw"]
         stages.append(fallback_stage)
         put_summary = summarize_put_artifacts(case_dir / "put")
-    concrete_replay_persistence = persist_case_concrete_replays(
-        case_dir, put_summary, f"{dataset_label}/{subject_id}")
+    concrete_replay_persistence = persist_case_concrete_replays(case_dir, put_summary,
+                                                                f"{dataset_label}/{subject_id}")
     persistence_failure = None
     if put_summary["valid"] > 0:
-        persistence_failure = persistence_publication_failure(
-            concrete_replay_persistence)
+        persistence_failure = persistence_publication_failure(concrete_replay_persistence)
         if persistence_failure:
-            put_summary = quarantine_unpersisted_validity(
-                put_summary, persistence_failure)
+            put_summary = quarantine_unpersisted_validity(put_summary, persistence_failure)
             result_status = "persistence-error"
             failure_reason = persistence_failure
     wall_total_s = round(time.monotonic() - start, 3)
@@ -8039,19 +8013,16 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     if not getattr(args, "ce_replay_only", False):
         stale_row = _best_stale_artifact_row(target_row, dataset_label, case_dir, row)
         row = _adopt_stale_artifacts(row, stale_row)
-    final_valid_tests = [test for test in row.get("valid_tests") or []
-                         if isinstance(test, dict)]
+    final_valid_tests = [test for test in row.get("valid_tests") or [] if isinstance(test, dict)]
     if final_valid_tests:
-        final_replay_persistence = persist_case_concrete_replays(
-            case_dir, {"valid_tests": final_valid_tests},
-            f"{dataset_label}/{subject_id}")
-        final_persistence_failure = persistence_publication_failure(
-            final_replay_persistence)
+        final_replay_persistence = persist_case_concrete_replays(case_dir,
+                                                                 {"valid_tests": final_valid_tests},
+                                                                 f"{dataset_label}/{subject_id}")
+        final_persistence_failure = persistence_publication_failure(final_replay_persistence)
         concrete_replay_persistence = final_replay_persistence
         if final_persistence_failure:
             row = quarantine_unpersisted_validity(row, final_persistence_failure)
-            put_summary = quarantine_unpersisted_validity(
-                put_summary, final_persistence_failure)
+            put_summary = quarantine_unpersisted_validity(put_summary, final_persistence_failure)
             row["status"] = "persistence-error"
             row["reason"] = final_persistence_failure
             row = _annotate_result_accounting(row)
@@ -8343,10 +8314,7 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
 
 
 def write_dataset_manifest(root: Path, dataset_label: str, journal: Path) -> None:
-    latest = {
-        key: _normalize_result_row(row)
-        for key, row in _latest_rows(journal).items()
-    }
+    latest = {key: _normalize_result_row(row) for key, row in _latest_rows(journal).items()}
     status = Counter(str(row.get("status") or "<missing>") for row in latest.values())
     quality = Counter(
         str(row.get("quality_bucket") or _legacy_quality_bucket(row)) for row in latest.values())
@@ -8515,6 +8483,11 @@ def main(argv=None) -> int:
                     help="run only the admitted CE replay candidates from "
                     "--ce-replay-manifest; do not run normal Stage 2 "
                     "jobs. Requires at least one manifest candidate.")
+    ap.add_argument("--concrete-replay-only-ablation",
+                    action="store_true",
+                    help="run Stage 2 normally, but force every Stage-4 certified region "
+                    "and fallback witness through the concrete-only emitter. This "
+                    "mode is for isolated ablations and never emits a PUT.")
     ap.add_argument("--timeout",
                     type=int,
                     default=60,
@@ -8718,7 +8691,11 @@ def main(argv=None) -> int:
         veriput_root = Path(args.veriput_root).expanduser().resolve()
         result_root = Path(args.result_root).expanduser().resolve()
         ast_cache_root = Path(args.ast_cache_root).expanduser().resolve()
-        validate_roots(veriput_root, result_root, ast_cache_root)
+        validate_roots(
+            veriput_root,
+            result_root,
+            ast_cache_root,
+            concrete_replay_only_ablation=args.concrete_replay_only_ablation)
         if (args.timeout <= 0 or args.esbmc_run_timeout <= 0 or args.wrapper_grace < 0
                 or args.memlimit_gib <= 0 or args.no_output_stage2_stop_s < 0
                 or args.min_no_output_stage2_unit_stop_n < 0

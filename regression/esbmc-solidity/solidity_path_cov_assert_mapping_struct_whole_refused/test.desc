@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract Roles --solidity-path-coverage --solidity-max-tx 1 --focus-function inspectRole --path-cov-assert spec.json
+^ERROR: --path-cov-assert: unit '.*inspectRole.*' -- REFUSING THE LADDER: NOT ONE candidate assertion could be formed\..*roles\[role\] \(the mapping's VALUE type cannot carry a candidate: it resolves to an AGGREGATE

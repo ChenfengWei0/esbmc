@@ -78,6 +78,8 @@ CERT = os.path.join(NOTES, "coverage", "certify", "results.jsonl")
 # nothing else. Which file a row came from therefore travels with the row.
 POC_CERT = os.path.join(NOTES, "coverage", "certify", "poc_results.jsonl")
 POC_SRC = os.path.join(NOTES, "coverage", "poc")
+RQ3_NO_CER_REG_ROOT = os.path.abspath(
+    "/home/samson/workspace/VeriPUT/Results/RQ3/VeriExploit/No_Cer_Reg")
 OUT = os.path.join(NOTES, "coverage", "put_roundtrip")
 ESBMC = os.path.join(REPO, "build", "src", "esbmc", "esbmc")
 PUT = os.path.join(REPO, "scripts", "solidity_path_put.py")
@@ -543,6 +545,76 @@ def occupied_stage2_path_ids(record):
             if enc is not None:
                 occupied.add(enc)
     return occupied
+
+
+def stage2_witness_return(record, enc, path_function, certified_detail):
+    """Return an unambiguous Stage-2 return witness for one exact path."""
+    journal = record.get("partial_witness_journal") or {}
+    if not isinstance(journal, dict):
+        return None
+    wanted_enc = claim_path_id_int(enc)
+    if (wanted_enc is None or not path_function
+            or not isinstance(certified_detail, dict)):
+        return None
+    detail_ce = certified_detail.get("ce") or {}
+    if not isinstance(detail_ce, dict):
+        return None
+    detail_region, detail_holes, detail_pins = parse_certified_detail_region(
+        certified_detail, parse_pins(record.get("pins")))
+    if detail_region is None or detail_holes is None or detail_pins is None:
+        return None
+    values = []
+    for path in journal.get("paths") or []:
+        if not isinstance(path, dict):
+            continue
+        if claim_path_id_int(path.get("path_id")) != wanted_enc:
+            continue
+        if str(path.get("path_function") or "") != str(path_function):
+            continue
+        try:
+            if int(path.get("witness_count") or 0) <= 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        ce = path.get("ce") or {}
+        if not isinstance(ce, dict) or ce.get("return") is None:
+            continue
+        required_detail_coords = {
+            name: value for name, value in detail_ce.items()
+            if name != "return"
+        }
+        if any(name not in ce or str(ce[name]) != str(value)
+               for name, value in required_detail_coords.items()):
+            continue
+        point_matches = True
+        for name, value in ce.items():
+            if name == "return":
+                continue
+            if name not in detail_ce and name not in detail_region and name not in detail_pins:
+                point_matches = False
+                break
+            if name in detail_region:
+                try:
+                    numeric = int(str(value), 0)
+                except ValueError:
+                    point_matches = False
+                    break
+                lo, hi = detail_region[name]
+                if numeric < lo or numeric > hi:
+                    point_matches = False
+                    break
+                if numeric in set(detail_holes.get(name) or []):
+                    point_matches = False
+                    break
+            elif name in detail_pins and str(detail_pins[name]) != str(value):
+                point_matches = False
+                break
+        if not point_matches:
+            continue
+        value = ce["return"]
+        if value not in values:
+            values.append(value)
+    return values[0] if len(values) == 1 else None
 
 
 def timeout_concrete_fallback_rows(record):
@@ -2444,7 +2516,12 @@ def main():
     try:
         ensure_path_not_protected("--out-root", args.out_root)
     except ValueError as exc:
-        sys.exit(str(exc))
+        out_root_abs = os.path.abspath(args.out_root)
+        rq3_ablation_out = (args.certified_concrete_only and
+                            (out_root_abs == RQ3_NO_CER_REG_ROOT
+                             or out_root_abs.startswith(RQ3_NO_CER_REG_ROOT + os.sep)))
+        if not rq3_ablation_out:
+            sys.exit(str(exc))
     OUT = os.path.abspath(args.out_root)
     os.makedirs(OUT, exist_ok=True)
     cert_path = args.cert or (POC_CERT if args.poc else CERT)
@@ -2722,6 +2799,13 @@ def main():
                     "current certify_all.py instead of silently emitting a PUT "
                     "for a different entry slice.")
                 return 2
+            witness_return = stage2_witness_return(
+                r, enc_i, r.get("path_function"), details)
+            if witness_return is not None:
+                details = dict(details)
+                detail_ce = dict(details.get("ce") or {})
+                detail_ce.setdefault("return", witness_return)
+                details["ce"] = detail_ce
             establish = details.get("established") or []
             detail_region, detail_holes, detail_pins = \
                 parse_certified_detail_region(details, parse_pins(r.get("pins")))
@@ -3149,6 +3233,10 @@ def main():
             basis_cmd = stage4_cmd(
                 CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE,
                 "CERTIFIED-BASIS-REPLAY", stage2_depth)
+            witness_ce = ((certified_detail or {}).get("ce") or {})
+            if witness_ce.get("return") is not None:
+                basis_cmd += ["--concrete-return-value",
+                              str(witness_ce["return"])]
             workdir_i = basis_cmd.index("--workdir") + 1
             basis_cmd[workdir_i] = basis_wd
             basis_json = os.path.join(basis_wd, "put.json")
