@@ -246,6 +246,7 @@ bool solidity_convertert::get_unbound_expr(
     exprt assign_lock = side_effect_exprt("assign", bool_t);
     assign_lock.copy_to_operands(_mutex, true_exprt());
     convert_expression_to_code(assign_lock);
+    assign_lock.set("#sol_extcall_wrapper", true);
 
     exprt assign_unlock = side_effect_exprt("assign", bool_t);
     assign_unlock.copy_to_operands(_mutex, false_exprt());
@@ -256,6 +257,7 @@ bool solidity_convertert::get_unbound_expr(
     move_to_back_block(assign_unlock);
   }
 
+  func_call.set("#sol_extcall_wrapper", true);
   move_to_front_block(func_call);
   new_expr = func_call;
   return false;

@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--contract Wallet --bound --solidity-max-tx 1 --no-standard-checks --cvc5
+^VERIFICATION FAILED$

@@ -1,0 +1,7 @@
+CORE
+contract.sol
+--solidity-path-coverage --contract Flag --focus-function f --path-cov-certify certify.json --solidity-max-tx 1 --multi-property --k-induction --max-k-step 2 --max-inductive-step 1 --result-only
+^VERIFICATION UNKNOWN$
+^WARNING: k-induction did not close: downgrading [0-9]+ base-case-only path verdict\(s\) to UNDECIDED
+^ERROR: --path-cov-certify: RESULT: UNDECIDED
+\A(?!(.|\n)*RESULT: CERTIFIED)

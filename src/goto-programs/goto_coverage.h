@@ -1203,6 +1203,14 @@ public:
   // disabled by a change to that other flag.
   bool emit_decision_sites = false;
 
+  // Stage-2/3 proof queries may be discharged by ESBMC's k-induction driver.
+  // This affects provenance wording only; the strategy itself is selected by
+  // the normal command-line option and runs before this pass.
+  static bool path_cov_k_induction;
+  // True only when the strategy-level forward condition or inductive step
+  // closed. Base-case UNSAT rows alone are never an inductive proof.
+  static bool path_cov_k_induction_proved;
+
   // ---- STAGE 2: THE CERTIFICATION QUERY (--path-cov-certify <json>) ----
   //
   // Everything downstream of path enumeration rests on ONE query:

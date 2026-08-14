@@ -3655,33 +3655,28 @@ bool solidity_convertert::get_contract_member_call_expr(
   if (cast_target_cname.empty())
     cast_target_cname = recover_cast_target(resolved_caller);
 
+  const bool explicit_contract_cast =
+    caller_expr_json.value("nodeType", "") == "FunctionCall" &&
+    caller_expr_json.value("kind", "") == "typeConversion" &&
+    !cast_target_cname.empty();
+  const nlohmann::json &cast_address_expr =
+    explicit_contract_cast && caller_expr_json.contains("arguments") &&
+        caller_expr_json["arguments"].is_array() &&
+        caller_expr_json["arguments"].size() == 1
+      ? caller_expr_json["arguments"][0]
+      : resolved_caller;
+
   const bool path_cov_unknown_address_cast =
     uses_revert_observation && !cast_target_cname.empty() &&
     !resolved_caller.contains("referencedDeclaration") &&
     resolved_caller.value("name", "") != "this";
-  if (path_cov_unknown_address_cast)
-  {
-    // Complete-path coverage is run over one target unit.  Treating an
-    // arbitrary address cast like `I(addr).f()` as a tracked singleton opens the
-    // whole structural-typing dispatch cluster and dominates the timeout/OOM
-    // bucket for proxy/factory-heavy projects.  The callee is outside the unit
-    // dependency region unless the address came from `new`/`this`, so expose its
-    // return value as typed nondet instead of inlining the external closure.
-    log_debug(
-      "solidity",
-      "\t\t@@@ path-coverage external address-cast call to {}, "
-      "synthesizing nondet return",
-      cast_target_cname);
-    return synthesize_nondet_member_return();
-  }
-
   side_effect_expr_function_callt call;
   int contract_var_id = -1;
   exprt base;
   std::string base_cname = "";
 
   if (
-    !resolved_caller.contains("referencedDeclaration") && is_bound &&
+    !resolved_caller.contains("referencedDeclaration") &&
     !cast_target_cname.empty() && structureTypingMap.count(cast_target_cname))
   {
     // The cast operand is not a persistent contract variable — e.g.
@@ -3700,9 +3695,9 @@ bool solidity_convertert::get_contract_member_call_expr(
     // approveAndCall, ...) is silently missed — a soundness false
     // negative.
     if (get_expr(
-          resolved_caller,
-          resolved_caller.contains("typeDescriptions")
-            ? resolved_caller["typeDescriptions"]
+          cast_address_expr,
+          cast_address_expr.contains("typeDescriptions")
+            ? cast_address_expr["typeDescriptions"]
             : nlohmann::json(nullptr),
           base))
       return true;
@@ -3833,6 +3828,78 @@ bool solidity_convertert::get_contract_member_call_expr(
         return synthesize_nondet_member_return();
       }
     }
+  }
+
+  // Address zero is guaranteed to have no code.  Solidity high-level calls
+  // reject it either through the code-existence check or, for return values,
+  // through ABI decoding of empty returndata.  Preserve that boundary before
+  // either concrete dispatch or the path-coverage opaque-call shortcut.  Read
+  // the already-materialised base so a computed cast operand is evaluated once.
+  const bool direct_self_call =
+    resolved_caller.value("nodeType", "") == "Identifier" &&
+    resolved_caller.value("name", "") == "this";
+  if (!direct_self_call && base.is_not_nil())
+  {
+    // Evaluating a computed target may mutate caller state before the external
+    // call begins.  A failed high-level call outside try/catch reverts the
+    // whole caller frame, so force build_revert_rollback_block to retain and
+    // restore the function-entry snapshot for this case.
+    if (initializer_has_side_effect(cast_address_expr))
+      current_function_seen_mutation = true;
+
+    auto emit_call_guard = [&](const exprt &condition) {
+      exprt rollback;
+      if (!build_revert_rollback_block(&condition, rollback))
+      {
+        rollback.set("#sol_extcall_target_guard", true);
+        move_to_front_block(rollback);
+        return;
+      }
+
+      // Constructors and other scopes without a rollback frame still cannot
+      // continue after a failed high-level call.  Match the legacy revert
+      // lowering by pruning that execution.
+      side_effect_expr_function_callt assume_call;
+      get_library_function_call_no_args(
+        "__ESBMC_assume",
+        "c:@F@__ESBMC_assume",
+        empty_typet(),
+        location,
+        assume_call);
+      assume_call.arguments().push_back(condition);
+      convert_expression_to_code(assume_call);
+      move_to_front_block(assume_call);
+    };
+
+    // An uninitialised contract-typed variable is represented as a null
+    // pointer.  Reject it before reading `$address`, then reject a materialised
+    // contract pointer whose EVM address is zero.
+    if (base.type().is_pointer() && !explicit_contract_cast)
+    {
+      exprt target_exists =
+        binary_relation_exprt(base, "notequal", gen_zero(base.type()));
+      emit_call_guard(target_exists);
+    }
+    exprt target_address = member_exprt(base, "$address", addr_t);
+    exprt target_address_nonzero = binary_relation_exprt(
+      target_address, "notequal", from_integer(0, target_address.type()));
+    emit_call_guard(target_address_nonzero);
+  }
+
+  if (path_cov_unknown_address_cast)
+  {
+    // Complete-path coverage is run over one target unit.  Treating an
+    // arbitrary address cast like `I(addr).f()` as a tracked singleton opens the
+    // whole structural-typing dispatch cluster and dominates the timeout/OOM
+    // bucket for proxy/factory-heavy projects.  The callee is outside the unit
+    // dependency region unless the address came from `new`/`this`, so expose its
+    // return value as typed nondet instead of inlining the external closure.
+    log_debug(
+      "solidity",
+      "\t\t@@@ path-coverage external address-cast call to {}, "
+      "synthesizing nondet return",
+      cast_target_cname);
+    return synthesize_nondet_member_return();
   }
 
   const int member_id = callee_expr_json["referencedDeclaration"].get<int>();
@@ -4249,6 +4316,7 @@ bool solidity_convertert::get_contract_member_call_expr(
       code_declt old_sender_decl(symbol_expr(added_old_sender));
       added_old_sender.value = msg_sender;
       old_sender_decl.operands().push_back(msg_sender);
+      old_sender_decl.set("#sol_extcall_wrapper", true);
       move_to_front_block(old_sender_decl);
 
       // msg_sender = this.address;
@@ -4256,6 +4324,7 @@ bool solidity_convertert::get_contract_member_call_expr(
       exprt assign_sender = side_effect_exprt("assign", addr_t);
       assign_sender.copy_to_operands(msg_sender, this_address);
       convert_expression_to_code(assign_sender);
+      assign_sender.set("#sol_extcall_wrapper", true);
       move_to_front_block(assign_sender);
 
       // msg_sender = old_sender;

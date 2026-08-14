@@ -98,6 +98,8 @@ std::map<std::pair<std::string, std::string>, std::string>
 std::string goto_coveraget::path_covered_outpath;
 std::map<std::string, std::string> goto_coveraget::units_not_entered;
 bool goto_coveraget::path_cov_certify_mode = false;
+bool goto_coveraget::path_cov_k_induction = false;
+bool goto_coveraget::path_cov_k_induction_proved = false;
 std::vector<std::string> goto_coveraget::path_cov_certify_box_names;
 std::vector<std::array<std::string, 3>> goto_coveraget::path_cov_certify_box;
 std::map<std::string, std::string> goto_coveraget::path_cov_certify_ce;
@@ -1325,6 +1327,13 @@ void goto_coveraget::report_path_cov_certify()
       unknown,
       path_cov_certify_exit_keys.size());
   else
+  {
+    const std::string proof_scope = path_cov_k_induction
+                                      ? "K-INDUCTION: discharged by the "
+                                        "inductive proof strategy"
+                                      : "BOUNDED: true under THIS exploration "
+                                        "(tx/unwind bound, post-constructor "
+                                        "entry state), never 'proven'";
     log_status(
       "--path-cov-certify: RESULT: CERTIFIED — every input the box admits "
       "walks "
@@ -1332,12 +1341,13 @@ void goto_coveraget::report_path_cov_certify()
       "exits the box makes unreachable), and NON-VACUITY was witnessed, so "
       "this "
       "is a statement about executions rather than about an empty box. "
-      "BOUNDED: true under THIS exploration (tx/unwind bound, post-constructor "
-      "entry state), never 'proven'",
+      "{}",
       enc_txt,
       holds,
       path_cov_certify_exit_keys.size(),
-      unreachable);
+      unreachable,
+      proof_scope);
+  }
 
   log_status(
     "--path-cov-certify: the run's VERIFICATION SUCCESSFUL / FAILED line is "
@@ -2592,17 +2602,23 @@ void goto_coveraget::report_path_cov_assertions()
 
   // All four counts, every time, zeros included: a category that stops
   // occurring is noticed, a category that silently disappears is not.
+  const std::string holds_scope =
+    path_cov_k_induction ? "K-INDUCTION-holds: discharged by the "
+                           "inductive proof strategy"
+                         : "BOUNDED-holds: true for every input of "
+                           "the region under THIS exploration "
+                           "(tx/unwind bound, post-constructor entry "
+                           "state), never \"proven\"";
   log_status(
     "--path-cov-assert: ladder summary -- {} candidate(s): {} HOLDS, {} "
     "REFUTED, {} no verdict (solver unknown), {} no verdict (never reached the "
-    "solver). HOLDS is BOUNDED-holds: true for every input of the region under "
-    "THIS exploration (tx/unwind bound, post-constructor entry state), never "
-    "\"proven\"",
+    "solver). HOLDS is {}",
     path_cov_assert_candidates.size(),
     holds,
     refuted,
     nv_unknown,
-    nv_unreached);
+    nv_unreached,
+    holds_scope);
 }
 
 void goto_coveraget::publish_path_cov_assertion_partial_row_locked(
@@ -5808,17 +5824,9 @@ void goto_coveraget::solidity_path_coverage()
       // The contract instance object. Same symbol family the counterexample
       // harvest reads `final_state` from, so a coordinate named here and a
       // value reported there refer to the same thing by construction.
-      const symbolt *obj = nullptr;
-      cov_context->foreach_operand([&](const symbolt &s) {
-        if (obj != nullptr)
-          return;
-        const std::string id = s.id.as_string();
-        if (
-          id.rfind("sol:@_ESBMC_Object_", 0) == 0 &&
-          (scope_contract.empty() ||
-           id.find(scope_contract) != std::string::npos))
-          obj = &s;
-      });
+      const std::string own =
+        fsym != nullptr ? contract_of(fsym->id.as_string()) : scope_contract;
+      const symbolt *obj = path_cov_contract_object(*cov_context, own);
       if (obj == nullptr)
         return false;
       const typet ostruct = ns.follow(obj->type);
@@ -9542,18 +9550,37 @@ void goto_coveraget::solidity_path_coverage()
       {
         goto_programt::targett nv_pc;
         bool nv_found = false;
+        size_t nv_path_idx = 0;
         for (const auto &e : to_insert)
         {
           const std::string &cm = std::get<2>(e);
           const size_t q = cm.rfind(":path:");
           if (q == std::string::npos)
+          {
+            ++nv_path_idx;
             continue;
+          }
           if (strtoull(cm.substr(q + 6).c_str(), nullptr, 10) == certify_enc)
           {
             nv_pc = std::get<0>(e);
             nv_found = true;
+            // Certification continues before the ordinary emission loop below,
+            // where exit metadata is normally published. Preserve the target
+            // path's enumerated classification now so the query-local
+            // #nonvacuous/#exitN report rows do not silently default to normal.
+            const std::pair<std::string, std::string> base_key{
+              cm, nv_pc->location.as_string()};
+            if (std::get<3>(e))
+              revert_paths.insert(base_key);
+            else if (rollback_exits.count(nv_path_idx))
+              rollback_revert_paths.insert(base_key);
+            else if (undetermined_exits.count(nv_path_idx))
+              undetermined_exit_paths.insert(base_key);
+            else
+              normal_exit_paths.insert(base_key);
             break;
           }
+          ++nv_path_idx;
         }
         // ---- enc is not a path of this unit ----
         //

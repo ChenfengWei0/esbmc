@@ -366,6 +366,64 @@ the verifier:
 This policy lets the 1263 existing PUTs act as a regression benchmark for
 improving k-induction while keeping proof status distinct from test validity.
 
+### Internal k-induction checkpoint
+
+The bounded baseline was committed as `b33ced62f3` before changing proof
+strategy.  Region certification and R1/R2 assertion queries now remove
+`--unwind*`, `--partial-loops`, `--incremental-bmc`, `--overflow-check`, and
+`--div-by-zero-check`, then run with:
+
+```text
+--k-induction --max-k-step 30 --solidity-max-tx 1
+```
+
+Path enumeration and CE refutation remain bounded/incremental; this change is
+only for proving a candidate region and its synthesized oracle.  Two isolated
+checks using the new binary closed at `k = 2`: BaseEscalationManager's
+`isDisputeAllowed` R2 return oracle (peak RSS 186,904 KiB) and its certified
+region query (peak RSS 183,980 KiB).  These are feasibility samples, not a
+claim that the whole corpus has been re-proved.
+
+Each newly generated PUT file also contains an independent zero-parameter
+`test_ce_anchor_<hash>()`.  Its body is copied from the authenticated
+certified-basis replay and retains the fixed target call and concrete
+return/state/revert assertion.  The fuzz PUT function is not modified and the
+two tests run with separate Foundry setup state.  The PUT Forge gate requires
+both functions to pass.  An isolated BaseEscalationManager integration check
+passed the 256-run fuzz PUT and the fixed CE anchor separately.
+
+The first implementation incorrectly accepted a fresh witness merely because
+it had the same path identity.  That is not the source CE.  The current gate
+is deliberately stricter: the fresh claim's complete scalar input,
+environment, and entry-state map must equal the certified detail's CE, and the
+ESBMC report and emitted Foundry case must carry the same SHA-256 fingerprint
+of the testcase reconstructed from that solver model.  After result-oracle
+insertion, the selected Foundry `setUp` and target-call body are hashed again;
+the attachment step recomputes both hashes from the final basis source.  The
+fixed return oracle, when present, must equal the certified CE return.  A
+fixture or repair that changes the caller, call arguments, environment, setup,
+or expected result is refused until a dedicated equivalence materializer can
+prove that transformation.  This may reduce anchor yield; it cannot silently
+substitute another point on the path.
+
+The k-induction integration also exposed a verifier bookkeeping bug: a base
+case `P` verdict survived an inconclusive inductive step and was later printed
+as `K-INDUCTION HOLDS`/`CERTIFIED`.  Coverage reporting now authorizes those
+labels only after the strategy-level forward condition or inductive step
+actually closes.  On max-k exhaustion, base-only `P` rows are downgraded to
+`UNDECIDED` while concrete `F` witnesses remain refutations.  Dedicated
+regressions cover a positive proof at `k = 2` and forced inductive-step
+exhaustion for both region certification and R1/R2.
+
+The existing bounded-proof-plus-Forge corpus is a strong empirical oracle for
+the k-induction work: its tests have already passed both the old ESBMC query and
+independent Foundry fuzz execution.  Therefore, when the new k-induction run is
+inconclusive on one of these established tests, the default diagnosis is a
+weak inductive step or missing invariant, not an immediate assertion defect.
+This is prioritization evidence, not permission to label an inconclusive run
+proved; only an actual forward-condition or inductive-step closure may publish
+`HOLDS`/`CERTIFIED`.
+
 ## RQ3 No-Certification Ablation
 
 RQ3 `VeriExploit/No_Cer_Reg` is a concrete-only ablation with a 600-second

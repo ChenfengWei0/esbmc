@@ -1,0 +1,5 @@
+CORE
+contract.sol
+--solidity-path-coverage --contract Flag --focus-function f --path-cov-certify certify.json --solidity-max-tx 1 --multi-property --k-induction --max-k-step 30 --result-only
+^--path-cov-certify: RESULT: CERTIFIED .* K-INDUCTION: discharged by the inductive proof strategy
+^VERIFICATION FAILED$

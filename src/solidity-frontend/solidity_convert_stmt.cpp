@@ -1714,20 +1714,77 @@ bool solidity_convertert::get_statement(
       exprt call_expr;
       if (get_expr(stmt["externalCall"], call_expr))
         return true;
+      code_blockt call_prelude;
+      code_blockt call_setup;
+      std::vector<exprt> target_guards;
       for (auto &op : expr_frontBlockDecl.operands())
       {
+        if (op.get_bool("#sol_extcall_target_guard"))
+        {
+          if (
+            !op.is_code() || op.statement() != "ifthenelse" ||
+            op.operands().size() < 2)
+          {
+            log_error("malformed high-level external-call target guard");
+            return true;
+          }
+          // build_revert_rollback_block emits `if (!valid) rollback`; recover
+          // `valid` so the call itself can be placed in the success arm.
+          target_guards.emplace_back(not_exprt(op.op0()));
+          continue;
+        }
         convert_expression_to_code(op);
-        try_block.copy_to_operands(op);
+        if (op.get_bool("#sol_extcall_wrapper"))
+          call_setup.copy_to_operands(op);
+        else
+          call_prelude.copy_to_operands(op);
       }
       expr_frontBlockDecl.clear();
+
+      // Target and argument evaluation belongs to the caller frame.  It must
+      // happen before the external-call failure is observed, and its effects
+      // survive when a catch clause handles that failure.
+      try_block.copy_to_operands(call_prelude);
+
+      code_blockt guarded_call;
+      guarded_call.copy_to_operands(call_setup);
       convert_expression_to_code(call_expr);
-      try_block.copy_to_operands(call_expr);
+      guarded_call.copy_to_operands(call_expr);
       for (auto &op : expr_backBlockDecl.operands())
       {
         convert_expression_to_code(op);
-        try_block.copy_to_operands(op);
+        guarded_call.copy_to_operands(op);
       }
       expr_backBlockDecl.clear();
+
+      if (target_guards.empty())
+        try_block.copy_to_operands(guarded_call);
+      else
+      {
+        // Nest the checks in reverse so a null contract pointer is rejected
+        // before its `$address` is read.  The invalid arm marks only this
+        // external call as reverted; the existing try wrapper below restores
+        // its parent flag and transfers control to catch.
+        for (auto it = target_guards.rbegin(); it != target_guards.rend(); ++it)
+        {
+          code_blockt failed_call;
+          exprt mark_stmt;
+          build_revert_flag_call(
+            "_ESBMC_sol_mark_revert",
+            "c:@F@_ESBMC_sol_mark_revert",
+            loc,
+            mark_stmt);
+          failed_call.copy_to_operands(mark_stmt);
+
+          codet guarded_step("ifthenelse");
+          guarded_step.copy_to_operands(*it, guarded_call, failed_call);
+          guarded_step.location() = loc;
+          code_blockt next;
+          next.copy_to_operands(guarded_step);
+          guarded_call = next;
+        }
+        try_block.copy_to_operands(guarded_call);
+      }
     }
 
     // (D) snapshot THIS call's revert outcome before either body runs.

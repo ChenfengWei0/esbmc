@@ -377,6 +377,7 @@ private:
   /// counterexamples collapsing onto one emitted case are visible as several
   /// claims on that case rather than silently losing all but the first.
   std::map<std::string, std::string> claims_by_fingerprint;
+  std::map<std::string, size_t> defaulted_args_by_fingerprint;
 
   /// Deduplication fingerprint for a reconstructed test case.
   static std::string fingerprint(const test_case &tc);
@@ -397,6 +398,13 @@ private:
 
 public:
   foundry_generator() = default;
+
+  /// SHA-256 of the reconstructed testcase fingerprint for one exact coverage
+  /// claim.  Both cov-report.json and the emitted Foundry case publish this
+  /// value, binding the report CE to the concrete call rendered from the same
+  /// solver model.
+  std::string
+  testcase_fingerprint_sha256_for_claim(const std::string &claim) const;
 
   /// Clear collected data (start of a coverage run).
   void clear();

@@ -1,0 +1,5 @@
+CORE
+contract.sol
+--solidity-path-coverage --contract Target --focus-function transferOwnership --path-cov-certify cert.json --solidity-max-tx 1
+^--path-cov-certify: RESULT: CERTIFIED
+^VERIFICATION FAILED$

@@ -1,0 +1,13 @@
+{
+  "unit": "transferOwnership",
+  "enc": 15,
+  "depth": 3,
+  "box": [
+    { "name": "msg.sender", "lo": "1", "hi": "1" },
+    { "name": "next", "lo": "2", "hi": "2" },
+    { "name": "msg.value", "lo": "0", "hi": "0" }
+  ],
+  "establish": [
+    { "target": "state._owner", "source": "msg.sender" }
+  ]
+}

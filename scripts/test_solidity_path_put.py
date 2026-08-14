@@ -115,6 +115,7 @@ from solidity_path_put import (
     observed_env,
     constructor_sender_needs_nonzero,
     dedup_esbmc_singleton_args,
+    k_induction_proof_args,
     normal_exit_region_retreat,
     oracle_class_summary,
     oracle_detail,
@@ -148,6 +149,8 @@ from solidity_path_put import (
     _source_custom_type_import_symbol,
     can_synthesize_missing_emitter_output,
     concrete_stage2_source_record,
+    bind_emitted_claim_to_certified_ce,
+    bind_emitted_source_to_certified_ce,
     synthetic_emitter_probe_budget,
     synthesize_minimal_emitted_case,
     synthesize_missing_emitted_case_for_claim,
@@ -874,8 +877,8 @@ def test_certified_basis_raw_call_moves_off_zero_sender():
         "    (bool ok1, ) = address(c0).call{value: 99}(hex\"deadbeef\");",
         "    assertTrue(ok1, \"covered receive/fallback path must return normally\");",
     ]
-    out, changed = materialize_concrete_certified_sender_point(
-        lines, {"msg.sender": (0, 10)}, {"msg.value": 99})
+    out, changed = materialize_concrete_certified_sender_point(lines, {"msg.sender": (0, 10)},
+                                                               {"msg.value": 99})
     text = "\n".join(out)
     bad = 0
     bad += check(changed == 1, f"one governing prank is rewritten: {out}")
@@ -2524,10 +2527,8 @@ contract CCovTest is Test {
         in text, "the copied modules struct preserves original field values")
     for param_idx, field in fields:
         fixture = f"_esbmc_ctor_code_struct_0_{param_idx}"
-        bad += check(
-            f"address _esbmc_ctor_code_" in text
-            and f"= {fixture}.{field};" in text,
-            f"the {field} field is etched in place")
+        bad += check(f"address _esbmc_ctor_code_" in text and f"= {fixture}.{field};" in text,
+                     f"the {field} field is etched in place")
         bad += check(f"{fixture}.{field} =" not in text,
                      f"the {field} field value is not rewritten")
     bad += check("_esbmc_ctor_code_struct_0_0.balanceTracker =" not in text,
@@ -2540,9 +2541,10 @@ contract CCovTest is Test {
         text.count(".code.length == 0") >= 5,
         "existing dependency code is preserved instead of overwritten")
     deploy_at = text.find("new C(")
-    bad += check(deploy_at >= 0 and "_esbmc_ctor_code_struct_0_0" in text[deploy_at:]
-                 and "_esbmc_ctor_code_struct_0_1" in text[deploy_at:],
-                 "deployment uses the repaired struct fixtures")
+    bad += check(
+        deploy_at >= 0 and "_esbmc_ctor_code_struct_0_0" in text[deploy_at:]
+        and "_esbmc_ctor_code_struct_0_1" in text[deploy_at:],
+        "deployment uses the repaired struct fixtures")
     return bad
 
 
@@ -5176,24 +5178,26 @@ def test_concrete_stage2_source_record_preserves_certified_region_reason():
                  "certified-region concrete fallback keeps its source")
     bad += check(certified["stage4_kind"] == "certified-region-concrete-fallback",
                  "certified-region concrete fallback records its Stage-4 kind")
-    bad += check(certified["stage2_witness_check"] ==
-                 "CERTIFIED-REGION-PUT-REFUSED:build-put-refused",
-                 "certified-region concrete fallback keeps the witness verdict")
+    bad += check(
+        certified["stage2_witness_check"] == "CERTIFIED-REGION-PUT-REFUSED:build-put-refused",
+        "certified-region concrete fallback keeps the witness verdict")
     bad += check(certified["certified_region_fallback_reason"] == "build-put-refused",
                  "certified-region concrete fallback records the real PUT refusal")
     plain = concrete_stage2_source_record("cleared_not_certified_fallback", "SUCCESSFUL")
-    bad += check(plain["stage2_source"] == "cleared_not_certified_fallback" and
-                 plain["stage4_kind"] == "cleared-concrete-fallback" and
-                 plain["stage2_witness_check"] == "SUCCESSFUL" and
-                 "certified_region_fallback_reason" not in plain,
-                 "ordinary concrete fallback keeps its own provenance")
+    bad += check(
+        plain["stage2_source"] == "cleared_not_certified_fallback"
+        and plain["stage4_kind"] == "cleared-concrete-fallback"
+        and plain["stage2_witness_check"] == "SUCCESSFUL"
+        and "certified_region_fallback_reason" not in plain,
+        "ordinary concrete fallback keeps its own provenance")
     partial = concrete_stage2_source_record("partial_journal_concrete_fallback",
                                             "PARTIAL-JOURNAL-WITNESSED")
-    bad += check(partial["stage2_source"] == "partial_journal_concrete_fallback" and
-                 partial["stage4_kind"] == "partial-journal-concrete-fallback" and
-                 partial["stage2_witness_check"] == "PARTIAL-JOURNAL-WITNESSED" and
-                 "certified_region_fallback_reason" not in partial,
-                 "partial-journal concrete fallback keeps its own provenance")
+    bad += check(
+        partial["stage2_source"] == "partial_journal_concrete_fallback"
+        and partial["stage4_kind"] == "partial-journal-concrete-fallback"
+        and partial["stage2_witness_check"] == "PARTIAL-JOURNAL-WITNESSED"
+        and "certified_region_fallback_reason" not in partial,
+        "partial-journal concrete fallback keeps its own provenance")
     depth = concrete_stage2_source_record("certified-region-concrete-fallback",
                                           reason="path-depth-unavailable")
     bad += check(depth["certified_region_fallback_reason"] == "path-depth-unavailable",
@@ -5362,8 +5366,8 @@ contract SignMessageLib {
   }
 }
 """)
-        lines = runtime_self_interface_cast_mock_lines(tmp, "SignMessageLib",
-                                                       "getMessageHash", "c0", "    ")
+        lines = runtime_self_interface_cast_mock_lines(tmp, "SignMessageLib", "getMessageHash",
+                                                       "c0", "    ")
     text = "\n".join(lines)
     bad = 0
     bad += check("vm.mockCall(address(c0)" in text,
@@ -6462,6 +6466,94 @@ def test_esbmc_singleton_args_are_deduplicated_without_breaking_unwindset():
             "2:16",
             "--div-by-zero-check",
         ], f"only singleton flags are deduplicated: {got}")
+
+
+def test_r1_r2_proof_uses_clean_k_induction_args():
+    got = k_induction_proof_args([
+        "--cvc5",
+        "--unwind",
+        "8",
+        "--unwindset=4:64",
+        "--overflow-check",
+        "--div-by-zero-check",
+        "--partial-loops",
+        "--incremental-bmc",
+        "--max-k-step",
+        "99",
+        "--max-inductive-step",
+        "1",
+        "--base-k-step=7",
+        "--k-step",
+        "9",
+        "--unlimited-k-steps",
+        "--enable-forward-condition",
+        "--disable-inductive-step",
+    ])
+    return check(got == [
+        "--cvc5", "--k-induction", "--enable-forward-condition",
+        "--max-k-step", "30"
+    ],
+                 f"R1/R2 proof args are clean k-induction only: {got}")
+
+
+def test_certified_basis_requires_the_exact_certified_ce():
+    claim = {
+        "inputs": {
+            "amount": "0x07"
+        },
+        "env": {
+            "msg.sender": "9",
+            "msg.value": "0"
+        },
+        "entry_storage": {
+            "balance": "11"
+        },
+    }
+    expected = {
+        "amount": "7",
+        "msg.sender": "9",
+        "msg.value": "0",
+        "state.balance": "11",
+        "return": "3",
+    }
+    binding, reason = bind_emitted_claim_to_certified_ce(claim, expected)
+    bad = check(reason is None and binding["status"] == "exact",
+                f"equal CE coordinates bind exactly: {binding}, {reason}")
+    changed = dict(expected, amount="8")
+    binding, reason = bind_emitted_claim_to_certified_ce(claim, changed)
+    bad += check(binding is None and "different=amount" in reason,
+                 f"same-path different input is refused: {reason}")
+    malformed = dict(expected, amount={"not": "scalar"})
+    binding, reason = bind_emitted_claim_to_certified_ce(claim, malformed)
+    bad += check(binding is None and "non-scalar" in reason,
+                 f"unrenderable CE is refused: {reason}")
+    body = [
+        "    vm.prank(address(uint160(9)));",
+        "    c0.f(uint256(7));",
+    ]
+    source_sha, reason = bind_emitted_source_to_certified_ce(body, 1, "f", [("amount", "uint256")],
+                                                             {
+                                                                 "amount": "7",
+                                                                 "msg.sender": "9",
+                                                             })
+    bad += check(source_sha is not None and reason is None,
+                 f"rendered scalar call is bound to its CE: {reason}")
+    source_sha, reason = bind_emitted_source_to_certified_ce([body[0], "    c0.f(uint256(8));"], 1,
+                                                             "f", [("amount", "uint256")], {
+                                                                 "amount": "7",
+                                                                 "msg.sender": "9",
+                                                             })
+    bad += check(source_sha is None and "differs" in reason,
+                 f"rendered call with another input is refused: {reason}")
+    source_sha, reason = bind_emitted_source_to_certified_ce(body, 1, "f", [("amount", "uint256"),
+                                                                            ("omitted", "uint256")],
+                                                             {
+                                                                 "amount": "7",
+                                                                 "msg.sender": "9",
+                                                             })
+    bad += check(source_sha is None and "arguments do not match" in reason,
+                 f"defaulted or missing argument is refused: {reason}")
+    return bad
 
 
 def test_foundry_fixture_loading_keeps_esbmc_fixture_as_fallback():
@@ -7701,11 +7793,9 @@ def test_assert_query_skips_internal_semantic_state_pins():
     }, f"only storage-backed source-level pins remain: {keep}")
     bad += check(
         len(skipped) == 2
-        and any("state._DOCKED" in item and "no solc storage slot" in item
-                for item in skipped)
-        and any("state._SEQUENCER_STATUS_DOWN$144" in item
-                and "ESBMC-internal state name" in item for item in skipped),
-        f"semantic pin skips are recorded: {skipped}")
+        and any("state._DOCKED" in item and "no solc storage slot" in item for item in skipped)
+        and any("state._SEQUENCER_STATUS_DOWN$144" in item and "ESBMC-internal state name" in item
+                for item in skipped), f"semantic pin skips are recorded: {skipped}")
     return bad
 
 
@@ -7810,9 +7900,9 @@ def test_assert_query_internal_identifier_keys_do_not_reenter_r1_candidates():
 
 def test_exact_one_ladder_budget_prefers_certified_mapping_slot():
     from solidity_path_put import select_ladder_oracle_vars  # noqa: E402
-    selected = select_ladder_oracle_vars(
-        ["guesses$11[msg.sender].block"], [],
-        ["guesses[msg.sender].block", "guesses[msg.sender].guess"], {}, {})
+    selected = select_ladder_oracle_vars(["guesses$11[msg.sender].block"], [],
+                                         ["guesses[msg.sender].block", "guesses[msg.sender].guess"],
+                                         {}, {})
     return check(selected == ["guesses$11[msg.sender].block"],
                  f"certified mapping priority is the exact ladder query: {selected}")
 
@@ -7826,8 +7916,8 @@ def test_exact_one_ladder_budget_does_not_trim_without_mapping_priority():
 
 def test_exact_one_ladder_budget_preserves_mixed_certified_priorities():
     from solidity_path_put import select_ladder_oracle_vars  # noqa: E402
-    selected = select_ladder_oracle_vars(
-        ["owner", "balances[msg.sender]"], [], ["balances[msg.sender]"], {}, {})
+    selected = select_ladder_oracle_vars(["owner", "balances[msg.sender]"], [],
+                                         ["balances[msg.sender]"], {}, {})
     return check(selected == ["owner", "balances[msg.sender]"],
                  f"mixed certified priorities are not silently trimmed: {selected}")
 
@@ -8275,8 +8365,7 @@ def test_TWO_esbmc_invocations_do_not_share_ONE_log_file():
             bad += check("FIRST" in a and "FIRST" not in b,
                          "the first call's output survives the second")
             bad += check("SECOND" in b, "and the second call has its own")
-            bad += check("/bin/echo" in a,
-                         "the child command records an absolute executable path")
+            bad += check("/bin/echo" in a, "the child command records an absolute executable path")
         bad += check(
             "run.log" in names and "SECOND" in open(os.path.join(d, "run.log")).read(),
             f"`run.log` still holds the LAST call, so every existing "
@@ -10012,11 +10101,12 @@ def test_typed_R2_keeps_equality_fallback_without_ordering():
                            rendered_coords=[],
                            log=said.append)
     bad = 0
-    bad += check(len(got) == 1 and got[0].get("candidate_count") == 66,
-                 f"equality and absolute candidates remain available: {got}")
-    bad += check(any("absolute/equality R2 candidates are still meaningful" in line
-                     for line in said),
-                 f"the equality fallback is named explicitly: {said}")
+    bad += check(
+        len(got) == 1 and got[0].get("candidate_count") == 66,
+        f"equality and absolute candidates remain available: {got}")
+    bad += check(
+        any("absolute/equality R2 candidates are still meaningful" in line for line in said),
+        f"the equality fallback is named explicitly: {said}")
     return bad
 
 
@@ -13163,8 +13253,10 @@ def test_source_R2_state_entry_coords_are_used_only_when_rendered():
                  f"state coord provenance is recorded: {evidence}")
     bad += check(any("total: post - pre == state.seed" in line for line in evidence),
                  f"state delta provenance is recorded: {evidence}")
-    unrendered_entries = ({entry["name"]: entry
-                           for entry in unrendered[0]["vars"]} if unrendered else {})
+    unrendered_entries = ({
+        entry["name"]: entry
+        for entry in unrendered[0]["vars"]
+    } if unrendered else {})
     bad += check(
         set(unrendered_entries) == {"mirror", "savedOwner", "copiedReady"},
         f"direct readable state coords materialize without enabling composites: {unrendered}")
@@ -17330,8 +17422,7 @@ contract D is A, B {}
 
 def test_synthetic_inherited_unnamed_param_keeps_abi_position_and_return():
     from solidity_path_put import (  # noqa: E402
-        source_inherited_function_params,
-        source_inherited_function_returns,
+        source_inherited_function_params, source_inherited_function_returns,
     )
     source = """\
 pragma solidity >=0.8.0;
@@ -17342,14 +17433,12 @@ contract ChainReverseResolver is AbstractReverseResolver {}
 """
     bad = 0
     bad += check(
-        source_inherited_function_params(
-            source, "ChainReverseResolver", "supportsFeature", 1)
-        == [("_arg0", "bytes4")],
+        source_inherited_function_params(source, "ChainReverseResolver", "supportsFeature",
+                                         1) == [("_arg0", "bytes4")],
         "an unnamed inherited parameter retains its positional ABI argument")
     bad += check(
-        source_inherited_function_returns(
-            source, "ChainReverseResolver", "supportsFeature", 1)
-        == [("", "bool")],
+        source_inherited_function_returns(source, "ChainReverseResolver", "supportsFeature",
+                                          1) == [("", "bool")],
         "the inherited declaration fallback also recovers its bool return")
     return bad
 
@@ -23417,17 +23506,16 @@ def test_concrete_replay_gets_explicit_normal_exit_oracle():
   }
 }
 """
-    rewritten, oracles = add_concrete_normal_exit_oracle(
-        source, "test_cov_0", "f")
+    rewritten, oracles = add_concrete_normal_exit_oracle(source, "test_cov_0", "f")
     bad = 0
     bad += check("bool _veriput_concrete_completed = false;" in rewritten,
                  "the fixed replay records completion before the target call")
     bad += check("assertTrue(_veriput_concrete_completed" in rewritten,
                  "the fixed replay explicitly asserts its R0 normal result")
-    bad += check(len(oracles) == 1 and oracles[0]["class"] == "R0"
-                 and oracles[0]["target_receiver"] == "c0"
-                 and oracles[0]["observed"] == "_veriput_concrete_completed",
-                 f"the R0 assertion has structured target-bound provenance: {oracles}")
+    bad += check(
+        len(oracles) == 1 and oracles[0]["class"] == "R0" and oracles[0]["target_receiver"] == "c0"
+        and oracles[0]["observed"] == "_veriput_concrete_completed",
+        f"the R0 assertion has structured target-bound provenance: {oracles}")
     return bad
 
 
@@ -23438,16 +23526,16 @@ def test_try_concrete_replay_marks_only_successful_target_exit():
   }
 }
 """
-    rewritten, oracles = add_concrete_normal_exit_oracle(
-        source, "test_cov_0", "f")
+    rewritten, oracles = add_concrete_normal_exit_oracle(source, "test_cov_0", "f")
     bad = 0
-    bad += check("try c0.f() {\n      _veriput_concrete_completed = true;\n"
-                 "    } catch {}" in rewritten,
-                 "a try replay marks completion only in its success block")
+    bad += check(
+        "try c0.f() {\n      _veriput_concrete_completed = true;\n"
+        "    } catch {}" in rewritten, "a try replay marks completion only in its success block")
     bad += check("catch {}\n    _veriput_concrete_completed = true;" not in rewritten,
                  "a caught revert cannot satisfy the normal-exit oracle")
-    bad += check(len(oracles) == 1 and oracles[0]["kind"] == "normal-exit",
-                 f"the try replay retains structured R0 provenance: {oracles}")
+    bad += check(
+        len(oracles) == 1 and oracles[0]["kind"] == "normal-exit",
+        f"the try replay retains structured R0 provenance: {oracles}")
     return bad
 
 
@@ -23464,8 +23552,7 @@ def test_multiline_typed_try_replay_marks_success_after_all_catches():
   }
 }
 """
-    rewritten, oracles = add_concrete_normal_exit_oracle(
-        source, "test_cov_0", "f")
+    rewritten, oracles = add_concrete_normal_exit_oracle(source, "test_cov_0", "f")
     bad = 0
     success = rewritten.index("_veriput_concrete_completed = true;")
     first_catch = rewritten.index("catch Error")
@@ -23475,30 +23562,25 @@ def test_multiline_typed_try_replay_marks_success_after_all_catches():
                  "typed multiline try marks success before every catch and asserts after them")
     bad += check(len(oracles) == 1, "the structured multiline try gets one oracle")
     malformed = source.replace("    } catch (bytes memory data) {\n    }\n", "")
-    malformed = malformed.replace("    } catch Panic(uint256 code) {\n", "    catch Panic(uint256 code) {\n")
-    unchanged, refused = add_concrete_normal_exit_oracle(
-        malformed, "test_cov_0", "f")
+    malformed = malformed.replace("    } catch Panic(uint256 code) {\n",
+                                  "    catch Panic(uint256 code) {\n")
+    unchanged, refused = add_concrete_normal_exit_oracle(malformed, "test_cov_0", "f")
     bad += check(unchanged == malformed and refused == [],
                  "an incomplete try/catch parse is refused without direct fallback")
     with_options = source.replace("try c0.f(\n", "try c0.f{value: 1, gas: 50000}(\n")
-    rewritten, bound = add_concrete_normal_exit_oracle(
-        with_options, "test_cov_0", "f")
+    rewritten, bound = add_concrete_normal_exit_oracle(with_options, "test_cov_0", "f")
     bad += check(bound and "try c0.f{value: 1, gas: 50000}(" in rewritten,
                  "call options remain part of the structurally parsed try target")
     bad += check(bound and bound[0]["target_receiver"] == "c0",
                  "call-options provenance retains the exact target receiver")
-    nonempty = source.replace(
-        "    ) returns (uint256 value) {\n    } catch Error",
-        "    ) returns (uint256 value) {\n      value;\n    } catch Error")
-    unchanged, refused = add_concrete_normal_exit_oracle(
-        nonempty, "test_cov_0", "f")
+    nonempty = source.replace("    ) returns (uint256 value) {\n    } catch Error",
+                              "    ) returns (uint256 value) {\n      value;\n    } catch Error")
+    unchanged, refused = add_concrete_normal_exit_oracle(nonempty, "test_cov_0", "f")
     bad += check(unchanged == nonempty and refused == [],
                  "a nonempty success block is refused instead of direct fallback")
-    returning_catch = source.replace(
-        "    } catch (bytes memory data) {\n    }",
-        "    } catch (bytes memory data) {\n      return;\n    }")
-    unchanged, refused = add_concrete_normal_exit_oracle(
-        returning_catch, "test_cov_0", "f")
+    returning_catch = source.replace("    } catch (bytes memory data) {\n    }",
+                                     "    } catch (bytes memory data) {\n      return;\n    }")
+    unchanged, refused = add_concrete_normal_exit_oracle(returning_catch, "test_cov_0", "f")
     bad += check(unchanged == returning_catch and refused == [],
                  "a catch that can bypass the final assertion is refused")
     return bad
@@ -23511,21 +23593,32 @@ def test_source_synthesized_concrete_binds_fixed_scalar_return():
   }
 }
 """
-    rewritten, oracles = add_concrete_fixed_return_oracle(
-        source, "test_cov_0", "decimals", [("", "uint8")], "0")
+    rewritten, oracles = add_concrete_fixed_return_oracle(source, "test_cov_0", "decimals",
+                                                          [("", "uint8")], "0")
     bad = 0
     bad += check("uint8 _veriput_concrete_return = c0.decimals();" in rewritten,
                  "the fixed replay captures the selected target return")
     bad += check("assertEq(_veriput_concrete_return, uint8(0)" in rewritten,
                  "the replay asserts the Stage-2 witness value")
-    bad += check(oracles == [{
-        "class": "R0", "kind": "return-value",
-        "solidity_type": "uint8",
-        "observed": "_veriput_concrete_return", "expected": "uint8(0)",
-        "provenance": "stage2-witness", "target_receiver": "c0",
-        "assertion": ('assertEq(_veriput_concrete_return, uint8(0), '
-                      '"fixed witness return must match");'),
-    }], f"the return assertion carries structured witness provenance: {oracles}")
+    bad += check(
+        oracles == [{
+            "class":
+            "R0",
+            "kind":
+            "return-value",
+            "solidity_type":
+            "uint8",
+            "observed":
+            "_veriput_concrete_return",
+            "expected":
+            "uint8(0)",
+            "provenance":
+            "stage2-witness",
+            "target_receiver":
+            "c0",
+            "assertion": ('assertEq(_veriput_concrete_return, uint8(0), '
+                          '"fixed witness return must match");'),
+        }], f"the return assertion carries structured witness provenance: {oracles}")
     return bad
 
 
@@ -23537,16 +23630,14 @@ def test_concrete_return_binding_requires_one_known_scalar_return():
 }
 """
     bad = 0
-    for rettypes, value in (([], "0"), ([("", "uint8")], None),
-                             ([("", "string")], "0"),
-                             ([("", "uint8"), ("", "uint8")], "0"),
-                             ([("", "uint8")], "malformed")):
-        rewritten, oracles = add_concrete_fixed_return_oracle(
-            source, "test_cov_0", "f", rettypes, value)
+    for rettypes, value in (([], "0"), ([("", "uint8")], None), ([("", "string")], "0"),
+                            ([("", "uint8"), ("", "uint8")], "0"), ([("", "uint8")], "malformed")):
+        rewritten, oracles = add_concrete_fixed_return_oracle(source, "test_cov_0", "f", rettypes,
+                                                              value)
         bad += check(rewritten == source and oracles == [],
                      f"unknown/non-scalar return stays untouched: {rettypes}, {value}")
-    rewritten, oracles = add_concrete_fixed_return_oracle(
-        source, "test_cov_0", "f", [("", "uint8")], "(0)")
+    rewritten, oracles = add_concrete_fixed_return_oracle(source, "test_cov_0", "f",
+                                                          [("", "uint8")], "(0)")
     bad += check("uint8(0)" in rewritten and bool(oracles),
                  "a parenthesized scalar witness is parsed without crashing")
     return bad
@@ -23554,56 +23645,66 @@ def test_concrete_return_binding_requires_one_known_scalar_return():
 
 def test_concrete_return_witness_is_restricted_to_certified_basis():
     bad = 0
-    bad += check(concrete_return_mode_allowed(
-        True, "certified-region-concrete-fallback",
-        "CERTIFIED-BASIS-REPLAY"),
-                 "the retained certified basis may consume its return witness")
-    for concrete_only, source, witness_check in (
-            (False, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY"),
-            (True, "no-coordinate-concrete-fallback", "CERTIFIED-BASIS-REPLAY"),
-            (True, "certified-region-concrete-fallback", "SUCCESSFUL")):
-        bad += check(not concrete_return_mode_allowed(
-            concrete_only, source, witness_check),
+    bad += check(
+        concrete_return_mode_allowed(True, "certified-region-concrete-fallback",
+                                     "CERTIFIED-BASIS-REPLAY"),
+        "the retained certified basis may consume its return witness")
+    for concrete_only, source, witness_check in ((False, "certified-region-concrete-fallback",
+                                                  "CERTIFIED-BASIS-REPLAY"),
+                                                 (True, "no-coordinate-concrete-fallback",
+                                                  "CERTIFIED-BASIS-REPLAY"),
+                                                 (True, "certified-region-concrete-fallback",
+                                                  "SUCCESSFUL")):
+        bad += check(not concrete_return_mode_allowed(concrete_only, source, witness_check),
                      "other Stage-4 modes cannot inject a return witness")
     return bad
 
 
 def test_known_nonvoid_certified_basis_requires_return_witness():
     bad = 0
-    bad += check(certified_basis_missing_return_witness(
-        True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY",
-        [("", "uint8")], None),
-                 "known non-void certified basis refuses a missing witness")
-    bad += check(not certified_basis_missing_return_witness(
-        True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY",
-        [], None), "void certified basis does not require a return witness")
-    bad += check(not certified_basis_missing_return_witness(
-        True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY",
-        None, None), "unknown return metadata is not mislabeled non-void")
-    bad += check(not certified_basis_missing_return_witness(
-        True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY",
-        [("", "uint8")], "0"),
-                 "known non-void certified basis accepts an exact witness")
-    bad += check(not certified_basis_missing_return_witness(
-        True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY",
-        [("", "uint8")], None, "abi-value-gate"),
-                 "nonpayable ABI value-gate basis is a call-status replay, "
-                 "not a return-value replay")
-    bad += check(not certified_basis_missing_return_witness(
-        True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY",
-        [("", "address")], None, "getter-value-gate"),
-                 "nonpayable getter value-gate basis is a call-status replay, "
-                 "not a return-value replay")
-    bad += check(not certified_basis_missing_return_witness(
-        True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY",
-        [("", "uint256")], None, region={"msg.value": (1, UINT256_MAX)}),
-                 "certified msg.value gate basis is a call-status replay even "
-                 "when the target function returns a value")
-    bad += check(certified_basis_missing_return_witness(
-        True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY",
-        [("", "uint256")], None, region={"msg.value": (0, UINT256_MAX)}),
-                 "a non-void basis without a positive value gate still "
-                 "requires an exact return witness")
+    bad += check(
+        certified_basis_missing_return_witness(True, "certified-region-concrete-fallback",
+                                               "CERTIFIED-BASIS-REPLAY", [("", "uint8")], None),
+        "known non-void certified basis refuses a missing witness")
+    bad += check(
+        not certified_basis_missing_return_witness(True, "certified-region-concrete-fallback",
+                                                   "CERTIFIED-BASIS-REPLAY", [], None),
+        "void certified basis does not require a return witness")
+    bad += check(
+        not certified_basis_missing_return_witness(True, "certified-region-concrete-fallback",
+                                                   "CERTIFIED-BASIS-REPLAY", None, None),
+        "unknown return metadata is not mislabeled non-void")
+    bad += check(
+        not certified_basis_missing_return_witness(True, "certified-region-concrete-fallback",
+                                                   "CERTIFIED-BASIS-REPLAY", [("", "uint8")], "0"),
+        "known non-void certified basis accepts an exact witness")
+    bad += check(
+        not certified_basis_missing_return_witness(
+            True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY", [("", "uint8")],
+            None, "abi-value-gate"), "nonpayable ABI value-gate basis is a call-status replay, "
+        "not a return-value replay")
+    bad += check(
+        not certified_basis_missing_return_witness(True, "certified-region-concrete-fallback",
+                                                   "CERTIFIED-BASIS-REPLAY", [("", "address")],
+                                                   None, "getter-value-gate"),
+        "nonpayable getter value-gate basis is a call-status replay, "
+        "not a return-value replay")
+    bad += check(
+        not certified_basis_missing_return_witness(True,
+                                                   "certified-region-concrete-fallback",
+                                                   "CERTIFIED-BASIS-REPLAY", [("", "uint256")],
+                                                   None,
+                                                   region={"msg.value": (1, UINT256_MAX)}),
+        "certified msg.value gate basis is a call-status replay even "
+        "when the target function returns a value")
+    bad += check(
+        certified_basis_missing_return_witness(True,
+                                               "certified-region-concrete-fallback",
+                                               "CERTIFIED-BASIS-REPLAY", [("", "uint256")],
+                                               None,
+                                               region={"msg.value": (0, UINT256_MAX)}),
+        "a non-void basis without a positive value gate still "
+        "requires an exact return witness")
     return bad
 
 
@@ -23616,33 +23717,30 @@ def test_concrete_replay_preserves_low_level_call_status_oracle():
   }
 }
 '''
-    rewritten, oracles = add_concrete_normal_exit_oracle(
-        source, "test_cov_0", "f")
+    rewritten, oracles = add_concrete_normal_exit_oracle(source, "test_cov_0", "f")
     bad = 0
     bad += check(rewritten == source,
                  "the concrete producer does not rewrite an existing call-status oracle")
-    bad += check(oracles == [{
-        "class": "R0", "kind": "call-status", "observed": "ok",
-        "expected": False, "provenance": "stage2-witness",
-        "target_receiver": "c0",
-        "assertion": 'assertFalse(ok, "nonpayable call must revert");',
-    }], f"the low-level result is bound to the fixed target call: {oracles}")
-    no_status = source.replace(
-        '    assertFalse(ok, "nonpayable call must revert");\n', '')
-    unchanged, missing = add_concrete_normal_exit_oracle(
-        no_status, "test_cov_0", "f")
+    bad += check(
+        oracles == [{
+            "class": "R0",
+            "kind": "call-status",
+            "observed": "ok",
+            "expected": False,
+            "provenance": "stage2-witness",
+            "target_receiver": "c0",
+            "assertion": 'assertFalse(ok, "nonpayable call must revert");',
+        }], f"the low-level result is bound to the fixed target call: {oracles}")
+    no_status = source.replace('    assertFalse(ok, "nonpayable call must revert");\n', '')
+    unchanged, missing = add_concrete_normal_exit_oracle(no_status, "test_cov_0", "f")
     bad += check(unchanged == no_status and missing == [],
                  "a low-level call without a status oracle is refused, not marked complete")
-    prior = source.replace(
-        '    (bool ok,)', '    bool prior = false;\n    (bool ok,)')
-    unchanged, bound = add_concrete_normal_exit_oracle(
-        prior, "test_cov_0", "f")
+    prior = source.replace('    (bool ok,)', '    bool prior = false;\n    (bool ok,)')
+    unchanged, bound = add_concrete_normal_exit_oracle(prior, "test_cov_0", "f")
     bad += check(bound and bound[0]["observed"] == "ok",
                  "an unrelated earlier bool cannot replace the call status")
-    commented = source.replace(
-        '    (bool ok,)', '    // fixed low-level witness\n    (bool ok,)')
-    unchanged, bound = add_concrete_normal_exit_oracle(
-        commented, "test_cov_0", "f")
+    commented = source.replace('    (bool ok,)', '    // fixed low-level witness\n    (bool ok,)')
+    unchanged, bound = add_concrete_normal_exit_oracle(commented, "test_cov_0", "f")
     bad += check(bound and bound[0]["observed"] == "ok",
                  "a leading comment cannot hide the exact low-level call status")
     return bad
@@ -23769,17 +23867,17 @@ contract OwnerGateCovTest is Test {
                                     pins={},
                                     certified_value_gate_basis=True)
     bad = 0
-    bad += check("function test_cov_0()" in text,
-                 "the basis remains a concrete replay test")
+    bad += check("function test_cov_0()" in text, "the basis remains a concrete replay test")
     bad += check("function disabled_test_cov_0()" not in text,
                  "the selected replay is not pre-disabled")
     bad += check("vm.deal(address(uint160(1)), 1);" in text,
                  "the concrete sender is funded inside the certified sender range")
     bad += check("vm.prank(address(uint160(1)));" in text,
                  "the concrete sender avoids Foundry's unprankable zero address")
-    bad += check("address(c0).call{value: 1}(abi.encodeWithSignature("
-                 "\"transferOwnership(address)\", address(uint160(2000))))" in text,
-                 "the high-level nonpayable call is rewritten as value-bearing low-level ABI call")
+    bad += check(
+        "address(c0).call{value: 1}(abi.encodeWithSignature("
+        "\"transferOwnership(address)\", address(uint160(2000))))" in text,
+        "the high-level nonpayable call is rewritten as value-bearing low-level ABI call")
     bad += check("assertFalse(_esbmc_value_gate_ok" in text,
                  "the value-gate exit is asserted on the low-level call result")
     bad += check("c0.transferOwnership(" not in text,
@@ -23828,15 +23926,16 @@ contract OwnerGateCovTest is Test {
                                     },
                                     pins={},
                                     certified_value_gate_basis=True)
-    body = text[text.find("function test_cov_0() public {"):text.find("}\n}", text.find(
-        "function test_cov_0() public {"))]
+    body = text[text.find("function test_cov_0() public {"):text.
+                find("}\n}", text.find("function test_cov_0() public {"))]
     bad = 0
     bad += check("vm.expectRevert" not in body,
                  "the stale high-level revert oracle is removed before the low-level call")
     bad += check("vm.prank(address(uint160(0)))" not in body,
                  "the stale high-level prank is removed before the low-level call")
-    bad += check(body.count("vm.prank(") == 1 and "vm.prank(address(uint160(1)));" in body,
-                 "only the value-gate sender prank remains")
+    bad += check(
+        body.count("vm.prank(") == 1 and "vm.prank(address(uint160(1)));" in body,
+        "only the value-gate sender prank remains")
     bad += check("assertFalse(_esbmc_value_gate_ok" in body,
                  "the low-level call status remains the execution oracle")
     return bad
@@ -23998,6 +24097,8 @@ def main():
               test_the_emitted_test_carries_its_cell,
               test_esbmc_arg_passthrough_admits_unwindset_and_refuses_strategies,
               test_esbmc_singleton_args_are_deduplicated_without_breaking_unwindset,
+              test_r1_r2_proof_uses_clean_k_induction_args,
+              test_certified_basis_requires_the_exact_certified_ce,
               test_pin_with_a_slot_is_established,
               test_zero_sender_owner_pin_is_promoted_to_executable_relation,
               test_precheck_only_identifies_rendered_width_not_oracle_strength,

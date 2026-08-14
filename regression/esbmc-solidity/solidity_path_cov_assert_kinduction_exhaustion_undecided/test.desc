@@ -1,0 +1,7 @@
+CORE
+contract.sol
+--contract ExactR2 --solidity-path-coverage --solidity-max-tx 1 --path-cov-assert spec.json --multi-property --k-induction --max-k-step 2 --max-inductive-step 1 --result-only
+^VERIFICATION UNKNOWN$
+^WARNING: k-induction did not close: downgrading [0-9]+ base-case-only path verdict\(s\) to UNDECIDED
+^--path-cov-assert: ladder summary -- 2 candidate\(s\): 0 HOLDS, 1 REFUTED, 1 no verdict \(solver unknown\), 0 no verdict \(never reached the solver\)
+\A(?!(.|\n)*^--path-cov-assert: return: return == state\.owner  HOLDS$)

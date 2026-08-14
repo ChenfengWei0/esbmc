@@ -10,6 +10,7 @@
 #include <util/message/format.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
+#include <util/picosha2.h>
 #include <irep2/irep2_expr.h>
 #include <fstream>
 #include <functional>
@@ -2629,6 +2630,7 @@ void foundry_generator::clear()
   libraries.clear();
   mock_specs.clear();
   claims_by_fingerprint.clear();
+  defaulted_args_by_fingerprint.clear();
   suppressed_obstacle = 0;
   // suppressed_empty_body was NOT reset here, which would carry a previous
   // round's refusals into the next one's report. Every other accumulator in
@@ -2706,9 +2708,45 @@ void foundry_generator::collect(
   // how many obligations one shipped test actually stands for), and dropping it
   // would make a case look like it came from one claim when it came from four.
   const std::string fp = fingerprint(tc);
+  size_t defaulted_args = 0;
+  for (const auto &call : tc)
+    defaulted_args +=
+      std::count_if(call.args.begin(), call.args.end(), [](const sol_arg &arg) {
+        return arg.defaulted;
+      });
+  defaulted_args_by_fingerprint[fp] =
+    std::max(defaulted_args_by_fingerprint[fp], defaulted_args);
   std::string &slot = claims_by_fingerprint[fp];
-  if (!claims.empty() && slot.find(claims) == std::string::npos)
-    slot += (slot.empty() ? "" : ", ") + claims;
+  if (!claims.empty())
+  {
+    std::set<std::string> exact_claims;
+    auto collect_claims = [&exact_claims](const std::string &text) {
+      std::istringstream stream(text);
+      std::string token;
+      while (std::getline(stream, token, ','))
+      {
+        token.erase(
+          token.begin(),
+          std::find_if(token.begin(), token.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+          }));
+        token.erase(
+          std::find_if(
+            token.rbegin(),
+            token.rend(),
+            [](unsigned char ch) { return !std::isspace(ch); })
+            .base(),
+          token.end());
+        if (!token.empty())
+          exact_claims.insert(token);
+      }
+    };
+    collect_claims(slot);
+    collect_claims(claims);
+    slot.clear();
+    for (const auto &claim : exact_claims)
+      slot += (slot.empty() ? "" : ", ") + claim;
+  }
   test_cases.push_back(std::move(tc));
 }
 
@@ -2817,6 +2855,53 @@ std::string foundry_generator::fingerprint(const test_case &tc)
     fp += ";";
   }
   return fp;
+}
+
+std::string foundry_generator::testcase_fingerprint_sha256_for_claim(
+  const std::string &claim) const
+{
+  std::lock_guard<std::mutex> lock(data_mutex);
+  std::string result;
+  for (const auto &[fingerprint_text, claim_list] : claims_by_fingerprint)
+  {
+    std::istringstream claims(claim_list);
+    std::string token;
+    while (std::getline(claims, token, ','))
+    {
+      token.erase(
+        token.begin(),
+        std::find_if(token.begin(), token.end(), [](unsigned char ch) {
+          return !std::isspace(ch);
+        }));
+      token.erase(
+        std::find_if(
+          token.rbegin(),
+          token.rend(),
+          [](unsigned char ch) { return !std::isspace(ch); })
+          .base(),
+        token.end());
+      if (token != claim)
+        continue;
+      const auto defaulted =
+        defaulted_args_by_fingerprint.find(fingerprint_text);
+      if (
+        defaulted == defaulted_args_by_fingerprint.end() ||
+        defaulted->second != 0)
+        return {};
+      std::vector<unsigned char> digest(picosha2::k_digest_size);
+      picosha2::hash256(
+        fingerprint_text.begin(),
+        fingerprint_text.end(),
+        digest.begin(),
+        digest.end());
+      const std::string current =
+        picosha2::bytes_to_hex_string(digest.begin(), digest.end());
+      if (!result.empty() && result != current)
+        return {};
+      result = current;
+    }
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -3180,6 +3265,19 @@ size_t foundry_generator::write_foundry_file(
         const bool known =
           pit != claims_by_fingerprint.end() && !pit->second.empty();
         f << "  // claim: " << (known ? pit->second : "not recorded") << "\n";
+        if (known)
+        {
+          std::vector<unsigned char> digest(picosha2::k_digest_size);
+          const std::string fingerprint_text = fingerprint(*tcp);
+          picosha2::hash256(
+            fingerprint_text.begin(),
+            fingerprint_text.end(),
+            digest.begin(),
+            digest.end());
+          f << "  // witness-fingerprint-sha256: "
+            << picosha2::bytes_to_hex_string(digest.begin(), digest.end())
+            << "\n";
+        }
       }
       f << "  function test_cov_" << fn++ << "() public {\n";
       for (const auto &call : *tcp)
@@ -3790,7 +3888,18 @@ void foundry_generator::generate_single(
     return;
   }
   if (!claims.empty())
+  {
     claims_by_fingerprint[fingerprint(tc)] = claims;
+    size_t defaulted_args = 0;
+    for (const auto &call : tc)
+      defaulted_args += std::count_if(
+        call.args.begin(), call.args.end(), [](const sol_arg &arg) {
+          return arg.defaulted;
+        });
+    const std::string fp = fingerprint(tc);
+    defaulted_args_by_fingerprint[fp] =
+      std::max(defaulted_args_by_fingerprint[fp], defaulted_args);
+  }
 
   std::string p = primary_contract(tc);
   if (p.empty())

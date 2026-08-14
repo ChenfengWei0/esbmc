@@ -138,6 +138,7 @@ from solidity_path_generalise import (
     derive_agreed_establishable_env_pins,
     derive_agreed_unpinned_establishable_env_coords,
     tiny_safety_cut_retreat,
+    k_induction_proof_args,
     uncontrolled_decision_splits,
     _decision_term,
     _coord_range)
@@ -154,6 +155,17 @@ check("resolved-overload-narrows-stage1-denominator",
       path_function_instrument_args("sol:@C@Token@F@approve#274"),
       ["--path-cov-instrument-only", "sol:@C@Token@F@approve#274"])
 check("unresolved-unit-keeps-stage1-denominator", path_function_instrument_args(None), [])
+check(
+    "region-proof-uses-clean-k-induction",
+    k_induction_proof_args([
+        "--bitwuzla", "--unwind", "16", "--overflow-check", "--div-by-zero-check",
+        "--incremental-bmc", "--partial-loops", "--max-k-step=99", "--max-inductive-step", "1",
+        "--base-k-step=7", "--k-step", "9", "--unlimited-k-steps",
+        "--enable-forward-condition", "--disable-inductive-step"
+    ]), [
+        "--bitwuzla", "--k-induction", "--enable-forward-condition",
+        "--max-k-step", "30"
+    ])
 
 # The warning line is the one that made every certification read as certified.
 # It is quoted exactly; shortening it would defeat the point of the test.
@@ -532,50 +544,53 @@ REAL_PARTITION = {
 check("a-real-partition-does-not-fire", certified_overlap(REAL_PARTITION), [])
 check(
     "opposite-extcall-results-separate-otherwise-identical-regions",
-    certified_overlap(
-        {
-            (2, 1): {
-                "msg.value": (0, 0)
-            },
-            (3, 1): {
-                "msg.value": (0, 0)
-            },
+    certified_overlap({
+        (2, 1): {
+            "msg.value": (0, 0)
         },
-        extcall_pins={(2, 1): {
-                          "_s": 0
-                      }, (3, 1): {
-                          "_s": 1
-                      }}), [])
+        (3, 1): {
+            "msg.value": (0, 0)
+        },
+    },
+                      extcall_pins={
+                          (2, 1): {
+                              "_s": 0
+                          },
+                          (3, 1): {
+                              "_s": 1
+                          }
+                      }), [])
 check(
     "matching-extcall-results-do-not-hide-real-overlap",
-    certified_overlap(
-        {
-            (2, 1): {
-                "msg.value": (0, 0)
-            },
-            (3, 1): {
-                "msg.value": (0, 0)
-            },
+    certified_overlap({
+        (2, 1): {
+            "msg.value": (0, 0)
         },
-        extcall_pins={(2, 1): {
-                          "_s": 1
-                      }, (3, 1): {
-                          "_s": 1
-                      }}), [((2, 1), (3, 1))])
+        (3, 1): {
+            "msg.value": (0, 0)
+        },
+    },
+                      extcall_pins={
+                          (2, 1): {
+                              "_s": 1
+                          },
+                          (3, 1): {
+                              "_s": 1
+                          }
+                      }), [((2, 1), (3, 1))])
 check(
     "an-unpinned-extcall-domain-still-overlaps-a-pinned-one",
-    certified_overlap(
-        {
-            (2, 1): {
-                "msg.value": (0, 0)
-            },
-            (3, 1): {
-                "msg.value": (0, 0)
-            },
+    certified_overlap({
+        (2, 1): {
+            "msg.value": (0, 0)
         },
-        extcall_pins={(3, 1): {
-            "_s": 1
-        }}), [((2, 1), (3, 1))])
+        (3, 1): {
+            "msg.value": (0, 0)
+        },
+    },
+                      extcall_pins={(3, 1): {
+                                        "_s": 1
+                                    }}), [((2, 1), (3, 1))])
 check(
     "relation-established-partition-does-not-fire",
     certified_overlap(
@@ -4073,25 +4088,27 @@ check("cut-keeps-the-side-holding-x_pi-below", cut_towards(0, 100, 60, 10), (0, 
 check("cut-keeps-the-side-holding-x_pi-above", cut_towards(0, 100, 60, 90), (61, 100))
 check("cut-offers-nothing-where-they-agree", cut_towards(0, 100, 60, 60), None)
 
-# 2. FEWEST VALUES REMOVED, across candidates. This is the whole of correction
-#    4: the tool's first suggestion is not consulted at all.
-#    x_pi = {a: 10, b: 10}; witness differs on both.
-#      a: cut (0,59) removes 41 of 101
-#      b: cut (0,11) removes 89 of 101
-#    so `a` must be chosen. Reversing which coordinate is cheaper must reverse
-#    the answer -- otherwise the check would pass on "always take the first".
+# 2. A MULTI-COORDINATE refutation retreats before spending another solver
+#    query on one boundary cut. With equally useful ordinary inputs it keeps
+#    one coordinate wide and pins the other at x_pi. Reordering the witness's
+#    boundary values must not change which coordinate survives; otherwise
+#    solver model order, rather than the source-level priority, controls yield.
 _box2 = {"a": (0, 100), "b": (0, 100)}
 _ce2 = {"a": 10, "b": 10}
-check("cut-takes-the-fewest-values-removed",
+check("multi-coordinate-retreat-keeps-one-input-wide",
       refutation_response(_box2, {}, _ce2, {
           "a": 60,
           "b": 12
-      }, {}), ("cut", ("a", 0, 59, 41)))
-check("cut-and-the-choice-follows-the-numbers-not-the-order",
+      }, {}), ("pin", {
+          "a": 10
+      }))
+check("multi-coordinate-retreat-is-model-order-independent",
       refutation_response(_box2, {}, _ce2, {
           "a": 12,
           "b": 60
-      }, {}), ("cut", ("b", 0, 59, 41)))
+      }, {}), ("pin", {
+          "a": 10
+      }))
 
 # 3. THE RETREAT, trigger two: "where cutting would leave that coordinate one
 #    value". On [0,1] with x_pi = 0 and y = 1 the cut leaves exactly {0}, so
@@ -4384,8 +4401,8 @@ check("address-like-environment-coordinates-use-address-domain",
 check("numeric-modeled-environment-coordinates-stay-uint256-domain",
       (_coord_range("block.basefee"), _coord_range("tx.gasprice")),
       ((0, (1 << 256) - 1), (0, (1 << 256) - 1)))
-check("block-chainid-uses-foundry-executable-uint64-domain",
-      _coord_range("block.chainid"), (0, (1 << 64) - 1))
+check("block-chainid-uses-foundry-executable-uint64-domain", _coord_range("block.chainid"),
+      (0, (1 << 64) - 1))
 
 check("synthetic-abi-taken-is-the-body",
       abi_gate_class([{

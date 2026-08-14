@@ -2991,6 +2991,8 @@ int esbmc_parseoptionst::do_bmc_strategy(
         if (does_forward_condition_hold(options, goto_functions, k_step)
               .is_false())
         {
+          if (is_coverage)
+            goto_coveraget::path_cov_k_induction_proved = true;
           if (mp_active)
             mark_all_asserts_safe(goto_functions);
           if (is_coverage)
@@ -3012,6 +3014,8 @@ int esbmc_parseoptionst::do_bmc_strategy(
         if (is_inductive_step_violated(options, goto_functions, k_step)
               .is_false())
         {
+          if (is_coverage)
+            goto_coveraget::path_cov_k_induction_proved = true;
           if (mp_active)
             mark_all_asserts_safe(goto_functions);
           if (is_coverage)
@@ -4189,7 +4193,7 @@ bool esbmc_parseoptionst::process_goto_program(
           "--path-cov-probe: suppressing the ordinary branch-function pass; "
           "the Solidity path pass will emit exit-latched branch-arm probes");
       }
-      else
+      else if (!is_k_induction)
       {
         // for multi-property
         options.set_option("base-case", true);
@@ -4594,6 +4598,8 @@ bool esbmc_parseoptionst::process_goto_program(
         }
       }
       tmp.cov_assume_asserts = cmdline.isset("cov-assume-asserts");
+      tmp.path_cov_k_induction = is_k_induction;
+      tmp.path_cov_k_induction_proved = false;
       // Align the offline enumeration bound with the symex unwind bound. The
       // two MUST agree, or "this path is feasible" as enumerated and "this path
       // is feasible" as explored are answers to different questions.
@@ -4619,7 +4625,7 @@ bool esbmc_parseoptionst::process_goto_program(
         if (u > 0)
           tmp.path_cov_unwind = static_cast<size_t>(u);
       }
-      else
+      else if (!is_k_induction)
       {
         options.set_option("unwind", std::to_string(tmp.path_cov_unwind));
         log_status(
@@ -4630,7 +4636,16 @@ bool esbmc_parseoptionst::process_goto_program(
           "limit. Pass --unwind N to choose a different bound",
           tmp.path_cov_unwind);
       }
-      options.set_option("no-unwinding-assertions", true);
+      else
+      {
+        log_status(
+          "--solidity-path-coverage: k-induction proof query; leaving symex "
+          "unwind unset so --max-k-step controls the proof strategy. Path "
+          "enumeration retains its own structural loop cap of {}",
+          tmp.path_cov_unwind);
+      }
+      if (!is_k_induction)
+        options.set_option("no-unwinding-assertions", true);
       tmp.solidity_path_coverage();
     }
 

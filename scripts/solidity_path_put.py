@@ -94,6 +94,7 @@ passed; state is stored; environment pins are checked.
 """
 
 import argparse
+import hashlib
 import itertools
 import json
 import os
@@ -282,6 +283,55 @@ def dedup_esbmc_singleton_args(args):
         if arg in ESBMC_SINGLETON_ARGS:
             seen.add(arg)
     return out
+
+
+K_INDUCTION_PROOF_FLAGS_WITH_VALUE = {
+    "--base-k-step",
+    "--k-step",
+    "--max-inductive-step",
+    "--unwind",
+    "--unwindset",
+    "--unwindsetname",
+    "--max-k-step",
+}
+K_INDUCTION_PROOF_FLAGS = {
+    "--base-case",
+    "--enable-forward-condition",
+    "--disable-forward-condition",
+    "--disable-inductive-step",
+    "--falsification",
+    "--forward-condition",
+    "--partial-loops",
+    "--incremental-bmc",
+    "--overflow-check",
+    "--div-by-zero-check",
+    "--k-induction",
+    "--k-induction-parallel",
+    "--inductive-step",
+    "--termination",
+    "--unlimited-k-steps",
+}
+
+
+def k_induction_proof_args(existing):
+    """Build the clean proof strategy used by the R1/R2 ladder only."""
+    out = []
+    skip_value = False
+    for raw in existing or ():
+        arg = str(raw)
+        if skip_value:
+            skip_value = False
+            continue
+        name = arg.split("=", 1)[0]
+        if name in K_INDUCTION_PROOF_FLAGS_WITH_VALUE:
+            skip_value = "=" not in arg
+            continue
+        if name in K_INDUCTION_PROOF_FLAGS:
+            continue
+        out.append(arg)
+    return out + [
+        "--k-induction", "--enable-forward-condition", "--max-k-step", "30"
+    ]
 
 
 # ---- WHICH CELL A RUN IS IN, AND WHY THE ARTEFACT HAS TO SAY SO --------------
@@ -5048,7 +5098,10 @@ def r1_priority_oracle_vars(region, pins, layout, query_maps, state_store_names=
     return out, skipped
 
 
-def select_ladder_oracle_vars(r1_priority_vars, scalar_vars, slot_vars, layout,
+def select_ladder_oracle_vars(r1_priority_vars,
+                              scalar_vars,
+                              slot_vars,
+                              layout,
                               state_store_names=None):
     """Select exact ladder variables, budgeting certified mapping priorities.
 
@@ -5634,8 +5687,7 @@ def assert_query_pins(pins, layout, maps, params=None):
             continue
         if not (layout and v in layout):
             reason = ("ESBMC-internal state name"
-                      if re.search(r"\$[0-9]+$", v)
-                      else "state pin with no solc storage slot")
+                      if re.search(r"\$[0-9]+$", v) else "state pin with no solc storage slot")
             skipped.append(f"{name} (not passed to --path-cov-assert: solc's layout "
                            f"does not list this {reason}, so the assertion ladder "
                            "cannot resolve it)")
@@ -7679,9 +7731,8 @@ def source_inherited_function_returns(source, contract, unit, arity=None):
             if arity is not None and len(params) != arity:
                 continue
             match = re.search(r"\breturns\s*\((.*?)\)", header_tail, re.S)
-            returns = [] if match is None else [
-                ("", typ) for typ in _function_return_types(match.group(1))
-            ]
+            returns = [] if match is None else [("", typ)
+                                                for typ in _function_return_types(match.group(1))]
             matches.append(returns)
         for base_name in _source_inheritance_names(chunk):
             visit(base_name)
@@ -8992,6 +9043,7 @@ class EmittedFile:
 
     CONTRACT_RE = re.compile(r"^contract (\w+) is Test \{")
     CLAIM_RE = re.compile(r"^\s*// claim: (.*)$")
+    FINGERPRINT_RE = re.compile(r"^\s*// witness-fingerprint-sha256: ([0-9a-f]{64})\s*$")
     FN_RE = re.compile(r"^\s*function (test_cov_\d+)\(\) public \{")
 
     def __init__(self, path):
@@ -8999,10 +9051,12 @@ class EmittedFile:
         self.lines = open(path).read().splitlines()
         self.blocks = []  # (contract_name, start_idx, end_idx)
         self.cases = []  # (contract_idx, name, claims, body_slice)
+        self.case_fingerprints = {}
         cur_c, cur_start = None, None
         depth = 0
         i = 0
         pending_claim = ""
+        pending_fingerprint = None
         while i < len(self.lines):
             ln = self.lines[i]
             m = self.CONTRACT_RE.match(ln)
@@ -9014,6 +9068,9 @@ class EmittedFile:
                 mc = self.CLAIM_RE.match(ln)
                 if mc:
                     pending_claim = mc.group(1)
+                mh = self.FINGERPRINT_RE.match(ln)
+                if mh:
+                    pending_fingerprint = mh.group(1)
                 mf = self.FN_RE.match(ln)
                 # A function is consumed WHOLE, opening and closing brace
                 # together, and its braces are never fed to `depth`. Counting
@@ -9030,7 +9087,9 @@ class EmittedFile:
                             break
                         j += 1
                     self.cases.append((len(self.blocks), mf.group(1), pending_claim, (i, j)))
+                    self.case_fingerprints[(len(self.blocks), mf.group(1))] = pending_fingerprint
                     pending_claim = ""
+                    pending_fingerprint = None
                     i = j + 1
                     continue
                 depth += ln.count("{") - ln.count("}")
@@ -9053,6 +9112,11 @@ class EmittedFile:
             if want in ids:
                 return c
         return None
+
+    def fingerprint_for(self, case):
+        if case is None:
+            return None
+        return self.case_fingerprints.get((case[0], case[1]))
 
 
 # ---------------------------------------------------------------------------
@@ -9160,8 +9224,12 @@ def _lit_int(expr):
     if expr is None:
         return None
     s = expr.strip()
+    if s == "true":
+        return 1
+    if s == "false":
+        return 0
     while True:
-        m = re.match(r"^(?:address|payable|u?int\d*)\s*\(\s*(.*)\s*\)$", s)
+        m = re.match(r"^(?:address|payable|u?int\d*|bytes\d+)\s*\(\s*(.*)\s*\)$", s)
         if not m:
             break
         s = m.group(1).strip()
@@ -9169,6 +9237,42 @@ def _lit_int(expr):
         return int(s, 0)
     except ValueError:
         return None
+
+
+def bind_emitted_source_to_certified_ce(body, call_i, unit, params, expected):
+    """Check that the emitted Solidity call literally replays the scalar CE."""
+    expected_ce = normalized_concrete_ce(expected)
+    if expected_ce is None or call_i is None or params is None:
+        return None, "certified CE or emitted target signature is unavailable"
+    _rewritten, args = rewrite_call_args(body[call_i], unit, {})
+    params = named_params(params)
+    if args is None or len(args) != len(params):
+        return None, "emitted target call arguments do not match its declaration"
+    rendered = {}
+    for (name, _typ), expr in zip(params, args):
+        if name not in expected_ce:
+            return None, f"emitted argument {name} has no exact certified CE coordinate"
+        value = _lit_int(expr)
+        if value is None:
+            return None, f"emitted argument {name} is not an exact scalar CE literal"
+        rendered[name] = value
+    env = observed_env(body, call_i, body[call_i])
+    for name in ("msg.sender", "msg.value"):
+        if name not in expected_ce:
+            continue
+        value, _evidence = env[name]
+        if value is None:
+            return None, f"emitted environment coordinate {name} is not an exact literal"
+        rendered[name] = value
+    unsupported = sorted(set(expected_ce) - set(rendered))
+    if unsupported:
+        return None, ("certified CE has coordinates not directly bound in the emitted source: " +
+                      ",".join(unsupported))
+    if rendered != expected_ce:
+        different = sorted(name for name in expected_ce if rendered.get(name) != expected_ce[name])
+        return None, "emitted source differs from certified CE: " + ",".join(different)
+    encoded = json.dumps(rendered, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest(), None
 
 
 def _arg0(line, open_idx):
@@ -10734,9 +10838,8 @@ def materialize_concrete_nonpayable_value_gate(lines, unit, params, region, pins
     for _name, ty in params:
         sty = signature_type(ty)
         if sty is None:
-            return list(lines), 0, (
-                f"nonpayable value-gate concrete basis cannot render `{ty}` "
-                "in an ABI signature")
+            return list(lines), 0, (f"nonpayable value-gate concrete basis cannot render `{ty}` "
+                                    "in an ABI signature")
         sig_types.append(sty)
     value = _concrete_point_for_region("msg.value", region or {}, pins or {})
     if value is None or value <= 0:
@@ -10775,8 +10878,9 @@ def materialize_concrete_nonpayable_value_gate(lines, unit, params, region, pins
             return out, changed, cerr
         statement_i = statement_start(out, i)
         statement = "\n".join(out[statement_i:i + 1])
-        receiver = re.search(r"(?:try\s+)?([A-Za-z_]\w*)\s*\.\s*" + re.escape(unit) +
-                             r"\s*(?:\{[^{}]*\}\s*)?\(", statement)
+        receiver = re.search(
+            r"(?:try\s+)?([A-Za-z_]\w*)\s*\.\s*" + re.escape(unit) + r"\s*(?:\{[^{}]*\}\s*)?\(",
+            statement)
         if receiver is None or ".call" in statement:
             continue
         encoded_args = (", " + ", ".join(completed_args)) if completed_args else ""
@@ -12190,9 +12294,8 @@ def build_put(contract,
             # all produce a perfectly well-formed write to a word the contract
             # never reads -- and `vm.store` cannot fail. See
             # `slot_landing_check_at`.
-            store_lines += slot_landing_check_at(target_addr,
-                                                 map_value_slot_expr(kexpr, _mspec), voff, vnb,
-                                                 str(lo), name)
+            store_lines += slot_landing_check_at(target_addr, map_value_slot_expr(kexpr, _mspec),
+                                                 voff, vnb, str(lo), name)
             stored.append(f"{name} := {lo}")
             continue
         layout_name = layout_scalar_key(v, layout, state_store_names)
@@ -13360,8 +13463,9 @@ def getter_only_path_function(contract, unit):
 
 def can_synthesize_missing_emitter_output(path_function, ast_path, stage4_kind=None):
     """Whether Stage 4 has enough source identity to build a preamble itself."""
-    return bool(ast_path and (
-        path_function or stage4_kind in ("getter-only", "getter-value-gate", "abi-value-gate")))
+    return bool(
+        ast_path and
+        (path_function or stage4_kind in ("getter-only", "getter-value-gate", "abi-value-gate")))
 
 
 def stage4_kind_from_stage2_source(source, *, concrete_only=False):
@@ -13636,6 +13740,77 @@ def apply_foundry_fixture_target_call_mode(lines, fixture, inst, unit):
         out.append(f'{indent}{assertion}({ok}, "{message}");')
         repaired += 1
     return out
+
+
+def normalized_concrete_ce(raw):
+    """Return a canonical scalar CE map, or None for an unrenderable CE."""
+
+    if not isinstance(raw, dict):
+        return None
+    out = {}
+    for raw_name, raw_value in raw.items():
+        name = str(raw_name)
+        if not name or name == "return":
+            continue
+        try:
+            out[name] = int(str(raw_value), 0)
+        except (TypeError, ValueError):
+            return None
+    return out
+
+
+def claim_concrete_ce(claim):
+    """Canonicalize the scalar coordinates carried by one emitted claim."""
+
+    if not isinstance(claim, dict):
+        return None
+    out = {}
+    groups = ((claim.get("inputs"), ""), (claim.get("env"), ""), (claim.get("entry_storage"),
+                                                                  "state."))
+    for values, prefix in groups:
+        if not isinstance(values, dict):
+            return None
+        for raw_name, raw_value in values.items():
+            name = prefix + str(raw_name)
+            try:
+                value = int(str(raw_value), 0)
+            except (TypeError, ValueError):
+                return None
+            if name in out and out[name] != value:
+                return None
+            out[name] = value
+    return out
+
+
+def bind_emitted_claim_to_certified_ce(claim, expected):
+    """Authenticate an emitted case as the exact CE used by certification."""
+
+    expected_ce = normalized_concrete_ce(expected)
+    actual_ce = claim_concrete_ce(claim)
+    if expected_ce is None:
+        return None, "certified CE contains a non-scalar or malformed coordinate"
+    if actual_ce is None:
+        return None, "emitted claim contains a non-scalar or malformed coordinate"
+    if expected_ce != actual_ce:
+        missing = sorted(set(expected_ce) - set(actual_ce))
+        extra = sorted(set(actual_ce) - set(expected_ce))
+        different = sorted(name for name in set(expected_ce) & set(actual_ce)
+                           if expected_ce[name] != actual_ce[name])
+        details = []
+        if missing:
+            details.append("missing=" + ",".join(missing))
+        if extra:
+            details.append("extra=" + ",".join(extra))
+        if different:
+            details.append("different=" + ",".join(different))
+        return None, ("fresh emitted witness is not the certified CE" +
+                      (": " + "; ".join(details) if details else ""))
+    encoded = json.dumps(expected_ce, sort_keys=True, separators=(",", ":"))
+    return {
+        "status": "exact",
+        "ce_sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+        "coordinates": len(expected_ce),
+    }, None
 
 
 def apply_foundry_fixture_expected_revert(lines, fixture, inst, unit):
@@ -14334,8 +14509,7 @@ def runtime_sender_interface_mock_lines(forge_project, contract, unit, indent):
                                                           ("address(0)", "address(this)"))
 
 
-def runtime_self_interface_cast_mock_lines(forge_project, contract, unit, target_expr,
-                                           indent):
+def runtime_self_interface_cast_mock_lines(forge_project, contract, unit, target_expr, indent):
     """Mock interface calls that the target makes through address(this).
 
     Solidity libraries/proxy helpers sometimes call their embedding contract via
@@ -14355,7 +14529,8 @@ def runtime_self_interface_cast_mock_lines(forge_project, contract, unit, target
     decl_rx = re.compile(r"\bfunction\s+([A-Za-z_]\w*)\s*\(")
     for name in decl_rx.findall(chunk):
         names.add(name)
-        bodies_by_name.setdefault(name, [body for _params, body in _source_function_decls(chunk, name)])
+        bodies_by_name.setdefault(name,
+                                  [body for _params, body in _source_function_decls(chunk, name)])
     reachable_bodies = []
     queue = [unit]
     visited = set()
@@ -14372,10 +14547,9 @@ def runtime_self_interface_cast_mock_lines(forge_project, contract, unit, target
                 if called in names and called not in visited:
                     queue.append(called)
     calls, seen = [], set()
-    self_cast_rx = re.compile(
-        r"\b([A-Za-z_]\w*)\s*\(\s*"
-        r"(?:payable\s*\(\s*)?address\s*\(\s*this\s*\)\s*\)?\s*"
-        r"\)\s*\.\s*([A-Za-z_]\w*)\s*\(")
+    self_cast_rx = re.compile(r"\b([A-Za-z_]\w*)\s*\(\s*"
+                              r"(?:payable\s*\(\s*)?address\s*\(\s*this\s*\)\s*\)?\s*"
+                              r"\)\s*\.\s*([A-Za-z_]\w*)\s*\(")
     for scan_body in reachable_bodies:
         for match in self_cast_rx.finditer(scan_body):
             iface, fname = match.groups()
@@ -14996,8 +15170,7 @@ def constructor_param_interface_mock_specs(forge_project, contract):
                 if not m:
                     continue
                 arg_expr = strip_balanced_outer_parens(m.group(2).strip())
-                cast = re.fullmatch(r"[A-Za-z_]\w*\s*\(\s*([A-Za-z_]\w*)\s*\)",
-                                    arg_expr or "")
+                cast = re.fullmatch(r"[A-Za-z_]\w*\s*\(\s*([A-Za-z_]\w*)\s*\)", arg_expr or "")
                 if cast:
                     arg_expr = cast.group(1)
                 elif not re.fullmatch(r"[A-Za-z_]\w*", arg_expr or ""):
@@ -15603,7 +15776,8 @@ def constructor_param_hascode_specs(forge_project, contract):
             if inherited_chunk:
                 inheritance_work.extend(_source_inheritance_names(inherited_chunk))
         body = _constructor_body_text(chunk)
-        constructor_has_modifier = _constructor_has_nontrivial_modifier_excluding(chunk, inherited_names)
+        constructor_has_modifier = _constructor_has_nontrivial_modifier_excluding(
+            chunk, inherited_names)
         for local_name, local_type in _source_constructor_params_from_source(source, name):
             binding = bindings.get(local_name)
             if binding is None:
@@ -17192,8 +17366,9 @@ def _matching_solidity_delimiter(text, start, opening, closing):
 
 def _try_target_statement_span(body_text, unit):
     """Find one complete try/catch target statement, including all catches."""
-    call = re.search(r"\b[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*" +
-                     re.escape(unit) + r"\s*(?:\{[^{}]*\}\s*)?\(", body_text)
+    call = re.search(
+        r"\b[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*" + re.escape(unit) + r"\s*(?:\{[^{}]*\}\s*)?\(",
+        body_text)
     if call is None:
         return None
     tries = list(re.finditer(r"\btry\b", body_text[:call.start()]))
@@ -17254,9 +17429,10 @@ def _try_target_statement_span(body_text, unit):
 
 
 def _target_has_try_prefix(body_text, unit):
-    return bool(re.search(
-        r"\btry\s+[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*" +
-        re.escape(unit) + r"\s*(?:\{[^{}]*\}\s*)?\(", body_text, re.S))
+    return bool(
+        re.search(
+            r"\btry\s+[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*" + re.escape(unit) +
+            r"\s*(?:\{[^{}]*\}\s*)?\(", body_text, re.S))
 
 
 def add_concrete_normal_exit_oracle(source, test_name, unit):
@@ -17286,24 +17462,21 @@ def add_concrete_normal_exit_oracle(source, test_name, unit):
     while statement_end + 1 < len(body) and ";" not in body[statement_end]:
         statement_end += 1
     call_context = "\n".join(body[statement_start:statement_end + 1])
-    receiver_match = re.search(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" +
-                               re.escape(unit) + r"\s*\(", call_context)
-    low_level_receiver = re.search(
-        r"address\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)\s*\.\s*call",
-        call_context)
+    receiver_match = re.search(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" + re.escape(unit) + r"\s*\(",
+                               call_context)
+    low_level_receiver = re.search(r"address\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)\s*\.\s*call",
+                                   call_context)
     receiver = receiver_match.group(1) if receiver_match else "target"
     if low_level_receiver:
         receiver = low_level_receiver.group(1)
         result_match = re.search(
             r"\(\s*bool\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*,[^)]*\)\s*=\s*"
-            r"address\s*\(\s*" + re.escape(receiver) + r"\s*\)\s*\.\s*call",
-            call_context)
+            r"address\s*\(\s*" + re.escape(receiver) + r"\s*\)\s*\.\s*call", call_context)
         result = result_match.group(1) if result_match else None
-        following = next((line.strip() for line in body[statement_end + 1:]
-                          if line.strip()), "")
+        following = next((line.strip() for line in body[statement_end + 1:] if line.strip()), "")
         status = re.fullmatch(
-            r"assert(True|False)\s*\(\s*" + re.escape(result or "") +
-            r"\s*(?:,.*)?\)\s*;", following)
+            r"assert(True|False)\s*\(\s*" + re.escape(result or "") + r"\s*(?:,.*)?\)\s*;",
+            following)
         if not result or not status:
             return source, []
         expected = status.group(1) == "True"
@@ -17411,8 +17584,7 @@ def _concrete_return_literal(sol_type, value):
     return None
 
 
-def add_concrete_fixed_return_oracle(source, test_name, unit, rettypes,
-                                     witness_value):
+def add_concrete_fixed_return_oracle(source, test_name, unit, rettypes, witness_value):
     """Bind a source-synthesized fixed replay to its Stage-2 return value."""
     if witness_value is None or rettypes is None or len(rettypes) != 1:
         return source, []
@@ -17448,8 +17620,8 @@ def add_concrete_fixed_return_oracle(source, test_name, unit, rettypes,
     assertion = (f'assertEq({observed}, {expected}, '
                  '"fixed witness return must match");')
     lines.insert(absolute_call + 1, indent + assertion)
-    receiver_match = re.search(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" +
-                               re.escape(unit) + r"\s*\(", rebound)
+    receiver_match = re.search(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" + re.escape(unit) + r"\s*\(",
+                               rebound)
     receiver = receiver_match.group(1) if receiver_match else "target"
     return "\n".join(lines) + "\n", [{
         "class": "R0",
@@ -17465,8 +17637,7 @@ def add_concrete_fixed_return_oracle(source, test_name, unit, rettypes,
 
 def concrete_return_mode_allowed(concrete_only, stage2_source, witness_check):
     """Only retained certified basis replays may consume a return witness."""
-    return (concrete_only
-            and stage2_source == "certified-region-concrete-fallback"
+    return (concrete_only and stage2_source == "certified-region-concrete-fallback"
             and witness_check == "CERTIFIED-BASIS-REPLAY")
 
 
@@ -17477,8 +17648,7 @@ def certified_nonpayable_value_gate_basis(concrete_only,
                                           pins=None,
                                           stage4_kind=None):
     """Whether the certified basis is the nonpayable msg.value gate."""
-    if not concrete_return_mode_allowed(concrete_only, stage2_source,
-                                        witness_check):
+    if not concrete_return_mode_allowed(concrete_only, stage2_source, witness_check):
         return False
     if stage4_kind in ("abi-value-gate", "getter-value-gate"):
         return True
@@ -17486,20 +17656,24 @@ def certified_nonpayable_value_gate_basis(concrete_only,
     return bool(bounds) and int(bounds[0]) > 0
 
 
-def certified_basis_missing_return_witness(concrete_only, stage2_source,
-                                           witness_check, rettypes,
+def certified_basis_missing_return_witness(concrete_only,
+                                           stage2_source,
+                                           witness_check,
+                                           rettypes,
                                            witness_value,
-                                           stage4_kind=None, region=None,
+                                           stage4_kind=None,
+                                           region=None,
                                            pins=None):
     """Whether a known non-void certified basis lacks its fixed return."""
-    if certified_nonpayable_value_gate_basis(
-            concrete_only, stage2_source, witness_check, region=region,
-            pins=pins, stage4_kind=stage4_kind):
+    if certified_nonpayable_value_gate_basis(concrete_only,
+                                             stage2_source,
+                                             witness_check,
+                                             region=region,
+                                             pins=pins,
+                                             stage4_kind=stage4_kind):
         return False
-    return (concrete_return_mode_allowed(
-        concrete_only, stage2_source, witness_check)
-            and rettypes is not None and len(rettypes) > 0
-            and witness_value is None)
+    return (concrete_return_mode_allowed(concrete_only, stage2_source, witness_check)
+            and rettypes is not None and len(rettypes) > 0 and witness_value is None)
 
 
 def r2_probe_has_rendered_assertion(stats):
@@ -17862,6 +18036,12 @@ def main():
                     default=None,
                     help="fixed scalar return captured by the authenticated "
                     "Stage-2 witness; used only by --concrete-only")
+    ap.add_argument("--concrete-certified-ce-json",
+                    default=None,
+                    help="exact certified Stage-2 CE used to authenticate a "
+                    "CERTIFIED-BASIS-REPLAY. The fresh emitted case must carry "
+                    "the identical scalar input, environment and entry-state "
+                    "coordinates; a same-path witness is not sufficient")
     ap.add_argument("--concrete-stage2-source",
                     default="cleared_not_certified_fallback",
                     choices=("cleared_not_certified_fallback", "timeout_concrete_fallback",
@@ -18012,13 +18192,26 @@ def main():
                     "a test emitted under another is two measurements.")
     a = ap.parse_args()
 
-    if (a.concrete_return_value is not None and
-            not concrete_return_mode_allowed(
-                a.concrete_only, a.concrete_stage2_source,
-                a.concrete_stage2_witness_check)):
+    if (a.concrete_return_value is not None and not concrete_return_mode_allowed(
+            a.concrete_only, a.concrete_stage2_source, a.concrete_stage2_witness_check)):
         print("[put] REFUSED: --concrete-return-value is restricted to an "
               "authenticated certified-region CERTIFIED-BASIS-REPLAY")
         return 1
+    if (a.concrete_certified_ce_json is not None and not concrete_return_mode_allowed(
+            a.concrete_only, a.concrete_stage2_source, a.concrete_stage2_witness_check)):
+        print("[put] REFUSED: --concrete-certified-ce-json is restricted to an "
+              "authenticated certified-region CERTIFIED-BASIS-REPLAY")
+        return 1
+    certified_ce = None
+    if a.concrete_certified_ce_json is not None:
+        try:
+            certified_ce = json.loads(a.concrete_certified_ce_json)
+        except (TypeError, ValueError):
+            print("[put] REFUSED: --concrete-certified-ce-json is not valid JSON")
+            return 1
+        if not isinstance(certified_ce, dict):
+            print("[put] REFUSED: --concrete-certified-ce-json must encode an object")
+            return 1
 
     refusal = check_esbmc_args(a.esbmc_arg)
     if refusal:
@@ -18123,8 +18316,7 @@ def main():
         a.concrete_stage2_source, concrete_only=True) if a.concrete_only else "certified-region"))
     deploy_only = stage4_kind == "deploy-only"
     getter_only = stage4_kind in ("getter-only", "getter-value-gate")
-    source_synthesized_call = stage4_kind in ("getter-only", "getter-value-gate",
-                                             "abi-value-gate")
+    source_synthesized_call = stage4_kind in ("getter-only", "getter-value-gate", "abi-value-gate")
     if a.concrete_only and deploy_only:
         constructor_params = source_constructor_param_types(a.forge_project, a.contract)
         try:
@@ -18430,6 +18622,35 @@ def main():
                                  timeout_s=a.timeout)
         return 1
     ast_declaration_id = None if getter_only else declaration_id
+    certified_ce_binding = None
+    if concrete_return_mode_allowed(a.concrete_only, a.concrete_stage2_source,
+                                    a.concrete_stage2_witness_check):
+        if certified_ce is None:
+            reason = ("CERTIFIED-BASIS-REPLAY lacks the exact certified CE; "
+                      "a fresh same-path witness is not an authenticated basis")
+        else:
+            certified_ce_binding, reason = bind_emitted_claim_to_certified_ce(claim, certified_ce)
+        if certified_ce_binding is None:
+            print(f"[put] REFUSED: {reason}")
+            write_put_refusal_record(a.workdir,
+                                     "certified-basis-ce-mismatch",
+                                     a.contract,
+                                     a.unit,
+                                     a.enc,
+                                     a.depth,
+                                     path_function=pf,
+                                     region=region,
+                                     holes=holes,
+                                     pins=pins,
+                                     notes=notes + [reason],
+                                     timing_start=put_start,
+                                     timeout_s=a.timeout)
+            return 1
+        certified_ce_binding.update({
+            "path_function": pf,
+            "enc": int(a.enc),
+            "piece": a.piece,
+        })
     case = emitted.case_for(pf, a.enc)
     if case is None:
         if (synthetic_possible and not getter_only and not a.concrete_only
@@ -18469,6 +18690,29 @@ def main():
                                      timeout_s=a.timeout)
             return 1
     print(f"[put]   concrete case: {case[1]} in contract {emitted.blocks[case[0]][0]}")
+    if certified_ce_binding is not None:
+        report_fingerprint = str(claim.get("foundry_testcase_fingerprint_sha256") or "")
+        emitted_fingerprint = str(emitted.fingerprint_for(case) or "")
+        if (not report_fingerprint or not emitted_fingerprint
+                or report_fingerprint != emitted_fingerprint):
+            reason = ("certified CE report and emitted Foundry case lack the same "
+                      "solver-witness fingerprint")
+            print(f"[put] REFUSED: {reason}")
+            write_put_refusal_record(a.workdir,
+                                     "certified-basis-fingerprint-mismatch",
+                                     a.contract,
+                                     a.unit,
+                                     a.enc,
+                                     a.depth,
+                                     path_function=pf,
+                                     region=region,
+                                     holes=holes,
+                                     pins=pins,
+                                     notes=notes + [reason],
+                                     timing_start=put_start,
+                                     timeout_s=a.timeout)
+            return 1
+        certified_ce_binding["foundry_testcase_fingerprint_sha256"] = report_fingerprint
     path_exit_kind = effective_exit_kind(a.exit_kind, claim)
     if path_exit_kind and path_exit_kind != a.exit_kind:
         print(f"[put]   exit kind read from this run's own report: "
@@ -18512,8 +18756,9 @@ def main():
     runtime_zero_cast_mocks = runtime_zero_interface_cast_mock_lines(a.forge_project, a.contract,
                                                                      a.unit, "    ")
     target_instance = target_instance_for_call(case_body, case_call_i, a.unit) or "c0"
-    runtime_self_cast_mocks = runtime_self_interface_cast_mock_lines(
-        a.forge_project, a.contract, a.unit, target_instance, "    ")
+    runtime_self_cast_mocks = runtime_self_interface_cast_mock_lines(a.forge_project, a.contract,
+                                                                     a.unit, target_instance,
+                                                                     "    ")
     runtime_staticcall_mocks = runtime_staticcall_mock_lines(a.forge_project, claim, "    ")
     runtime_extcall_mocks, runtime_extcall_error = runtime_low_level_success_mock_lines(
         a.forge_project, a.contract, a.unit, extcall_pins, "    ")
@@ -18578,15 +18823,14 @@ def main():
     if a.ast:
         concrete_params = function_params(a.ast, a.contract, a.unit, concrete_arity,
                                           ast_declaration_id)
-        concrete_rettypes = function_returns(a.ast, a.contract, a.unit,
-                                             concrete_arity,
+        concrete_rettypes = function_returns(a.ast, a.contract, a.unit, concrete_arity,
                                              ast_declaration_id)
     if concrete_params is None:
-        concrete_params = source_inherited_function_params(
-            flat_source, a.contract, a.unit, concrete_arity)
+        concrete_params = source_inherited_function_params(flat_source, a.contract, a.unit,
+                                                           concrete_arity)
     if concrete_rettypes is None:
-        concrete_rettypes = source_inherited_function_returns(
-            flat_source, a.contract, a.unit, concrete_arity)
+        concrete_rettypes = source_inherited_function_returns(flat_source, a.contract, a.unit,
+                                                              concrete_arity)
     getter_signature = (public_state_getter_signature(a.ast, a.contract, a.unit)
                         if getter_only and a.ast else None)
     if getter_signature is not None:
@@ -18594,21 +18838,59 @@ def main():
                      f"{len(getter_signature[0])} parameter(s), "
                      f"{len(getter_signature[1])} return value(s)")
 
+    if certified_ce_binding is not None:
+        rendered_ce_sha, rendered_ce_error = bind_emitted_source_to_certified_ce(
+            case_body, case_call_i, a.unit, concrete_params, certified_ce)
+        if rendered_ce_sha is None:
+            reason = "certified CE is not exactly rendered by the Foundry source: " + \
+                rendered_ce_error
+            print(f"[put] REFUSED: {reason}")
+            write_put_refusal_record(a.workdir,
+                                     "certified-basis-source-ce-mismatch",
+                                     a.contract,
+                                     a.unit,
+                                     a.enc,
+                                     a.depth,
+                                     path_function=pf,
+                                     region=region,
+                                     holes=holes,
+                                     pins=pins,
+                                     notes=notes + [reason],
+                                     timing_start=put_start,
+                                     timeout_s=a.timeout)
+            return 1
+        if rendered_ce_sha != certified_ce_binding.get("ce_sha256"):
+            reason = "emitted Foundry source CE hash differs from certified detail"
+            print(f"[put] REFUSED: {reason}")
+            return 1
+        certified_ce_binding["rendered_source_verified"] = True
+        certified_ce_binding["rendered_source_ce_sha256"] = rendered_ce_sha
+
     if a.concrete_only:
-        if certified_basis_missing_return_witness(
-                a.concrete_only, a.concrete_stage2_source,
-                a.concrete_stage2_witness_check, concrete_rettypes,
-                a.concrete_return_value, stage4_kind, region=region,
-                pins=pins):
+        if certified_basis_missing_return_witness(a.concrete_only,
+                                                  a.concrete_stage2_source,
+                                                  a.concrete_stage2_witness_check,
+                                                  concrete_rettypes,
+                                                  a.concrete_return_value,
+                                                  stage4_kind,
+                                                  region=region,
+                                                  pins=pins):
             reason = ("authenticated certified basis has a known non-void "
                       "target but no exact Stage-2 return witness")
             print(f"[put] REFUSED: {reason}")
-            write_put_refusal_record(
-                a.workdir, "certified-basis-return-witness-missing",
-                a.contract, a.unit, a.enc, a.depth,
-                path_function=pf, region=region, holes=holes, pins=pins,
-                notes=notes + [reason], timing_start=put_start,
-                timeout_s=a.timeout)
+            write_put_refusal_record(a.workdir,
+                                     "certified-basis-return-witness-missing",
+                                     a.contract,
+                                     a.unit,
+                                     a.enc,
+                                     a.depth,
+                                     path_function=pf,
+                                     region=region,
+                                     holes=holes,
+                                     pins=pins,
+                                     notes=notes + [reason],
+                                     timing_start=put_start,
+                                     timeout_s=a.timeout)
             return 1
         if a.concrete_stage2_source in ("structural_deploy_only", "structural-deploy-only"):
             try:
@@ -18765,6 +19047,11 @@ def main():
         cname, _cstart, _cend = emitted.blocks[case[0]]
         newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
                 f"{plabel}{a.test_suffix}")
+        emitted_source = "\n".join(emitted.lines) + "\n"
+        certified_test_body = (function_body_lines(emitted_source, case[1])
+                               if certified_ce_binding is not None else None)
+        certified_setup_body = (function_body_lines(emitted_source, "setUp")
+                                if certified_ce_binding is not None else None)
         try:
             txt = assemble_concrete_source(
                 emitted, case, newc, foundry_fixture, layout, a.contract, a.unit, constructor_mocks,
@@ -18773,16 +19060,37 @@ def main():
                 constructor_param_hascode_mocks, flat_source, region, pins,
                 (a.concrete_stage2_source == "certified-region-concrete-fallback"
                  and a.concrete_stage2_witness_check == "CERTIFIED-BASIS-REPLAY"))
-            txt, concrete_oracles = add_concrete_fixed_return_oracle(
-                txt, case[1], a.unit, concrete_rettypes,
-                a.concrete_return_value)
+            if certified_ce_binding is not None:
+                rendered_test_body = function_body_lines(txt, case[1])
+                rendered_setup_body = function_body_lines(txt, "setUp")
+                if certified_test_body is None or rendered_test_body != certified_test_body:
+                    raise ValueError("certified CE target call body changed while rendering the "
+                                     "Foundry replay")
+                if certified_setup_body is None or rendered_setup_body != certified_setup_body:
+                    raise ValueError("certified CE setup state changed while rendering the "
+                                     "Foundry replay")
+                certified_ce_binding["pre_oracle_test_body_sha256"] = hashlib.sha256(
+                    "\n".join(rendered_test_body).encode("utf-8")).hexdigest()
+                certified_ce_binding["setup_body_sha256"] = hashlib.sha256(
+                    "\n".join(rendered_setup_body).encode("utf-8")).hexdigest()
+            txt, concrete_oracles = add_concrete_fixed_return_oracle(txt, case[1], a.unit,
+                                                                     concrete_rettypes,
+                                                                     a.concrete_return_value)
             if a.concrete_return_value is not None and not concrete_oracles:
-                raise ValueError(
-                    "authenticated non-void return witness could not be "
-                    "bound to the exact source-typed target call")
+                raise ValueError("authenticated non-void return witness could not be "
+                                 "bound to the exact source-typed target call")
             if not concrete_oracles:
-                txt, concrete_oracles = add_concrete_normal_exit_oracle(
-                    txt, case[1], a.unit)
+                txt, concrete_oracles = add_concrete_normal_exit_oracle(txt, case[1], a.unit)
+            if certified_ce_binding is not None:
+                final_test_body = function_body_lines(txt, case[1])
+                final_setup_body = function_body_lines(txt, "setUp")
+                if final_test_body is None or final_setup_body is None:
+                    raise ValueError("certified CE final replay body or setup is missing")
+                certified_ce_binding["source_preserved"] = True
+                certified_ce_binding["test_body_sha256"] = hashlib.sha256(
+                    "\n".join(final_test_body).encode("utf-8")).hexdigest()
+                certified_ce_binding["setup_body_sha256"] = hashlib.sha256(
+                    "\n".join(final_setup_body).encode("utf-8")).hexdigest()
         except ValueError as exc:
             reason = str(exc)
             print(f"[put] REFUSED: {reason}")
@@ -18853,6 +19161,8 @@ def main():
                     case[1],
                     "concrete_oracles":
                     concrete_oracles,
+                    "certified_ce_binding":
+                    certified_ce_binding,
                     "piece":
                     a.piece,
                     "region": {
@@ -19043,8 +19353,7 @@ def main():
             params = source_inherited_function_params(flat_source, a.contract, a.unit, arity)
         rettypes = function_returns(a.ast, a.contract, a.unit, arity, ast_declaration_id)
         if rettypes is None:
-            rettypes = source_inherited_function_returns(
-                flat_source, a.contract, a.unit, arity)
+            rettypes = source_inherited_function_returns(flat_source, a.contract, a.unit, arity)
         unit_mutability = function_state_mutability(a.ast, a.contract, a.unit, arity,
                                                     ast_declaration_id)
         try:
@@ -19080,18 +19389,14 @@ def main():
         newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
                 f"{plabel}{a.test_suffix}")
         try:
-            txt = assemble_concrete_source(emitted, case, newc, foundry_fixture, layout, a.contract,
-                                           a.unit, constructor_mocks, runtime_mocks,
-                                           constructor_params, params, constructor_param_mocks,
-                                           constructor_param_struct_field_mocks,
-                                           constructor_param_runtime_mocks,
-                                           constructor_param_hascode_mocks, flat_source, region,
-                                           pins, (a.concrete_stage2_source ==
-                                                  "certified-region-concrete-fallback"
-                                                  and a.concrete_stage2_witness_check ==
-                                                  "CERTIFIED-BASIS-REPLAY"))
-            txt, concrete_oracles = add_concrete_normal_exit_oracle(
-                txt, case[1], a.unit)
+            txt = assemble_concrete_source(
+                emitted, case, newc, foundry_fixture, layout, a.contract, a.unit, constructor_mocks,
+                runtime_mocks, constructor_params, params, constructor_param_mocks,
+                constructor_param_struct_field_mocks, constructor_param_runtime_mocks,
+                constructor_param_hascode_mocks, flat_source, region, pins,
+                (a.concrete_stage2_source == "certified-region-concrete-fallback"
+                 and a.concrete_stage2_witness_check == "CERTIFIED-BASIS-REPLAY"))
+            txt, concrete_oracles = add_concrete_normal_exit_oracle(txt, case[1], a.unit)
         except ValueError as exc:
             reason = str(exc)
             print(f"[put] REFUSED: {reason}")
@@ -19328,8 +19633,9 @@ def main():
                                        state_types=state_types,
                                        layout=layout)
     scalar_vars = scalar_dependency_vars(slot_dependencies, layout)
-    r1_priority_vars, r1_priority_skipped = r1_priority_oracle_vars(
-        region, pins, layout, query_maps, state_store_names, params)
+    r1_priority_vars, r1_priority_skipped = r1_priority_oracle_vars(region, pins, layout,
+                                                                    query_maps, state_store_names,
+                                                                    params)
     if r1_priority_vars:
         print("[put]   R1-priority certified state coordinates sent to the "
               "assertion ladder: " + ", ".join(r1_priority_vars))
@@ -19393,10 +19699,14 @@ def main():
         "name": assert_query_var_name(name, layout, state_store_names)
     } for name in oracle_vars]
     r1_oracle_ladder = {
-        "priority_vars": list(r1_priority_vars),
-        "skipped": list(r1_priority_skipped),
-        "source": "certified-region-state-coordinates",
-        "proof": "ESBMC path-cov-assert HOLDS rows only",
+        "priority_vars":
+        list(r1_priority_vars),
+        "skipped":
+        list(r1_priority_skipped),
+        "source":
+        "certified-region-state-coordinates",
+        "proof": ("ESBMC path-cov-assert HOLDS rows under k-induction "
+                  "with max-k-step 30 and solidity-max-tx 1"),
     }
     with open(os.path.join(assert_dir, "spec.json"), "w") as f:
         json.dump(spec, f)
@@ -19407,11 +19717,12 @@ def main():
         print("[put]   ESBMC ladder probe capped at "
               f"{capped_ladder_budget}s to reserve "
               f"{a.min_r2_esbmc_budget}s for verifier-backed R2 proof")
+    proof_esbmc_args = k_induction_proof_args(a.esbmc_arg)
     out2, rc2, w2 = run_esbmc(
         a.esbmc, a.sol, a.ast, a.contract, a.unit,
         ["--path-cov-assert",
-         os.path.join(assert_dir, "spec.json"), "--cov-report-json"] + a.esbmc_arg, assert_dir,
-        a.max_tx, capped_ladder_budget, a.memlimit, a.scope)
+         os.path.join(assert_dir, "spec.json"), "--cov-report-json"] + proof_esbmc_args, assert_dir,
+        1, capped_ladder_budget, a.memlimit, a.scope)
     rows, summary, refusal, blocker = parse_ladder(out2)
     rows = restore_ladder_row_names(rows, state_store_names)
     # The ladder run is asked about exactly ONE (unit, enc), so any rollback
@@ -19420,101 +19731,9 @@ def main():
     # silently apply one path's rollback to the other.
     rollback_here = any(e == int(a.enc) for _u, e in rollback_exit_paths(out2))
 
-    # ---- THE UNWIND LADDER: widen the loops the tool NAMED, and say so -----
+    # Region and oracle proofs deliberately have no bounded retry.  A failed
+    # k-induction query is inconclusive and must return to region narrowing.
     unwind_attempts, unwind_applied = [], []
-    k = 8
-    for attempt in range(1, a.auto_unwind + 1):
-        if blocker != "truncated":
-            break
-        loops, shapes = truncated_loops(out2)
-        if not loops:
-            print("[put]   auto-unwind: the run answered UNDECIDED-TRUNCATED "
-                  "but NAMED NO LOOP that this parser can read "
-                  f"(shape counts {shapes}). Refusing to widen a loop nobody "
-                  "identified -- teach the parser the new wording instead")
-            break
-        named = ", ".join(f"{lid} ({fn}, {f}:{ln})" for lid, f, ln, fn in sorted(loops))
-        print(f"[put]   auto-unwind {attempt}/{a.auto_unwind}: the tool named "
-              f"loop(s) {named}; re-running with --unwindset at {k}")
-        extra = unwindset_args(loops, k)
-        out2b, rc2b, w2b = run_esbmc(
-            a.esbmc, a.sol, a.ast, a.contract, a.unit,
-            ["--path-cov-assert",
-             os.path.join(assert_dir, "spec.json"), "--cov-report-json"] + a.esbmc_arg + extra,
-            assert_dir, a.max_tx, esbmc_budget("auto-unwind"), a.memlimit, a.scope)
-        rows_b, summary_b, refusal_b, blocker_b = parse_ladder(out2b)
-        rows_b = restore_ladder_row_names(rows_b, state_store_names)
-        # ---- AN ATTEMPT THAT PRODUCED NO LADDER MAY NOT REPLACE THE STATE ---
-        #
-        # See `attempt_is_usable`. Adopting unconditionally is what let a
-        # crashed retry (exit 64 on a rejected command line) overwrite
-        # blocker="truncated" with None, walk straight past the gate below, and
-        # ship an oracle-free PUT with exit 0. The refusal the retry was trying
-        # to LIFT is the thing it deleted.
-        usable = attempt_is_usable(rows_b, blocker_b)
-        unwind_attempts.append({
-            "attempt": attempt,
-            "k": k,
-            "loops": [list(x) for x in sorted(loops)],
-            "shapes": shapes,
-            "exit": rc2b,
-            "wall_s": round(w2b, 1),
-            "adopted": usable,
-            "blocker_after": blocker_b if usable else None,
-            "rows_after": len(rows_b) if usable else 0
-        })
-        if not usable:
-            print(f"[put]     exit={rc2b} {w2b:.1f}s  NO LADDER: this attempt "
-                  f"produced neither a candidate row nor a RESULT token, so it "
-                  f"is not a measurement of anything. The PREVIOUS verdict "
-                  f"stands and the widening is abandoned -- re-running at "
-                  f"{k * 2} would fail the same way. See "
-                  f"{os.path.join(assert_dir, 'run.log')}")
-            break
-        out2, rows, summary, refusal, blocker = (out2b, rows_b, summary_b, refusal_b, blocker_b)
-        print(f"[put]     exit={rc2b} {w2b:.1f}s  blocker={blocker} "
-              f"rows={len(rows)}")
-        # ⛔ NOT folded into `a.esbmc_arg`. Doing that was the first version
-        # and it wrote a FALSE record: step 1 -- the emit run that supplies the
-        # preamble and the concrete case -- already ran WITHOUT the widening,
-        # so listing the widened flags as the run's configuration claims both
-        # runs used them. They are kept in their own field, and the emitted test
-        # says which of its two halves the widening applies to.
-        if blocker != "truncated":
-            unwind_applied.extend(extra)
-        k *= 2
-    if blocker == "truncated" and a.auto_partial_loops:
-        print("[put]   auto-partial-loops: named-loop widening did not settle "
-              "the ladder; re-running once with --partial-loops")
-        extra = ["--partial-loops"]
-        out2b, rc2b, w2b = run_esbmc(
-            a.esbmc, a.sol, a.ast, a.contract, a.unit,
-            ["--path-cov-assert",
-             os.path.join(assert_dir, "spec.json"), "--cov-report-json"] + a.esbmc_arg + extra,
-            assert_dir, a.max_tx, esbmc_budget("partial-loops"), a.memlimit, a.scope)
-        rows_b, summary_b, refusal_b, blocker_b = parse_ladder(out2b)
-        rows_b = restore_ladder_row_names(rows_b, state_store_names)
-        usable = attempt_is_usable(rows_b, blocker_b)
-        unwind_attempts.append({
-            "attempt": a.auto_unwind + 1,
-            "mode": "partial-loops",
-            "args": extra,
-            "exit": rc2b,
-            "wall_s": round(w2b, 1),
-            "adopted": usable,
-            "blocker_after": blocker_b if usable else None,
-            "rows_after": len(rows_b) if usable else 0
-        })
-        if usable:
-            out2, rows, summary, refusal, blocker = (out2b, rows_b, summary_b, refusal_b, blocker_b)
-            print(f"[put]     exit={rc2b} {w2b:.1f}s  blocker={blocker} "
-                  f"rows={len(rows)}")
-            if blocker != "truncated":
-                unwind_applied.extend(extra)
-        else:
-            print(f"[put]     exit={rc2b} {w2b:.1f}s  NO LADDER: "
-                  "--partial-loops produced neither a candidate row nor a "
-                  "RESULT token, so the previous truncation verdict stands")
     if refusal:
         print(f"[put]   ladder REFUSED: {refusal}")
         notes.append(f"ladder refused: {refusal}")
@@ -19713,10 +19932,6 @@ def main():
             r2_requested = True
             _r2_before_fuzz = json.loads(json.dumps(_r2))
             _r2_filtered = _r2
-            if unwind_applied:
-                print("[put]   R2 ESBMC passes inherit ladder repair args: " +
-                      " ".join(unwind_applied))
-
             if rollback_here or path_reverts:
                 reason = ("rollback path has no observable R2 post-state"
                           if rollback_here else "revert path has no observable R2 post-state")
@@ -19827,22 +20042,20 @@ def main():
                 return p
 
             def _run_r2(spec_path):
-                extra = (["--path-cov-assert", spec_path, "--cov-report-json"] + a.esbmc_arg +
-                         unwind_applied)
+                extra = (["--path-cov-assert", spec_path, "--cov-report-json"] + proof_esbmc_args)
                 o, _rc, _w = run_esbmc(a.esbmc, a.sol, a.ast, a.contract, a.unit, extra, assert_dir,
-                                       a.max_tx, esbmc_budget("R2"), a.memlimit, a.scope)
+                                       1, esbmc_budget("R2"), a.memlimit, a.scope)
                 rows_o, _summary_o, _refusal_o, _blocker_o = parse_ladder(o)
                 with open(spec_path) as f:
                     spec_o = json.load(f)
-                if should_retry_exact_mapping_r2_with_cvc5(spec_o, rows_o,
-                                                           a.esbmc_arg + unwind_applied):
+                if should_retry_exact_mapping_r2_with_cvc5(spec_o, rows_o, proof_esbmc_args):
                     print("[put]   R2 exact mapping pass got solver unknown "
                           "under the default solver; retrying this spec once "
                           "with --cvc5")
                     notes.append("R2 exact mapping solver fallback: --cvc5")
                     cvc5_budget = min(esbmc_budget("R2-cvc5"), 240)
                     o2, _rc2, _w2 = run_esbmc(a.esbmc, a.sol, a.ast, a.contract, a.unit,
-                                              extra + ["--cvc5"], assert_dir, a.max_tx, cvc5_budget,
+                                              extra + ["--cvc5"], assert_dir, 1, cvc5_budget,
                                               a.memlimit, a.scope)
                     rows_2, _summary_2, _refusal_2, blocker_2 = parse_ladder(o2)
                     if attempt_is_usable(rows_2, blocker_2):
@@ -20104,18 +20317,14 @@ def main():
         newc = (f"{cname}_{a.contract}_{a.unit}_concrete{a.enc}"
                 f"{plabel}{a.test_suffix}")
         try:
-            txt = assemble_concrete_source(emitted, case, newc, foundry_fixture, layout, a.contract,
-                                           a.unit, constructor_mocks, runtime_mocks,
-                                           constructor_params, params, constructor_param_mocks,
-                                           constructor_param_struct_field_mocks,
-                                           constructor_param_runtime_mocks,
-                                           constructor_param_hascode_mocks, flat_source, region,
-                                           pins, (a.concrete_stage2_source ==
-                                                  "certified-region-concrete-fallback"
-                                                  and a.concrete_stage2_witness_check ==
-                                                  "CERTIFIED-BASIS-REPLAY"))
-            txt, concrete_oracles = add_concrete_normal_exit_oracle(
-                txt, case[1], a.unit)
+            txt = assemble_concrete_source(
+                emitted, case, newc, foundry_fixture, layout, a.contract, a.unit, constructor_mocks,
+                runtime_mocks, constructor_params, params, constructor_param_mocks,
+                constructor_param_struct_field_mocks, constructor_param_runtime_mocks,
+                constructor_param_hascode_mocks, flat_source, region, pins,
+                (a.concrete_stage2_source == "certified-region-concrete-fallback"
+                 and a.concrete_stage2_witness_check == "CERTIFIED-BASIS-REPLAY"))
+            txt, concrete_oracles = add_concrete_normal_exit_oracle(txt, case[1], a.unit)
         except ValueError as exc:
             reason = str(exc)
             print(f"[put] REFUSED: {reason}")
@@ -20219,6 +20428,12 @@ def main():
                     },
                     "esbmc_extra_args":
                     a.esbmc_arg,
+                    "proof_strategy": {
+                        "kind": "k-induction",
+                        "max_k_step": 30,
+                        "solidity_max_tx": 1,
+                        "esbmc_args": proof_esbmc_args,
+                    },
                     "unwind_applied_to_ladder_only":
                     unwind_applied,
                     "unwind_attempts":
@@ -20492,9 +20707,13 @@ def main():
                 # has to say which one it is.
                 "esbmc_extra_args":
                 a.esbmc_arg,
-                # The widening applies to the LADDER run only. The emit run
-                # that produced the preamble and the concrete case ran before
-                # any loop was named, so it did not carry these.
+                "proof_strategy": {
+                    "kind": "k-induction",
+                    "max_k_step": 30,
+                    "solidity_max_tx": 1,
+                    "esbmc_args": proof_esbmc_args,
+                },
+                # Retained as an empty compatibility field for older readers.
                 "unwind_applied_to_ladder_only":
                 unwind_applied,
                 "unwind_attempts":

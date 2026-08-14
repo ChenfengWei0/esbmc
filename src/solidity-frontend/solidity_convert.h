@@ -219,6 +219,7 @@ protected:
     const std::string &cname,
     const std::string &mod_name,
     const std::string &func_name,
+    int func_ast_id,
     std::string &name,
     std::string &id);
   bool get_function_params(

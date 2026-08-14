@@ -889,6 +889,34 @@ void report_coverage(
   // path, keyed by the "fn:path:enc" comment (see solidity_path_coverage()).
   bool is_path_cov = options.get_bool_option("solidity-path-coverage-enabled");
 
+  // A base-case UNSAT is only bounded evidence.  The per-claim ledger is
+  // shared across k-induction phases and deliberately preserves that `P`
+  // against a later SAT/UNKNOWN inductive step.  On strategy exhaustion this
+  // function is still called, so fail closed here unless FC/IS actually
+  // closed: retain concrete `F` witnesses, but turn base-only `P` rows back
+  // into undecided before certification or ladder reporting consumes them.
+  if (
+    is_path_cov && options.get_bool_option("k-induction") &&
+    !goto_coveraget::path_cov_k_induction_proved)
+  {
+    size_t downgraded = 0;
+    std::lock_guard lock(goto_coveraget::claim_outcome_mutex);
+    for (auto &[claim, outcome] : goto_coveraget::claim_outcome)
+    {
+      (void)claim;
+      if (outcome == 'P')
+      {
+        outcome = 'U';
+        ++downgraded;
+      }
+    }
+    if (downgraded > 0)
+      log_warning(
+        "k-induction did not close: downgrading {} base-case-only path "
+        "verdict(s) to UNDECIDED; none may be reported HOLDS or CERTIFIED",
+        downgraded);
+  }
+
   // Truncation disclosure. With --no-unwinding-assertions (which coverage
   // mode turns on automatically whenever --unwind is given, and which the
   // k-induction base/inductive phases set too) a loop that reaches its
@@ -1627,6 +1655,7 @@ void report_coverage(
     // exploration it was obtained under.
     const std::string max_tx = options.get_option("solidity-max-tx");
     const std::string unwind_s = options.get_option("unwind");
+    const bool k_induction_run = options.get_bool_option("k-induction");
     bool loops_truncated = false;
     {
       std::lock_guard lk(goto_functionst::truncated_loops_mutex);
@@ -1762,11 +1791,16 @@ void report_coverage(
               claim_entry["u_reason_detail"] = ue->second;
           }
         }
-        // Kept alongside the token: a consumer that already reads these keys
-        // keeps working, and `bounded_holds` additionally marks the U's worth
-        // re-checking under a deeper exploration.
+        // Keep the proof strategy explicit.  K-induction discharges loop
+        // iterations but does not make the fixed transaction horizon
+        // unbounded.
         if (v == 'P' && !unbounded_run)
-          claim_entry["bounded_holds"] = true;
+        {
+          if (k_induction_run)
+            claim_entry["inductively_holds"] = true;
+          else
+            claim_entry["bounded_holds"] = true;
+        }
         if (!witnessed && v == 0)
           // Never handed to the solver this run (sliced away, or skipped
           // because an earlier round already covered a different path).
@@ -1774,8 +1808,24 @@ void report_coverage(
 
         claim_entry["bound"]["max_tx"] = max_tx.empty() ? "default" : max_tx;
         claim_entry["bound"]["unwind"] =
-          unwind_s.empty() ? "default" : unwind_s;
-        claim_entry["bound"]["kind"] = unbounded_run ? "unbounded" : "bounded";
+          k_induction_run ? "not-applicable"
+                          : (unwind_s.empty() ? "default" : unwind_s);
+        claim_entry["bound"]["kind"] =
+          k_induction_run ? "k-induction"
+                          : (unbounded_run ? "unbounded" : "bounded");
+        if (k_induction_run)
+        {
+          const bool proof_closed = goto_coveraget::path_cov_k_induction_proved;
+          claim_entry["bound"]["max_k_step"] = options.get_option("max-k-step");
+          claim_entry["bound"]["base_case_unwind"] =
+            unwind_s.empty() ? "default" : unwind_s;
+          claim_entry["bound"]["proof_closed"] = proof_closed;
+          claim_entry["bound"]["loop_proof"] =
+            proof_closed ? "inductive proof over loop iterations"
+                         : "k-induction inconclusive at max-k-step";
+          claim_entry["bound"]["transaction_scope"] =
+            "bounded by solidity-max-tx";
+        }
         claim_entry["bound"]["tx_exploration"] = tx_exploration;
         if (loops_truncated)
           claim_entry["bound"]["loops_truncated"] = true;
@@ -1784,12 +1834,48 @@ void report_coverage(
         // rollback one (require/revert("msg"), which restores `*this` and then
         // reaches END_FUNCTION). Reporting the latter as "normal" would claim a
         // reverting transaction succeeded.
+        // Certification replaces the enumerated claim with query-local
+        // `#exitN` and `#nonvacuous` assertions. Exit metadata remains keyed
+        // by the undecorated enumerated path, so recover that key before
+        // classifying the query witness. In particular, the non-vacuity claim
+        // is inserted at this path's own exit and must retain its revert kind.
+        std::string metadata_claim_msg = claim_msg;
+        const size_t query_suffix = metadata_claim_msg.rfind('#');
+        if (query_suffix != std::string::npos)
+        {
+          const std::string suffix = metadata_claim_msg.substr(query_suffix);
+          const bool numbered_exit =
+            suffix.rfind("#exit", 0) == 0 && suffix.size() > 5 &&
+            std::all_of(suffix.begin() + 5, suffix.end(), [](const char c) {
+              return c >= '0' && c <= '9';
+            });
+          if (suffix == "#nonvacuous" || numbered_exit)
+            metadata_claim_msg.resize(query_suffix);
+        }
+        const std::pair<std::string, std::string> metadata_key{
+          metadata_claim_msg, claim_loc};
+        const auto contains_path = [&](const auto &paths) {
+          return std::any_of(paths.begin(), paths.end(), [&](const auto &key) {
+            return key.first == metadata_claim_msg;
+          });
+        };
+        // A certification query moves its assertions to query-specific exit
+        // sites. The enumerator's metadata key retains the original exit
+        // location, so the path comment, not the moved assertion location, is
+        // the stable join key in this mode.
+        const bool certification_claim = metadata_claim_msg != claim_msg;
         const bool ck_err =
-          goto_coveraget::revert_paths.count({claim_msg, claim_loc}) > 0;
-        const bool ck_rb = goto_coveraget::rollback_revert_paths.count(
-                             {claim_msg, claim_loc}) > 0;
-        const bool ck_un = goto_coveraget::undetermined_exit_paths.count(
-                             {claim_msg, claim_loc}) > 0;
+          certification_claim
+            ? contains_path(goto_coveraget::revert_paths)
+            : goto_coveraget::revert_paths.count(metadata_key);
+        const bool ck_rb =
+          certification_claim
+            ? contains_path(goto_coveraget::rollback_revert_paths)
+            : goto_coveraget::rollback_revert_paths.count(metadata_key);
+        const bool ck_un =
+          certification_claim
+            ? contains_path(goto_coveraget::undetermined_exit_paths)
+            : goto_coveraget::undetermined_exit_paths.count(metadata_key);
         claim_entry["exit_kind"] =
           (ck_err || ck_rb) ? "revert" : (ck_un ? "undetermined" : "normal");
         if (ck_rb)
@@ -1842,8 +1928,16 @@ void report_coverage(
         // had `path_id` could not build one; it had to be told the depth out of
         // band, which is the opposite of an interface.
         {
-          auto dp =
-            goto_coveraget::path_decision_depth.find({claim_msg, claim_loc});
+          auto dp = goto_coveraget::path_decision_depth.find(metadata_key);
+          if (
+            certification_claim &&
+            dp == goto_coveraget::path_decision_depth.end())
+            dp = std::find_if(
+              goto_coveraget::path_decision_depth.begin(),
+              goto_coveraget::path_decision_depth.end(),
+              [&](const auto &entry) {
+                return entry.first.first == metadata_claim_msg;
+              });
           if (dp != goto_coveraget::path_decision_depth.end())
             claim_entry["path_depth"] = dp->second;
 
@@ -1993,6 +2087,11 @@ void report_coverage(
             fin[prettify_solidity_expr(n)] = v;
           claim_entry["inputs"] = ins;
           claim_entry["env"] = envj;
+          const std::string testcase_fingerprint =
+            foundry_gen.testcase_fingerprint_sha256_for_claim(claim_msg);
+          if (!testcase_fingerprint.empty())
+            claim_entry["foundry_testcase_fingerprint_sha256"] =
+              testcase_fingerprint;
           // What the outside world returned on this path, in call order. Kept
           // separate from `inputs` because a consumer can CHOOSE an input and
           // cannot choose this: a replay has to mock the callee to return these
@@ -2483,7 +2582,7 @@ void report_coverage(
     // bound and are therefore worth re-checking unbounded.
     if (is_path_cov)
     {
-      size_t nF = 0, nI = 0, nU = 0, nBH = 0, nRevert = 0;
+      size_t nF = 0, nI = 0, nU = 0, nBH = 0, nIH = 0, nRevert = 0;
       for (const auto &c : claims_json)
       {
         const std::string s = c["status"];
@@ -2495,6 +2594,8 @@ void report_coverage(
           ++nU;
         if (c.contains("bounded_holds"))
           ++nBH;
+        if (c.contains("inductively_holds"))
+          ++nIH;
         if (c.value("exit_kind", "") == "revert")
           ++nRevert;
       }
@@ -2503,6 +2604,7 @@ void report_coverage(
       report["summary"]["I_proven_unreachable"] = nI;
       report["summary"]["U_undecided"] = nU;
       report["summary"]["U_of_which_bounded_holds"] = nBH;
+      report["summary"]["U_of_which_inductively_holds"] = nIH;
 
       // ---- HOW MANY WITNESSES THE REPORT ACTUALLY CARRIES ----
       //
@@ -2676,9 +2778,25 @@ void report_coverage(
       report["summary"]["bound"]["max_tx"] =
         max_tx.empty() ? "default" : max_tx;
       report["summary"]["bound"]["unwind"] =
-        unwind_s.empty() ? "default" : unwind_s;
+        k_induction_run ? "not-applicable"
+                        : (unwind_s.empty() ? "default" : unwind_s);
       report["summary"]["bound"]["kind"] =
-        unbounded_run ? "unbounded" : "bounded";
+        k_induction_run ? "k-induction"
+                        : (unbounded_run ? "unbounded" : "bounded");
+      if (k_induction_run)
+      {
+        const bool proof_closed = goto_coveraget::path_cov_k_induction_proved;
+        report["summary"]["bound"]["max_k_step"] =
+          options.get_option("max-k-step");
+        report["summary"]["bound"]["base_case_unwind"] =
+          unwind_s.empty() ? "default" : unwind_s;
+        report["summary"]["bound"]["proof_closed"] = proof_closed;
+        report["summary"]["bound"]["loop_proof"] =
+          proof_closed ? "inductive proof over loop iterations"
+                       : "k-induction inconclusive at max-k-step";
+        report["summary"]["bound"]["transaction_scope"] =
+          "bounded by solidity-max-tx";
+      }
       report["summary"]["bound"]["tx_exploration"] = tx_exploration;
       // THE PER-CLAIM BUDGET IS PART OF THE BOUND, not a footnote. A capped
       // run's U counts are not comparable with an uncapped run's: some of its
@@ -2693,7 +2811,16 @@ void report_coverage(
           : goto_coveraget::claim_budget_mechanism;
       report["summary"]["claims_abandoned_over_budget"] =
         goto_coveraget::claim_budget_exceeded.load(std::memory_order_relaxed);
-      if (!unbounded_run)
+      if (k_induction_run)
+        report["summary"]["note"] =
+          goto_coveraget::path_cov_k_induction_proved
+            ? "loop assertions are discharged by k-induction; transaction "
+              "exploration remains bounded by solidity-max-tx, so this does "
+              "not claim unbounded multi-transaction reachability"
+            : "k-induction did not close by max-k-step; bounded base-case "
+              "holds were downgraded to unknown and no inductive proof is "
+              "claimed";
+      else if (!unbounded_run)
         report["summary"]["note"] =
           "no coverage configuration can establish unreachability, so I is "
           "never emitted and every path that merely held at this exploration "

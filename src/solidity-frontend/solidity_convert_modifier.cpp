@@ -1278,11 +1278,12 @@ void solidity_convertert::get_modifier_function_name(
   const std::string &cname,
   const std::string &mod_name,
   const std::string &func_name,
+  int func_ast_id,
   std::string &name,
   std::string &id)
 {
   name = func_name + "_" + mod_name;
-  id = "sol:@C@" + cname + "@F@" + name + "#0";
+  id = "sol:@C@" + cname + "@F@" + name + "#" + i2string(func_ast_id);
 }
 
 bool solidity_convertert::has_modifier_invocation(
@@ -1452,7 +1453,12 @@ bool solidity_convertert::get_func_modifier(
     std::string mod_name = mod_def["name"];
     std::string aux_func_name, aux_func_id;
     get_modifier_function_name(
-      c_name, mod_name, func_name, aux_func_name, aux_func_id);
+      c_name,
+      mod_name,
+      func_name,
+      ast_node["id"].get<int>(),
+      aux_func_name,
+      aux_func_id);
 
     nlohmann::json *modifier_func = nullptr;
     if (insert_modifier_json(ast_node, c_name, aux_func_name, modifier_func))
@@ -1966,7 +1972,12 @@ bool solidity_convertert::get_func_modifier(
       std::string next_mod_name = next_mod_def["name"];
       std::string next_aux_func_id;
       get_modifier_function_name(
-        c_name, next_mod_name, f_name, next_aux_func_name, next_aux_func_id);
+        c_name,
+        next_mod_name,
+        f_name,
+        ast_node["id"].get<int>(),
+        next_aux_func_name,
+        next_aux_func_id);
 
       if (get_func_decl_this_ref(c_name, next_aux_func_id, this_ptr))
         return true;

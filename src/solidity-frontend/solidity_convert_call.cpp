@@ -1391,7 +1391,13 @@ bool solidity_convertert::get_high_level_member_access(
         return true;
 
       for (auto op : front_block.operands())
+      {
+        // TryStatement must evaluate the target/arguments before a failed
+        // high-level call, but this call-environment setup belongs to the
+        // call itself and must be skipped when the target has no code.
+        op.set("#sol_extcall_wrapper", true);
         move_to_front_block(op);
+      }
       for (auto op : back_block.operands())
         move_to_back_block(op);
     }

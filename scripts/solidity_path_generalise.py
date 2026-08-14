@@ -69,7 +69,8 @@ import time
 # No cycle: that module imports only the standard library.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from solidity_path_put import (
-    CHAIN_ID_MAX, ESTABLISHABLE_ENV_COORDS,  # noqa: E402,F401
+    CHAIN_ID_MAX,
+    ESTABLISHABLE_ENV_COORDS,  # noqa: E402,F401
     STRATEGY_FLAGS_REFUSED,
     check_esbmc_args,
     contract_state_types)
@@ -382,6 +383,55 @@ def named_value_items(values, *, env=False):
             continue
         out.append((_journal_env_name(name) if env else name, value))
     return out
+
+
+K_INDUCTION_PROOF_FLAGS_WITH_VALUE = {
+    "--base-k-step",
+    "--k-step",
+    "--max-inductive-step",
+    "--unwind",
+    "--unwindset",
+    "--unwindsetname",
+    "--max-k-step",
+}
+K_INDUCTION_PROOF_FLAGS = {
+    "--base-case",
+    "--enable-forward-condition",
+    "--disable-forward-condition",
+    "--disable-inductive-step",
+    "--falsification",
+    "--forward-condition",
+    "--partial-loops",
+    "--incremental-bmc",
+    "--overflow-check",
+    "--div-by-zero-check",
+    "--k-induction",
+    "--k-induction-parallel",
+    "--inductive-step",
+    "--termination",
+    "--unlimited-k-steps",
+}
+
+
+def k_induction_proof_args(existing):
+    """Build the clean unbounded proof strategy for region certification."""
+    out = []
+    skip_value = False
+    for raw in existing or ():
+        arg = str(raw)
+        if skip_value:
+            skip_value = False
+            continue
+        name = arg.split("=", 1)[0]
+        if name in K_INDUCTION_PROOF_FLAGS_WITH_VALUE:
+            skip_value = "=" not in arg
+            continue
+        if name in K_INDUCTION_PROOF_FLAGS:
+            continue
+        out.append(arg)
+    return out + [
+        "--k-induction", "--enable-forward-condition", "--max-k-step", "30"
+    ]
 
 
 def named_values_dict(values, *, env=False):
@@ -3065,7 +3115,11 @@ def function_mutability(ast_path, contract=None):
         index(ast)
         if target is not None:
             out = {}
-            collect(target, out)
+            chain = target.get("linearizedBaseContracts") or [target.get("id")]
+            for contract_id in reversed(chain):
+                inherited = by_id.get(contract_id)
+                if inherited is not None:
+                    collect(inherited, out)
             return out
         # Fall through to the whole-AST read; the caller reports that it did.
     return collect(ast, {})
@@ -3279,8 +3333,7 @@ def direct_recursive_helpers_in_unit_closure(ast_path, contract, unit, declarati
     for cn in chain:
         for node in _walk_ast(cn):
             kind = node.get("kind", "function")
-            node_name = node.get("name") or (
-                kind if kind in ("fallback", "receive") else "")
+            node_name = node.get("name") or (kind if kind in ("fallback", "receive") else "")
             if (node.get("nodeType") == "FunctionDefinition" and node_name == unit
                     and (declaration_id is None or node.get("id") == declaration_id)):
                 start_ids.add(id(node))
@@ -3860,8 +3913,7 @@ def unit_params(ast_path, contract, unit, declaration_id=None):
     def walk(n):
         if isinstance(n, dict):
             kind = n.get("kind", "function")
-            node_name = n.get("name") or (
-                kind if kind in ("fallback", "receive") else "")
+            node_name = n.get("name") or (kind if kind in ("fallback", "receive") else "")
             if (n.get("nodeType") == "FunctionDefinition" and node_name == unit
                     and (declaration_id is None or n.get("id") == declaration_id)):
                 ps = ((n.get("parameters") or {}).get("parameters") or [])
@@ -5243,33 +5295,6 @@ CERT_UNEXPRESSIBLE_RE = re.compile(
 # on a run that named several. `.` does not cross newlines here (no DOTALL), so
 # the match is confined to the one line that carries both parts.
 CERT_TRUNCATED_RE = re.compile(r"RESULT: UNDECIDED-TRUNCATED.*?Loops truncated: (.*)$", re.M)
-CERT_TRUNCATED_LOOP_RE = re.compile(r"(?:loop|recursion)\s+([0-9]+)\s+at\s+file\b")
-
-
-def certification_unwind_retry_args(log, existing_args, *, unwind=512):
-    """Return a named-loop retry for one truncated certification query.
-
-    The corpus runner has a unit-level retry for truncation, but that reruns
-    the expensive outer measurement rounds as well as the certification query.
-    A certification result already names the loop that was cut, so retry the
-    query that produced it in isolation.  Never add a second generic unwind
-    set: duplicate bounds make the command dependent on ESBMC's option-order
-    semantics and can silently change a previously measured query.
-    """
-    if "UNDECIDED-TRUNCATED" not in (log or ""):
-        return []
-    if any(str(arg) == "--unwindset" for arg in (existing_args or ())):
-        return []
-    detail = CERT_TRUNCATED_RE.search(log or "")
-    if not detail:
-        return []
-    loop_ids = []
-    for match in CERT_TRUNCATED_LOOP_RE.finditer(detail.group(1)):
-        if match.group(1) not in loop_ids:
-            loop_ids.append(match.group(1))
-    if not loop_ids:
-        return []
-    return ["--unwind", "4", "--unwindset", ",".join(f"{loop_id}:{unwind}" for loop_id in loop_ids)]
 
 
 def unexpressible_coords(log):
@@ -6880,54 +6905,20 @@ def certify(esbmc,
         want_property=want_property,
     )
     _t0 = time.time()
+    proof_esbmc_args = k_induction_proof_args(esbmc_args)
     log = run(esbmc,
               sol,
               contract, ["--path-cov-certify", path, "--cov-report-json"],
-              max_tx,
+              1,
               timeout,
               cwd,
               ast=ast,
               focus=focus,
               memlimit=memlimit,
-              esbmc_args=esbmc_args,
+              esbmc_args=proof_esbmc_args,
               result_only=not want_property)
     _wall = time.time() - _t0
     v = verdict(log)
-    retry_args = certification_unwind_retry_args(log, esbmc_args)
-    if v == "UNDECIDED_TRUNCATED" and retry_args:
-        retry_cwd = cwd + "__retry_unwind_enc%s" % enc
-        if want_property:
-            retry_cwd += "_property"
-        os.makedirs(retry_cwd, exist_ok=True)
-        try:
-            with open(os.path.join(cwd, "singlepoint_enc%s_truncated.log" % enc), "w") as _lf:
-                _lf.write(log)
-        except OSError as _e:
-            print("[certify] could not persist the truncated query for "
-                  "enc=%s: %s" % (enc, _e))
-        print(f"[certify] enc={enc} retrying only the certification query "
-              f"with {' '.join(retry_args)}")
-        retry_esbmc_args = list(esbmc_args)
-        if "--unwind" in retry_esbmc_args:
-            unwind_index = retry_esbmc_args.index("--unwind")
-            if unwind_index + 1 < len(retry_esbmc_args):
-                retry_esbmc_args[unwind_index + 1] = retry_args[1]
-                retry_args = retry_args[2:]
-        retry_esbmc_args.extend(retry_args)
-        _retry_t0 = time.time()
-        retry_log = run(esbmc,
-                        sol,
-                        contract, ["--path-cov-certify", path, "--cov-report-json"],
-                        max_tx,
-                        timeout,
-                        retry_cwd,
-                        ast=ast,
-                        focus=focus,
-                        memlimit=memlimit,
-                        esbmc_args=tuple(retry_esbmc_args),
-                        result_only=not want_property)
-        _wall += time.time() - _retry_t0
-        log, v, cwd = retry_log, verdict(retry_log), retry_cwd
     if v in ("UNKNOWN", "UNDECIDED_TRUNCATED"):
         # Keep the complete tool output for failed certification attempts. A
         # generic exit code is not enough to distinguish an ESBMC frontend
