@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from contextlib import contextmanager
 import copy
 import datetime
 import fcntl
@@ -17,10 +18,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import sys
 import tempfile
-from typing import Any
+from typing import Any, Iterator
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -42,10 +42,12 @@ EXPECTED = {
     "candidates": 605,
     "publishable": 499,
     "rejected": 106,
-    "raw": 2995,
+    # Two deploy-only diagnostic records were removed by the independently
+    # reviewed scope correction before this metadata transaction.
+    "raw": 2993,
     "valid_before": 2140,
     "valid_after": 2639,
-    "raw_only_after": 356,
+    "raw_only_after": 354,
 }
 
 
@@ -82,6 +84,10 @@ def _logical(rows: list[dict[str, Any]]) -> set[tuple[str, str]]:
 
 def _set_sha256(values: set[tuple[str, str]]) -> str:
     return _sha256_bytes(_json_bytes(sorted([list(value) for value in values])))
+
+
+def _mapping_sha256(values: dict[str, Any]) -> str:
+    return _sha256_bytes(_json_bytes(values))
 
 
 def _row_key(row: dict[str, Any]) -> str:
@@ -185,8 +191,11 @@ def _republish_summary(summary: dict[str, Any], candidates: list[dict[str, Any]]
     return published
 
 
-def _case_candidate(result_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    document = json.loads(result_path.read_text(errors="replace"))
+def _case_candidate(
+        result_path: Path,
+        document: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    if document is None:
+        document = json.loads(result_path.read_text(encoding="utf-8", errors="replace"))
     row = document.get("row") or {}
     if row.get("completion_status") != "persistence-error":
         raise MigrationError(f"not a frozen persistence-error row: {result_path}")
@@ -238,18 +247,47 @@ def _evidence_paths(case_dir: Path, row: dict[str, Any], candidates: list[dict[s
     return paths
 
 
+def _candidate_source_seals(candidates: list[dict[str, Any]]) -> list[dict[str, str]]:
+    seals = []
+    for candidate in candidates:
+        test_file = Path(str(candidate.get("file") or ""))
+        flat_file = test_file.parent.parent / "src" / "flat.sol"
+        if not test_file.is_file() or not flat_file.is_file():
+            raise MigrationError(f"missing candidate source evidence: {test_file}, {flat_file}")
+        seals.append({
+            "file": str(test_file),
+            "test": str(candidate.get("test") or ""),
+            "test_file_sha256": _sha256(test_file),
+            "flat_file": str(flat_file),
+            "flat_file_sha256": _sha256(flat_file),
+        })
+    return sorted(seals, key=lambda seal: (seal["file"], seal["test"]))
+
+
+def _result_snapshot(root: Path) -> dict[str, str]:
+    return {
+        str(path): _sha256(path)
+        for dataset in DATASETS
+        for path in sorted((root / dataset / "subjects").glob("*/result.json"))
+    }
+
+
 def _global_sets(
     root: Path,
-    replacements: dict[Path, dict[str, Any]] | None = None
+    replacements: dict[Path, dict[str, Any]] | None = None,
+    snapshot: dict[Path, dict[str, Any]] | None = None,
 ) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
     raw: set[tuple[str, str]] = set()
     valid: set[tuple[str, str]] = set()
     replacements = replacements or {}
+    snapshot = snapshot or {}
     for dataset in DATASETS:
         for result_path in sorted((root / dataset / "subjects").glob("*/result.json")):
             document = replacements.get(result_path)
             if document is None:
-                document = json.loads(result_path.read_text(errors="replace"))
+                document = snapshot.get(result_path)
+            if document is None:
+                document = json.loads(result_path.read_text(encoding="utf-8", errors="replace"))
             put = document.get("put") or {}
             raw.update(_logical(put.get("raw_artifacts") or []))
             valid.update(_logical(put.get("valid_artifacts") or []))
@@ -263,28 +301,47 @@ def _assert_root(root: Path) -> None:
         raise MigrationError(f"refusing non-published RQ3 root: {root}")
 
 
+@contextmanager
+def _root_lock(root: Path) -> Iterator[Path]:
+    canonical_root = root.expanduser().resolve()
+    _assert_root(canonical_root)
+    if not canonical_root.is_dir():
+        raise MigrationError(f"canonical RQ3 root does not exist: {canonical_root}")
+    lock_path = canonical_root / ".rq3-persistence-republish.lock"
+    lock_path.touch(exist_ok=True)
+    with lock_path.open("r+", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield canonical_root
+
+
 def build_plan(root: Path, bundle: Path, expected: dict[str, int] | None = None) -> dict[str, Any]:
+    root = root.resolve()
+    bundle = bundle.expanduser().resolve()
     expected = dict(EXPECTED if expected is None else expected)
     replacements: dict[Path, dict[str, Any]] = {}
+    snapshot: dict[Path, dict[str, Any]] = {}
     cases = []
     preimages: dict[Path, str] = {}
     for dataset in DATASETS:
         subject_root = root / dataset / "subjects"
         for result_path in sorted(subject_root.glob("*/result.json")):
-            preimages[result_path] = _sha256(result_path)
-            document = json.loads(result_path.read_text(errors="replace"))
+            result_data = result_path.read_bytes()
+            preimages[result_path] = _sha256_bytes(result_data)
+            document = json.loads(result_data.decode(errors="replace"))
+            snapshot[result_path] = document
             row = document.get("row") or {}
             if row.get("completion_status") != "persistence-error":
                 continue
-            updated, metadata = _case_candidate(result_path)
+            updated, metadata = _case_candidate(result_path, document)
             replacements[result_path] = updated
             cases.append(metadata)
             candidates = _green_candidates(document)
+            metadata["candidate_source_seals"] = _candidate_source_seals(candidates)
             for evidence in _evidence_paths(result_path.parent, row, candidates):
                 preimages[evidence] = _sha256(evidence)
 
-    old_raw, old_valid = _global_sets(root)
-    new_raw, new_valid = _global_sets(root, replacements)
+    old_raw, old_valid = _global_sets(root, snapshot=snapshot)
+    new_raw, new_valid = _global_sets(root, replacements, snapshot)
     publishable_keys = set()
     rejected_keys = set()
     for case in cases:
@@ -316,12 +373,12 @@ def build_plan(root: Path, bundle: Path, expected: dict[str, int] | None = None)
     for dataset in DATASETS:
         journal = root / dataset / "results.jsonl"
         manifest = root / dataset / "manifest.json"
-        preimages[journal] = _sha256(journal)
+        journal_data = journal.read_bytes()
+        preimages[journal] = _sha256_bytes(journal_data)
         preimages[manifest] = _sha256(manifest)
         updates = sorted((document["row"]
                           for path, document in replacements.items() if path.parts[-4] == dataset),
                          key=lambda row: str(row.get("subject_id") or ""))
-        journal_data = journal.read_bytes()
         if journal_data and not journal_data.endswith(b"\n"):
             journal_data += b"\n"
         journal_data += b"".join(
@@ -331,6 +388,7 @@ def build_plan(root: Path, bundle: Path, expected: dict[str, int] | None = None)
 
     audit_path = root / "audit.json"
     preimages[audit_path] = _sha256(audit_path)
+    result_snapshot = {str(path): preimages[path] for path in sorted(snapshot)}
     plan = {
         "schema": "veriput-rq3-persistence-republish-plan/v1",
         "root": str(root),
@@ -345,6 +403,8 @@ def build_plan(root: Path, bundle: Path, expected: dict[str, int] | None = None)
         "new_raw_sha256": _set_sha256(new_raw),
         "new_valid_sha256": _set_sha256(new_valid),
         "newly_valid_sha256": _set_sha256(new_valid - old_valid),
+        "result_snapshot": result_snapshot,
+        "result_snapshot_sha256": _mapping_sha256(result_snapshot),
         "preimages": {
             str(path): digest
             for path, digest in sorted(preimages.items(), key=lambda item: str(item[0]))
@@ -380,8 +440,11 @@ def _backup(plan: dict[str, Any], bundle: Path) -> dict[str, dict[str, str]]:
     for path in sorted(targets):
         relative = path.relative_to(root)
         backup = bundle / "rollback" / relative
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(path, backup)
+        data = path.read_bytes()
+        expected = plan["preimages"].get(str(path))
+        if expected is None or _sha256_bytes(data) != expected:
+            raise MigrationError(f"backup source differs from sealed preimage: {path}")
+        _atomic_write(backup, data)
         backups[str(path)] = {
             "path": str(backup),
             "sha256": _sha256(backup),
@@ -396,6 +459,51 @@ def _verify_preimages(plan: dict[str, Any]) -> None:
             raise MigrationError(f"compare-before-write mismatch: {path}")
 
 
+def _verify_plan_seal(plan: dict[str, Any]) -> None:
+    serializable = {key: value for key, value in plan.items() if key != "_write_bytes"}
+    expected = serializable.pop("plan_sha256", None)
+    if expected != _sha256_bytes(_json_bytes(serializable)):
+        raise MigrationError("plan seal mismatch")
+    writes = plan.get("_write_bytes") or {}
+    observed = {
+        str(path): {
+            "sha256": _sha256_bytes(data),
+            "bytes": len(data),
+        }
+        for path, data in sorted(writes.items(), key=lambda item: str(item[0]))
+    }
+    if observed != plan.get("writes"):
+        raise MigrationError("staged write bytes differ from sealed plan")
+
+
+def _verify_result_snapshot(plan: dict[str, Any]) -> None:
+    expected = plan.get("result_snapshot") or {}
+    if _mapping_sha256(expected) != plan.get("result_snapshot_sha256"):
+        raise MigrationError("result snapshot seal mismatch")
+    observed = _result_snapshot(Path(plan["root"]))
+    if observed != expected:
+        raise MigrationError("full result snapshot changed before apply")
+
+
+def _verify_candidate_source_seals(plan: dict[str, Any]) -> None:
+    for case in plan["cases"]:
+        seals = case.get("candidate_source_seals")
+        expected_keys = {tuple(key) for key in case.get("candidate_keys") or []}
+        if (not isinstance(seals, list) or len(seals) != case.get("candidates")
+                or not all(isinstance(seal, dict) for seal in seals)
+                or len({(seal.get("file"), seal.get("test"))
+                        for seal in seals}) != len(seals) or {(seal.get("file"), seal.get("test"))
+                                                              for seal in seals} != expected_keys):
+            raise MigrationError(f"candidate source seal population mismatch: {case['result']}")
+        for seal in seals:
+            test_file = Path(seal["file"])
+            flat_file = Path(seal["flat_file"])
+            if (not test_file.is_file() or _sha256(test_file) != seal["test_file_sha256"]):
+                raise MigrationError(f"candidate test source seal mismatch: {test_file}")
+            if (not flat_file.is_file() or _sha256(flat_file) != seal["flat_file_sha256"]):
+                raise MigrationError(f"candidate flat source seal mismatch: {flat_file}")
+
+
 def _restore(backups: dict[str, dict[str, str]]) -> None:
     validated = {}
     for target, record in backups.items():
@@ -407,11 +515,29 @@ def _restore(backups: dict[str, dict[str, str]]) -> None:
         _atomic_write(target, data)
 
 
+def _require_canonical_descendant(path: Path, root: Path, label: str) -> None:
+    canonical = path.resolve()
+    try:
+        canonical.relative_to(root)
+    except ValueError as error:
+        raise MigrationError(f"{label} escapes its transaction root: {path}") from error
+    if canonical != path:
+        raise MigrationError(f"{label} is not canonical: {path}")
+
+
+def _verify_rollback_paths(backups: dict[str, dict[str, str]], root: Path, bundle: Path) -> None:
+    rollback_root = (bundle / "rollback").resolve()
+    for raw_target, record in backups.items():
+        _require_canonical_descendant(Path(raw_target), root, "rollback target")
+        _require_canonical_descendant(Path(record.get("path") or ""), rollback_root,
+                                      "rollback backup")
+
+
 def _reauthenticate(plan: dict[str, Any]) -> None:
     publishable = set()
     for case in plan["cases"]:
         result_path = Path(case["result"])
-        document = json.loads(result_path.read_text(errors="replace"))
+        document = json.loads(result_path.read_text(encoding="utf-8", errors="replace"))
         candidates = _green_candidates(document)
         coverage = _rebuild_coverage(result_path.parent, document.get("row") or {}, candidates)
         allowed = set(coverage.get("publishable_validity_keys") or [])
@@ -422,105 +548,118 @@ def _reauthenticate(plan: dict[str, Any]) -> None:
         raise MigrationError("manifest binding changed after staging")
 
 
-def apply_plan(plan: dict[str, Any], bundle: Path) -> dict[str, Any]:
+def _apply_plan_locked(plan: dict[str, Any], bundle: Path) -> dict[str, Any]:
     root = Path(plan["root"])
-    lock_path = root / ".rq3-persistence-republish.lock"
-    lock_path.touch(exist_ok=True)
-    with lock_path.open("r+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        _verify_preimages(plan)
-        _reauthenticate(plan)
-        backups = _backup(plan, bundle)
-        transaction = {
-            "schema": "veriput-rq3-persistence-republish-transaction/v1",
-            "state": "applying",
-            "root": str(root),
-            "plan_sha256": plan["plan_sha256"],
-            "backups": backups,
-            "allowed_recovery_hashes": {
-                target:
-                sorted({
-                    record["sha256"],
-                    plan["writes"].get(target, {}).get("sha256", record["sha256"]),
-                })
-                for target, record in backups.items()
-            },
+    _verify_plan_seal(plan)
+    _verify_preimages(plan)
+    _verify_result_snapshot(plan)
+    _verify_candidate_source_seals(plan)
+    _reauthenticate(plan)
+    backups = _backup(plan, bundle)
+    transaction = {
+        "schema": "veriput-rq3-persistence-republish-transaction/v1",
+        "state": "applying",
+        "root": str(root),
+        "plan_sha256": plan["plan_sha256"],
+        "backups": backups,
+        "backups_sha256": _mapping_sha256(backups),
+        "allowed_recovery_hashes": {
+            target:
+            sorted({
+                record["sha256"],
+                plan["writes"].get(target, {}).get("sha256", record["sha256"]),
+            })
+            for target, record in backups.items()
+        },
+    }
+    _atomic_write(bundle / "transaction.json", _json_bytes(transaction))
+    try:
+        for path, data in plan["_write_bytes"].items():
+            _atomic_write(path, data)
+        audit = audit_output(root)
+        observed = {
+            "raw": audit["raw_tests"],
+            "valid_after": audit["valid_tests"],
+            "raw_only_after": audit["raw_only_count"],
         }
+        wanted = {
+            "raw": plan["expected"]["raw"],
+            "valid_after": plan["expected"]["valid_after"],
+            "raw_only_after": plan["expected"]["raw_only_after"],
+        }
+        if observed != wanted or audit["valid_only_count"] != 0 or audit["ok"]:
+            raise MigrationError(
+                f"post-publication RQ3 audit mismatch: got {observed}, expected {wanted}")
+        raw_set, valid_set = _global_sets(root)
+        if (_set_sha256(raw_set) != plan["new_raw_sha256"]
+                or _set_sha256(valid_set) != plan["new_valid_sha256"]):
+            raise MigrationError("post-publication full raw/valid identity set mismatch")
+        raw_only_hash = _set_sha256(raw_set - valid_set)
+        if raw_only_hash != plan["new_raw_only_sha256"]:
+            raise MigrationError("post-publication raw-only identity set mismatch")
+        _reauthenticate(plan)
+        audit["persistence_republication"] = {
+            "plan_sha256": plan["plan_sha256"],
+            "cases": plan["totals"]["cases"],
+            "publishable": plan["totals"]["publishable"],
+            "rejected": plan["totals"]["rejected"],
+        }
+        audit_data = _json_bytes(audit)
+        audit_path = root / "audit.json"
+        transaction["state"] = "committing"
+        transaction["allowed_recovery_hashes"][str(audit_path)] = sorted({
+            backups[str(audit_path)]["sha256"],
+            _sha256_bytes(audit_data),
+        })
         _atomic_write(bundle / "transaction.json", _json_bytes(transaction))
-        try:
-            for path, data in plan["_write_bytes"].items():
-                _atomic_write(path, data)
-            audit = audit_output(root)
-            observed = {
-                "raw": audit["raw_tests"],
-                "valid_after": audit["valid_tests"],
-                "raw_only_after": audit["raw_only_count"],
-            }
-            wanted = {
-                "raw": plan["expected"]["raw"],
-                "valid_after": plan["expected"]["valid_after"],
-                "raw_only_after": plan["expected"]["raw_only_after"],
-            }
-            if observed != wanted or audit["valid_only_count"] != 0 or audit["ok"]:
-                raise MigrationError(
-                    f"post-publication RQ3 audit mismatch: got {observed}, expected {wanted}")
-            raw_set, valid_set = _global_sets(root)
-            if (_set_sha256(raw_set) != plan["new_raw_sha256"]
-                    or _set_sha256(valid_set) != plan["new_valid_sha256"]):
-                raise MigrationError("post-publication full raw/valid identity set mismatch")
-            raw_only_hash = _set_sha256(raw_set - valid_set)
-            if raw_only_hash != plan["new_raw_only_sha256"]:
-                raise MigrationError("post-publication raw-only identity set mismatch")
-            _reauthenticate(plan)
-            audit["persistence_republication"] = {
-                "plan_sha256": plan["plan_sha256"],
-                "cases": plan["totals"]["cases"],
-                "publishable": plan["totals"]["publishable"],
-                "rejected": plan["totals"]["rejected"],
-            }
-            audit_data = _json_bytes(audit)
-            audit_path = root / "audit.json"
-            transaction["state"] = "committing"
-            transaction["allowed_recovery_hashes"][str(audit_path)] = sorted({
-                backups[str(audit_path)]["sha256"],
-                _sha256_bytes(audit_data),
-            })
-            _atomic_write(bundle / "transaction.json", _json_bytes(transaction))
-            _atomic_write(audit_path, audit_data)
-            transaction.update({
-                "state": "committed",
-                "audit_sha256": _sha256(root / "audit.json"),
-                "observed": observed,
-                "postimages": {
-                    str(path): _sha256(path)
-                    for path in sorted(set(plan["_write_bytes"]) | {root / "audit.json"})
-                },
-            })
-            _atomic_write(bundle / "transaction.json", _json_bytes(transaction))
-            return transaction
-        except Exception:
-            _restore(backups)
-            transaction["state"] = "rolled-back"
-            _atomic_write(bundle / "transaction.json", _json_bytes(transaction))
-            raise
+        _atomic_write(audit_path, audit_data)
+        transaction.update({
+            "state": "committed",
+            "audit_sha256": _sha256(root / "audit.json"),
+            "observed": observed,
+            "postimages": {
+                str(path): _sha256(path)
+                for path in sorted(set(plan["_write_bytes"]) | {root / "audit.json"})
+            },
+        })
+        _atomic_write(bundle / "transaction.json", _json_bytes(transaction))
+        return transaction
+    except Exception:
+        _restore(backups)
+        transaction["state"] = "rolled-back"
+        _atomic_write(bundle / "transaction.json", _json_bytes(transaction))
+        raise
+
+
+def apply_plan(plan: dict[str, Any], bundle: Path) -> dict[str, Any]:
+    bundle = bundle.expanduser().resolve()
+    if bundle != Path(plan["bundle"]):
+        raise MigrationError("apply bundle differs from sealed plan bundle")
+    root = Path(plan["root"]).resolve()
+    if root != Path(plan["root"]):
+        raise MigrationError("plan root is not canonical")
+    with _root_lock(root):
+        return _apply_plan_locked(plan, bundle)
 
 
 def rollback(bundle: Path) -> None:
+    bundle = bundle.expanduser().resolve()
     transaction_path = bundle / "transaction.json"
-    transaction = json.loads(transaction_path.read_text(errors="replace"))
-    backups = transaction.get("backups") or {}
-    if not backups:
-        raise MigrationError("transaction has no rollback map")
-    state = transaction.get("state")
-    if state not in ("applying", "committing", "committed"):
-        raise MigrationError(f"transaction state is not rollbackable: {state}")
-    root = Path(
-        transaction.get("root") or json.loads(
-            (bundle / "plan.json").read_text(errors="replace"))["root"])
-    lock_path = root / ".rq3-persistence-republish.lock"
-    lock_path.touch(exist_ok=True)
-    with lock_path.open("r+") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    initial = json.loads(transaction_path.read_text(encoding="utf-8", errors="replace"))
+    root = Path(initial.get("root") or "").resolve()
+    with _root_lock(root) as locked_root:
+        transaction = json.loads(transaction_path.read_text(encoding="utf-8", errors="replace"))
+        if Path(transaction.get("root") or "").resolve() != locked_root:
+            raise MigrationError("transaction root changed while acquiring rollback lock")
+        backups = transaction.get("backups") or {}
+        if not backups:
+            raise MigrationError("transaction has no rollback map")
+        if _mapping_sha256(backups) != transaction.get("backups_sha256"):
+            raise MigrationError("rollback backup map seal mismatch")
+        state = transaction.get("state")
+        if state not in ("applying", "committing", "committed", "rolling-back"):
+            raise MigrationError(f"transaction state is not rollbackable: {state}")
+        _verify_rollback_paths(backups, locked_root, bundle)
         if state == "committed":
             permitted = {
                 path: {digest}
@@ -537,6 +676,12 @@ def rollback(bundle: Path) -> None:
             path = Path(raw_path)
             if not path.is_file() or _sha256(path) not in allowed:
                 raise MigrationError(f"refusing rollback over a changed postimage: {path}")
+        transaction["state"] = "rolling-back"
+        transaction["allowed_recovery_hashes"] = {
+            path: sorted(set(permitted[path]) | {backups[path]["sha256"]})
+            for path in backups
+        }
+        _atomic_write(transaction_path, _json_bytes(transaction))
         _restore(backups)
         transaction["state"] = "rolled-back-manually"
         _atomic_write(transaction_path, _json_bytes(transaction))
@@ -557,22 +702,23 @@ def main() -> int:
         parser.error("--root is required unless --rollback is used")
     root = args.root.expanduser().resolve()
     _assert_root(root)
-    plan = build_plan(root, args.bundle)
-    _stage(plan, args.bundle)
-    print(
-        json.dumps(
-            {
-                "plan_sha256": plan["plan_sha256"],
-                "totals": plan["totals"],
-                "newly_valid_sha256": plan["newly_valid_sha256"],
-                "new_raw_only_sha256": plan["new_raw_only_sha256"],
-                "apply": args.apply,
-            },
-            indent=2,
-            sort_keys=True))
-    if args.apply:
-        transaction = apply_plan(plan, args.bundle)
-        print(json.dumps(transaction, indent=2, sort_keys=True))
+    with _root_lock(root):
+        plan = build_plan(root, args.bundle)
+        _stage(plan, args.bundle)
+        print(
+            json.dumps(
+                {
+                    "plan_sha256": plan["plan_sha256"],
+                    "totals": plan["totals"],
+                    "newly_valid_sha256": plan["newly_valid_sha256"],
+                    "new_raw_only_sha256": plan["new_raw_only_sha256"],
+                    "apply": args.apply,
+                },
+                indent=2,
+                sort_keys=True))
+        if args.apply:
+            transaction = _apply_plan_locked(plan, args.bundle)
+            print(json.dumps(transaction, indent=2, sort_keys=True))
     return 0
 
 
