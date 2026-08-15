@@ -3795,12 +3795,13 @@ def _source_identity_type_name(sol_type, *, allow_bare=False):
     return None
 
 
-def _address_expr_for_source_type(sol_type, addr_expr, *, allow_bare=False):
+def _address_expr_for_source_type(sol_type, addr_expr, *, allow_bare=False, source=""):
     if _is_address_payable_type(sol_type):
         return f"payable({addr_expr})"
-    t = _norm_ty(sol_type)
     name = _source_identity_type_name(sol_type, allow_bare=allow_bare)
     if name is not None:
+        if source and _source_contract_accepts_value(source, name):
+            addr_expr = f"payable({addr_expr})"
         return f"{name}({addr_expr})"
     return addr_expr
 
@@ -7013,12 +7014,12 @@ def abi_signature_from_params(unit, params, flat_source=""):
     return f"{unit}({','.join(types)})"
 
 
-def call_arg_expr(sol_type, kind, width, var):
+def call_arg_expr(sol_type, kind, width, var, source=""):
     """Expression passed to the target unit for one lifted PUT coordinate."""
     if kind == "bytes":
         return f"bytes{width // 8}({var})"
     if kind == "address":
-        return _address_expr_for_source_type(sol_type, var)
+        return _address_expr_for_source_type(sol_type, var, source=source)
     return var
 
 
@@ -7053,15 +7054,22 @@ def _source_sol_param_name(raw):
     return parts[-1]
 
 
-def repair_payable_replay_call_args(lines, unit, params):
-    """Cast replay-call arguments whose declaration is `address payable`.
+def repair_payable_replay_call_args(lines, unit, params, source=""):
+    """Cast replay-call arguments requiring a payable source address.
 
     The main PUT call is rewritten from the AST-backed parameter table, but the
     replay prefix is kept from ESBMC's concrete testcase.  Older ESBMC emitters
-    spell payable address literals as plain `address(...)`, which Solidity
-    refuses for high-level calls to `address payable` parameters.
+    spell payable address literals as plain `address(...)`. Solidity also
+    requires payable source addresses for contract/interface identities whose
+    receive or fallback is payable, including inherited declarations.
     """
-    if not params or not any(_is_address_payable_type(ty) for _name, ty in params):
+
+    def needs_payable(typ):
+        name = _source_identity_type_name(typ, allow_bare=True)
+        return (_is_address_payable_type(typ)
+                or bool(name and source and _source_contract_accepts_value(source, name)))
+
+    if not params or not any(needs_payable(ty) for _name, ty in params):
         return list(lines), 0
     out, changed = [], 0
     for line in lines:
@@ -7078,8 +7086,17 @@ def repair_payable_replay_call_args(lines, unit, params):
             continue
         repl = {}
         for idx, (_name, ty) in enumerate(params):
-            if _is_address_payable_type(ty):
-                casted = _payable_arg_expr(args[idx])
+            if needs_payable(ty):
+                arg = args[idx].strip()
+                name = _source_identity_type_name(ty, allow_bare=True)
+                identity = (re.fullmatch(re.escape(name or "") +
+                                         r"\s*\((.*)\)", arg, re.S) if name else None)
+                if identity is not None:
+                    casted = f"{name}({_payable_arg_expr(identity.group(1).strip())})"
+                elif name is not None:
+                    casted = f"{name}({_payable_arg_expr(arg)})"
+                else:
+                    casted = _payable_arg_expr(arg)
                 if casted != args[idx]:
                     repl[idx] = casted
         if not repl:
@@ -7104,6 +7121,50 @@ def _source_contract_chunk(source, contract):
                          r"\s+[A-Za-z_]\w*\b", re.M)
     nxt = next_rx.search(source, m.end())
     return source[m.start():nxt.start() if nxt else len(source)]
+
+
+def _source_contract_accepts_value(source, contract):
+    """Whether a source identity requires a payable address conversion.
+
+    Solidity applies this rule through inheritance too: converting an address
+    to a contract or interface with a payable receive/fallback requires the
+    source address to be payable.  Synthetic replay arguments otherwise fail
+    before Forge can execute the authenticated counterexample.
+    """
+    pending = [str(contract or "").rsplit(".", maxsplit=1)[-1]]
+    visited = set()
+    while pending:
+        name = pending.pop()
+        if not name or name in visited:
+            continue
+        visited.add(name)
+        chunk = _source_contract_chunk(source or "", name)
+        if not chunk:
+            continue
+        if re.search(
+                r"\b(?:receive|fallback)\s*\([^)]*\)\s*"
+                r"(?:external\s+)?(?:virtual\s+)?payable\b", chunk):
+            return True
+        pending.extend(_source_inheritance_names(chunk))
+    return False
+
+
+def _source_contract_has_immutable(source, contract):
+    """Whether a contract or one of its bases declares immutable state."""
+    pending = [str(contract or "").rsplit(".", maxsplit=1)[-1]]
+    visited = set()
+    while pending:
+        name = pending.pop()
+        if not name or name in visited:
+            continue
+        visited.add(name)
+        chunk = _source_contract_chunk(source or "", name)
+        if not chunk:
+            continue
+        if re.search(r"\bimmutable\b", _mask_solidity_comments_and_strings(chunk)):
+            return True
+        pending.extend(_source_inheritance_names(chunk))
+    return False
 
 
 def _source_contract_kind(source, name):
@@ -9921,14 +9982,17 @@ def _source_type_default_expr(sol_type, seed=1, source=""):
                 return f"{t}.wrap({value})"
     if (t in ("address", "address payable") or _source_identity_type_name(sol_type) is not None):
         addr = f"address(uint160({seed}))"
-        return _address_expr_for_source_type(sol_type, addr)
+        return _address_expr_for_source_type(sol_type, addr, source=source)
     default = default_call_arg(sol_type)
     if default is not None:
         return default
     name = _source_bare_identity_type_name(
         source, sol_type) if source else _source_identity_type_name(sol_type, allow_bare=True)
     if name is not None:
-        return f"{name}(address(uint160({seed})))"
+        return _address_expr_for_source_type(name,
+                                             f"address(uint160({seed}))",
+                                             allow_bare=True,
+                                             source=source)
     return None
 
 
@@ -9957,7 +10021,7 @@ def _point_int_for_name(name, region, pins):
         return None
 
 
-def _source_point_expr(name, sol_type, region, pins):
+def _source_point_expr(name, sol_type, region, pins, source=""):
     """Render a source-level argument from a single-point Stage-2 witness."""
 
     t = _norm_ty(sol_type)
@@ -9974,7 +10038,7 @@ def _source_point_expr(name, sol_type, region, pins):
         if (t in ("address", "address payable")
                 or _source_identity_type_name(sol_type) is not None):
             addr = f"address(uint160({ivalue}))"
-            return _address_expr_for_source_type(sol_type, addr)
+            return _address_expr_for_source_type(sol_type, addr, source=source)
         m = re.fullmatch(r"bytes([1-9]|[12][0-9]|3[0-2])", t)
         if m:
             return f"{t}(0)"
@@ -10172,7 +10236,7 @@ def synthesize_minimal_emitted_case(out_dir,
 
     call_args = []
     for idx, (_name, ty) in enumerate(named_params(params)):
-        expr = _source_point_expr(_name, ty, region or {}, pins or {})
+        expr = _source_point_expr(_name, ty, region or {}, pins or {}, flat_source)
         if expr is None:
             expr = _source_type_default_expr(ty, 2000 + idx, flat_source)
         if expr is None:
@@ -11213,6 +11277,16 @@ def _concrete_point_for_region(name, region, pins, avoid_zero=False):
     return value
 
 
+def _fresh_generated_identifier(lines, base):
+    used = set(re.findall(r"\b[A-Za-z_$][A-Za-z0-9_$]*\b", "\n".join(lines)))
+    if base not in used:
+        return base
+    suffix = 1
+    while f"{base}_{suffix}" in used:
+        suffix += 1
+    return f"{base}_{suffix}"
+
+
 def materialize_concrete_nonpayable_value_gate(lines,
                                                unit,
                                                params,
@@ -11298,11 +11372,13 @@ def materialize_concrete_nonpayable_value_gate(lines,
             break
         return start if saw_target_prelude else statement_i
 
-    for i, line in enumerate(list(out)):
+    # Rewrite from the end so inserting each call's deal/prank prelude cannot
+    # invalidate the indices of earlier calls in the same replay function.
+    for i, line in reversed(list(enumerate(out))):
         _rewritten, args = rewrite_call_args(line, unit, {})
         if args is None:
             continue
-        completed, completed_args, _implicit, cerr = complete_missing_call_args(
+        _completed, completed_args, _implicit, cerr = complete_missing_call_args(
             line, unit, params, args)
         if cerr is not None:
             return out, changed, cerr
@@ -11315,7 +11391,7 @@ def materialize_concrete_nonpayable_value_gate(lines,
             continue
         encoded_args = (", " + ", ".join(completed_args)) if completed_args else ""
         signature = f"{unit}({','.join(sig_types)})"
-        okvar = "_esbmc_value_gate_ok"
+        okvar = _fresh_generated_identifier(out, "_esbmc_value_gate_ok")
         replacement = [
             f"    vm.deal(address(uint160({sender})), {value});",
             f"    vm.prank(address(uint160({sender})));",
@@ -11968,11 +12044,12 @@ def build_put(contract,
         call_line = body[call_i]
         notes.append(f"completed {setup_arg_repairs} pre-target replay call(s) with "
                      "default arguments; setup calls are not fuzz oracles")
-    body, payable_replay_repairs = repair_payable_replay_call_args(body, unit, params)
+    body, payable_replay_repairs = repair_payable_replay_call_args(body, unit, params, flat_source
+                                                                   or "")
     if payable_replay_repairs:
         call_line = body[call_i]
         notes.append(f"repaired {payable_replay_repairs} replay call(s) to pass "
-                     "`address payable` arguments with an explicit payable(...) cast")
+                     "payable address/identity arguments with an explicit payable(...) cast")
     body, setup_calls_tolerated = tolerate_setup_unit_calls(body, call_i, unit)
     if setup_calls_tolerated:
         call_line = body[call_i]
@@ -12360,7 +12437,7 @@ def build_put(contract,
                 f"abi.encodeWithSignature(\"{spec['signature']}\"), {ret});",
             ]
             param_interface_mock_calls += 1
-        repl[idx] = call_arg_expr(ptype, kind, width, var)
+        repl[idx] = call_arg_expr(ptype, kind, width, var, flat_source or "")
         lifted.append(pname)
         # ---- AN ADDRESS BOUNDS AN ABSOLUTE VALUE, NEVER A DELTA ------------
         #
@@ -14120,14 +14197,47 @@ def repair_constructor_arg_count(lines, contract, constructor_params):
     return out, changed
 
 
-def _fixture_foundry_args(fixture):
+def _fixture_arg_is_single_expression(arg):
+    """Reject fixture payloads that contain source text instead of an expr."""
+    text = str(arg or "").strip()
+    if not text:
+        return False
+    masked = _mask_solidity_comments_and_strings(text)
+    if ";" in masked or re.search(r"\b(?:pragma|contract|interface|library|function|constructor)\b",
+                                  masked):
+        return False
+    pairs = {')': '(', ']': '[', '}': '{'}
+    stack = []
+    for char in masked:
+        if char in "([{":
+            stack.append(char)
+        elif char in pairs:
+            if not stack or stack.pop() != pairs[char]:
+                return False
+    return not stack
+
+
+def _fixture_foundry_args(fixture, constructor_params=None, source=""):
     foundry = fixture.get("foundry") or {}
     args = foundry.get("constructor_args")
     if args is None:
         return None
     if not isinstance(args, list):
         return None
-    return [str(a) for a in args]
+    rendered = [str(a) for a in args]
+    if constructor_params is None or len(rendered) != len(constructor_params):
+        return rendered
+    repaired = []
+    for idx, (arg, item) in enumerate(zip(rendered, constructor_params)):
+        if _fixture_arg_is_single_expression(arg):
+            repaired.append(arg)
+            continue
+        typ = item[1] if isinstance(item, (list, tuple)) else item
+        fallback = _source_type_default_expr(typ, 1000 + idx, source)
+        if fallback is None:
+            return None
+        repaired.append(fallback)
+    return repaired
 
 
 def _fixture_foundry_skip(fixture):
@@ -14371,7 +14481,8 @@ def apply_foundry_fixture(lines,
                           contract,
                           fixture,
                           layout,
-                          constructor_params=None):
+                          constructor_params=None,
+                          flat_source=""):
     """Mirror a path-cov fixture in the Foundry preamble.
 
     ESBMC's `--path-cov-fixture` may skip a constructor and install scalar
@@ -14396,7 +14507,7 @@ def apply_foundry_fixture(lines,
         if not replaced and m:
             indent = m.group(1)
             end = _statement_end(lines, i)
-            replay_args = _fixture_foundry_args(fixture)
+            replay_args = _fixture_foundry_args(fixture, constructor_params, flat_source or "")
             if replay_args is not None and (constructor_params is None
                                             or len(replay_args) == len(constructor_params)):
                 if fixture.get("skip_constructor"):
@@ -14416,8 +14527,27 @@ def apply_foundry_fixture(lines,
                            "by ESBMC")
                 out.append(f"{indent}address _esbmc_fixture_{inst} = "
                            "address(uint160(1337));")
-                out.append(f"{indent}vm.etch(_esbmc_fixture_{inst}, "
-                           f"type({contract}).runtimeCode);")
+                if _source_contract_has_immutable(flat_source or "", contract):
+                    template_args = []
+                    for index, item in enumerate(constructor_params or []):
+                        typ = item[1] if isinstance(item, (list, tuple)) else item
+                        expr = _source_type_default_expr(typ, 1000 + index, flat_source or "")
+                        if expr is None:
+                            template_args = None
+                            break
+                        template_args.append(expr)
+                    if template_args is not None:
+                        template = f"_esbmc_fixture_template_{inst}"
+                        out.append(f"{indent}{contract} {template} = new {contract}"
+                                   f"({', '.join(template_args)});")
+                        out.append(f"{indent}vm.etch(_esbmc_fixture_{inst}, "
+                                   f"address({template}).code);")
+                    else:
+                        raise ValueError(f"immutable fixture for {contract} has an "
+                                         "unsynthesizable constructor argument")
+                else:
+                    out.append(f"{indent}vm.etch(_esbmc_fixture_{inst}, "
+                               f"type({contract}).runtimeCode);")
                 # A contract with a payable receive/fallback function may only
                 # be converted from address payable.  The payable cast is also
                 # valid for contracts without either function, so use it for
@@ -17720,7 +17850,7 @@ def assemble_put_source(emitted,
     lines[insert_at:insert_at] = inserted
     if fixture is not None and contract is not None and unit is not None:
         lines = apply_foundry_fixture(lines, emitted, case, unit, contract, fixture, layout,
-                                      constructor_params)
+                                      constructor_params, flat_source or "")
     lines, _constructor_arg_count_repairs = repair_constructor_arg_count(
         lines, contract, constructor_params)
     if contract is not None and unit is not None:
@@ -17843,7 +17973,7 @@ def assemble_concrete_source(emitted,
         del lines[fs:fe + 1]
     if fixture is not None and contract is not None and unit is not None:
         lines = apply_foundry_fixture(lines, emitted, case, unit, contract, fixture, layout,
-                                      constructor_params)
+                                      constructor_params, flat_source or "")
     lines, _constructor_arg_count_repairs = repair_constructor_arg_count(
         lines, contract, constructor_params)
     if contract is not None and unit is not None:
@@ -17891,7 +18021,7 @@ def assemble_concrete_source(emitted,
                 lines, contract, constructor_param_hascode_mocks or [])
         if params is not None:
             lines, _payable_replay_repairs = repair_payable_replay_call_args(
-                lines, unit, named_params(params))
+                lines, unit, named_params(params), flat_source or "")
             if certified_value_gate_basis:
                 lines, _value_gate_basis_repairs, value_gate_basis_error = \
                     materialize_concrete_nonpayable_value_gate(

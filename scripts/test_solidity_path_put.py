@@ -861,6 +861,82 @@ def test_path_cov_fixture_runtime_cast_is_payable():
                  "runtime-etched contract casts use address payable")
 
 
+def test_source_identity_defaults_cast_inherited_payable_fallbacks():
+    flat = """
+interface NativeFallback { receive() external payable; }
+interface ISafe is NativeFallback {}
+abstract contract Proxy { fallback() external payable virtual {} }
+contract TransparentProxy is Proxy {}
+"""
+    iface = _source_type_default_expr("interface ISafe", 7, flat)
+    bare = _source_type_default_expr("TransparentProxy", 8, flat)
+    bad = 0
+    bad += check(iface == "ISafe(payable(address(uint160(7))))",
+                 f"inherited payable interface defaults use a payable source: {iface}")
+    bad += check(bare == "TransparentProxy(payable(address(uint160(8))))",
+                 f"inherited payable contract defaults use a payable source: {bare}")
+    return bad
+
+
+def test_fixture_replaces_non_expression_constructor_payload():
+    em, case = make_case_target_after_mock()
+    flat = """
+contract Target {
+  constructor(address owner) {}
+  function setFlag(bool flag) external {}
+}
+"""
+    put = ["", "  function test_put_Target_setFlag_path7() public {",
+           "    c1.setFlag(true);", "  }"]
+    text = assemble_put_source(
+        em, case, [put], "TargetCovTest_fixture_expr", {
+            "contract": "Target",
+            "foundry": {
+                "constructor_args": [
+                    "address(uint160(abstract contract Context { function f() external; }))"
+                ]
+            },
+        }, {}, "Target", "setFlag",
+        constructor_params=["address"], flat_source=flat)
+    bad = 0
+    bad += check("abstract contract Context" not in text,
+                 "fixture source payload is not spliced into a constructor call")
+    bad += check("c1 = new Target(address(uint160(1000)));" in text,
+                 "an invalid fixture argument falls back to its declared source type")
+    return bad
+
+
+def test_immutable_fixture_copies_code_from_deployed_template():
+    em, case = make_case_target_after_mock()
+    flat = """
+abstract contract Base {
+  address immutable dependency;
+  constructor(address dependency_) { dependency = dependency_; }
+}
+contract Target is Base {
+  constructor(address dependency_) Base(dependency_) {}
+  function setFlag(bool flag) external {}
+}
+"""
+    put = ["", "  function test_put_Target_setFlag_path7() public {",
+           "    c1.setFlag(true);", "  }"]
+    text = assemble_put_source(
+        em, case, [put], "TargetCovTest_immutable_fixture", {
+            "contract": "Target",
+            "skip_constructor": True,
+            "foundry": {"skip_constructor": True},
+        }, {}, "Target", "setFlag",
+        constructor_params=["address"], flat_source=flat)
+    bad = 0
+    bad += check("type(Target).runtimeCode" not in text,
+                 "immutable fixtures do not use Solidity's forbidden runtimeCode expression")
+    bad += check("Target _esbmc_fixture_template_c1 = new Target(address(uint160(1000)));" in text,
+                 "a legal template deployment materializes immutable runtime code")
+    bad += check("address(_esbmc_fixture_template_c1).code" in text,
+                 "the fixture address receives the deployed template's code")
+    return bad
+
+
 def test_proxy_fixture_getter_uses_low_level_success_oracle():
     """A zero-implementation proxy getter must not ABI-decode empty data."""
     lines = apply_foundry_fixture_target_call_mode(
@@ -23083,6 +23159,67 @@ contract VaultCovTest is Test {
     return bad
 
 
+def test_payable_contract_replay_and_lifted_arg_keep_identity_cast():
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {Vault} from "./Vault.sol";
+contract VaultCovTest is Test {
+  Vault c1;
+  function setUp() public { c1 = new Vault(); }
+  // claim: sol:@C@Vault@F@accept#51:path:8
+  function test_cov_0() public {
+    // [revert-tolerant] outcome not asserted
+    try c1.accept(address(uint160(1))) {} catch {}
+    // [revert-tolerant] outcome not asserted
+    try c1.accept(address(uint160(2))) {} catch {}
+  }
+}
+"""
+    flat = """
+contract NativeFallback { receive() external payable {} }
+contract PayableTarget is NativeFallback {}
+contract Vault { function accept(PayableTarget target) external {} }
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@Vault@F@accept#51", 8)
+    notes = []
+    put, stats = build_put("Vault",
+                           "accept",
+                           8,
+                           1,
+                           "sol:@C@Vault@F@accept#51",
+                           region={"target": (0, (1 << 160) - 1)},
+                           holes={},
+                           pins={},
+                           params=[("target", "contract PayableTarget")],
+                           emitted=em,
+                           case=case,
+                           layout={},
+                           ladder_rows=[],
+                           notes=notes,
+                           exit_kind="normal",
+                           flat_source=flat)
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a payable-contract PUT is produced: {notes}")
+    bad += check(
+        "try c1.accept(PayableTarget(payable(address(uint160(1))))) {} catch {}" in text,
+        "a raw replay address is restored to the payable contract identity")
+    bad += check("c1.accept(PayableTarget(payable(target)));" in text,
+                 "the lifted address keeps its source-level payable contract cast")
+    bad += check(stats and stats["fuzz_params"] == 1,
+                 f"the identity cast does not change PUT accounting: {stats}")
+    return bad
+
+
 def test_address_payable_constructor_args_are_cast():
     emitted = """\
 // SPDX-License-Identifier: MIT
@@ -24705,6 +24842,26 @@ def test_certified_value_gate_basis_materializes_exact_ce_sender_and_value():
     return bad
 
 
+def test_concrete_value_gate_uses_fresh_status_identifiers():
+    lines = [
+        "  function test_cov_0() public {",
+        "    c0.f();",
+        "    c0.f();",
+        "  }",
+    ]
+    rendered, changed, reason = materialize_concrete_nonpayable_value_gate(
+        lines, "f", [], {"msg.value": (1, 1)}, {})
+    source = "\n".join(rendered)
+    bad = 0
+    bad += check(changed == 2 and reason is None,
+                 f"both repeated replay calls are materialized: {reason}")
+    bad += check(source.count("bool _esbmc_value_gate_ok,") == 1,
+                 "the first generated call-status variable keeps the stable base name")
+    bad += check(source.count("bool _esbmc_value_gate_ok_1,") == 1,
+                 "a repeated value-gate call receives a fresh local identifier")
+    return bad
+
+
 def test_certified_value_gate_setup_materialization_is_narrowly_projected():
     raw_setup = ["    c0 = new Feed();"]
     materialized_setup = [
@@ -24897,6 +25054,9 @@ def main():
               test_path_cov_fixture_replays_constructor_then_pins_state,
               test_foundry_only_fixture_replaces_constructor_without_skipping_stage2,
               test_path_cov_fixture_runtime_cast_is_payable,
+              test_source_identity_defaults_cast_inherited_payable_fallbacks,
+              test_fixture_replaces_non_expression_constructor_payload,
+              test_immutable_fixture_copies_code_from_deployed_template,
               test_proxy_fixture_getter_uses_low_level_success_oracle,
               test_constructor_staticcall_mock_is_scoped_to_deployment,
               test_low_level_success_pin_is_realized_and_unsupported_shape_refused,
@@ -25265,6 +25425,7 @@ def main():
               test_unconstrained_replay_args_become_full_domain_fuzz_inputs,
               test_missing_address_payable_replay_arg_casts_at_the_unit_call,
               test_address_payable_replay_prefix_calls_are_cast,
+              test_payable_contract_replay_and_lifted_arg_keep_identity_cast,
               test_address_payable_constructor_args_are_cast,
               test_unused_setup_helper_deployment_is_revert_tolerant,
               test_missing_fixed_bytes_replay_arg_becomes_full_domain_fuzz_input,
@@ -25317,6 +25478,7 @@ def main():
               test_certified_value_gate_basis_concrete_uses_low_level_call,
               test_certified_value_gate_basis_drops_stale_revert_prelude,
               test_certified_value_gate_basis_materializes_exact_ce_sender_and_value,
+              test_concrete_value_gate_uses_fresh_status_identifiers,
               test_certified_value_gate_setup_materialization_is_narrowly_projected,
               test_abstract_target_deployment_uses_concrete_harness,
               test_abstract_target_harness_forwards_dynamic_constructor_args,
