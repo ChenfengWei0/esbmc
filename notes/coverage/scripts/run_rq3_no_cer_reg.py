@@ -20,6 +20,7 @@ BENCHMARKS = ("peer182", "bugfix124", "real203")
 TIMEOUT_S = 600
 TEST_DECL_RE = re.compile(r"\bfunction\s+(test\w*)\s*\(([^)]*)\)", re.MULTILINE)
 ASSERT_RE = re.compile(r"\b(?:assert\w*|vm\.expectRevert|vm\.expectEmit)\s*\(")
+REDO_MARKERS = (".redo.", ".superseded.", ".adopted_from_", ".incomplete.")
 
 
 def mem_available_gib() -> float:
@@ -93,77 +94,211 @@ def runner_command(args: argparse.Namespace, benchmark: str, jobs: int) -> list[
     return cmd
 
 
+def _is_published_path(path: Path) -> bool:
+    """Reject archived attempts and nested rerun shards."""
+    return not any(
+        any(marker in part for marker in REDO_MARKERS) or part.startswith("shard-")
+        for part in path.parts)
+
+
+def _logical_tests(artifacts: list, ledger: Path,
+                   side: str) -> tuple[set[tuple[str, str]], list[dict]]:
+    """Project well-formed concrete artifacts onto the logical test key."""
+    tests = set()
+    invalid = []
+    if not isinstance(artifacts, list):
+        return tests, [{
+            "ledger": str(ledger),
+            "side": side,
+            "index": None,
+            "file": "",
+            "test": "",
+            "errors": ["artifacts-not-list"],
+        }]
+    for index, artifact in enumerate(artifacts):
+        errors = []
+        if not isinstance(artifact, dict):
+            errors.append("not-object")
+            artifact = {}
+        if artifact.get("kind") != "concrete":
+            errors.append("not-concrete")
+        file_name = str(artifact.get("file") or "")
+        test_name = str(artifact.get("test") or "")
+        if not file_name:
+            errors.append("missing-file")
+        if not test_name:
+            errors.append("missing-test")
+        if errors:
+            invalid.append({
+                "ledger": str(ledger),
+                "side": side,
+                "index": index,
+                "file": file_name,
+                "test": test_name,
+                "errors": errors,
+            })
+        else:
+            tests.add((file_name, test_name))
+    return tests, invalid
+
+
+def _logical_test_rows(tests: set[tuple[str, str]]) -> list[dict[str, str]]:
+    """Serialize logical test keys deterministically for the audit report."""
+    return [{
+        "file": file_name,
+        "test": test_name,
+    } for file_name, test_name in sorted(tests)]
+
+
 def audit_output(result_root: Path) -> dict:
+    """Audit published RQ3 ledgers and concrete replay artifacts."""
     put_records = []
     concrete_records = []
     invalid_tests = []
     result_files = []
-    for path in result_root.glob("*/subjects/**/put.json"):
-        if not path.is_file():
-            continue
-        try:
-            record = json.loads(path.read_text(errors="replace"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        kind = str(record.get("kind") or "")
-        if kind == "put":
-            put_records.append(str(path))
-        elif kind == "concrete":
-            concrete_records.append(str(path))
-    for result_json in result_root.glob("*/subjects/*/result.json"):
-        if not result_json.is_file() or ".redo." in str(result_json):
-            continue
-        try:
-            result = json.loads(result_json.read_text(errors="replace"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        result_files.append(str(result_json))
-        for artifact in (result.get("put") or {}).get("valid_artifacts") or []:
-            if not isinstance(artifact, dict):
+    published_result_files = []
+    ledger_errors = []
+    invalid_artifacts = []
+    raw_tests: set[tuple[str, str]] = set()
+    valid_tests: set[tuple[str, str]] = set()
+    for benchmark in BENCHMARKS:
+        subjects_root = result_root / benchmark / "subjects"
+        for path in subjects_root.glob("*/**/put.json"):
+            if not path.is_file() or not _is_published_path(path.relative_to(result_root)):
                 continue
-            if artifact.get("kind") != "concrete":
-                continue
-            concrete_records.append(artifact)
-            errors = []
-            if artifact.get("is_put") or not artifact.get("is_concrete"):
-                errors.append("not-concrete-only")
-            if not artifact.get("concrete_oracles"):
-                errors.append("missing-structured-concrete-oracle")
-            test_file = Path(str(artifact.get("file") or ""))
-            test_name = str(artifact.get("test") or "")
-            if not test_file.is_file() or not test_name:
-                errors.append("missing-test-file-or-name")
-            else:
-                source = test_file.read_text(errors="replace")
-                match = re.search(rf"\bfunction\s+{re.escape(test_name)}\s*\(([^)]*)\)",
-                                  source)
-                if not match:
-                    errors.append("missing-selected-test-function")
-                else:
-                    params = match.group(1).strip()
-                    tail = source[match.end():]
-                    next_test = TEST_DECL_RE.search(tail)
-                    body = tail[:next_test.start()] if next_test else tail
-                    if params:
-                        errors.append("fuzz-parameters")
-                    if not ASSERT_RE.search(body):
-                        errors.append("missing-execution-assertion")
-            if errors:
-                invalid_tests.append({
-                    "file": str(test_file),
-                    "test": test_name,
-                    "errors": errors,
+            try:
+                record = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+            except (OSError, json.JSONDecodeError) as error:
+                ledger_errors.append({
+                    "file": str(path),
+                    "error": type(error).__name__,
                 })
+                continue
+            if not isinstance(record, dict):
+                ledger_errors.append({
+                    "file": str(path),
+                    "error": "not-object",
+                })
+                continue
+            kind = str(record.get("kind") or "")
+            if kind == "put":
+                put_records.append(str(path))
+            elif kind == "concrete":
+                concrete_records.append(str(path))
+        for result_json in subjects_root.glob("*/result.json"):
+            if not result_json.is_file() or not _is_published_path(
+                    result_json.relative_to(result_root)):
+                continue
+            published_result_files.append(str(result_json))
+            try:
+                result = json.loads(result_json.read_text(encoding="utf-8", errors="replace"))
+            except (OSError, json.JSONDecodeError) as error:
+                ledger_errors.append({
+                    "file": str(result_json),
+                    "error": type(error).__name__,
+                })
+                continue
+            if not isinstance(result, dict):
+                ledger_errors.append({
+                    "file": str(result_json),
+                    "error": "not-object",
+                })
+                continue
+            result_files.append(str(result_json))
+            put = result.get("put") or {}
+            if not isinstance(put, dict):
+                ledger_errors.append({
+                    "file": str(result_json),
+                    "error": "put-not-object",
+                })
+                continue
+            raw_artifacts = put.get("raw_artifacts") or []
+            valid_artifacts = put.get("valid_artifacts") or []
+            raw, invalid_raw = _logical_tests(raw_artifacts, result_json, "raw")
+            valid, invalid_valid = _logical_tests(valid_artifacts, result_json, "valid")
+            raw_tests.update(raw)
+            valid_tests.update(valid)
+            invalid_artifacts.extend(invalid_raw)
+            invalid_artifacts.extend(invalid_valid)
+            for artifact in valid_artifacts if isinstance(valid_artifacts, list) else []:
+                if not isinstance(artifact, dict):
+                    continue
+                if artifact.get("kind") != "concrete":
+                    continue
+                concrete_records.append(artifact)
+                errors = []
+                if artifact.get("is_put") or not artifact.get("is_concrete"):
+                    errors.append("not-concrete-only")
+                if not artifact.get("concrete_oracles"):
+                    errors.append("missing-structured-concrete-oracle")
+                test_file = Path(str(artifact.get("file") or ""))
+                test_name = str(artifact.get("test") or "")
+                if not test_file.is_file() or not test_name:
+                    errors.append("missing-test-file-or-name")
+                else:
+                    source = test_file.read_text(encoding="utf-8", errors="replace")
+                    match = re.search(rf"\bfunction\s+{re.escape(test_name)}\s*\(([^)]*)\)", source)
+                    if not match:
+                        errors.append("missing-selected-test-function")
+                    else:
+                        params = match.group(1).strip()
+                        tail = source[match.end():]
+                        next_test = TEST_DECL_RE.search(tail)
+                        body = tail[:next_test.start()] if next_test else tail
+                        if params:
+                            errors.append("fuzz-parameters")
+                        if not ASSERT_RE.search(body):
+                            errors.append("missing-execution-assertion")
+                if errors:
+                    invalid_tests.append({
+                        "file": str(test_file),
+                        "test": test_name,
+                        "errors": errors,
+                    })
+    raw_only = raw_tests - valid_tests
+    valid_only = valid_tests - raw_tests
     return {
-        "schema": "veriput-rq3-no-cer-reg-audit/1",
-        "result_root": str(result_root),
-        "result_files": len(result_files),
-        "concrete_records": len(concrete_records),
-        "put_leaks": len(put_records),
-        "invalid_tests": len(invalid_tests),
-        "put_leak_files": put_records,
-        "invalid_test_details": invalid_tests,
-        "ok": not put_records and not invalid_tests,
+        "schema":
+        "veriput-rq3-no-cer-reg-audit/2",
+        "result_root":
+        str(result_root),
+        "published_result_files":
+        len(published_result_files),
+        "result_files":
+        len(result_files),
+        "raw_tests":
+        len(raw_tests),
+        "valid_tests":
+        len(valid_tests),
+        "raw_only_count":
+        len(raw_only),
+        "valid_only_count":
+        len(valid_only),
+        "raw_only":
+        _logical_test_rows(raw_only),
+        "valid_only":
+        _logical_test_rows(valid_only),
+        "concrete_records":
+        len(concrete_records),
+        "put_leaks":
+        len(put_records),
+        "invalid_tests":
+        len(invalid_tests),
+        "ledger_errors":
+        len(ledger_errors),
+        "invalid_artifacts":
+        len(invalid_artifacts),
+        "put_leak_files":
+        put_records,
+        "ledger_error_details":
+        ledger_errors,
+        "invalid_artifact_details":
+        invalid_artifacts,
+        "invalid_test_details":
+        invalid_tests,
+        "ok":
+        bool(result_files) and not ledger_errors and not invalid_artifacts and not put_records
+        and not invalid_tests and not raw_only and not valid_only,
     }
 
 
