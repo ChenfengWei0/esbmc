@@ -707,24 +707,59 @@ def persistence_publication_failure(coverage: dict) -> str | None:
     return None
 
 
-def quarantine_unpersisted_validity(put_summary: dict, reason: str) -> dict:
-    """Keep raw evidence while withholding validity from the published row."""
+def _persistence_row_key(row: dict,
+                         artifact_field: str) -> tuple[str, str, str, str, str, str]:
+    """Return the exact artifact identity used by persistence coverage rows."""
+    return (
+        str(row.get("path_function") or ""),
+        str(row.get("unit") or ""),
+        str(row.get("enc") if row.get("enc") is not None else ""),
+        str(row.get("piece") if row.get("piece") is not None else ""),
+        str(row.get("test") or ""),
+        str(row.get(artifact_field) or ""),
+    )
+
+
+def quarantine_unpersisted_validity(put_summary: dict,
+                                     reason: str,
+                                     coverage: dict | None = None) -> dict:
+    """Reject only validity rows whose exact persistence proof is missing.
+
+    Older callers without coverage still fail closed for the whole summary.  A
+    persistence transaction supplies coverage so independently retained
+    siblings remain publishable when one replay cannot be stored.
+    """
     summary = dict(put_summary)
-    withheld = [dict(row) for row in summary.get("valid_tests") or [] if isinstance(row, dict)]
+    candidates = [dict(row) for row in summary.get("valid_tests") or [] if isinstance(row, dict)]
+    retained = []
+    withheld = []
+    if coverage is None or coverage.get("invalidated_evidence"):
+        withheld = candidates
+    else:
+        missing_concrete = {
+            _persistence_row_key(row, "file")
+            for row in coverage.get("valid_concrete_missing") or [] if isinstance(row, dict)
+        }
+        missing_put = {
+            _persistence_row_key(row, "put_json")
+            for row in coverage.get("put_basis_missing") or [] if isinstance(row, dict)
+        }
+        for row in candidates:
+            missing = missing_put if row.get("kind") == "put" else missing_concrete
+            artifact_field = "put_json" if row.get("kind") == "put" else "file"
+            if _persistence_row_key(row, artifact_field) in missing:
+                withheld.append(row)
+            else:
+                retained.append(row)
     summary["unpublished_valid_tests"] = withheld
     summary["persistence_failure_reason"] = reason
-    summary["valid_tests"] = []
-    summary["valid_artifacts"] = []
-    summary["valid"] = 0
-    summary["put_valid"] = 0
-    summary["concrete_valid"] = 0
-    summary["valid_put_with_R1"] = 0
-    summary["valid_put_with_R2"] = 0
-    summary["valid_put_with_R1_or_R2"] = 0
-    summary["valid_put_without_R1R2"] = 0
-    summary["quality_bucket"] = "no-valid"
-    summary["status"] = "persistence-error"
-    return summary
+    summary["valid_tests"] = retained
+    summary["valid_artifacts"] = retained
+    summary["status"] = "ok" if retained else "persistence-error"
+    summary["reason"] = None if retained else reason
+    if retained:
+        summary["partial_failure_reason"] = reason
+    return _normalize_result_row(summary)
 
 
 def _artifact_summary_row(target_row: dict,
@@ -7697,7 +7732,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     if put_summary["valid"] > 0:
         persistence_failure = persistence_publication_failure(concrete_replay_persistence)
         if persistence_failure:
-            put_summary = quarantine_unpersisted_validity(put_summary, persistence_failure)
+            put_summary = quarantine_unpersisted_validity(put_summary, persistence_failure,
+                                                           concrete_replay_persistence)
             result_status = "persistence-error"
             failure_reason = persistence_failure
     wall_total_s = round(time.monotonic() - start, 3)
@@ -8021,10 +8057,14 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         final_persistence_failure = persistence_publication_failure(final_replay_persistence)
         concrete_replay_persistence = final_replay_persistence
         if final_persistence_failure:
-            row = quarantine_unpersisted_validity(row, final_persistence_failure)
-            put_summary = quarantine_unpersisted_validity(put_summary, final_persistence_failure)
-            row["status"] = "persistence-error"
-            row["reason"] = final_persistence_failure
+            row = quarantine_unpersisted_validity(row, final_persistence_failure,
+                                                   final_replay_persistence)
+            put_summary = quarantine_unpersisted_validity(put_summary,
+                                                           final_persistence_failure,
+                                                           final_replay_persistence)
+            if not row.get("valid_tests"):
+                row["status"] = "persistence-error"
+                row["reason"] = final_persistence_failure
             row = _annotate_result_accounting(row)
             persistence_failure = final_persistence_failure
     detail = {

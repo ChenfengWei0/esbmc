@@ -5924,6 +5924,93 @@ def test_persistence_failure_withholds_validity_from_publication():
     return bad
 
 
+def test_persistence_failure_rejects_only_exact_unpersisted_replay():
+    """A bad oracle must not erase an independently persisted green sibling."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        project = root / "producer"
+        subject = root / "rq3" / "case"
+        (project / "src").mkdir(parents=True)
+        (project / "test").mkdir()
+        (project / "lib" / "forge-std" / "src").mkdir(parents=True)
+        (project / "foundry.toml").write_text(
+            '[profile.default]\nsrc = "src"\ntest = "test"\nlibs = ["lib"]\n')
+        (project / "src" / "flat.sol").write_text(
+            "pragma solidity >=0.8.0; contract C { uint256 public x; "
+            "function f(uint256 value) public { x = value; } }\n")
+        (project / "lib" / "forge-std" / "src" / "Test.sol").write_text(
+            "pragma solidity >=0.8.0; contract Test { "
+            "function assertEq(uint256 a, uint256 b) internal pure { require(a == b); } }\n")
+        good_file = project / "test" / "Good.t.sol"
+        good_file.write_text(
+            'pragma solidity >=0.8.0; import {Test} from "forge-std/Test.sol"; '
+            'import {C} from "../src/flat.sol"; contract Good is Test { '
+            'function test_cov_good() public { C c = new C(); c.f(7); '
+            'assertEq(c.x(), 7); } }\n')
+        bad_file = project / "test" / "Bad.t.sol"
+        bad_file.write_text(
+            'pragma solidity >=0.8.0; import {Test} from "forge-std/Test.sol"; '
+            'import {C} from "../src/flat.sol"; contract Bad is Test { '
+            'function test_cov_bad() public { C c = new C(); c.f(8); '
+            'assertEq(1, 1); } }\n')
+
+        common = {
+            "kind": "concrete",
+            "valid_reference_test": True,
+            "forge_status": "Success",
+            "unit": "f",
+            "path_function": "sol:@C@C@F@f#1",
+            "piece": None,
+        }
+        good = {
+            **common,
+            "enc": 7,
+            "test": "test_cov_good",
+            "file": str(good_file),
+            "concrete_oracles": [{
+                "class": "concrete-value",
+                "kind": "post-state",
+                "observed": "c.x()",
+                "expected": "7",
+                "provenance": "stage2-witness",
+                "target_receiver": "c",
+                "assertion": "assertEq(c.x(), 7);",
+            }],
+        }
+        bad_row = {
+            **common,
+            "enc": 8,
+            "test": "test_cov_bad",
+            "file": str(bad_file),
+        }
+        summary = {
+            "valid_tests": [good, bad_row],
+            "valid_artifacts": [good, bad_row],
+            "valid": 2,
+            "concrete_valid": 2,
+            "put_valid": 0,
+        }
+        coverage = rq1_veriput_run.persist_case_concrete_replays(subject, summary)
+        reason = rq1_veriput_run.persistence_publication_failure(coverage)
+        published = rq1_veriput_run.quarantine_unpersisted_validity(
+            summary, reason, coverage)
+        manifest = rq1_concrete_replay_store.load_manifest(subject)
+
+        bad = 0
+        bad += check(reason is not None, "the oracle-invalid replay fails persistence")
+        bad += check(coverage["persisted_valid_concrete_count"] == 1,
+                     "the green sibling is proven in canonical persistence")
+        bad += check(published["valid"] == 1 and published["concrete_valid"] == 1,
+                     "published counters retain exactly the persisted sibling")
+        bad += check([row["test"] for row in published["valid_tests"]]
+                     == ["test_cov_good"], "only the persisted exact row remains valid")
+        bad += check([row["test"] for row in published["unpublished_valid_tests"]]
+                     == ["test_cov_bad"], "only the oracle-invalid exact row is rejected")
+        bad += check(len(manifest.get("entries") or []) == 1,
+                     "the real manifest contains the retained sibling replay")
+        return bad
+
+
 def main():
     tests = [
         test_latest_rows_coalesces_legacy_and_canonical_subject_keys,
@@ -6022,6 +6109,7 @@ def main():
         test_put_saturated_concrete_only_stage4_skip_keeps_put_work,
         test_valid_saturated_concrete_only_stage4_skip_preserves_put_budget,
         test_persistence_failure_withholds_validity_from_publication,
+        test_persistence_failure_rejects_only_exact_unpersisted_replay,
     ]
     bad = 0
     for test in tests:
