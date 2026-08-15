@@ -24179,8 +24179,24 @@ def test_authenticated_structured_concrete_oracles_are_reused_without_downgrade(
     }]
     rewritten, retained, error = reuse_authenticated_concrete_oracles(
         revert_source, "test_cov_0", "f", revert)
-    bad += check((rewritten, retained, error) == (revert_source, revert, None),
-                 "revert remains the exact anchor oracle")
+    bad += check(rewritten == revert_source and error is None
+                 and retained[0].get("source") == "expectRevert"
+                 and retained[0].get("target_receiver") == "c0",
+                 "minimal revert metadata is completed from the exact anchor source")
+    legacy_revert = [{key: value for key, value in revert[0].items()
+                      if key != "source"}]
+    rewritten, retained, error = reuse_authenticated_concrete_oracles(
+        revert_source, "test_cov_0", "f", legacy_revert)
+    bad += check(error is None and retained[0].get("source") == "expectRevert"
+                 and retained[0].get("target_receiver") == "c0",
+                 "source-bound legacy revert metadata is upgraded to the strict schema")
+    prior_calls = revert_source.replace(
+        "vm.expectRevert(bytes4(0x12345678)); c0.f();",
+        "try c0.f() {} catch {} vm.expectRevert(bytes4(0x12345678)); c0.f();")
+    rewritten, retained, error = reuse_authenticated_concrete_oracles(
+        prior_calls, "test_cov_0", "f", legacy_revert)
+    bad += check(error is None and retained[0].get("target_receiver") == "c0",
+                 "prior same-name calls do not hide the uniquely armed revert target")
     intervening_revert = revert_source.replace(
         "vm.expectRevert(bytes4(0x12345678)); c0.f();",
         "vm.expectRevert(bytes4(0x12345678)); helper.g(); c0.f();")
@@ -24188,6 +24204,24 @@ def test_authenticated_structured_concrete_oracles_are_reused_without_downgrade(
         intervening_revert, "test_cov_0", "f", revert)
     bad += check(retained == [] and "immediately armed" in str(error),
                  "an intervening external call cannot consume the target revert expectation")
+    return bad
+
+
+def test_normal_exit_oracle_binds_call_options_receiver():
+    source = """contract R {
+  function test_cov_0() public {
+    bool _veriput_concrete_completed = false;
+    c0.f{value: 7}(uint256(1));
+    _veriput_concrete_completed = true;
+    assertTrue(_veriput_concrete_completed, "fixed witness call must complete");
+  }
+}
+"""
+    unchanged, retained = add_concrete_normal_exit_oracle(
+        source, "test_cov_0", "f", "normal")
+    bad = 0
+    bad += check(unchanged == source and retained[0].get("target_receiver") == "c0",
+                 "call-options normal-exit generation binds the actual receiver")
     return bad
 
 
@@ -25273,6 +25307,7 @@ def main():
               test_source_synthesized_concrete_binds_fixed_scalar_return,
               test_concrete_return_binding_requires_one_known_scalar_return,
               test_authenticated_structured_concrete_oracles_are_reused_without_downgrade,
+              test_normal_exit_oracle_binds_call_options_receiver,
               test_authenticated_concrete_oracle_downgrade_fails_closed,
               test_concrete_return_witness_is_restricted_to_certified_basis,
               test_known_nonvoid_certified_basis_requires_return_witness,

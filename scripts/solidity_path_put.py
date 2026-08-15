@@ -18134,8 +18134,9 @@ def add_concrete_normal_exit_oracle(source, test_name, unit, expected_exit="norm
     while statement_end + 1 < len(body) and ";" not in body[statement_end]:
         statement_end += 1
     call_context = "\n".join(body[statement_start:statement_end + 1])
-    receiver_match = re.search(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" + re.escape(unit) + r"\s*\(",
-                               call_context)
+    receiver_match = re.search(
+        r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" + re.escape(unit) +
+        r"\s*(?:\{[^{}]*\}\s*)?\(", call_context)
     low_level_receiver = re.search(r"address\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)\s*\.\s*call",
                                    call_context)
     receiver = receiver_match.group(1) if receiver_match else "target"
@@ -18357,40 +18358,47 @@ def reuse_authenticated_concrete_oracles(source, test_name, unit, oracles):
     binding_oracles = oracles
     if (isinstance(oracles, list) and len(oracles) == 1 and isinstance(oracles[0], dict)
             and oracles[0].get("kind") == "revert"
-            and not (oracles[0].get("target_receiver") or oracles[0].get("target_contract"))):
+            and (oracles[0].get("source") != "expectRevert"
+                 or not (oracles[0].get("target_receiver")
+                         or oracles[0].get("target_contract")))):
         mask = _concrete_oracle_code_mask(source)
         function = re.search(r"\bfunction\s+" + re.escape(test_name) + r"\s*\(", mask)
         opening = mask.find("{", function.end()) if function else -1
         closing = (_matching_solidity_delimiter(mask, opening, "{", "}") if opening >= 0 else None)
         body = mask[opening + 1:closing] if closing is not None else ""
-        target_calls = list(
+        armed_targets = list(
             re.finditer(
-                r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" + re.escape(unit) +
+                r"(vm\s*\.\s*expectRevert\s*\([^;]*\)\s*;)\s*"
+                r"([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" + re.escape(unit) +
                 r"\s*(?:\{[^{}]*\}\s*)?\(", body))
-        if len(target_calls) != 1:
-            return source, [], "revert oracle has no unique selected target receiver"
-        receiver = target_calls[0].group(1)
-        prefix = body[:target_calls[0].start()]
-        armed = re.search(r"vm\s*\.\s*expectRevert\s*\([^;]*\)\s*;\s*$", prefix)
-        if armed is None:
+        if len(armed_targets) != 1:
             return source, [], ("revert oracle expectRevert is not immediately armed for "
                                 "the selected target call")
+        armed = armed_targets[0]
+        receiver = armed.group(2)
         bound = dict(oracles[0])
         bound.update({
+            "source": "expectRevert",
             "observed": "target call reverts",
             "expected": True,
             "provenance": "stage2-witness",
             "target_receiver": receiver,
-            "assertion": re.sub(r"\s+", " ", armed.group(0)).strip(),
+            "assertion": re.sub(r"\s+", " ", armed.group(1)).strip(),
         })
         binding_oracles = [bound]
+    if (isinstance(oracles, list) and len(oracles) == 1 and isinstance(oracles[0], dict)
+            and oracles[0].get("kind") == "normal-exit"):
+        _rewritten, rebuilt = add_concrete_normal_exit_oracle(
+            source, test_name, unit, "normal")
+        if len(rebuilt) == 1 and rebuilt[0].get("kind") == "normal-exit":
+            binding_oracles = rebuilt
     error = authenticated_concrete_oracle_error(binding_oracles)
     if error:
         return source, [], error
     errors = _oracle_binding_errors(source, test_name, unit, binding_oracles)
     if errors:
         return source, [], "; ".join(errors)
-    return source, oracles, None
+    return source, binding_oracles, None
 
 
 def _canonical_event_abi_type(type_string):
