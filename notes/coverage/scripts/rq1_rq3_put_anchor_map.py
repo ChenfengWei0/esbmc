@@ -24,15 +24,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from rq1_artifact_audit import canonical_subject  # pylint: disable=wrong-import-position
 from rq1_anchor_all_tests import (  # pylint: disable=wrong-import-position
-    contract_end,
-    function_span,
+    contract_end, function_span,
 )
 from rq3_mechanical_match import identity, load_rq3  # pylint: disable=wrong-import-position
 
-
 DEFAULT_RQ1 = Path("/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT")
-DEFAULT_RQ3 = Path(
-    "/home/samson/workspace/VeriPUT/Results/RQ3/VeriExploit/No_Cer_Reg")
+DEFAULT_RQ3 = Path("/home/samson/workspace/VeriPUT/Results/RQ3/VeriExploit/No_Cer_Reg")
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -84,22 +81,21 @@ def target_source(record: dict[str, Any], root: Path) -> Path | None:
     except ValueError:
         return None
     subject_dir = root / benchmark / "subjects" / subject
-    values = (
-        final_test.get("canonical_copy"), final_test.get("selected_retained_path"),
-        final_test.get("recorded_path"))
+    values = (final_test.get("canonical_copy"), final_test.get("selected_retained_path"),
+              final_test.get("recorded_path"))
     for value in values:
         if not isinstance(value, str) or not value:
             continue
         path = Path(value)
         if path.is_file() and inside(path, root):
             return path.resolve()
-    names = [Path(value).name for value in values
-             if isinstance(value, str) and value]
+    names = [Path(value).name for value in values if isinstance(value, str) and value]
     if len(set(names)) != 1:
         return None
-    matches = [path.resolve() for path in subject_dir.rglob(names[0])
-               if path.is_file() and "/put/" in str(path)
-               and "/_wd/" not in str(path) and ".redo." not in str(path)]
+    matches = [
+        path.resolve() for path in subject_dir.rglob(names[0]) if path.is_file()
+        and "/put/" in str(path) and "/_wd/" not in str(path) and ".redo." not in str(path)
+    ]
     # Prefer a canonical Foundry test; an out/ copy is the final fallback.
     matches.sort(key=lambda path: (path.parent.name != "test", len(path.parts), str(path)))
     return matches[0] if matches else None
@@ -116,7 +112,8 @@ def selected_put(record: dict[str, Any]) -> Path | None:
     return None
 
 
-def make_target(record: dict[str, Any], root: Path,
+def make_target(record: dict[str, Any],
+                root: Path,
                 source: Path | None = None,
                 put_path: Path | None = None) -> dict[str, Any] | None:
     source = source or target_source(record, root)
@@ -133,8 +130,7 @@ def make_target(record: dict[str, Any], root: Path,
         return None
     flat = source.parent.parent / "src" / "flat.sol"
     return {
-        "identity": list(identity(case, path_function, unit, enc,
-                                  put_doc.get("piece"))),
+        "identity": list(identity(case, path_function, unit, enc, put_doc.get("piece"))),
         "case": case,
         "unit": str(unit),
         "enc": str(enc),
@@ -156,14 +152,16 @@ def canonical_cases(root: Path) -> list[tuple[str, Path, dict[str, Any]]]:
         if not stable_subject(subject):
             continue
         benchmark = result_path.parent.parent.parent.name
-        rows.append((f"{benchmark}/{subject}", result_path.parent,
-                     read_json(result_path)))
+        rows.append((f"{benchmark}/{subject}", result_path.parent, read_json(result_path)))
     return rows
 
 
-def build_targets(root: Path, provenance: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    records = [json.loads(line) for line in provenance.read_text(
-        encoding="utf-8").splitlines() if line.strip()]
+def build_targets(root: Path,
+                  provenance: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    records = [
+        json.loads(line) for line in provenance.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     artifacts = [row for row in records if row.get("record_kind") == "artifact"]
     targets: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -175,9 +173,12 @@ def build_targets(root: Path, provenance: Path) -> tuple[list[dict[str, Any]], l
             continue
         target = make_target(record, root, source=source)
         if target is None:
-            unresolved.append({"kind": "artifact", "case": record.get("case"),
-                               "test": record.get("test"),
-                               "reason": "target source or PUT record is not retained"})
+            unresolved.append({
+                "kind": "artifact",
+                "case": record.get("case"),
+                "test": record.get("test"),
+                "reason": "target source or PUT record is not retained"
+            })
             continue
         seen.add((target["source"], target["test"]))
         target["population_source"] = "row-valid-artifact"
@@ -195,8 +196,8 @@ def build_targets(root: Path, provenance: Path) -> tuple[list[dict[str, Any]], l
             continue
         candidates = []
         for item in artifact_values(put):
-            if (item.get("forge_status") != "Success"
-                    or not item.get("valid_reference_test") or not item.get("b")):
+            if (item.get("forge_status") != "Success" or not item.get("valid_reference_test")
+                    or not item.get("b")):
                 continue
             source_value = item.get("file")
             put_value = item.get("put_json")
@@ -212,8 +213,12 @@ def build_targets(root: Path, provenance: Path) -> tuple[list[dict[str, Any]], l
                 "unit": item.get("unit"),
                 "enc": item.get("enc"),
                 "test": item.get("test"),
-                "put_json": {"selected_retained_path": str(put_path)},
-                "final_test": {"selected_retained_path": str(source)},
+                "put_json": {
+                    "selected_retained_path": str(put_path)
+                },
+                "final_test": {
+                    "selected_retained_path": str(source)
+                },
             }
             target = make_target(record, root, source=source, put_path=put_path)
             if target is not None:
@@ -227,7 +232,8 @@ def build_targets(root: Path, provenance: Path) -> tuple[list[dict[str, Any]], l
         remaining = needed - min(needed, len(candidates))
         if remaining:
             unresolved.append({
-                "kind": "counter-gap", "case": case,
+                "kind": "counter-gap",
+                "case": case,
                 "claimed_put_valid": claimed,
                 "identified_row_tests": len(row_values),
                 "recovered_green_tests": min(needed, len(candidates)),
@@ -241,8 +247,8 @@ def build_targets(root: Path, provenance: Path) -> tuple[list[dict[str, Any]], l
 def concrete_candidates(rq3_root: Path) -> list[dict[str, Any]]:
     rows = []
     for row in load_rq3(rq3_root):
-        if (not row.get("is_concrete") or row.get("is_put")
-                or not row.get("file_exists") or not row.get("test")):
+        if (not row.get("is_concrete") or row.get("is_put") or not row.get("file_exists")
+                or not row.get("test")):
             continue
         path = Path(str(row.get("file")))
         try:
@@ -250,7 +256,13 @@ def concrete_candidates(rq3_root: Path) -> list[dict[str, Any]]:
         except (OSError, UnicodeDecodeError):
             continue
         if test_function(source, str(row["test"])) is not None:
-            rows.append(row)
+            claims = test_claims(source, str(row["test"]))
+            for claim in claims or [(str(row["path_function"]), str(row["enc"]))]:
+                claimed = dict(row)
+                claimed["path_function"], claimed["enc"] = claim
+                claimed["identity"] = list(
+                    identity(row["case"], claim[0], row["unit"], claim[1], row.get("piece")))
+                rows.append(claimed)
     known = {candidate_key(row) for row in rows}
     for put_path in rq3_root.rglob("put.json"):
         put = read_json(put_path)
@@ -273,34 +285,49 @@ def concrete_candidates(rq3_root: Path) -> list[dict[str, Any]]:
                 source = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
-            for test in re.findall(r"\bfunction\s+(test_cov_[A-Za-z0-9_$]*)\s*\(",
-                                   source):
+            for test in re.findall(r"\bfunction\s+(test_cov_[A-Za-z0-9_$]*)\s*\(", source):
                 if test_function(source, test) is None:
                     continue
                 key = (str(path.resolve()), test)
                 if key in known:
                     continue
                 known.add(key)
-                rows.append({
-                    "identity": list(identity(case, path_function, put["unit"],
-                                              enc, put.get("piece"))),
-                    "case": case,
-                    "path_function": path_function,
-                    "unit": str(put["unit"]),
-                    "enc": str(enc),
-                    "piece": str(put.get("piece") or ""),
-                    "file": str(path.resolve()),
-                    "file_exists": True,
-                    "test": test,
-                    "is_concrete": True,
-                    "is_put": False,
-                    "forge_status": put.get("forge_status"),
-                    "valid_reference_test": bool(put.get("valid_reference_test")),
-                    "concrete_oracles": (put.get("materialization") or {}).get(
-                        "oracle_classes") or [],
-                    "physical_recovery": True,
-                    "put_json": str(put_path.resolve()),
-                })
+                claims = test_claims(source, test) or [(path_function, str(enc))]
+                for claim_path, claim_enc in claims:
+                    rows.append({
+                        "identity":
+                        list(identity(case, claim_path, put["unit"], claim_enc, put.get("piece"))),
+                        "case":
+                        case,
+                        "path_function":
+                        claim_path,
+                        "unit":
+                        str(put["unit"]),
+                        "enc":
+                        claim_enc,
+                        "piece":
+                        str(put.get("piece") or ""),
+                        "file":
+                        str(path.resolve()),
+                        "file_exists":
+                        True,
+                        "test":
+                        test,
+                        "is_concrete":
+                        True,
+                        "is_put":
+                        False,
+                        "forge_status":
+                        put.get("forge_status"),
+                        "valid_reference_test":
+                        bool(put.get("valid_reference_test")),
+                        "concrete_oracles": (put.get("materialization") or {}).get("oracle_classes")
+                        or [],
+                        "physical_recovery":
+                        True,
+                        "put_json":
+                        str(put_path.resolve()),
+                    })
     # Historical RQ3 Python exceptions sometimes left the adjacent put.json
     # with null unit/path fields even though the emitted concrete test exists.
     # The scheduled job directory still binds case and unit mechanically.
@@ -314,14 +341,12 @@ def concrete_candidates(rq3_root: Path) -> list[dict[str, Any]]:
         if not tests:
             continue
         parts = path.parts
-        subject_indexes = [index for index, value in enumerate(parts)
-                           if value == "subjects"]
+        subject_indexes = [index for index, value in enumerate(parts) if value == "subjects"]
         put_indexes = [index for index, value in enumerate(parts) if value == "put"]
         if not subject_indexes or not put_indexes:
             continue
         subject_index = subject_indexes[-1]
-        put_index = next((index for index in put_indexes
-                          if index > subject_index + 1), None)
+        put_index = next((index for index in put_indexes if index > subject_index + 1), None)
         if put_index is None or put_index + 1 >= len(parts):
             continue
         case = f"{parts[subject_index - 1]}/{parts[subject_index + 1]}"
@@ -388,6 +413,12 @@ def contract_name(path_function: str) -> str:
     return path_function.split(".", 1)[0] if "." in path_function else ""
 
 
+def semantic_identity(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """Drop only the solc source-offset suffix from a five-field identity."""
+    key = tuple(str(value or "") for value in values)
+    return (key[0], re.sub(r"#[0-9]+$", "", key[1]), key[2], key[3], key[4])
+
+
 def rq3_index(rows: list[dict[str, Any]]) -> tuple[dict, dict, dict, dict, dict]:
     exact: dict[tuple[str, ...], dict[tuple[str, str], dict[str, Any]]] = defaultdict(dict)
     path_function: dict[tuple[str, str], dict[tuple[str, str], dict[str, Any]]] = defaultdict(dict)
@@ -396,7 +427,7 @@ def rq3_index(rows: list[dict[str, Any]]) -> tuple[dict, dict, dict, dict, dict]
     global_unit: dict[tuple[str, str], dict[tuple[str, str], dict[str, Any]]] = defaultdict(dict)
     for row in rows:
         key = tuple(str(value or "") for value in row["identity"])
-        exact[key][candidate_key(row)] = row
+        exact[semantic_identity(key)][candidate_key(row)] = row
         path_function[(key[0], key[1])][candidate_key(row)] = row
         unit[(key[0], key[2])][candidate_key(row)] = row
         if key[1]:
@@ -411,22 +442,12 @@ def rq3_index(rows: list[dict[str, Any]]) -> tuple[dict, dict, dict, dict, dict]
 
 def choose_candidate(target: dict[str, Any], indexes: tuple[dict, dict, dict],
                      rq3_root: Path) -> tuple[str, list[dict[str, Any]], dict[str, Any] | None]:
-    exact, path_function, unit, global_path, global_unit = indexes
-    key = tuple(target["identity"])
-    contract = contract_name(key[1])
-    tiers = (
-        ("exact", list(exact.get(key, {}).values())),
-        ("same-path-function", list(path_function.get((key[0], key[1]), {}).values())),
-        ("same-unit", list(unit.get((key[0], key[2]), {}).values())),
-        ("global-path-function", list(global_path.get(key[1], {}).values())),
-        ("global-contract-unit", list(global_unit.get((contract, key[2]), {}).values())),
-    )
-    for tier, rows in tiers:
-        if not rows:
-            continue
-        ranked = sorted(rows, key=lambda row: candidate_score(row, target, rq3_root),
-                        reverse=True)
-        return tier, ranked, ranked[0]
+    exact, _path_function, _unit, _global_path, _global_unit = indexes
+    key = semantic_identity(target["identity"])
+    rows = list(exact.get(key, {}).values())
+    if rows:
+        ranked = sorted(rows, key=lambda row: candidate_score(row, target, rq3_root), reverse=True)
+        return "exact-claim", ranked, ranked[0]
     return "missing", [], None
 
 
@@ -435,21 +456,42 @@ def test_function(source: str, name: str) -> str | None:
     if span is None:
         return None
     function = source[span[0]:span[1]]
-    signature = re.search(r"\bfunction\s+" + re.escape(name) + r"\s*\(([^)]*)\)",
-                          function)
+    signature = re.search(r"\bfunction\s+" + re.escape(name) + r"\s*\(([^)]*)\)", function)
     if signature is None or signature.group(1).strip():
         return None
     return function
 
 
+def test_claims(source: str, name: str) -> list[tuple[str, str]]:
+    """Return every path identity attached to one emitted concrete function."""
+    span = function_span(source, name)
+    if span is None:
+        return []
+    prefix = source[:span[0]]
+    lines = prefix.splitlines()
+    for line in reversed(lines[-4:]):
+        if re.match(r"\s*//\s*claim:", line):
+            return re.findall(r"(sol:[^,\s]+):path:([0-9]+)", line)
+        if line.strip() and not line.lstrip().startswith("//"):
+            break
+    return []
+
+
+def test_claim(source: str, name: str) -> tuple[str, str] | None:
+    """Compatibility wrapper for callers expecting one path identity."""
+    claims = test_claims(source, name)
+    return claims[0] if claims else None
+
+
 def rename_function(function: str, old: str, new: str) -> str:
     return re.sub(r"(\bfunction\s+)" + re.escape(old) + r"(\s*\()",
-                  r"\1" + new + r"\2", function, count=1)
+                  r"\1" + new + r"\2",
+                  function,
+                  count=1)
 
 
 def remove_generated_anchors(source: str) -> str:
-    names = re.findall(
-        r"\bfunction\s+(test_ce_anchor_(?:auto|rq3)_[A-Za-z0-9_$]*)\s*\(", source)
+    names = re.findall(r"\bfunction\s+(test_ce_anchor_(?:auto|rq3)_[A-Za-z0-9_$]*)\s*\(", source)
     spans = []
     for name in names:
         location = function_span(source, name)
@@ -468,11 +510,12 @@ def contract_insert(source: str, target_test: str, function: str) -> str | None:
     if owner_end is None:
         return None
     close = owner_end - 1
-    return source[:close].rstrip() + "\n\n  // RQ3 concrete basis anchor.\n  " + function + "\n" + source[close:]
+    return source[:close].rstrip(
+    ) + "\n\n  // RQ3 concrete basis anchor.\n  " + function + "\n" + source[close:]
 
 
-def stage_targets(targets: list[dict[str, Any]], candidates: list[dict[str, Any]],
-                  root: Path, rq3_root: Path, staging: Path) -> list[dict[str, Any]]:
+def stage_targets(targets: list[dict[str, Any]], candidates: list[dict[str, Any]], root: Path,
+                  rq3_root: Path, staging: Path) -> list[dict[str, Any]]:
     indexes = rq3_index(candidates)
     rows = []
     for target in targets:
@@ -497,17 +540,20 @@ def stage_targets(targets: list[dict[str, Any]], candidates: list[dict[str, Any]
             continue
         source_path = Path(target["source"])
         original = source_path.read_text(encoding="utf-8")
-        non_auto = [name for name in re.findall(
-            r"\bfunction\s+(test_ce_anchor_[A-Za-z0-9_$]*)\s*\(", original)
-                    if not name.startswith(("test_ce_anchor_auto_",
-                                            "test_ce_anchor_rq3_"))]
+        non_auto = [
+            name
+            for name in re.findall(r"\bfunction\s+(test_ce_anchor_[A-Za-z0-9_$]*)\s*\(", original)
+            if not name.startswith(("test_ce_anchor_auto_", "test_ce_anchor_rq3_"))
+        ]
         if len(non_auto) == 1:
-            output.update(status="existing-anchor", anchor_test=non_auto[0],
+            output.update(status="existing-anchor",
+                          anchor_test=non_auto[0],
                           reason="one non-generic anchor already exists")
             rows.append(output)
             continue
         if len(non_auto) > 1:
-            output.update(status="refused", reason="multiple non-generic anchors exist",
+            output.update(status="refused",
+                          reason="multiple non-generic anchors exist",
                           existing_anchors=non_auto)
             rows.append(output)
             continue
@@ -537,25 +583,39 @@ def stage_targets(targets: list[dict[str, Any]], candidates: list[dict[str, Any]
 
 
 def apply_staged(rows: list[dict[str, Any]]) -> int:
-    applied = 0
-    for row in rows:
-        if row.get("status") != "staged":
-            continue
-        target = Path(row["source"])
-        staged = Path(row["staged_source"])
+    selected = [row for row in rows if row.get("status") == "staged"]
+    preimages: dict[Path, tuple[bytes, int]] = {}
+    postimages: dict[Path, bytes] = {}
+    for row in selected:
+        target, staged = Path(row["source"]), Path(row["staged_source"])
         if sha256_file(target) != row.get("source_sha256"):
             raise RuntimeError(f"source changed after staging: {target}")
         data = staged.read_bytes()
         if sha256_bytes(data) != row.get("staged_source_sha256"):
             raise RuntimeError(f"staged source seal changed: {staged}")
-        temporary = target.with_name(target.name + ".rq3-anchor.tmp")
-        temporary.write_bytes(data)
-        os.chmod(temporary, target.stat().st_mode)
-        os.replace(temporary, target)
-        row["applied_source_sha256"] = sha256_file(target)
-        row["status"] = "applied"
-        applied += 1
-    return applied
+        preimages[target] = (target.read_bytes(), target.stat().st_mode)
+        postimages[target] = data
+    written: list[Path] = []
+    try:
+        for row in selected:
+            target = Path(row["source"])
+            temporary = target.with_name(target.name + ".rq3-anchor.tmp")
+            temporary.write_bytes(postimages[target])
+            os.chmod(temporary, preimages[target][1])
+            os.replace(temporary, target)
+            written.append(target)
+            if sha256_file(target) != row.get("staged_source_sha256"):
+                raise RuntimeError(f"post-write source seal mismatch: {target}")
+            row["applied_source_sha256"] = sha256_file(target)
+            row["status"] = "applied"
+    except BaseException:
+        for target in reversed(written):
+            temporary = target.with_name(target.name + ".rq3-anchor.rollback.tmp")
+            temporary.write_bytes(preimages[target][0])
+            os.chmod(temporary, preimages[target][1])
+            os.replace(temporary, target)
+        raise
+    return len(selected)
 
 
 def main() -> int:
@@ -572,8 +632,7 @@ def main() -> int:
     args.staging.mkdir(parents=True)
     targets, gaps = build_targets(args.rq1_root, args.provenance)
     candidates = concrete_candidates(args.rq3_root)
-    rows = stage_targets(targets, candidates, args.rq1_root, args.rq3_root,
-                         args.staging)
+    rows = stage_targets(targets, candidates, args.rq1_root, args.rq3_root, args.staging)
     applied = apply_staged(rows) if args.apply else 0
     status = Counter(str(row.get("status")) for row in rows)
     tiers = Counter(str(row.get("mapping_tier")) for row in rows)
@@ -585,8 +644,7 @@ def main() -> int:
         "provenance_sha256": sha256_file(args.provenance),
         "population": {
             "test_units": len(targets),
-            "counter_gap_test_units": sum(int(row.get("missing_test_units") or 0)
-                                          for row in gaps),
+            "counter_gap_test_units": sum(int(row.get("missing_test_units") or 0) for row in gaps),
             "policy": "one retained green PUT test function equals one anchor target",
         },
         "counts": {
@@ -603,8 +661,7 @@ def main() -> int:
         "policy": "staging only; no canonical writes and no Forge credit",
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
-                           encoding="utf-8")
+    args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report["counts"], sort_keys=True))
     return 0
 
