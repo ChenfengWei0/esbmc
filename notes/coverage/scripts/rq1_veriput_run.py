@@ -695,6 +695,7 @@ def persistence_publication_failure(coverage: dict) -> str | None:
     manifest_errors = list(coverage.get("manifest_errors") or [])
     missing = int(coverage.get("put_basis_missing_count") or 0)
     missing_concrete = int(coverage.get("valid_concrete_missing_count") or 0)
+    unrecognized = int(coverage.get("unrecognized_valid_count") or 0)
     if errors:
         return f"{len(errors)} concrete replay(s) could not be persisted"
     if manifest_errors:
@@ -703,6 +704,8 @@ def persistence_publication_failure(coverage: dict) -> str | None:
         return f"{missing} PUT artifact(s) lack an exact concrete basis replay"
     if missing_concrete:
         return f"{missing_concrete} valid concrete replay test(s) were not retained"
+    if unrecognized:
+        return f"{unrecognized} valid row(s) have an unrecognized artifact kind"
     if not coverage.get("complete"):
         return "canonical concrete replay coverage is incomplete"
     return None

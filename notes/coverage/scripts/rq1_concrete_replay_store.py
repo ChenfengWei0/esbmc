@@ -1649,6 +1649,7 @@ def persistence_coverage(valid_tests: list[dict], entries: list[dict],
              and row.get("valid_reference_test") is True]
     puts = [row for row in valid if row.get("kind") == "put"]
     concretes = [row for row in valid if row.get("kind") == "concrete"]
+    unrecognized_valid_count = len(valid) - len(puts) - len(concretes)
     # One obligation is one instrumented path/CE. Rows are retries or test
     # materializations, so they must not increase the obligation count.
     all_put_keys = {
@@ -1747,6 +1748,7 @@ def persistence_coverage(valid_tests: list[dict], entries: list[dict],
         "case_replay_persisted": bool(audited_entries),
         "valid_put_count": len(puts),
         "valid_concrete_count": len(concretes),
+        "unrecognized_valid_count": unrecognized_valid_count,
         "identity_matching_concrete_count": len(identity_matching_concretes),
         "identity_unmatched_concrete_count": len(identity_unmatched_concretes),
         "persisted_generalized_replay_entry_count": persisted_generalized_entries,
@@ -1764,7 +1766,7 @@ def persistence_coverage(valid_tests: list[dict], entries: list[dict],
         "publishable_validity_keys": sorted(
             key for key in publishable_validity_keys if key is not None),
         "complete": (bool(valid) and bool(audited_entries) and not missing_puts
-                     and not missing_concretes),
+                     and not missing_concretes and not unrecognized_valid_count),
     }
 
 

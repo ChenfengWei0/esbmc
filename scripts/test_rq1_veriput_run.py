@@ -6025,6 +6025,23 @@ def test_persistence_failure_rejects_only_exact_unpersisted_replay():
                      "oracle-invalid and unknown-kind rows fail closed")
         bad += check(len(manifest.get("entries") or []) == 1,
                      "the real manifest contains the retained sibling replay")
+        recognized_summary = {
+            **summary,
+            "valid_tests": [good, malformed],
+            "valid_artifacts": [good, malformed],
+            "valid": 2,
+        }
+        recognized_coverage = rq1_veriput_run.persist_case_concrete_replays(
+            subject, recognized_summary)
+        recognized_reason = rq1_veriput_run.persistence_publication_failure(
+            recognized_coverage)
+        recognized_published = rq1_veriput_run.quarantine_unpersisted_validity(
+            recognized_summary, recognized_reason, recognized_coverage)
+        bad += check("unrecognized artifact kind" in recognized_reason,
+                     "unknown kind alone makes persistence publication incomplete")
+        bad += check([row["test"] for row in recognized_published["valid_tests"]]
+                     == ["test_cov_good"],
+                     "the allowlist runs when every recognized row is persisted")
         return bad
 
 
