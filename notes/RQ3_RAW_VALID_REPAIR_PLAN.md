@@ -52,7 +52,8 @@ All 2140 valid rows have `forge_status=Success` and
 The 855-row gap partitions as follows:
 
 ```text
-Forge-green/reference-valid rows cleared by persistence: 605
+Forge-green/reference-valid siblings already persisted:  499
+Forge-green rows rejected for missing structured oracle:  106
 Forge Failure raw rows:                                  115
 raw rows with no Forge status:                           133
 other non-valid raw rows:                                  2
@@ -65,7 +66,9 @@ total:                                                    855
 
 Eighty-one cases have `completion_status=persistence-error`.  In those cases,
 605 concrete tests already have both `forge_status=Success` and
-`valid_reference_test=true`, but the final `valid_tests` array is empty.
+`valid_reference_test=true`, but the final `valid_tests` array is empty.  Of
+those 605 rows, 499 were successfully persisted; 106 were the failing rows
+that lacked an authenticated structured oracle.
 
 The persistence layer processes all concrete rows for the case.  If one row
 lacks a structured execution-result oracle or otherwise cannot be persisted,
@@ -91,9 +94,11 @@ concrete replay lacks structured witness oracle provenance
 ```
 
 The correct behavior is per-test rejection: retain the 20 valid/persisted rows
-and reject only the one invalid replay.
+and reject only the one invalid replay.  Across all 81 cases, this accounting
+repair restores 499 rows without ESBMC or Forge reruns.  The 106 rejected rows
+still require an oracle-generation repair before `raw == valid` can hold.
 
-### 2. Raw includes 250 tests that did not pass the validity gate
+### 2. Another 250 raw tests did not pass the Forge/reference gate
 
 The raw arrays are populated before the final Forge/reference-test gate.  They
 currently retain 115 Forge failures, 133 tests with no Forge status, and two
@@ -148,19 +153,24 @@ it is not a validity result.
 2. Change persistence publication from case-wide quarantine to per-test
    rejection while preserving valid, successfully persisted sibling rows.
 3. Rebuild the 81 persistence-error result rows from their retained artifacts.
-4. Verify that the expected 605 Forge-green rows move into `valid_tests` without
-   rerunning ESBMC.
+4. Verify that the expected 499 persisted sibling rows move into `valid_tests`
+   without rerunning ESBMC, while the 106 oracle-invalid rows remain explicitly
+   rejected.
 
-### Phase 2: repair the remaining 250 raw tests
+### Phase 2: repair the remaining 356 raw tests
 
-1. Split the 115 Forge failures by compile failure, runtime oracle failure, and
+1. Repair the 106 Forge-green rows whose generated test lacks an authenticated
+   structured execution-result oracle.
+2. Split the 115 Forge failures by compile failure, runtime oracle failure, and
    target-not-executed failure.
-2. Split the 133 no-status rows by never-emitted, never-run, timeout, and stale
+3. Split the 133 no-status rows by never-emitted, never-run, timeout, and stale
    path.
-3. Fix the shared generator defect for each class before parallel case repair.
-4. Run the exact RQ3 test with machine-readable Forge output, requiring exactly
+4. Resolve the remaining two non-valid rows whose status/reference fields
+   disagree.
+5. Fix the shared generator defect for each class before parallel case repair.
+6. Run the exact RQ3 test with machine-readable Forge output, requiring exactly
    one intended test `Success` and rejecting `No tests found`.
-5. Rebuild results and repeat until the published RQ3 audit proves
+7. Rebuild results and repeat until the published RQ3 audit proves
    `raw == valid == 2995`, or records an explicit experiment-scope correction
    approved by the user.
 
