@@ -105,6 +105,53 @@ currently retain 115 Forge failures, 133 tests with no Forge status, and two
 other non-valid rows.  Under the RQ3 ablation invariant these are generator or
 execution defects to repair, not publishable raw tests.
 
+The deterministic classifier
+`notes/coverage/scripts/rq3_raw_valid_repair_inventory.py` reconstructed all
+356 real-repair rows and ran exact `--match-path` plus signature-aware
+`--match-test '^name\('` Forge checks for the 248 Failure/no-status rows.  The
+same inventory hash was reproduced in two independent runs:
+
+```text
+10517bdcb60a96364879831edf687ce5646526baa63510647a2a498db980b935
+```
+
+The exact machine-readable inventory and human summary are stored at:
+
+```text
+/home/samson/workspace/VeriPUT/Results/RQ3/adoption-bundles/
+  rq3-raw-valid-repair-20260815/repair-inventory.{json,md}
+```
+
+The 356 rows have no unclassified remainder:
+
+```text
+runtime implementationAuthority sender mismatch: 107
+constructor dependency not etched/mocked:          52
+missing result-bound structured oracle:            42
+oracle bound to the wrong selected call:            41
+zero-address constructor fixture:                   26
+other constructor/setup revert:                     17
+weak, non-strict revert oracle:                     15
+non-payable to payable-contract cast:               12
+constructor owner/caller mismatch:                  11
+constructor domain-constraint violation:             9
+type(C).runtimeCode on immutable contract:            6
+duplicate generated local identifier:                4
+missing path_function/enc identity:                   4
+revert oracle not adjacent to target call:            3
+invalid generated ABI/type syntax:                    2
+missing file-level import symbol:                     2
+deploy-only row lacks authenticated policy oracle:    2
+invalid normal-exit marker shape:                     1
+total:                                               356
+```
+
+All 115 rows previously marked Forge Failure reproduce as a `setUp()` failure;
+none is an unexplained target-test failure.  The 133 no-status rows resolve to
+107 identical ERC-3643 implementation-authority reverts plus 26 deterministic
+compile failures.  This makes generator-cluster repair possible without
+case-by-case rediscovery.
+
 ### 3. The existing RQ3 audit omits the raw/valid invariant
 
 `run_rq3_no_cer_reg.py --audit-only` currently checks structural concrete
