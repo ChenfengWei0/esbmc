@@ -665,17 +665,11 @@ def stage_targets(targets: list[dict[str, Any]], candidates: list[dict[str, Any]
             for name in re.findall(r"\bfunction\s+(test_ce_anchor_[A-Za-z0-9_$]*)\s*\(", original)
             if not name.startswith(("test_ce_anchor_auto_", "test_ce_anchor_rq3_"))
         ]
-        if len(non_auto) == 1:
-            output.update(status="existing-anchor",
-                          anchor_test=non_auto[0],
-                          reason="one non-generic anchor already exists")
-            rows.append(output)
-            continue
         anchor = "test_ce_anchor_rq3_" + sha256_bytes(
             "\0".join(target["identity"] + [target["test"]]).encode())[:16]
         function = rename_function(function, str(selected["test"]), anchor)
         cleaned = remove_generated_anchors(original)
-        if len(non_auto) > 1:
+        if non_auto:
             cleaned = remove_anchor_names(cleaned, non_auto)
         staged = contract_insert(cleaned, target["test"], function)
         if staged is None:
