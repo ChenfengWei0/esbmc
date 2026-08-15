@@ -425,12 +425,10 @@ def build_plan(root: Path, partition_path: Path, bundle: Path) -> dict[str, Any]
         preimages[manifest] = transaction._sha256(  # pylint: disable=protected-access
             manifest)
         updates = [
-            document["row"]
-            for path, document in sorted(replacements.items(), key=lambda item: str(item[0]))
+            replacements.get(path, document)["row"]
+            for path, document in sorted(snapshot.items(), key=lambda item: str(item[0]))
             if path.parts[-4] == dataset
         ]
-        if not updates:
-            continue
         journal_data = _journal_with_updates(journal.read_bytes(), updates)
         writes[journal] = journal_data
         new_manifest = transaction._dataset_manifest(  # pylint: disable=protected-access
