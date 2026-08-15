@@ -147,6 +147,53 @@ original fixed CE witness still reproduces its authenticated observable result
 If the concrete witness still exposes an error but the PUT cannot observe it,
 the obligation must not be reported as successfully generalized.
 
+### R0 encoding and the atomic Foundry execution protocol
+
+Methodologically, the fixed CE assertion is part of the generalized PUT's R0.
+The PUT artifact denotes the conjunction:
+
+```text
+PUT obligation = parameterized R1/R2 test AND fixed-witness R0 test
+```
+
+The current Foundry encoding places these two conjuncts in the same final
+Solidity source file and the same test contract, but in two functions:
+
+```solidity
+function test_put_<identity>(/* fuzz parameters */) public { /* R1/R2 */ }
+function test_ce_anchor_<identity>() public { /* fixed CE and R0 assertion */ }
+```
+
+The separate zero-parameter function is an isolation mechanism, not a second
+CE obligation and not an optional companion test. Foundry restores the test
+state for each test function, so this encoding prevents the fixed CE execution
+from mutating the state used by the fuzz execution. It is accepted as the
+engineering representation of an R0 embedded in the PUT artifact only when
+the execution and reporting pipeline treats both functions as one atomic
+acceptance unit.
+
+Consequently, a Forge result obtained only with a selector such as
+`--match-test '^test_put_'` is incomplete and must never establish a valid or
+generalized PUT. The permitted execution protocols are:
+
+1. run the final test file and verify from Forge's machine-readable result that
+   the exact PUT test and the exact CE-anchor test both executed and succeeded;
+2. run two exact, source-bound invocations, one selecting the PUT test and one
+   selecting the anchor test, and join them through the same source SHA-256,
+   PUT identity, test contract, and evidence record.
+
+The paired runner must fail closed when either test is absent, filtered out,
+not executed, failed, timed out, or reported only by a process return code
+without an exact per-test `Success` record. The parameterized test must also
+meet the configured fuzz-run requirement. Both exact test names, commands,
+Forge JSON records, and the final source hash must be retained in metadata.
+
+This yields suite-level semantic equivalence to placing both assertions in one
+test function while preserving state isolation. It does **not** justify
+claiming that the R0 statement text occurs inside the parameterized function
+body. The paper and reports must instead describe it as an isolated R0 test
+inside the same atomic PUT artifact.
+
 ## Recovering Witness Anchors
 
 Witness anchors should first be recovered from retained evidence, without
