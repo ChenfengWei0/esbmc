@@ -170,6 +170,20 @@ def _entry_test_key(entry: dict) -> tuple:
             entry.get("flat_sha256"))
 
 
+def persistence_publication_key(row: dict) -> str | None:
+    """Return the hash-bound identity used to authorize one published row."""
+    kind = row.get("kind") if isinstance(row, dict) else None
+    if kind == "concrete":
+        key = (kind, *_concrete_test_key(row))
+    elif kind == "put":
+        put_json = Path(str(row.get("put_json") or ""))
+        key = (kind, _artifact_key(row), str(row.get("test") or ""),
+               _sha256(put_json) if put_json.is_file() else "")
+    else:
+        return None
+    return json.dumps(key, separators=(",", ":"), sort_keys=True)
+
+
 def _entry_test_keys(entry: dict) -> set[tuple]:
     """Include the immutable source identity of a strictly augmented replay."""
     keys = {_entry_test_key(entry)}
@@ -1714,6 +1728,16 @@ def persistence_coverage(valid_tests: list[dict], entries: list[dict],
             continue
         if _concrete_test_key(row) in persisted_not_generalized_tests:
             confirmed_not_generalized_keys.add(_artifact_key(row))
+    publishable_validity_keys = []
+    for row in concretes:
+        if _concrete_test_key(row) in persisted_concrete_tests:
+            publishable_validity_keys.append(persistence_publication_key(row))
+    for row in puts:
+        put_json = Path(str(row.get("put_json") or ""))
+        basis_key = (_artifact_key(row), str(row.get("test") or ""),
+                     _sha256(put_json) if put_json.is_file() else "")
+        if basis_key in persisted_basis_artifacts:
+            publishable_validity_keys.append(persistence_publication_key(row))
     return {
         "schema": "veriput-rq1-concrete-replay-coverage/v1",
         "strict_valid": bool(valid),
@@ -1737,6 +1761,8 @@ def persistence_coverage(valid_tests: list[dict], entries: list[dict],
         "put_basis_missing": missing_puts,
         "valid_concrete_missing_count": len(missing_concretes),
         "valid_concrete_missing": missing_concretes,
+        "publishable_validity_keys": sorted(
+            key for key in publishable_validity_keys if key is not None),
         "complete": (bool(valid) and bool(audited_entries) and not missing_puts
                      and not missing_concretes),
     }

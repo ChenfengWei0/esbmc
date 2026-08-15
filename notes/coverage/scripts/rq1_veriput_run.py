@@ -42,6 +42,7 @@ from rq1_window_guard import (  # noqa: E402
 from rq1_concrete_replay_store import (  # noqa: E402
     ReplayPersistenceError, annotate_generalization, audit_manifest, load_manifest,
     invalidation_applies, persist_concrete_replay, persistence_coverage,
+    persistence_publication_key,
 )
 from solidity_path_put import (  # noqa: E402
     _constructor_body_text, _constructor_initializer_calls, _mask_solidity_comments_and_strings,
@@ -707,19 +708,6 @@ def persistence_publication_failure(coverage: dict) -> str | None:
     return None
 
 
-def _persistence_row_key(row: dict,
-                         artifact_field: str) -> tuple[str, str, str, str, str, str]:
-    """Return the exact artifact identity used by persistence coverage rows."""
-    return (
-        str(row.get("path_function") or ""),
-        str(row.get("unit") or ""),
-        str(row.get("enc") if row.get("enc") is not None else ""),
-        str(row.get("piece") if row.get("piece") is not None else ""),
-        str(row.get("test") or ""),
-        str(row.get(artifact_field) or ""),
-    )
-
-
 def quarantine_unpersisted_validity(put_summary: dict,
                                      reason: str,
                                      coverage: dict | None = None) -> dict:
@@ -736,25 +724,18 @@ def quarantine_unpersisted_validity(put_summary: dict,
     if coverage is None or coverage.get("invalidated_evidence"):
         withheld = candidates
     else:
-        missing_concrete = {
-            _persistence_row_key(row, "file")
-            for row in coverage.get("valid_concrete_missing") or [] if isinstance(row, dict)
-        }
-        missing_put = {
-            _persistence_row_key(row, "put_json")
-            for row in coverage.get("put_basis_missing") or [] if isinstance(row, dict)
-        }
+        publishable = set(coverage.get("publishable_validity_keys") or [])
         for row in candidates:
-            missing = missing_put if row.get("kind") == "put" else missing_concrete
-            artifact_field = "put_json" if row.get("kind") == "put" else "file"
-            if _persistence_row_key(row, artifact_field) in missing:
-                withheld.append(row)
-            else:
+            key = persistence_publication_key(row)
+            if key is not None and key in publishable:
                 retained.append(row)
+            else:
+                withheld.append(row)
     summary["unpublished_valid_tests"] = withheld
     summary["persistence_failure_reason"] = reason
     summary["valid_tests"] = retained
     summary["valid_artifacts"] = retained
+    summary["valid_artifacts_retained"] = bool(retained)
     summary["status"] = "ok" if retained else "persistence-error"
     summary["reason"] = None if retained else reason
     if retained:
@@ -8056,6 +8037,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                                                                  f"{dataset_label}/{subject_id}")
         final_persistence_failure = persistence_publication_failure(final_replay_persistence)
         concrete_replay_persistence = final_replay_persistence
+        row["concrete_replay_persistence"] = final_replay_persistence
         if final_persistence_failure:
             row = quarantine_unpersisted_validity(row, final_persistence_failure,
                                                    final_replay_persistence)

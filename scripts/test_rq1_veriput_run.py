@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "notes" / "coverage" / "scripts"))
 
 import rq1_veriput_run  # noqa: E402
+import rq1_concrete_replay_store  # noqa: E402
 import veriput_path_guard  # noqa: E402
 
 
@@ -5953,20 +5954,28 @@ def test_persistence_failure_rejects_only_exact_unpersisted_replay():
             'import {C} from "../src/flat.sol"; contract Bad is Test { '
             'function test_cov_bad() public { C c = new C(); c.f(8); '
             'assertEq(1, 1); } }\n')
+        good_record = project / "good.put.json"
+        bad_record = project / "bad.put.json"
+        for record, enc in ((good_record, 7), (bad_record, 8)):
+            record.write_text(json.dumps({
+                "kind": "concrete",
+                "unit": "f",
+                "enc": enc,
+                "piece": None,
+                "path_function": "sol:@C@C@F@f#1",
+                "stage2_source": "certified-region-concrete-fallback",
+            }))
 
         common = {
             "kind": "concrete",
             "valid_reference_test": True,
             "forge_status": "Success",
-            "unit": "f",
-            "path_function": "sol:@C@C@F@f#1",
-            "piece": None,
         }
         good = {
             **common,
-            "enc": 7,
             "test": "test_cov_good",
             "file": str(good_file),
+            "put_json": str(good_record),
             "concrete_oracles": [{
                 "class": "concrete-value",
                 "kind": "post-state",
@@ -5979,14 +5988,21 @@ def test_persistence_failure_rejects_only_exact_unpersisted_replay():
         }
         bad_row = {
             **common,
-            "enc": 8,
             "test": "test_cov_bad",
             "file": str(bad_file),
+            "put_json": str(bad_record),
+        }
+        malformed = {
+            "kind": "unexpected",
+            "valid_reference_test": True,
+            "forge_status": "Success",
+            "test": "test_legacy_unknown_kind",
+            "file": str(good_file),
         }
         summary = {
-            "valid_tests": [good, bad_row],
-            "valid_artifacts": [good, bad_row],
-            "valid": 2,
+            "valid_tests": [good, bad_row, malformed],
+            "valid_artifacts": [good, bad_row, malformed],
+            "valid": 3,
             "concrete_valid": 2,
             "put_valid": 0,
         }
@@ -6005,7 +6021,8 @@ def test_persistence_failure_rejects_only_exact_unpersisted_replay():
         bad += check([row["test"] for row in published["valid_tests"]]
                      == ["test_cov_good"], "only the persisted exact row remains valid")
         bad += check([row["test"] for row in published["unpublished_valid_tests"]]
-                     == ["test_cov_bad"], "only the oracle-invalid exact row is rejected")
+                     == ["test_cov_bad", "test_legacy_unknown_kind"],
+                     "oracle-invalid and unknown-kind rows fail closed")
         bad += check(len(manifest.get("entries") or []) == 1,
                      "the real manifest contains the retained sibling replay")
         return bad
