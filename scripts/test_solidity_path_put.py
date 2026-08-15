@@ -63,6 +63,7 @@ from solidity_path_put import (
     _abi_mock_expr_for_type,
     _constructor_interface_mock_return_expr,
     _mock_call_canonical_signature,
+    _oracle_claim_coverage_error,
     _source_type_default_expr,
     apply_constructor_param_interface_mocks,
     apply_constructor_param_strict_orders,
@@ -71,6 +72,7 @@ from solidity_path_put import (
     apply_runtime_interface_mocks,
     add_concrete_fixed_return_oracle,
     add_concrete_normal_exit_oracle,
+    authenticated_concrete_oracle_error,
     assembly_no_iteration_length_cap,
     attempt_is_usable,
     assemble_concrete_source,
@@ -82,7 +84,9 @@ from solidity_path_put import (
     cell_of,
     complete_missing_call_args,
     certified_basis_missing_return_witness,
+    certified_setup_render_error,
     concrete_return_mode_allowed,
+    reuse_authenticated_concrete_oracles,
     constructor_param_hascode_specs,
     constructor_param_nonzero_specs,
     constructor_param_strict_order_specs,
@@ -151,7 +155,12 @@ from solidity_path_put import (
     concrete_stage2_source_record,
     bind_emitted_claim_to_certified_ce,
     bind_emitted_source_to_certified_ce,
+    abi_value_gate_ce_projection,
+    extcall_fixture_ce_projection,
+    materialize_concrete_nonpayable_value_gate,
     synthetic_emitter_probe_budget,
+    synthetic_claim_with_report,
+    synthetic_claim_with_certified_ce,
     synthesize_minimal_emitted_case,
     synthesize_missing_emitted_case_for_claim,
     synthesize_unsupported_case_replay,
@@ -953,6 +962,62 @@ contract B {
     return bad
 
 
+def test_low_level_success_pin_accepts_typed_target_and_calldata_parameters():
+    source = """pragma solidity ^0.8.0;
+contract Proxy {
+  function forward(address callee, bytes memory data) public {
+    (bool ok,) = callee.call(data);
+    require(ok);
+  }
+}"""
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "src"))
+        with open(os.path.join(project, "src", "flat.sol"), "w") as f:
+            f.write(source)
+        yes, yes_err = runtime_low_level_success_mock_lines(
+            project, "Proxy", "forward", {"extcall.ok": "1"}, "    ")
+        no, no_err = runtime_low_level_success_mock_lines(
+            project, "Proxy", "forward", {"extcall.ok": "0"}, "    ")
+    bad = 0
+    bad += check(yes_err is None and yes == [
+        "    // VERIPUT_EXTCALL_CALLSITE callee data 1"
+    ], "an address/bytes parameter call records a success callsite fixture")
+    bad += check(no_err is None and no == [
+        "    // VERIPUT_EXTCALL_CALLSITE callee data 0"
+    ], "an address/bytes parameter call records a failure callsite fixture")
+    return bad
+
+
+def test_empty_bytes_claim_binds_to_its_certified_length_coordinate():
+    claim = {
+        "inputs": {
+            "callee": "0",
+            "data": "{ .offset=0, .length=0, .capacity=0, .initialized=1 }",
+        },
+        "env": {},
+        "entry_storage": {},
+    }
+    expected = {"callee": "0", "data.length": "0"}
+    binding, reason = bind_emitted_claim_to_certified_ce(
+        claim, expected, params=[("callee", "address"), ("data", "bytes memory")])
+    bad = 0
+    bad += check(binding is not None and reason is None,
+                 "an empty bytes witness binds through its exact zero length")
+    nonempty = dict(claim)
+    nonempty["inputs"] = dict(claim["inputs"], data="{ .length=1 }")
+    rejected, rejected_reason = bind_emitted_claim_to_certified_ce(
+        nonempty, expected, params=[("callee", "address"), ("data", "bytes memory")])
+    bad += check(rejected is None and "non-scalar" in (rejected_reason or ""),
+                 "nonempty bytes remain refused without exact content evidence")
+    body = ['    c0.forward(address(uint160(0)), hex"");']
+    digest, source_reason = bind_emitted_source_to_certified_ce(
+        body, 0, "forward", [("callee", "address"), ("data", "bytes memory")],
+        {"callee": 0, "data.length": 0})
+    bad += check(digest is not None and source_reason is None,
+                 "the exact empty bytes source literal binds to certified length zero")
+    return bad
+
+
 def test_constructor_param_runtime_bytes_quote_mock_encodes_decode_payload():
     flat = """\
 pragma solidity >=0.8.0;
@@ -1347,6 +1412,47 @@ contract Initializer {
         "a guarded local alias reuses the matching constructor argument")
     bad += check("_ret_0 = address(uint160(3000))" not in text,
                  "the guarded getter does not synthesize an unrelated address")
+    return bad
+
+
+def test_constructor_interface_choice_is_scoped_to_receiver_type():
+    flat = """\
+pragma solidity >=0.8.0;
+interface IVault0 {}
+interface IVault1 {}
+interface IVaultAdmin0 { function vault() external view returns (IVault0); }
+interface IVaultAdmin1 { function vault() external view returns (IVault1); }
+contract Extension {
+  error WrongVaultAdminDeployment();
+  constructor(IVault1 mainVault, IVaultAdmin1 vaultAdmin) {
+    if (vaultAdmin.vault() != mainVault) revert WrongVaultAdminDeployment();
+  }
+}
+"""
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "src"))
+        with open(os.path.join(project, "src", "flat.sol"), "w") as f:
+            f.write(flat)
+        specs = constructor_param_interface_mock_specs(project, "Extension")
+    lines, changed = apply_constructor_param_interface_mocks([
+        "  function setUp() public {",
+        "    c0 = new Extension(IVault1(address(uint160(1000))), "
+        "IVaultAdmin1(address(uint160(1001))));",
+        "  }",
+    ], "Extension", specs, flat)
+    text = "\n".join(lines)
+    bad = 0
+    bad += check(
+        [(spec["signature"], spec["returns"]) for spec in specs] ==
+        [("vault()", ["IVault1"])],
+        f"receiver-scoped ABI resolves the nominal return type: {specs}")
+    bad += check(changed == 1, "one Extension deployment receives constructor mocks")
+    bad += check(
+        'abi.encodeWithSignature("vault()"), '
+        'abi.encode(IVault1(address(uint160(1000)))))' in text,
+        "the scoped vault getter is tied to the matching mainVault argument")
+    bad += check("IVault0(address(uint160(1000)))" not in text,
+                 "the unrelated same-name interface ABI is not selected")
     return bad
 
 
@@ -2320,6 +2426,73 @@ contract CCovTest is Test {
     bad += check("address _esbmc_ctor_arg_mock_0_0 = "
                  "payable(address(uint160(7)));" in text,
                  "the original target constructor argument is materialized")
+    return bad
+
+
+def test_deep_base_constructor_local_interface_alias_is_mocked():
+    flat = """\
+pragma solidity >=0.8.0;
+interface IController { function hashes() external view returns (bytes32, bytes32); }
+abstract contract Root {
+  constructor(address controller_) {
+    IController controller = IController(controller_);
+    controller.hashes();
+  }
+}
+abstract contract Middle is Root {
+  constructor(address controller_) Root(controller_) {}
+}
+contract C is Middle {
+  constructor(address controller_) Middle(controller_) {}
+  function f() external {}
+}
+"""
+    emitted = """\
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {C} from "./flat.sol";
+contract CCovTest is Test {
+  C c0;
+  function setUp() public {
+    c0 = new C(address(uint160(1000)));
+  }
+  // claim: sol:@C@C@F@f#9:path:1
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    fd, path = tempfile.mkstemp(suffix=".cov.t.sol")
+    with os.fdopen(fd, "w") as f:
+        f.write(emitted)
+    try:
+        em = EmittedFile(path)
+    finally:
+        os.unlink(path)
+    case = em.case_for("sol:@C@C@F@f#9", 1)
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "src"))
+        with open(os.path.join(project, "src", "flat.sol"), "w") as f:
+            f.write(flat)
+        specs = constructor_param_interface_mock_specs(project, "C")
+    text = assemble_put_source(
+        em,
+        case, [["", "  function test_put_C_f_path1() public {", "    c0.f();", "  }"]],
+        "CCovTest_put",
+        contract="C",
+        unit="f",
+        constructor_param_mocks=specs,
+        constructor_params=["address"],
+        flat_source=flat)
+    bad = 0
+    bad += check(
+        len(specs) == 1 and specs[0]["signature"] == "hashes()",
+        f"deep inherited local interface alias is detected: {specs}")
+    mock_at = text.find('abi.encodeWithSignature("hashes()")')
+    new_at = text.find("c0 = new C(address(uint160(1000)));")
+    bad += check(0 <= mock_at < new_at,
+                 "deep inherited local interface call is mocked before deployment")
     return bad
 
 
@@ -5067,7 +5240,7 @@ contract Configuration {
   struct Options { bytes32 name; bytes32 symbol; }
 }
 contract Target is Configuration {
-  constructor(Options memory options) {}
+  constructor(Options memory options, Options[] memory optionList) {}
   function value() external pure returns (uint256) { return 1; }
 }
 """
@@ -5077,7 +5250,8 @@ contract Target is Configuration {
                                                          "Target",
                                                          "value",
                                                          "sol:@C@Target@F@value#1",
-                                                         1, [], [("options", "Options")],
+                                                         1, [], [("options", "Options"),
+                                                                 ("optionList", "Options[]")],
                                                          notes,
                                                          flat_source=flat)
         text = "\n".join(emitted.lines)
@@ -5089,6 +5263,8 @@ contract Target is Configuration {
                  "a nested struct is not imported as a top-level declaration")
     bad += check("Configuration.Options({name: bytes32(0), symbol: bytes32(0)})" in text,
                  "a nested constructor struct gets a qualified named-field literal")
+    bad += check("new Configuration.Options[](0)" in text,
+                 "a nested constructor struct array gets an owner-qualified element type")
     return bad
 
 
@@ -6476,6 +6652,7 @@ def test_r1_r2_proof_uses_clean_k_induction_args():
         "--unwindset=4:64",
         "--overflow-check",
         "--div-by-zero-check",
+        "--path-cov-arith-resolve",
         "--partial-loops",
         "--incremental-bmc",
         "--max-k-step",
@@ -6553,6 +6730,200 @@ def test_certified_basis_requires_the_exact_certified_ce():
                                                              })
     bad += check(source_sha is None and "arguments do not match" in reason,
                  f"defaulted or missing argument is refused: {reason}")
+    gate_body = [
+        "    vm.deal(address(uint160(1)), 1);",
+        "    vm.prank(address(uint160(1)));",
+        "    (bool ok, ) = address(c0).call{value: 1}(",
+        '        abi.encodeWithSignature("f()"));',
+        "    assertFalse(ok);",
+    ]
+    gate_ce = {
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "1",
+        "state.feed": "7",
+    }
+    projection = abi_value_gate_ce_projection(gate_ce, [], stage4_kind="abi-value-gate")
+    audit = {}
+    source_sha, reason = bind_emitted_source_to_certified_ce(
+        gate_body,
+        find_unit_call(gate_body, "f"),
+        "f", [],
+        gate_ce,
+        coordinate_evidence=projection,
+        audit=audit)
+    bad += check(source_sha is not None and reason is None,
+                 f"the structural ABI gate binds the complete CE: {reason}")
+    bad += check(audit.get("ce_sha256") == source_sha
+                 and audit.get("coordinates", {}).get("msg.sender", {}).get("rendered") == 1
+                 and audit.get("coordinates", {}).get("state.feed", {}).get("certified") == 7,
+                 f"the audit records rendered and projected full-CE coordinates: {audit}")
+    wrong_value = list(gate_body)
+    wrong_value[2] = wrong_value[2].replace("value: 1", "value: 2")
+    source_sha, reason = bind_emitted_source_to_certified_ce(
+        wrong_value,
+        find_unit_call(wrong_value, "f"),
+        "f", [],
+        gate_ce,
+        coordinate_evidence=projection)
+    bad += check(source_sha is None and "msg.value" in reason,
+                 "the ABI projection never permits a different msg.value")
+    return bad
+
+
+def test_extcall_fixture_projection_is_structural_and_region_bounded():
+    source = """\
+contract Proxy {
+  function forward(address callee, bytes memory data) public {
+    { (bool success,) = callee.call(data); require(success); }
+  }
+}
+"""
+    expected = {
+        "callee": "0",
+        "data.length": "0",
+        "msg.sender": "0",
+        "msg.value": "0",
+        "state.owner": "0",
+    }
+    region = {
+        "callee": ["0", str((1 << 160) - 1)],
+        "data.length": ["0", str((1 << 64) - 1)],
+    }
+    params = [("callee", "address"), ("data", "bytes memory")]
+    projection = extcall_fixture_ce_projection(
+        source, "Proxy", "forward", expected, params, region,
+        {"extcall.success": "1"})
+    body = [
+        "    vm.prank(address(uint160(7)));",
+        "    vm.mockCall(address(uint160(13125)), hex\"\", bytes(\"\"));",
+        "    c0.forward(address(uint160(13125)), hex\"\");",
+    ]
+    audit = {}
+    digest, reason = bind_emitted_source_to_certified_ce(
+        body, 2, "forward", params, expected,
+        coordinate_evidence=projection, audit=audit)
+    bad = check(digest is not None and reason is None,
+                f"strict extcall fixture projects an executable region member: {reason}")
+    callee = audit.get("coordinates", {}).get("callee", {})
+    bad += check(callee.get("rendered") == 13125 and callee.get("lo") == 0
+                 and callee.get("hi") == (1 << 160) - 1,
+                 f"extcall projection audit retains certified region bounds: {callee}")
+    digest, reason = bind_emitted_source_to_certified_ce(
+        [body[0], body[2]], 1, "forward", params, expected,
+        coordinate_evidence=projection)
+    bad += check(digest is None and "exact callsite mock" in reason,
+                 f"a projected replay without its extcall mock is refused: {reason}")
+    cleared = [body[0], body[1], "    vm.clearMockedCalls();", body[2]]
+    digest, reason = bind_emitted_source_to_certified_ce(
+        cleared, 3, "forward", params, expected,
+        coordinate_evidence=projection)
+    bad += check(digest is None and "exact callsite mock" in reason,
+                 f"a cleared extcall mock cannot authenticate the call: {reason}")
+    conditional = [body[0], "    if (false) {", "      " + body[1].strip(), "    }", body[2]]
+    digest, reason = bind_emitted_source_to_certified_ce(
+        conditional, 4, "forward", params, expected,
+        coordinate_evidence=projection)
+    bad += check(digest is None and "exact callsite mock" in reason,
+                 f"a conditional extcall mock cannot authenticate the call: {reason}")
+    outside = list(body)
+    outside[1] = "    vm.mockCall(address(uint160(9)), hex\"\", bytes(\"\"));"
+    outside[2] = "    c0.forward(address(uint160(9)), hex\"\");"
+    narrow = extcall_fixture_ce_projection(
+        source, "Proxy", "forward", expected, params,
+        {"callee": ["0", "8"], "data.length": ["0", "0"]},
+        {"extcall.success": "1"})
+    digest, reason = bind_emitted_source_to_certified_ce(
+        outside, 2, "forward", params, expected, coordinate_evidence=narrow)
+    bad += check(digest is None and "callee" in reason and "region" in reason,
+                 f"an address outside the certified region is refused: {reason}")
+    reads_sender = source.replace("{ (bool success,)",
+                                  "require(msg.sender != address(0)); { (bool success,)")
+    bad += check(extcall_fixture_ce_projection(
+        reads_sender, "Proxy", "forward", expected, params, region,
+        {"extcall.success": "1"}) is None,
+                 "an extra sender-dependent statement cannot acquire the certificate")
+    bad += check(extcall_fixture_ce_projection(
+        source, "Proxy", "forward", expected, params, region,
+        {"extcall.other": "1"}) is None,
+                 "a pin not naming the exact low-level-call result is refused")
+    return bad
+
+
+def test_synthetic_claim_retains_report_ce_coordinates():
+    path_function = "sol:@C@Feed@F@latest#201"
+    fallback = {
+        "path_function": path_function,
+        "path_depth": 1,
+        "exit_kind": "revert",
+        "decisions": [],
+        "veriput_synthetic_emitter": True,
+    }
+    report_claim = {
+        "condition": "latest:path:2",
+        "path_id": "2",
+        "path_function": path_function,
+        "path_depth": 1,
+        "exit_kind": "revert",
+        "inputs": {},
+        "env": {
+            "msg.sender": "0",
+            "msg.value": "1",
+        },
+        "entry_storage": {
+            "feed": "1",
+        },
+    }
+    with tempfile.TemporaryDirectory() as td:
+        report_path = os.path.join(td, "cov-report.json")
+        with open(report_path, "w") as out:
+            json.dump({"claims": [report_claim]}, out)
+        claim = synthetic_claim_with_report(report_path, "latest", 2, path_function,
+                                            fallback)
+    binding, reason = bind_emitted_claim_to_certified_ce(claim, {
+        "msg.sender": "0",
+        "msg.value": "1",
+        "state.feed": "1",
+    })
+    bad = check(claim.get("env") == report_claim["env"],
+                f"synthetic source keeps the verifier claim: {claim}")
+    bad += check(binding is not None and reason is None,
+                 f"retained synthetic claim binds to the exact certified CE: {reason}")
+    return bad
+
+
+def test_synthetic_claim_can_be_rebuilt_from_authenticated_certified_ce():
+    fallback = {
+        "path_function": "sol:@C@Feed@F@latest#201",
+        "path_depth": 1,
+        "exit_kind": "revert",
+        "decisions": [],
+        "veriput_synthetic_emitter": True,
+    }
+    certified_ce = {
+        "amount": "7",
+        "block.timestamp": "9",
+        "msg.sender": "0",
+        "msg.value": "1",
+        "state.feed": "3",
+        "return": "11",
+    }
+    claim = synthetic_claim_with_certified_ce(certified_ce, [("amount", "uint256")], fallback)
+    binding, reason = bind_emitted_claim_to_certified_ce(claim, certified_ce)
+    bad = check(binding is not None and reason is None,
+                f"the authenticated CE rebuilds an exact synthetic claim: {reason}")
+    bad += check(claim.get("inputs") == {"amount": 7}
+                 and claim.get("env") == {
+                     "block.timestamp": 9,
+                     "msg.sender": 0,
+                     "msg.value": 1,
+                 } and claim.get("entry_storage") == {"feed": 3},
+                 f"CE coordinates retain their claim groups: {claim}")
+    refused = synthetic_claim_with_certified_ce({"msg.value": "1"},
+                                                [("amount", "uint256")], fallback)
+    bad += check("inputs" not in refused,
+                 "a certified CE missing a declared parameter fails closed")
     return bad
 
 
@@ -23148,6 +23519,35 @@ def test_source_level_dynamic_defaults_are_nonempty_for_constructors():
     return bad
 
 
+def test_ast_struct_prefix_has_source_level_default():
+    source = """\
+pragma solidity >=0.8.0;
+enum Kind { A, B }
+struct Item { uint256 value; }
+struct Order { address owner; Item[] items; Kind kind; }
+"""
+    expr = _source_type_default_expr("struct Order", 1, source)
+    bad = 0
+    bad += check(expr is not None, "AST-style `struct X` type is synthesizable")
+    bad += check(
+        expr == ("Order({owner: address(uint160(1)), items: new Item[](0), "
+                 "kind: Kind(0)})"),
+        f"AST-style struct default preserves fields and nested types: {expr}")
+    with tempfile.TemporaryDirectory() as td:
+        notes = []
+        emitted, case = synthesize_minimal_emitted_case(
+            td,
+            "Target",
+            "take",
+            "sol:@C@Target@F@take#7",
+            1, [("order", "struct Order")], [], notes,
+            flat_source=source + "\ncontract Target { function take(Order memory) external {} }\n")
+        text = "\n".join(emitted.lines) if emitted is not None else ""
+    bad += check(case is not None and "c0.take(Order({" in text,
+                 "synthetic emitter accepts AST-style struct parameters")
+    return bad
+
+
 def test_source_identity_defaults_are_nonzero_and_typed():
     bad = 0
     bad += check(
@@ -23539,6 +23939,24 @@ def test_try_concrete_replay_marks_only_successful_target_exit():
     return bad
 
 
+def test_try_concrete_replay_can_assert_the_fixed_revert_exit():
+    source = """contract CReplay is Test {
+  function test_cov_0() public {
+    try c0.f() {} catch {}
+  }
+}
+"""
+    rewritten, oracles = add_concrete_normal_exit_oracle(
+        source, "test_cov_0", "f", "revert")
+    bad = check("assertFalse(_veriput_concrete_completed" in rewritten,
+                "the fixed replay explicitly asserts its R0 revert result")
+    bad += check(
+        len(oracles) == 1 and oracles[0]["kind"] == "call-status"
+        and oracles[0]["expected"] is False,
+        f"the revert replay carries an authenticated failed-status oracle: {oracles}")
+    return bad
+
+
 def test_multiline_typed_try_replay_marks_success_after_all_catches():
     source = """contract CReplay is Test {
   function test_cov_0() public {
@@ -23643,6 +24061,232 @@ def test_concrete_return_binding_requires_one_known_scalar_return():
     return bad
 
 
+def test_authenticated_structured_concrete_oracles_are_reused_without_downgrade():
+    bad = 0
+    return_source = ('contract R { function test_cov_0() public { '
+                     'uint8 got = c0.f(); assertEq(got, uint8(7)); } }')
+    return_oracle = [{
+        "class": "R0", "kind": "return-value", "solidity_type": "uint8",
+        "observed": "got", "expected": "uint8(7)",
+        "provenance": "stage2-witness", "target_receiver": "c0",
+        "assertion": "assertEq(got, uint8(7));",
+    }]
+    status_source = ('contract R { function test_cov_0() public { '
+                     '(bool ok,) = address(c0).call(abi.encodeWithSignature("f()")); '
+                     'assertTrue(ok, "status"); } }')
+    status_oracle = [{
+        "class": "R0", "kind": "call-status", "observed": "ok", "expected": True,
+        "provenance": "stage2-witness", "target_receiver": "c0",
+        "assertion": 'assertTrue(ok, "status");',
+    }]
+    state_source = ('contract R { function test_cov_0() public { '
+                    'c0.f(); assertEq(c0.value(), uint256(7)); } }')
+    state_oracle = [{
+        "class": "concrete-value", "kind": "post-state", "observed": "c0.value()",
+        "expected": "uint256(7)", "provenance": "stage2-witness",
+        "target_receiver": "c0", "assertion": "assertEq(c0.value(), uint256(7));",
+    }]
+    tuple_source = ('contract R { function test_cov_0() public { '
+                    '(uint8 first, uint16 second) = c0.f(); '
+                    'assertEq(first, uint8(1)); assertEq(second, uint16(2)); } }')
+    tuple_oracles = [{
+        "class": "R0", "kind": "return-value", "solidity_type": sol_type,
+        "return_index": index, "return_arity": 2, "observed": observed,
+        "expected": expected, "provenance": "stage2-witness", "target_receiver": "c0",
+        "assertion": assertion,
+    } for index, (sol_type, observed, expected, assertion) in enumerate((
+        ("uint8", "first", "uint8(1)", "assertEq(first, uint8(1));"),
+        ("uint16", "second", "uint16(2)", "assertEq(second, uint16(2));"),
+    ))]
+    for source, oracle, label in (
+            (return_source, return_oracle, "return-value"),
+            (status_source, status_oracle, "call-status"),
+            (state_source, state_oracle, "post-state"),
+            (tuple_source, tuple_oracles, "indexed tuple return")):
+        rewritten, retained, error = reuse_authenticated_concrete_oracles(
+            source, "test_cov_0", "f", oracle)
+        bad += check((rewritten, retained, error) == (source, oracle, None),
+                     f"{label} remains target-bound")
+    storage_source = (
+        'contract R { function test_cov_0() public { c0.f(); '
+        'uint256 observed = uint256(vm.load(address(c0), bytes32(uint256(2)))); '
+        'assertEq(observed, uint256(7)); } }')
+    storage_oracle = [{
+        "class": "concrete-value", "kind": "storage-slot-post-state",
+        "observed": "observed", "expected": "uint256(7)",
+        "provenance": "stage2-witness", "target_receiver": "c0",
+        "storage_variable": "value", "storage_slot": 2,
+        "storage_offset_bytes": 0, "storage_width_bytes": 32,
+        "assertion": "assertEq(observed, uint256(7));",
+    }]
+    rewritten, retained, error = reuse_authenticated_concrete_oracles(
+        storage_source, "test_cov_0", "f", storage_oracle)
+    bad += check((rewritten, retained, error) ==
+                 (storage_source, storage_oracle, None),
+                 "real storage-slot-post-state schema remains target-bound")
+    event_assertions = (
+        "assertEq(_veriputLogs.length, 1);"
+        "assertEq(_veriputLogs[0].emitter, address(c0));"
+        "assertEq(_veriputLogs[0].topics.length, 1);"
+        'assertEq(_veriputLogs[0].topics[0], keccak256("Updated()"));'
+        "assertEq(_veriputLogs[0].data, hex\"\");")
+    event_source = (
+        "contract R { function test_cov_0() public { vm.recordLogs(); c0.f(); "
+        "Vm.Log[] memory _veriputLogs = vm.getRecordedLogs(); " +
+        event_assertions + " } }")
+    event_oracle = [{
+        "class": "concrete-value", "kind": "event-log",
+        "observed": "_veriputLogs",
+        "expected": {"log_count": 1, "event_index": 0,
+                     "emitter": "address(c0)",
+                     "topics": ['keccak256("Updated()")'], "data": 'hex""'},
+        "provenance": "source-grounded", "target_receiver": "c0",
+        "assertion": event_assertions,
+    }]
+    rewritten, retained, error = reuse_authenticated_concrete_oracles(
+        event_source, "test_cov_0", "f", event_oracle)
+    bad += check((rewritten, retained, error) == (event_source, event_oracle, None),
+                 "real event-log schema remains target-bound")
+    revert_source = ('contract R { function test_cov_0() public { '
+                     'vm.expectRevert(bytes4(0x12345678)); c0.f(); } }')
+    revert = [{
+        "class": "R0", "kind": "revert", "source": "expectRevert",
+    }]
+    rewritten, retained, error = reuse_authenticated_concrete_oracles(
+        revert_source, "test_cov_0", "f", revert)
+    bad += check((rewritten, retained, error) == (revert_source, revert, None),
+                 "revert remains the exact anchor oracle")
+    intervening_revert = revert_source.replace(
+        "vm.expectRevert(bytes4(0x12345678)); c0.f();",
+        "vm.expectRevert(bytes4(0x12345678)); helper.g(); c0.f();")
+    _unchanged, retained, error = reuse_authenticated_concrete_oracles(
+        intervening_revert, "test_cov_0", "f", revert)
+    bad += check(retained == [] and "immediately armed" in str(error),
+                 "an intervening external call cannot consume the target revert expectation")
+    return bad
+
+
+def test_authenticated_concrete_oracle_downgrade_fails_closed():
+    completion = {
+        "class": "R0",
+        "kind": "normal-exit",
+        "observed": "_veriput_concrete_completed",
+        "expected": True,
+        "provenance": "stage2-witness",
+        "target_receiver": "c0",
+        "assertion": "assertTrue(_veriput_concrete_completed);",
+    }
+    exact_return = {
+        "class": "R0",
+        "kind": "return-value",
+        "solidity_type": "uint8",
+        "observed": "observed",
+        "expected": "uint8(7)",
+        "provenance": "stage2-witness",
+        "target_receiver": "c0",
+        "assertion": "assertEq(observed, uint8(7));",
+    }
+    bad = 0
+    bad += check(
+        "normal-exit cannot downgrade" in str(
+            authenticated_concrete_oracle_error([completion, exact_return])),
+        "completion cannot replace or accompany an exact return")
+    for damaged in (
+            {**exact_return, "kind": "unknown"},
+            {key: value for key, value in exact_return.items() if key != "expected"},
+            {**exact_return, "assertion": ""},
+            {**exact_return, "provenance": "guessed"}):
+        bad += check(authenticated_concrete_oracle_error([damaged]) is not None,
+                     "missing or unauthenticated structured evidence fails closed")
+    source = "contract C { function test_cov_0() public { c0.f(); } }"
+    unchanged, retained, error = reuse_authenticated_concrete_oracles(
+        source, "test_cov_0", "f", [exact_return])
+    bad += check(unchanged == source and retained == [] and error is not None,
+                 "metadata cannot claim an assertion absent from the replay")
+    unrelated_source = ('contract C { function test_cov_0() public { c0.f(); '
+                        'assertEq(helper.value(), uint256(7)); } }')
+    unrelated = [{
+        "class": "concrete-value", "kind": "post-state",
+        "observed": "helper.value()", "expected": "uint256(7)",
+        "provenance": "stage2-witness", "target_receiver": "helper",
+        "assertion": "assertEq(helper.value(), uint256(7));",
+    }]
+    unchanged, retained, error = reuse_authenticated_concrete_oracles(
+        unrelated_source, "test_cov_0", "f", unrelated)
+    bad += check(unchanged == unrelated_source and retained == [] and error is not None,
+                 "an unrelated helper assertion cannot authenticate the target call")
+    untyped_exact = """contract C {
+  function test_cov_0() public {
+    c0.f();
+    assertEq(c0.value(), 7);
+  }
+}
+"""
+    unchanged, retained = add_concrete_normal_exit_oracle(
+        untyped_exact, "test_cov_0", "f")
+    bad += check(unchanged == untyped_exact and retained == [],
+                 "an untyped exact assertion is refused instead of downgraded")
+    scalar_oracle = [{"kind": "return-value", "expected": "uint8(8)"}]
+    bad += check("differs" in _oracle_claim_coverage_error(
+        {"return_value": "7"}, scalar_oracle),
+        "wrong scalar expected value is rejected")
+    bad += check("differs" in _oracle_claim_coverage_error(
+        {"return_value": "reportSymbol"},
+        [{"kind": "return-value", "expected": "differentSymbol"}]),
+        "different unrenderable scalar texts cannot compare equal")
+    tuple_oracles = [{
+        "kind": "return-value", "return_index": index, "return_arity": 2,
+        "expected": expected,
+    } for index, expected in enumerate(("uint8(1)", "uint16(9)"))]
+    bad += check("differs" in _oracle_claim_coverage_error(
+        {"return_value": "(1,2)"}, tuple_oracles),
+        "wrong tuple component is rejected")
+    bad += check("differs" in _oracle_claim_coverage_error(
+        {"events": [{"name": "Expected"}]},
+        [{"kind": "event-log", "expected": {"name": "Other"}}]),
+        "wrong event sequence is rejected")
+    bad += check("differs" in _oracle_claim_coverage_error(
+        {"call_status": False}, [{"kind": "call-status", "expected": True}]),
+        "wrong call status is rejected")
+    bad += check("normal exit" in _oracle_claim_coverage_error(
+        {"exit_kind": "normal"}, [{"kind": "call-status", "expected": False}]),
+        "normal exit rejects a failed target call status without report status metadata")
+    bad += check("differs" in _oracle_claim_coverage_error(
+        {"revert_selector": "0x12345678"},
+        [{"kind": "revert", "expected": "0x87654321"}]),
+        "wrong revert selector is rejected")
+    exact_event = {
+        "kind": "event-log",
+        "expected": {
+            "log_count": 1, "event_index": 0, "emitter": "address(c0)",
+            "topics": ['keccak256("Updated(address,uint256)")'],
+            "data": "abi.encode(uint256(9))",
+        },
+    }
+    bad += check(_oracle_claim_coverage_error({
+        "exit_kind": "normal",
+        "events": ["sol:@C@Probe@F@Updated#42"],
+    }, [exact_event], {42: "Updated(address,uint256)"}) is None,
+        "event declaration identity maps to the exact event-log signature")
+    bad += check("event declaration" in _oracle_claim_coverage_error({
+        "exit_kind": "normal",
+        "events": ["sol:@C@Probe@F@Updated#42"],
+    }, [{**exact_event, "expected": {
+        **exact_event["expected"],
+        "topics": ['keccak256("Updated(address,address)")'],
+    }}], {42: "Updated(address,uint256)"}),
+        "same-name overloaded event cannot use another declaration signature")
+    bad += check("event declaration" in _oracle_claim_coverage_error({
+        "exit_kind": "normal",
+        "events": ["sol:@C@Probe@F@Transfer#44"],
+    }, [{**exact_event, "expected": {
+        **exact_event["expected"],
+        "topics": ['keccak256("OtherTransfer(bytes32)")'],
+    }}], {44: "Transfer(bytes32)"}),
+        "an event signature substring cannot impersonate the declaration")
+    return bad
+
+
 def test_concrete_return_witness_is_restricted_to_certified_basis():
     bad = 0
     bad += check(
@@ -23678,6 +24322,15 @@ def test_known_nonvoid_certified_basis_requires_return_witness():
         not certified_basis_missing_return_witness(True, "certified-region-concrete-fallback",
                                                    "CERTIFIED-BASIS-REPLAY", [("", "uint8")], "0"),
         "known non-void certified basis accepts an exact witness")
+    bad += check(
+        not certified_basis_missing_return_witness(
+            True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY",
+            [("", "uint8")], None,
+            concrete_oracles=[{
+                "kind": "post-state", "observed": "c0.value()", "expected": 7,
+                "provenance": "stage2-witness", "assertion": "assertEq(c0.value(), 7);",
+            }]),
+        "an exact structured state oracle need not be downgraded to a return oracle")
     bad += check(
         not certified_basis_missing_return_witness(
             True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY", [("", "uint8")],
@@ -23941,6 +24594,77 @@ contract OwnerGateCovTest is Test {
     return bad
 
 
+def test_certified_value_gate_basis_materializes_exact_ce_sender_and_value():
+    lines = [
+        "  function test_cov_0() public {",
+        "    vm.prank(address(uint160(99)));",
+        "    c0.f(uint256(7));",
+        "  }",
+    ]
+    rendered, changed, reason = materialize_concrete_nonpayable_value_gate(
+        lines,
+        "f", [("amount", "uint256")], {
+            "msg.value": (1, 100),
+            "msg.sender": (0, 100),
+        }, {}, {
+            "amount": "7",
+            "msg.sender": "3",
+            "msg.value": "11",
+        })
+    source = "\n".join(rendered)
+    bad = 0
+    bad += check(changed == 1 and reason is None,
+                 f"the exact certified gate CE is renderable: {reason}")
+    bad += check("vm.deal(address(uint160(3)), 11);" in source,
+                 "the exact certified sender receives the exact certified value")
+    bad += check("vm.prank(address(uint160(3)));" in source,
+                 "the exact certified sender drives the call")
+    bad += check("call{value: 11}" in source and ", uint256(7)))" in source,
+                 "the exact certified value and argument reach the ABI call")
+    zero_sender, changed, reason = materialize_concrete_nonpayable_value_gate(
+        lines, "f", [("amount", "uint256")], {
+            "msg.value": (1, 100),
+            "msg.sender": (1, 100),
+        }, {}, {
+            "amount": "7",
+            "msg.sender": "0",
+            "msg.value": "11",
+        })
+    bad += check(changed == 1 and reason is None
+                 and "vm.prank(address(uint160(1)));" in "\n".join(zero_sender),
+                 "the structural gate projects zero before checking Foundry's renderable domain")
+    _rendered, changed, reason = materialize_concrete_nonpayable_value_gate(
+        lines, "f", [("amount", "uint256")], {
+            "msg.value": (1, 10),
+        }, {}, {
+            "amount": "7",
+            "msg.sender": "3",
+            "msg.value": "11",
+        })
+    bad += check(changed == 0 and "outside" in reason,
+                 "a certified CE outside its certified gate region fails closed")
+    return bad
+
+
+def test_certified_value_gate_setup_materialization_is_narrowly_projected():
+    raw_setup = ["    c0 = new Feed();"]
+    materialized_setup = [
+        "    vm.mockCall(feed, data, result);",
+        "    c0 = new Feed();",
+    ]
+    bad = 0
+    bad += check(
+        certified_setup_render_error(raw_setup, materialized_setup, True) is None,
+        "the authenticated ABI gate permits deterministic setup materialization")
+    ordinary_error = certified_setup_render_error(raw_setup, materialized_setup, False)
+    bad += check(ordinary_error is not None and "changed" in ordinary_error,
+                 "an ordinary certified path still rejects setup drift")
+    missing_error = certified_setup_render_error(raw_setup, None, True)
+    bad += check(missing_error is not None and "absent" in missing_error,
+                 "even the ABI gate rejects a missing final setup")
+    return bad
+
+
 def test_abstract_target_deployment_uses_concrete_harness():
     """Certified and concrete rows share the same abstract-target repair."""
     source = """\
@@ -24099,6 +24823,9 @@ def main():
               test_esbmc_singleton_args_are_deduplicated_without_breaking_unwindset,
               test_r1_r2_proof_uses_clean_k_induction_args,
               test_certified_basis_requires_the_exact_certified_ce,
+              test_extcall_fixture_projection_is_structural_and_region_bounded,
+              test_synthetic_claim_retains_report_ce_coordinates,
+              test_synthetic_claim_can_be_rebuilt_from_authenticated_certified_ce,
               test_pin_with_a_slot_is_established,
               test_zero_sender_owner_pin_is_promoted_to_executable_relation,
               test_precheck_only_identifies_rendered_width_not_oracle_strength,
@@ -24114,6 +24841,8 @@ def main():
               test_proxy_fixture_getter_uses_low_level_success_oracle,
               test_constructor_staticcall_mock_is_scoped_to_deployment,
               test_low_level_success_pin_is_realized_and_unsupported_shape_refused,
+              test_low_level_success_pin_accepts_typed_target_and_calldata_parameters,
+              test_empty_bytes_claim_binds_to_its_certified_length_coordinate,
               test_constructor_param_runtime_bytes_quote_mock_encodes_decode_payload,
               test_constructor_param_runtime_bytes_quote_ignores_unrelated_decode,
               test_constructor_param_runtime_bytes_quote_payload_skips_ambiguous_overload,
@@ -24127,6 +24856,7 @@ def main():
               test_constructor_param_interface_calls_are_mocked_before_deploy,
               test_constructor_return_alias_public_constant_getters_use_returned_address,
               test_constructor_interface_return_local_alias_matches_constructor_arg,
+              test_constructor_interface_choice_is_scoped_to_receiver_type,
               test_constructor_cleanup_precedes_constructor_sourced_runtime_mocks,
               test_inherited_constructor_return_alias_uses_arity_and_typed_return_mock,
               test_constructor_param_bool_mocks_follow_immediate_revert_polarity,
@@ -24142,6 +24872,7 @@ def main():
               test_extcall_array_length_coordinate_is_mocked_from_fuzz_param,
               test_constructor_param_interface_call_via_stored_getter_is_mocked,
               test_base_constructor_param_interface_call_is_mocked,
+              test_deep_base_constructor_local_interface_alias_is_mocked,
               test_base_constructor_named_helper_interface_call_is_mocked,
               test_constructor_param_hascode_args_are_etched_before_deploy,
               test_constructor_struct_address_fields_with_code_guards_are_repaired,
@@ -24484,6 +25215,7 @@ def main():
               test_missing_low_level_dynamic_args_update_abi_signature,
               test_missing_dynamic_array_args_are_fuzzable,
               test_source_level_dynamic_defaults_are_nonempty_for_constructors,
+              test_ast_struct_prefix_has_source_level_default,
               test_source_identity_defaults_are_nonzero_and_typed,
               test_constructor_runtime_mocks_skip_udvt_state_params,
               test_unsupported_skeleton_is_synthesized_for_concrete_replay,
@@ -24510,9 +25242,12 @@ def main():
               test_assembled_concrete_source_keeps_only_the_selected_replay,
               test_concrete_replay_gets_explicit_normal_exit_oracle,
               test_try_concrete_replay_marks_only_successful_target_exit,
+              test_try_concrete_replay_can_assert_the_fixed_revert_exit,
               test_multiline_typed_try_replay_marks_success_after_all_catches,
               test_source_synthesized_concrete_binds_fixed_scalar_return,
               test_concrete_return_binding_requires_one_known_scalar_return,
+              test_authenticated_structured_concrete_oracles_are_reused_without_downgrade,
+              test_authenticated_concrete_oracle_downgrade_fails_closed,
               test_concrete_return_witness_is_restricted_to_certified_basis,
               test_known_nonvoid_certified_basis_requires_return_witness,
               test_concrete_replay_preserves_low_level_call_status_oracle,
@@ -24520,6 +25255,8 @@ def main():
               test_assembled_concrete_source_completes_missing_call_args,
               test_certified_value_gate_basis_concrete_uses_low_level_call,
               test_certified_value_gate_basis_drops_stale_revert_prelude,
+              test_certified_value_gate_basis_materializes_exact_ce_sender_and_value,
+              test_certified_value_gate_setup_materialization_is_narrowly_projected,
               test_abstract_target_deployment_uses_concrete_harness,
               test_abstract_target_harness_forwards_dynamic_constructor_args,
               test_abstract_target_harness_supplies_unresolved_base_constructor,
