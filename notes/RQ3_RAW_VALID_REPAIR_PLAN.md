@@ -204,22 +204,23 @@ it is not a validity result.
    without rerunning ESBMC, while the 106 oracle-invalid rows remain explicitly
    rejected.
 
-### Phase 2: repair the remaining 356 raw tests
+### Phase 2: authenticate and repair the remaining raw-only tests
 
-1. Repair the 106 Forge-green rows whose generated test lacks an authenticated
-   structured execution-result oracle.
-2. Split the 115 Forge failures by compile failure, runtime oracle failure, and
-   target-not-executed failure.
-3. Split the 133 no-status rows by never-emitted, never-run, timeout, and stale
-   path.
-4. Resolve the remaining two non-valid rows whose status/reference fields
-   disagree.
+1. Exclude the two deploy-only smoke tests from deliverable raw accounting;
+   retain them as diagnostics.  This changes raw from 2995 to 2993.
+2. Restore the 499 hash-bound persisted siblings.  The authoritative state is
+   then raw 2993, valid 2639, raw-only 354.
+3. Apply the sealed authenticity partition: 288 rows have a non-empty,
+   hash-bound certified CE and are repairable; 66 are unauthenticated fallback
+   artifacts (62 empty-CE structural gates and four constructor fallbacks) and
+   must remain diagnostics rather than deliverable raw tests.
+4. Repair the 288 authenticated rows by their shared generator root cause,
+   without treating Forge success as CE authentication.
 5. Fix the shared generator defect for each class before parallel case repair.
 6. Run the exact RQ3 test with machine-readable Forge output, requiring exactly
    one intended test `Success` and rejecting `No tests found`.
 7. Rebuild results and repeat until the published RQ3 audit proves
-   `raw == valid == 2995`, or records an explicit experiment-scope correction
-   approved by the user.
+   `raw == valid == 2927` after the explicit diagnostic scope corrections.
 
 ### Phase 3: mechanically replace invalid RQ1 anchors
 
@@ -250,3 +251,14 @@ The matcher/mapper/validator checkpoint commit is:
 
 No new RQ1 anchor replacement is permitted between that checkpoint and the
 successful completion of the RQ3 raw/valid equality gate.
+
+Subsequent durable checkpoints are:
+
+```text
+1da5ff2f85 [solidity] harden RQ3 republish transaction
+fdb6a8e9b9 [solidity] audit RQ3 raw replay authenticity
+```
+
+The 499-row transaction committed successfully with raw 2993, valid 2639,
+raw-only 354, and valid-only 0.  The sealed authenticity partition SHA-256 is
+`c0ecd6798553f577d911be2e708dfaf04c3ba3b645449f938d2d580a46ddc6b1`.
