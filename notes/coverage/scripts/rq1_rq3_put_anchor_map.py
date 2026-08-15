@@ -483,6 +483,110 @@ def test_claim(source: str, name: str) -> tuple[str, str] | None:
     return claims[0] if claims else None
 
 
+def normalized_test_body(source: str, name: str) -> str | None:
+    function = test_function(source, name)
+    if function is None:
+        return None
+    function = rename_function(function, name, "TEST")
+    function = re.sub(r"//[^\n]*", "", function)
+    function = re.sub(r"/\*.*?\*/", "", function, flags=re.DOTALL)
+    return re.sub(r"\s+", "", function)
+
+
+def closure_body_index(candidates: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in candidates:
+        path = Path(str(row.get("file") or ""))
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        normalized = normalized_test_body(source, str(row.get("test") or ""))
+        if normalized is not None:
+            result[sha256_bytes(normalized.encode())].append(row)
+    return result
+
+
+def closure_body_candidate(target: dict[str, Any], body_index: dict[str, list[dict[str, Any]]],
+                           rq3_root: Path) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    key = semantic_identity(target["identity"])
+    matches: dict[str, list[dict[str, Any]]] = {}
+    for path in Path(target["source"]).parents[2].rglob("*.t.sol"):
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for name in re.findall(r"\bfunction\s+(test_cov_[A-Za-z0-9_$]*)\s*\(", source):
+            if not any(
+                    semantic_identity((target["case"], path_function, target["unit"], enc,
+                                       target.get("piece", ""))) == key
+                    for path_function, enc in test_claims(source, name)):
+                continue
+            normalized = normalized_test_body(source, name)
+            if normalized is None:
+                continue
+            digest = sha256_bytes(normalized.encode())
+            if digest in body_index:
+                matches[digest] = body_index[digest]
+    if len(matches) != 1:
+        return [], None
+    ranked = sorted(next(iter(matches.values())),
+                    key=lambda row: candidate_score(row, target, rq3_root),
+                    reverse=True)
+    return ranked, ranked[0] if ranked else None
+
+
+def subject_root(path: Path) -> Path:
+    value = str(path.resolve())
+    for marker in ("/put/", "/concrete-replays/"):
+        if marker in value:
+            return Path(value.split(marker, 1)[0])
+    return path.parents[2]
+
+
+def retained_closure_candidate(
+        target: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    key = semantic_identity(target["identity"])
+    candidates = []
+    for path in subject_root(Path(target["source"])).rglob("*.t.sol"):
+        try:
+            source = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for name in re.findall(r"\bfunction\s+(test_cov_[A-Za-z0-9_$]*)\s*\(", source):
+            if not any(
+                    semantic_identity((target["case"], path_function, target["unit"], enc,
+                                       target.get("piece", ""))) == key
+                    for path_function, enc in test_claims(source, name)):
+                continue
+            if test_function(source, name) is None:
+                continue
+            path_text = str(path)
+            score = (int(f"concrete{target['enc']}" in path.name),
+                     int("/concrete-replays/projects/" in path_text),
+                     int("/_wd/" not in path_text
+                         and "/.generation/" not in path_text), -len(path.parts), path_text)
+            candidates.append((score, {
+                "identity": target["identity"],
+                "case": target["case"],
+                "path_function": target["identity"][1],
+                "unit": target["unit"],
+                "enc": target["enc"],
+                "piece": target.get("piece", ""),
+                "file": path_text,
+                "file_exists": True,
+                "test": name,
+                "is_concrete": True,
+                "is_put": False,
+                "closure_recovery": True,
+            }))
+    if not candidates:
+        return [], None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    ranked = [item[1] for item in candidates]
+    return ranked, ranked[0]
+
+
 def rename_function(function: str, old: str, new: str) -> str:
     return re.sub(r"(\bfunction\s+)" + re.escape(old) + r"(\s*\()",
                   r"\1" + new + r"\2",
@@ -502,6 +606,13 @@ def remove_generated_anchors(source: str) -> str:
     return source
 
 
+def remove_anchor_names(source: str, names: list[str]) -> str:
+    spans = [function_span(source, name) for name in names]
+    for start, end in sorted((span for span in spans if span is not None), reverse=True):
+        source = source[:start] + source[end:]
+    return source
+
+
 def contract_insert(source: str, target_test: str, function: str) -> str | None:
     test_span = function_span(source, target_test)
     if test_span is None:
@@ -517,9 +628,18 @@ def contract_insert(source: str, target_test: str, function: str) -> str | None:
 def stage_targets(targets: list[dict[str, Any]], candidates: list[dict[str, Any]], root: Path,
                   rq3_root: Path, staging: Path) -> list[dict[str, Any]]:
     indexes = rq3_index(candidates)
+    body_index = closure_body_index(candidates)
     rows = []
     for target in targets:
         tier, ranked, selected = choose_candidate(target, indexes, rq3_root)
+        if selected is None:
+            ranked, selected = closure_body_candidate(target, body_index, rq3_root)
+            if selected is not None:
+                tier = "exact-concrete-body"
+        if selected is None:
+            ranked, selected = retained_closure_candidate(target)
+            if selected is not None:
+                tier = "retained-closure-basis"
         output = dict(target)
         output.update({
             "mapping_tier": tier,
@@ -551,16 +671,12 @@ def stage_targets(targets: list[dict[str, Any]], candidates: list[dict[str, Any]
                           reason="one non-generic anchor already exists")
             rows.append(output)
             continue
-        if len(non_auto) > 1:
-            output.update(status="refused",
-                          reason="multiple non-generic anchors exist",
-                          existing_anchors=non_auto)
-            rows.append(output)
-            continue
         anchor = "test_ce_anchor_rq3_" + sha256_bytes(
             "\0".join(target["identity"] + [target["test"]]).encode())[:16]
         function = rename_function(function, str(selected["test"]), anchor)
         cleaned = remove_generated_anchors(original)
+        if len(non_auto) > 1:
+            cleaned = remove_anchor_names(cleaned, non_auto)
         staged = contract_insert(cleaned, target["test"], function)
         if staged is None:
             output.update(status="refused", reason="target test contract is not insertable")

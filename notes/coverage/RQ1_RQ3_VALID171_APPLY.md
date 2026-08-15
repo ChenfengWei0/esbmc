@@ -34,3 +34,20 @@ declared impossible and are not silently dropped.
 
 The generated RQ1 Results tree is outside this Git repository; this note is
 the tracked handoff and does not include unrelated worktree changes.
+
+## Superseded
+
+The tiered 171-row transaction above was subsequently found to match at file
+level instead of concrete-function claim level.  It has been mechanically
+superseded by the claim/body closure transaction on 2026-08-16:
+
+- RQ1 PUT test units: **1313**
+- exact function-claim matches: **1036**
+- exact normalized concrete-body matches present in RQ3: **201**
+- retained RQ1 closure-basis recoveries: **76**
+- missing/refused: **0/0**
+- physical audit: **1313 unique sources, exactly one anchor each**
+- rewritten sources: **872**, normalized anchor-body mismatches: **0**
+
+The obsolete same-function/same-unit/global fallbacks are no longer accepted
+by `rq1_rq3_put_anchor_map.py`.
