@@ -397,11 +397,14 @@ def _verify_preimages(plan: dict[str, Any]) -> None:
 
 
 def _restore(backups: dict[str, dict[str, str]]) -> None:
+    validated = {}
     for target, record in backups.items():
         backup = Path(record["path"])
         if not backup.is_file() or _sha256(backup) != record["sha256"]:
             raise MigrationError(f"rollback backup hash mismatch: {backup}")
-        _atomic_write(Path(target), backup.read_bytes())
+        validated[Path(target)] = backup.read_bytes()
+    for target, data in validated.items():
+        _atomic_write(target, data)
 
 
 def _reauthenticate(plan: dict[str, Any]) -> None:
@@ -434,6 +437,14 @@ def apply_plan(plan: dict[str, Any], bundle: Path) -> dict[str, Any]:
             "root": str(root),
             "plan_sha256": plan["plan_sha256"],
             "backups": backups,
+            "allowed_recovery_hashes": {
+                target:
+                sorted({
+                    record["sha256"],
+                    plan["writes"].get(target, {}).get("sha256", record["sha256"]),
+                })
+                for target, record in backups.items()
+            },
         }
         _atomic_write(bundle / "transaction.json", _json_bytes(transaction))
         try:
@@ -467,7 +478,15 @@ def apply_plan(plan: dict[str, Any], bundle: Path) -> dict[str, Any]:
                 "publishable": plan["totals"]["publishable"],
                 "rejected": plan["totals"]["rejected"],
             }
-            _atomic_write(root / "audit.json", _json_bytes(audit))
+            audit_data = _json_bytes(audit)
+            audit_path = root / "audit.json"
+            transaction["state"] = "committing"
+            transaction["allowed_recovery_hashes"][str(audit_path)] = sorted({
+                backups[str(audit_path)]["sha256"],
+                _sha256_bytes(audit_data),
+            })
+            _atomic_write(bundle / "transaction.json", _json_bytes(transaction))
+            _atomic_write(audit_path, audit_data)
             transaction.update({
                 "state": "committed",
                 "audit_sha256": _sha256(root / "audit.json"),
@@ -492,6 +511,9 @@ def rollback(bundle: Path) -> None:
     backups = transaction.get("backups") or {}
     if not backups:
         raise MigrationError("transaction has no rollback map")
+    state = transaction.get("state")
+    if state not in ("applying", "committing", "committed"):
+        raise MigrationError(f"transaction state is not rollbackable: {state}")
     root = Path(
         transaction.get("root") or json.loads(
             (bundle / "plan.json").read_text(errors="replace"))["root"])
@@ -499,10 +521,21 @@ def rollback(bundle: Path) -> None:
     lock_path.touch(exist_ok=True)
     with lock_path.open("r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        postimages = transaction.get("postimages") or {}
-        for raw_path, expected in postimages.items():
+        if state == "committed":
+            permitted = {
+                path: {digest}
+                for path, digest in (transaction.get("postimages") or {}).items()
+            }
+        else:
+            permitted = {
+                path: set(digests)
+                for path, digests in (transaction.get("allowed_recovery_hashes") or {}).items()
+            }
+        if set(permitted) != set(backups):
+            raise MigrationError("rollback target set differs from the transaction backup set")
+        for raw_path, allowed in permitted.items():
             path = Path(raw_path)
-            if not path.is_file() or _sha256(path) != expected:
+            if not path.is_file() or _sha256(path) not in allowed:
                 raise MigrationError(f"refusing rollback over a changed postimage: {path}")
         _restore(backups)
         transaction["state"] = "rolled-back-manually"

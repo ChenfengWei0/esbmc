@@ -18030,11 +18030,17 @@ def _matching_solidity_delimiter(text, start, opening, closing):
 
 def _try_target_statement_span(body_text, unit):
     """Find one complete try/catch target statement, including all catches."""
-    call = re.search(
-        r"\b[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*" + re.escape(unit) + r"\s*(?:\{[^{}]*\}\s*)?\(",
-        body_text)
-    if call is None:
+    calls = list(
+        re.finditer(
+            r"\b[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*" + re.escape(unit) +
+            r"\s*(?:\{[^{}]*\}\s*)?\(", body_text))
+    if not calls:
         return None
+    # Keep this selection identical to find_unit_call(): a reconstructed case
+    # may contain setup transactions followed by the exit-classified target
+    # transaction.  The oracle belongs to the final target call, not the first
+    # same-name call in the replay.
+    call = calls[-1]
     tries = list(re.finditer(r"\btry\b", body_text[:call.start()]))
     if not tries:
         return None

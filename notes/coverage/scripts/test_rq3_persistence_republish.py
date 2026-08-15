@@ -72,6 +72,7 @@ class RQ3PersistenceRepublishTest(unittest.TestCase):
             backup.write_text("old\n")
             transaction = {
                 "root": str(bundle),
+                "state": "committed",
                 "backups": {
                     str(target): {
                         "path": str(backup),
@@ -103,6 +104,48 @@ class RQ3PersistenceRepublishTest(unittest.TestCase):
             backup.write_text("tampered\n")
             with self.assertRaisesRegex(migrate.MigrationError, "backup hash mismatch"):
                 migrate._restore(record)
+
+    def test_restore_validates_all_backups_before_writing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / "first.json"
+            second = root / "second.json"
+            first_backup = root / "first.backup"
+            second_backup = root / "second.backup"
+            first.write_text("new-first\n")
+            second.write_text("new-second\n")
+            first_backup.write_text("old-first\n")
+            second_backup.write_text("old-second\n")
+            records = {
+                str(first): {
+                    "path": str(first_backup),
+                    "sha256": migrate._sha256(first_backup),
+                },
+                str(second): {
+                    "path": str(second_backup),
+                    "sha256": migrate._sha256(second_backup),
+                },
+            }
+            second_backup.write_text("corrupt\n")
+            with self.assertRaises(migrate.MigrationError):
+                migrate._restore(records)
+            self.assertEqual(first.read_text(), "new-first\n")
+
+    def test_manual_rollback_rejects_completed_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory)
+            transaction = {
+                "state": "rolled-back",
+                "backups": {
+                    "target": {
+                        "path": "backup",
+                        "sha256": "hash",
+                    }
+                },
+            }
+            (bundle / "transaction.json").write_text(json.dumps(transaction))
+            with self.assertRaisesRegex(migrate.MigrationError, "not rollbackable"):
+                migrate.rollback(bundle)
 
 
 if __name__ == "__main__":

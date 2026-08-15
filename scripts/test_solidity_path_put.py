@@ -23957,6 +23957,31 @@ def test_try_concrete_replay_can_assert_the_fixed_revert_exit():
     return bad
 
 
+def test_try_concrete_replay_selects_the_final_same_name_call():
+    source = """contract SynthCovTest is Test {
+  Synth c0;
+  function test_cov_0() public {
+    c0.allowance(address(0), address(0));
+    try c0.allowance(address(1), address(2)) {} catch {}
+    try c0.allowance(address(3), address(4)) {} catch {}
+  }
+}
+"""
+    rewritten, oracles = add_concrete_normal_exit_oracle(
+        source, "test_cov_0", "allowance", "revert")
+    bad = 0
+    bad += check(len(oracles) == 1 and oracles[0].get("kind") == "call-status"
+                 and oracles[0].get("expected") is False,
+                 "the exit oracle binds the final same-name try call")
+    bad += check(
+        rewritten.index("address(3), address(4)") <
+        rewritten.index("_veriput_concrete_completed = true;"),
+        "the completion marker is inserted in the selected final try success block")
+    bad += check(rewritten.count("_veriput_concrete_completed = true;") == 1,
+                 "earlier same-name calls cannot receive the selected-call marker")
+    return bad
+
+
 def test_multiline_typed_try_replay_marks_success_after_all_catches():
     source = """contract CReplay is Test {
   function test_cov_0() public {
@@ -25243,6 +25268,7 @@ def main():
               test_concrete_replay_gets_explicit_normal_exit_oracle,
               test_try_concrete_replay_marks_only_successful_target_exit,
               test_try_concrete_replay_can_assert_the_fixed_revert_exit,
+              test_try_concrete_replay_selects_the_final_same_name_call,
               test_multiline_typed_try_replay_marks_success_after_all_catches,
               test_source_synthesized_concrete_binds_fixed_scalar_return,
               test_concrete_return_binding_requires_one_known_scalar_return,
