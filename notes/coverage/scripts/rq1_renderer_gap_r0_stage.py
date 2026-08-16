@@ -178,11 +178,19 @@ def stage_one(renderer: Any, recovery: dict[str, Any], row: dict[str, Any], out:
     params = renderer.source_inherited_function_params(flat.read_text(encoding="utf-8"), contract, unit)
     if params is None:
         return {"identity": identity, "status": "refused", "reason": "function parameters unavailable"}
+    establish = detail.get("established") or []
+    layout = None
+    if establish:
+        layout, _maps, layout_error = renderer.storage_layout(copied, contract)
+        if layout is None:
+            return {"identity": identity, "status": "refused",
+                    "reason": f"storage layout unavailable: {layout_error}"}
     notes: list[str] = []
     try:
         put, stats = renderer.build_put(
             contract, unit, enc, int(detail.get("depth") or 0), path_function, region, holes, {},
-            params, emitted, test_case, None, [], notes, exit_kind="normal",
+            params, emitted, test_case, layout, [], notes, exit_kind="normal",
+            establish=establish,
             flat_source=flat.read_text(encoding="utf-8"))
     except renderer.ConcreteFallback as exc:
         return {"identity": identity, "status": "refused", "reason": exc.reason}
@@ -191,7 +199,7 @@ def stage_one(renderer: Any, recovery: dict[str, Any], row: dict[str, Any], out:
         return {"identity": identity, "status": "refused", "reason": "not an R0 parameterized PUT"}
     new_contract = f"{contract}RendererR0_{enc}"
     assembled = renderer.assemble_put_source(
-        emitted, test_case, [put, anchor], new_contract, contract=contract, unit=unit,
+        emitted, test_case, [put, anchor], new_contract, layout=layout, contract=contract, unit=unit,
         constructor_params=renderer.source_constructor_param_types(copied, contract),
         flat_source=flat.read_text(encoding="utf-8"))
     output = copied / "test" / f"{new_contract}.t.sol"
