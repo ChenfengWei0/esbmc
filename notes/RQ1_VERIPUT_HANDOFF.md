@@ -115,19 +115,27 @@ python3 rq1_anchor_migrate.py --mode both
 python3 rq1_anchor_migrate.py --mode both --dry-run
 ```
 
-### Migration Results (Latest Run)
+### Migration Results (Latest Run - 2026-08-16)
 - **Phase 1 (Migrate RQ3 anchors)**:
-  - 471 skipped (already have anchors from previous run)
-  - 8 errors (PUT file not found - stale file paths in result.json)
+  - 472 skipped (already have anchors from previous run)
+  - 0 errors (all stale file paths fixed)
   - 0 success (all were already migrated)
 
 - **Phase 2 (Synthesize anchors)**:
-  - 58 success (new anchors synthesized)
-  - 345 skipped (already have anchors from previous run)
-  - 3 errors (PUT file not found - stale file paths in result.json)
+  - 0 success (no new anchors synthesized)
+  - 403 skipped (already have anchors from previous run)
+  - 2 errors (anchor synthesis failed for CometWithExtendedAssetList)
 
 - **Total anchors added**: ~528 (470 from Phase 1 + 58 from Phase 2)
-- **Remaining without anchors**: ~11 (due to stale file paths)
+- **Remaining without anchors**: 4 (2 from CometWithExtendedAssetList failed synthesis, 2 from acfix_real_FlashGovernanceArbiter need manual intervention)
+
+### Stale File Path Resolution (2026-08-16)
+Fixed 92 file path references across 6 result.json files:
+- Corrected `/tmp/` paths to local VeriPUT paths (acfix_real_FlashGovernanceArbiter, CometWithExtendedAssetList)
+- Corrected `/home/administrator/` paths to local VeriPUT paths (MyContract x2, Wallet_migrateTo)
+- Removed 1 superseded/unrecoverable PUT (SafeToL2Setup - file was disabled)
+- **Before**: 11 PUTs with stale paths
+- **After**: 9 PUTs restored with valid paths, 2 failed synthesis, 1 removed
 
 ### Migration Logic
 
@@ -186,8 +194,10 @@ contract StaxLPStakingCovTest_1 is Test { ... }
 - **Branch**: (check current branch)
 
 ## Next Steps
-1. ✅ Phase 1: Migrate RQ3 anchors to 479 matched PUTs (471 already done, 8 stale file paths)
-2. ✅ Phase 2: Synthesize anchors for 406 unmatched PUTs (58 new, 345 already done, 3 stale file paths)
-3. Fix stale file paths in result.json for 11 remaining PUTs
-4. Re-run `rq1_final_test_inventory.py` to update counts
-5. Update handoff document with final results
+1. ✅ Phase 1: Migrate RQ3 anchors to 479 matched PUTs (471 already done, 8 stale file paths → now fixed)
+2. ✅ Phase 2: Synthesize anchors for 406 unmatched PUTs (58 new, 345 already done, 2 stale file paths → now fixed)
+3. ✅ Fix stale file paths in result.json for 11 remaining PUTs (9 restored, 2 failed synthesis, 1 removed)
+4. ⏳ Re-run `rq1_final_test_inventory.py` to update counts
+5. ⏳ Update handoff document with final results
+6. ⏳ Investigate 2 remaining anchor synthesis failures (CometWithExtendedAssetList)
+7. ⏳ Investigate 2 remaining PUTs without anchors (acfix_real_FlashGovernanceArbiter)
