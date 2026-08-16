@@ -2,22 +2,39 @@
 
 ## Current Status (2026-08-16)
 
-### Frozen Denominators
-- **Case-level**: 509 cases (124 bugfix124 + 203 real203 + 182 peer182)
-- **Test-level**: 1,808 CE obligations
+### Test Inventory (File-based count, not JSON statistics)
 
-### Obligation Classification
-- **generalized_ce_obligations**: 147 (PUT + anchor + complete evidence chain)
-- **unresolved_strength_ce_obligations**: 1,661 (PUT + anchor exist, but evidence chain incomplete)
-- **not_generalized_ce_obbligations**: 0
+**Two types of tests in `.t.sol` files:**
 
-### Unresolved Strength Breakdown (1,661)
-- **PUT files without ce_anchor metadata**: 885 PUT rows (45% of PUT rows have no anchor)
-- **PUT files with empty anchor**: 54 (anchor function exists but only has comment)
-- **PUT files with anchor but evidence chain issues**: remaining ~722
+1. **PUT tests** (Parameterized Unit Tests = foundry fuzz tests with parameters)
+2. **Concrete replay tests** (fixed-value, no-parameter foundry tests)
 
-### Key Insight: "Unresolved Strength" ≠ Missing Code
-All 1,661 unresolved strength cases have both PUT and anchor in the same `.t.sol` file. The issue is **incomplete evidence chain** (missing provenance, stale anchors, or unreadable artifacts), not missing test code.
+### Actual File Counts
+
+| Metric | Count |
+|--------|-------|
+| Total PUT tests (fuzz/parameterized) | 1,473 |
+| PUTs with exactly 1 `test_ce_anchor` | 1,334 |
+| PUTs with 0 `test_ce_anchor` | 23 |
+| PUTs with >1 `test_ce_anchor` | 116 |
+| Total concrete tests (fixed-value) | 852 |
+| Cases with PUTs | 505 |
+| Cases with concrete tests | 292 |
+
+### Anchor Coverage
+- **1,334 / 1,473 PUTs (90.6%) have exactly one test_ce_anchor**
+- **23 PUTs have no anchor** (need anchor injection)
+- **116 PUTs have multiple anchors** (need cleanup)
+
+### By Benchmark
+
+| Benchmark | PUTs | Anchored | Unanchored | Concretes |
+|-----------|------|----------|------------|-----------|
+| peer182 | 588 | — | — | 228 |
+| real203 | 554 | — | — | 372 |
+| bugfix124 | 331 | — | — | 252 |
+
+**Note**: The `generalized_ce_obligations`, `unresolved_strength_ce_obligations`, and `not_generalized_ce_obligations` fields in JSON files are **misleading** and should be ignored. They are computed from result.json metadata that doesn't match actual files. Always verify by counting `test_ce_anchor_` functions in `.t.sol` files directly.
 
 ## RQ3 Data for Anchor Migration
 
@@ -202,74 +219,42 @@ contract StaxLPStakingCovTest_1 is Test { ... }
 - **Last commit**: `results: checkpoint RQ1 VeriPUT before anchor migration`
 - **Branch**: (check current branch)
 
-## 376 Recovery Pool "Remaining" — 真实含义调查 (2026-08-16)
-
-### 关键发现：376 不在当前 CE 义务中
-
-**376 不是 1,808 个 CE 义务的子集。** 它们是 recovery pool 中的历史残留条目，其 identity 已不再匹配当前 inventory。
-
-### 数据关系
-
-```
-Frozen CE obligations (1,808):
-  ├─ Generalized: 147 (PUT + anchor + double-green)
-  ├─ Unresolved strength: 1,661 (PUT 存在，anchor 证据不完整)
-  └─ Not generalized: 0 (仅 concrete replay)
-
-Recovery pool (521, 历史快照):
-  ├─ 145 — 已匹配到当前 generalized (已恢复)
-  └─ 376 — 不再匹配当前 inventory (历史残留)
-
-数学关系: 147 + 1,661 + 0 = 1,808 ✓
-          145 + 376 = 521 (recovery pool)
-          376 不在 1,808 中
-```
-
-### 376 个案例去哪了？
-
-所有 376 个案例的 subject_dir 都存在，且包含有效的 PUT 测试。问题在于 **recovery pool 中的 identity 与当前 inventory 不匹配**。
-
-#### 不匹配原因
-
-| 原因 | 数量 | 说明 |
-|------|------|------|
-| `enc_mismatch` | 196 | recovery pool 中的 `enc` 值与当前 PUT 的 `enc` 不同 |
-| `no_matching_unit` | 178 | 当前 inventory 中没有匹配的 `unit` |
-| `enc_match_but_not_in_inventory` | 2 | enc 匹配但仍不在 inventory 中 |
-
-#### 具体例子
-
-**enc_mismatch (196 个)**: Recovery pool 记录的是旧 run 的 enc 值，当前 PUT 已更新为不同的 enc。
-```
-Recovery pool: acfix_016_CVE_2018_10705/setOwner#enc=2
-Current:       acfix_016_CVE_2018_10705/setOwner#enc=6  ← enc 不同，identity 不匹配
-
-Recovery pool: acfix_022_CVE_2018_19833/burn#enc=15
-Current:       acfix_022_CVE_2018_19833/burn#enc=6  ← enc 不同，identity 不匹配
-```
-
-**no_matching_unit (178 个)**: Recovery pool 记录的 unit 在当前 PUT 中不存在。
-```
-Recovery pool: acfix_021_CVE_2018_19832/allowance#enc=2
-Current:       acfix_021_CVE_2018_19832 的 PUT 中 unit 已改变或 case 被重新处理
-```
+## Recovery Pool 521 — 历史残留说明 (2026-08-16)
 
 ### Recovery Pool 的本质
 
-Recovery pool 是一个**历史快照**，记录了某个时间点被识别为 "valid-no-PUT" 的 521 个案例。它不是当前 inventory 的实时视图。
+`rq1_recovery_pool_521.frozen.json` 是一个**历史快照**，记录了某个时间点被识别为 "valid-no-PUT" 的 521 个案例。它**不是**当前 inventory 的实时视图。
 
-- 145 个案例已成功恢复（PUT + anchor + double-green），已匹配到 generalized
-- 376 个案例的 identity 已过期（enc 值变了，或 case 被重新处理），不再匹配当前 inventory
+### 当前真实状态（按文件计数）
 
-### 与 ce_anchor 的关系
+| 测试类型 | 数量 | 说明 |
+|---------|------|------|
+| PUT tests (fuzz/parameterized) | 1,473 | 参数化模糊测试 |
+| 其中带恰好 1 个 test_ce_anchor | 1,334 | 符合要求 |
+| 其中无 anchor | 23 | 需要注入 anchor |
+| 其中多个 anchor | 116 | 需要清理 |
+| Concrete replay tests (固定值，无参数) | 852 | 非 fuzz 测试 |
 
-**376 与 ce_anchor 无关。** 这些案例不是 "缺少 anchor" 的问题，而是 recovery pool 条目已过期的问题。它们可能已经有 PUT 和 anchor，只是 identity 不匹配。
+### Recovery Pool 与当前的关系
+
+- 521 个历史条目中，**145 个已匹配到当前 PUT**（这些 PUT 已有 anchor）
+- **376 个条目已过期**（enc 值变了，或 case 被重新处理，identity 不再匹配）
+
+### 376 个过期条目的原因
+
+| 原因 | 数量 | 说明 |
+|------|------|------|
+| `enc_mismatch` | 196 | recovery pool 记录旧 enc，当前 PUT 已更新 |
+| `no_matching_unit` | 178 | 当前无匹配 unit |
+| `enc_match_but_not_in_inventory` | 2 | enc 匹配但找不到 |
 
 ### 建议
 
-1. **376 不需要修复** — 它们是历史残留，不是当前问题
-2. **关注 1,661 unresolved_strength** — 这些是当前真正缺少完整 anchor 证据的案例
-3. **recovery pool 可以视为已完成** — 521 中有 145 已恢复，376 已过期（不再是有效跟踪对象）
+1. **Recovery pool 是历史快照，不是当前问题** — 376 个过期条目不需要修复
+2. **当前关注点**：
+   - 23 个 PUT 缺少 anchor → 需要注入
+   - 116 个 PUT 有多个 anchor → 需要清理
+3. **不要使用 JSON 中的 generalized/unresolved_strength 字段** — 这些字段与实际情况不符，应通过数 `.t.sol` 文件中的 `test_ce_anchor_` 函数来验证
 
 ### Key Scripts for Investigation
 - `/home/samson/workspace/esbmc/notes/coverage/scripts/rq1_anchor_migrate.py` — Anchor migration
