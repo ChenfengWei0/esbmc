@@ -20,27 +20,41 @@
 |--------|-------|-------------|
 | raw | 1,808 | 所有 CE obligations (frozen ledger) |
 | valid | 1,808 | 与 raw 相同 |
-| Valid-but-not-PUT (concrete) | 787 | 定值测试，无参数 foundry 测试 |
-| valid-PUT (fuzz) | 1,021 | 参数化模糊测试 |
+| Valid-but-not-PUT (concrete) | 831 | 定值测试，无参数 foundry 测试 |
+| valid-PUT (fuzz) | 977 | 参数化模糊测试 |
 | PUT with exactly 1 `test_ce_anchor` | 1,334 | ✅ 符合要求（含重复/多 enc） |
 | PUT with 0 `test_ce_anchor` | 23 | ❌ 需要注入 anchor |
 | PUT with >1 `test_ce_anchor` | 116 | ❌ 需要清理 |
 
 **关系**: raw == valid → 1,808 == 1,808 ✓
 
+### 关键概念
+
+**CE obligation = Counterexample obligation**
+- 每个 CE obligation 是唯一的 `(case, path_function, unit, enc, piece)` 组合
+- 代表一个被 instrumented 的路径 + counterexample
+- 1,808 是冻结的 CE 义务清单，来自 `rq1_ce_obligations.frozen.json`
+
+**test rows = result.json 中的 detailed test rows**
+- 每个 test row 是唯一的 `(file, test, kind, unit)` 组合
+- 代表一个具体的测试文件 + 测试函数
+- 2,325 是通过 `_strict_valid_tests` 返回的数量
+
+**一个 CE obligation 可能对应多个 test rows**
+- 例如：`bugfix124/acfix_002_Templedao` 有 5 个 CE obligations 和 5 个 test rows
+
 ### 统计口径说明
 
-**1,808 CE obligations** 来自 `rq1_ce_obligations.frozen.json`，是冻结的 CE 义务清单。每个 CE 义务是唯一的 `(case, path_function, unit, enc, piece)` 组合。
+**831 concrete** 是真正的 concrete replay test rows（deduplicated by file+test+kind+unit）。注意：result.json 中 `kind: 'concrete'` 的 test rows 有 852 个，但其中 16 个实际上是 PUT 测试文件（文件名包含 `test_put_`，内容包含 `test_put_` 测试）。所以真正的 concrete 测试是 831 个。
 
-**787 concrete** 是当前有效的 concrete replay test rows（deduplicated by file+test+kind+unit）。
+**977 PUT** = 1,808 - 831，是 PUT 形态的 CE obligations。
 
-**1,021 PUT** = 1,808 - 787，是 PUT 形态的 CE obligations。
-
-**1,334/23/116** 是通过数 `.t.sol` 文件中的 `test_ce_anchor_` 函数得到的。这些数字大于 1,021 是因为一个 CE obligation 可能对应多个 test rows（重试、不同路径）。
+**1,334/23/116** 是通过数 `.t.sol` 文件中的 `test_ce_anchor_` 函数得到的。这些数字大于 977 是因为一个 CE obligation 可能对应多个 test rows。
 
 ### result.json 可信度
 
 - **summary 字段 (put_valid, concrete_valid)**: ❌ 不可信。在 anchor migration 时被修改，summary 字段没有更新。
+- **kind 字段**: ❌ 不完全可信。`kind: 'concrete'` 的 test rows 中，16 个实际上是 PUT 测试文件。
 - **detailed test rows (strict_detailed_test_rows)**: ✅ 可用。通过 `_strict_valid_tests` 读取。
 - **SafeToL2Setup**: result.json 显示 `put_valid: 1`，但 `_strict_valid_tests` 返回 0 行。PUT 文件实际存在。这是 result.json 数据不一致问题。
 
