@@ -97,6 +97,19 @@ def normalise_r0(source: str, unit: str) -> str | None:
     )
     result, count = pattern.subn(
         "\n    // [asserted] path exits normally; a revert fails the test\n    \\2;", source)
+    if count == 1:
+        return result
+    # Older emitters sometimes made the normal call directly but then wrapped
+    # its already-asserted completion in a redundant boolean marker.  Remove
+    # only that exact three-statement shape; the bare call remains Foundry's
+    # normal-exit R0 oracle.
+    direct = re.compile(
+        r"\s*bool (_veriput_concrete_completed\w*) = false;\n"
+        r"\s*([^\n;]*\." + re.escape(unit) + r"\([^;\n]*\));\n"
+        r"\s*\1 = true;\n"
+        r"\s*assertTrue\(\1, \"fixed witness call must complete\"\);"
+    )
+    result, count = direct.subn("\n    \\2", source)
     return result if count == 1 else None
 
 
