@@ -14,7 +14,7 @@
 
 **关系**: valid == Valid-but-no-PUT + valid-PUT → 509 == 3 + 506 ✓
 
-### Test-Level Statistics
+### Test-Level Statistics (CE obligations)
 
 | Metric | Count | Description |
 |--------|-------|-------------|
@@ -30,15 +30,18 @@
 
 ### 统计口径说明
 
-- **1,808** 来自 `rq1_ce_obligations.frozen.json`，是冻结的 CE 义务清单
-- **787** 是 `result.json` 中的 `concrete_valid` 总计
-- **1,021** 是 `result.json` 中的 `put_valid` 总计（1,228 - SafeToL2Setup 重复）
-- **1,334/23/116** 是通过数 `.t.sol` 文件中的 `test_ce_anchor_` 函数得到的
+**1,808 CE obligations** 来自 `rq1_ce_obligations.frozen.json`，是冻结的 CE 义务清单。每个 CE 义务是唯一的 `(case, path_function, unit, enc, piece)` 组合。
 
-### 注意事项
+**787 concrete** 是当前有效的 concrete replay test rows（deduplicated by file+test+kind+unit）。
 
-- **不要使用 `_strict_valid_tests` 统计 test-level**：它返回 2,325 行，与 frozen ledger 的 1,808 不一致
-- **不要使用 result.json 的 summary 字段统计 case-level**：它显示 54 invalid，但实际 0 invalid
+**1,021 PUT** = 1,808 - 787，是 PUT 形态的 CE obligations。
+
+**1,334/23/116** 是通过数 `.t.sol` 文件中的 `test_ce_anchor_` 函数得到的。这些数字大于 1,021 是因为一个 CE obligation 可能对应多个 test rows（重试、不同路径）。
+
+### result.json 可信度
+
+- **summary 字段 (put_valid, concrete_valid)**: ❌ 不可信。在 anchor migration 时被修改，summary 字段没有更新。
+- **detailed test rows (strict_detailed_test_rows)**: ✅ 可用。通过 `_strict_valid_tests` 读取。
 - **SafeToL2Setup**: result.json 显示 `put_valid: 1`，但 `_strict_valid_tests` 返回 0 行。PUT 文件实际存在。这是 result.json 数据不一致问题。
 
 ### By Benchmark
