@@ -122,12 +122,12 @@ python3 rq1_anchor_migrate.py --mode both --dry-run
   - 0 success (all were already migrated)
 
 - **Phase 2 (Synthesize anchors)**:
-  - 0 success (no new anchors synthesized)
+  - 2 success (CometWithExtendedAssetList PUTs - see below)
   - 403 skipped (already have anchors from previous run)
-  - 2 errors (anchor synthesis failed for CometWithExtendedAssetList)
+  - 0 errors (all synthesis failures resolved)
 
-- **Total anchors added**: ~528 (470 from Phase 1 + 58 from Phase 2)
-- **Remaining without anchors**: 4 (2 from CometWithExtendedAssetList failed synthesis, 2 from acfix_real_FlashGovernanceArbiter need manual intervention)
+- **Total anchors added**: ~530 (470 from Phase 1 + 58 from Phase 2 + 2 from CometWithExtendedAssetList fix)
+- **Remaining without anchors**: 2 (acfix_real_FlashGovernanceArbiter - need manual intervention)
 
 ### Stale File Path Resolution (2026-08-16)
 Fixed 92 file path references across 6 result.json files:
@@ -135,7 +135,16 @@ Fixed 92 file path references across 6 result.json files:
 - Corrected `/home/administrator/` paths to local VeriPUT paths (MyContract x2, Wallet_migrateTo)
 - Removed 1 superseded/unrecoverable PUT (SafeToL2Setup - file was disabled)
 - **Before**: 11 PUTs with stale paths
-- **After**: 9 PUTs restored with valid paths, 2 failed synthesis, 1 removed
+- **After**: 10 PUTs restored with valid paths and anchors, 1 removed
+
+### CometWithExtendedAssetList Anchor Synthesis Fix
+The 2 CometWithExtendedAssetList PUTs initially failed anchor synthesis due to a **wrong file path** in result.json:
+- The `file` field pointed to `*_concrete2_fb.t.sol` (concrete test) instead of `*_put3.t.sol` (PUT test)
+- Fixed by updating result.json to point to the correct PUT files
+- Anchors synthesized:
+  - `getAssetInfo_path3` → `test_ce_anchor_f1578b2bf6ba`
+  - `getUtilization_path2` → `test_ce_anchor_c24b8bf1a465`
+- Also added `ce_anchor` metadata to `raw_artifacts` and `valid_artifacts` sources in result.json to prevent deduplication from overwriting anchored entries
 
 ### Migration Logic
 
@@ -195,9 +204,7 @@ contract StaxLPStakingCovTest_1 is Test { ... }
 
 ## Next Steps
 1. ✅ Phase 1: Migrate RQ3 anchors to 479 matched PUTs (471 already done, 8 stale file paths → now fixed)
-2. ✅ Phase 2: Synthesize anchors for 406 unmatched PUTs (58 new, 345 already done, 2 stale file paths → now fixed)
-3. ✅ Fix stale file paths in result.json for 11 remaining PUTs (9 restored, 2 failed synthesis, 1 removed)
+2. ✅ Phase 2: Synthesize anchors for 406 unmatched PUTs (60 new, 345 already done, 0 stale file paths)
+3. ✅ Fix stale file paths in result.json for 11 remaining PUTs (10 restored with anchors, 1 removed)
 4. ⏳ Re-run `rq1_final_test_inventory.py` to update counts
-5. ⏳ Update handoff document with final results
-6. ⏳ Investigate 2 remaining anchor synthesis failures (CometWithExtendedAssetList)
-7. ⏳ Investigate 2 remaining PUTs without anchors (acfix_real_FlashGovernanceArbiter)
+5. ⏳ Investigate 2 remaining PUTs without anchors (acfix_real_FlashGovernanceArbiter)
