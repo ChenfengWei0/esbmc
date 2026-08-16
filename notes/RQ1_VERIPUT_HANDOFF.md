@@ -2,39 +2,42 @@
 
 ## Current Status (2026-08-16)
 
-### Test Inventory (File-based count, not JSON statistics)
+### Case-Level Statistics (509 target contracts)
 
-**Two types of tests in `.t.sol` files:**
+| Metric | Count | Description |
+|--------|-------|-------------|
+| raw | 509 | 原生生成的 case 总数 |
+| valid | 508 | 测试在源程序上有效（编译通过，断言不违例） |
+| invalid | 1 | 测试无效（编译失败/断言违例/重复/非 509 target） |
+| Valid-but-no-PUT | 3 | valid 测试是定值测试（concrete replay），未被泛化成 fuzz |
+| valid-PUT | 505 | 至少生成了一个 PUT 形态测试 |
 
-1. **PUT tests** (Parameterized Unit Tests = foundry fuzz tests with parameters)
-2. **Concrete replay tests** (fixed-value, no-parameter foundry tests)
+**关系**: valid == Valid-but-no-PUT + valid-PUT → 508 == 3 + 505 ✓
 
-### Actual File Counts
+### Test-Level Statistics (所有测试函数)
 
-| Metric | Count |
-|--------|-------|
-| Total PUT tests (fuzz/parameterized) | 1,473 |
-| PUTs with exactly 1 `test_ce_anchor` | 1,334 |
-| PUTs with 0 `test_ce_anchor` | 23 |
-| PUTs with >1 `test_ce_anchor` | 116 |
-| Total concrete tests (fixed-value) | 852 |
-| Cases with PUTs | 505 |
-| Cases with concrete tests | 292 |
+| Metric | Count | Description |
+|--------|-------|-------------|
+| raw | 2,325 | 所有生成的测试函数 |
+| valid | 2,325 | 能在源程序上编译通过且断言不违例 |
+| Valid-but-not-PUT (concrete) | 852 | 定值测试，无参数 foundry 测试 |
+| valid-PUT (fuzz) | 1,473 | 参数化模糊测试 |
+| PUT with exactly 1 `test_ce_anchor` | 1,334 | ✅ 符合要求 |
+| PUT with 0 `test_ce_anchor` | 23 | ❌ 需要注入 anchor |
+| PUT with >1 `test_ce_anchor` | 116 | ❌ 需要清理 |
 
-### Anchor Coverage
-- **1,334 / 1,473 PUTs (90.6%) have exactly one test_ce_anchor**
-- **23 PUTs have no anchor** (need anchor injection)
-- **116 PUTs have multiple anchors** (need cleanup)
+**关系**: raw == valid → 2,325 == 2,325 ✓
 
 ### By Benchmark
 
-| Benchmark | PUTs | Anchored | Unanchored | Concretes |
-|-----------|------|----------|------------|-----------|
-| peer182 | 588 | — | — | 228 |
-| real203 | 554 | — | — | 372 |
-| bugfix124 | 331 | — | — | 252 |
+| Benchmark | Cases | PUTs | Concrete | PUT anchored | PUT unanchored | PUT multi-anchor |
+|-----------|-------|------|----------|--------------|----------------|------------------|
+| real203 | 203 | 554 | 372 | 469 | 13 | 72 |
+| peer182 | 182 | 588 | 228 | 563 | 5 | 20 |
+| bugfix124 | 124 | 331 | 252 | 302 | 5 | 24 |
+| **Total** | **509** | **1,473** | **852** | **1,334** | **23** | **116** |
 
-**Note**: The `generalized_ce_obligations`, `unresolved_strength_ce_obligations`, and `not_generalized_ce_obligations` fields in JSON files are **misleading** and should be ignored. They are computed from result.json metadata that doesn't match actual files. Always verify by counting `test_ce_anchor_` functions in `.t.sol` files directly.
+**Note**: The `generalized_ce_obligations`, `unresolved_strength_ce_obligations`, and `not_generalized_ce_obligations` fields in JSON files are **misleading** and should be ignored. Always verify by counting `test_ce_anchor_` functions in `.t.sol` files directly.
 
 ## RQ3 Data for Anchor Migration
 
@@ -111,6 +114,45 @@ RQ1: bugfix124/acfix_002_Templedao/test_put_StaxLPStaking_setMigrator_path7
 RQ1: bugfix124/acfix_015_CVE_2018_10666/test_put_Owned_setOwner_path6
   -> RQ3: acfix_015_CVE_2018_10666/test_cov_2 (unit: setOwner, enc: 2)
 ```
+
+## Anchor Generation Methods
+
+### 方法 1: RQ3 Mapping（从 RQ3 concrete replay 提取）
+
+**适用场景**: PUT 对应的 case 在 RQ3 中有 concrete replay 测试
+
+**步骤**:
+1. 从 RQ3 的 `results.jsonl` 中找到对应 case 的 concrete test
+2. 提取该 concrete test 的函数体
+3. 适配到 PUT 上下文：
+   - 替换 `address(this)` → `address(uint160(1))`
+   - 移除 `vm.deal` 调用（PUT 不需要）
+4. 注入到 PUT 文件，命名为 `test_ce_anchor_rq3_<hash>()`
+
+**匹配规则**: 按 `(benchmark, case)` 匹配，RQ3 和 RQ1 可能测试不同的 unit/enc，但 anchor 验证的是 subject 的行为
+
+### 方法 2: Synthesis（从 PUT 本身合成）
+
+**适用场景**: PUT 对应的 case 在 RQ3 中没有 concrete replay 测试
+
+**步骤**:
+1. 读取 PUT 测试文件
+2. 提取 PUT 测试函数体中的 `c0.functionName(args)`
+3. 用固定值替换参数：
+   - address 参数 → `address(uint160(0))`
+   - uint 参数 → `uint256(0)`
+4. 生成简单 anchor 函数，命名为 `test_ce_anchor_<hash>()`
+
+**注意**: Synthesis 生成的 anchor 比 RQ3 mapping 弱，因为它没有真实的 concrete 执行路径，只是从 PUT 中提取了函数调用并用了固定值
+
+### 两种方法对比
+
+| 特性 | RQ3 Mapping | Synthesis |
+|------|-------------|-----------|
+| 来源 | RQ3 concrete replay 测试 | PUT 测试本身 |
+| 强度 | 强（真实执行路径） | 弱（固定值） |
+| 命名前缀 | `test_ce_anchor_rq3_` | `test_ce_anchor_` |
+| 覆盖率 | ~54% (479/885) | ~46% (406/885) |
 
 ## Anchor Migration Results
 
