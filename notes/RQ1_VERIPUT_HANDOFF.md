@@ -202,9 +202,156 @@ contract StaxLPStakingCovTest_1 is Test { ... }
 - **Last commit**: `results: checkpoint RQ1 VeriPUT before anchor migration`
 - **Branch**: (check current branch)
 
-## Next Steps
-1. ✅ Phase 1: Migrate RQ3 anchors to 479 matched PUTs (471 already done, 8 stale file paths → now fixed)
-2. ✅ Phase 2: Synthesize anchors for 406 unmatched PUTs (60 new, 345 already done, 0 stale file paths)
-3. ✅ Fix stale file paths in result.json for 11 remaining PUTs (10 restored with anchors, 1 removed)
-4. ⏳ Re-run `rq1_final_test_inventory.py` to update counts
-5. ⏳ Investigate 2 remaining PUTs without anchors (acfix_real_FlashGovernanceArbiter)
+## 376 Valid-no-PUT Investigation (2026-08-16)
+
+### Current State
+- **Frozen CE obligations**: 1,808 total
+  - Generalized (PUT + anchor + double-green): 147
+  - Unresolved strength (PUT exists, anchor evidence incomplete): 1,661
+  - Not generalized (concrete replay only): 0
+- **Recovery pool**: 521 initial valid-no-PUT cases
+  - Recovered (converted to generalized): 145
+  - **Remaining**: 376
+
+### Root Cause Classification (376 remaining)
+
+The 376 remaining cases fall into 8 categories based on the `category` field in `rq1_recovery_pool_521.frozen.json`. Each category represents a different failure mode in the PUT generation/anchor injection pipeline.
+
+#### 1. no-generalizable-coordinate (232 obligations, 112 unique cases)
+**Description**: ESBMC certified the region but couldn't find a fuzzable coordinate to generalize over. The PUT was generated but anchor injection failed.
+
+**Failure modes**:
+- `missing-ce-anchor`: PUT exists in result.json but has no `ce_anchor` metadata
+- `missing-anchor-body`: `ce_anchor` metadata exists but the actual anchor function is missing from the PUT `.t.sol` file
+
+**Examples**:
+- `acfix_021_CVE_2018_19832`: `allowance#2`, `balanceOf#2` — missing-ce-anchor
+- `SafeProxyFactory`: `proxyCreationCode#3` — has ce_anchor metadata but missing-anchor-body
+- `SablierComptroller`: `supportsInterface#3`, `supportsInterface#6` — missing-ce-anchor
+
+**Root cause**: PUT files were generated but anchor injection either failed silently or the anchor body was lost during file operations.
+
+#### 2. not-certified-fallback (184 obligations, 66 unique cases)
+**Description**: ESBMC certification fell back to a non-optimal path. PUTs exist but anchor evidence is incomplete.
+
+**Failure modes**:
+- `missing-ce-anchor`: No ce_anchor metadata
+- `missing-anchor-body`: ce_anchor metadata exists but anchor function missing from file
+
+**Examples**:
+- `OpenAddressLottery`: `kill#6`, `luckyNumberOfAddress#29` — missing-ce-anchor
+- `Ballot`: `delegate#63`, `giveRightToVote#31` — has ce_anchor but missing-anchor-body
+- `AavePoolReward`: `getReward#3` — missing-ce-anchor
+
+**Root cause**: Similar to category 1 — PUT generation succeeded but anchor injection failed.
+
+#### 3. certified-region-renderer-gap (38 obligations, 27 unique cases)
+**Description**: ESBMC certified the region successfully, but the PUT renderer didn't include the anchor body.
+
+**Failure mode**:
+- `missing-anchor-body`: ce_anchor metadata exists but anchor function missing from PUT file
+
+**Examples**:
+- `FlashGovernanceArbiter`: `enforceTolerance#13`, `enforceToleranceInt#7` — missing-anchor-body
+- `TokenPairRegistry`: `pendingOwner#3` — missing-anchor-body
+- `PausableZoneController`: `acceptOwnership#7` — missing-ce-anchor
+
+**Root cause**: PUT renderer gap — metadata says anchor should exist, but the actual Solidity function wasn't written to the file.
+
+#### 4. metadata-unknown (29 obligations, 14 unique cases)
+**Description**: Mixed category — some PUTs have ce_anchor metadata, some don't. The common factor is missing anchor body.
+
+**Failure modes**:
+- `missing-anchor-body`: ce_anchor metadata exists but anchor function missing from file (majority)
+- `missing-ce-anchor`: No ce_anchor metadata (minority)
+
+**Examples**:
+- `many_fun`: `f1#6`, `f1#7` — missing-anchor-body
+- `exampl`: `A#6`, `A_set#3` — missing-anchor-body
+- `Greeter`: `changeHello#6` — missing-anchor-body, `changeHello#14` — missing-ce-anchor
+
+**Root cause**: Same as category 3 — anchor metadata was injected but the actual function body wasn't written.
+
+#### 5. certification-timeout (7 obligations, 6 unique cases)
+**Description**: ESBMC certification timed out before completing. PUTs were generated but anchors were never injected.
+
+**Failure mode**:
+- `missing-ce-anchor`: No ce_anchor metadata (certification didn't complete)
+
+**Examples**:
+- `ERC-3643__Token`: `increaseAllowance#15` — missing-ce-anchor
+- `array-utils`: `indexOf#7`, `indexOfFromEnd#7` — missing-ce-anchor
+
+**Root cause**: Certification timeout — PUT generation started but didn't complete anchor injection.
+
+#### 6. manual-source-grounded (4 obligations, 4 unique cases)
+**Description**: Cases where the source grounding was done manually or through a non-standard path.
+
+**Failure modes**:
+- `invalid-anchor-provenance`: ce_anchor metadata exists but provenance checks fail
+- `missing-ce-anchor`: No ce_anchor metadata
+
+**Examples**:
+- `FIFSRegistrar`: `register_source_put` — invalid-anchor-provenance
+- `VaultAdmin`: `getMinimumPoolTokens#3` — missing-ce-anchor
+- `PublicResolver`: `supportsInterface#2` — missing-ce-anchor
+
+**Root cause**: Non-standard anchor provenance — metadata exists but doesn't pass validation.
+
+#### 7. unmatched-no-current-manifest (3 obligations, 3 unique cases)
+**Description**: Cases that were in the original recovery pool but no longer have a current manifest entry.
+
+**Failure modes**:
+- `invalid-anchor-provenance`: ce_anchor metadata exists but provenance checks fail
+- `missing-ce-anchor`: No ce_anchor metadata
+
+**Examples**:
+- `ReferenceConsideration`: `name#1` — invalid-anchor-provenance
+- `TimelockAuthorizerMigrator`: `executeDelays#1p1`, `finalizeMigration#1p1` — invalid-anchor-provenance
+- `SablierBob`: `getAdapter#1`, `getDefaultAdapterFor#1` — missing-ce-anchor
+
+**Root cause**: Manifest drift — cases were in the recovery pool but manifest entries were removed or changed.
+
+#### 8. constructor-fallback (1 obligation, 1 case)
+**Description**: Constructor-related case that fell back to a non-standard path.
+
+**Failure mode**: Not yet analyzed
+
+**Example**:
+- `peer_soltg__constructor_state_variable_init_diamond`: `__deploy__#0`
+
+### Summary of Failure Modes
+
+| Failure Mode | Count | Description |
+|-------------|-------|-------------|
+| `missing-ce-anchor` | ~200 | PUT exists but no ce_anchor metadata in result.json |
+| `missing-anchor-body` | ~150 | ce_anchor metadata exists but anchor function missing from .t.sol file |
+| `invalid-anchor-provenance` | ~7 | ce_anchor metadata exists but provenance validation fails |
+| `subject-dir-missing` | ~20 | Subject directory not found (path resolution issue) |
+| `no-matching-put` | ~10 | No PUT found matching the recovery pool identity |
+
+### Recommended Next Steps
+
+1. **Priority 1: Fix missing-anchor-body cases (~150)**
+   - These have ce_anchor metadata but the actual anchor function is missing from the PUT file
+   - Likely caused by anchor injection script writing to wrong location or file overwrite
+   - Fix: Re-run anchor injection for these cases
+
+2. **Priority 2: Fix missing-ce-anchor cases (~200)**
+   - These have PUT files but no ce_anchor metadata
+   - Fix: Run anchor migration script (rq1_anchor_migrate.py) on these cases
+
+3. **Priority 3: Fix invalid-anchor-provenance cases (~7)**
+   - These have ce_anchor metadata but provenance validation fails
+   - Fix: Investigate specific provenance failures and repair
+
+4. **Priority 4: Investigate subject-dir-missing and no-matching-put cases (~30)**
+   - Path resolution issues or manifest drift
+   - Fix: Update result.json paths or regenerate missing cases
+
+### Key Scripts for Investigation
+- `/home/samson/workspace/esbmc/notes/coverage/scripts/rq1_anchor_migrate.py` — Anchor migration
+- `/home/samson/workspace/esbmc/notes/coverage/scripts/rq1_final_test_inventory.py` — Obligation classification
+- `/home/samson/workspace/esbmc/notes/coverage/scripts/rq1_concrete_replay_migrate.py` — Data access utilities
+- `/home/samson/workspace/esbmc/notes/coverage/rq1_recovery_pool_521.frozen.json` — Frozen recovery pool
+- `/home/samson/workspace/esbmc/notes/coverage/rq1_ce_obligations.frozen.json` — Frozen CE obligations
