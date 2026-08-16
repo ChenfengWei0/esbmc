@@ -45,6 +45,28 @@ one row, but only `1,424` have a parseable physical parameterized test body
 (the `PUT_BACKED` bucket).  The remaining `15` prefixed identities lack a
 resolvable test function (13 in `CONCRETE_ONLY`, 2 in `UNRESOLVED_ROWS_NO_PHYSICAL`).
 
+### Anchor Naming Convention (Updated 2026-08-17)
+
+All anchor functions have been renamed from `test_ce_anchor_*` and
+`test_structural_anchor_*` to `test_concrete_replay_{path_suffix}` where the
+suffix matches the corresponding PUT test's path suffix.  For example:
+
+| PUT Test | Old Anchor Name | New Anchor Name |
+|----------|-----------------|-----------------|
+| `test_put_XXX_path6` | `test_ce_anchor_rq3_9a55046e1616` | `test_concrete_replay_path6` |
+| `test_put_YYY_path7` | `test_structural_anchor_abc123` | `test_concrete_replay_path7` |
+
+This applies to all 1,446 unique PUT files (1,424 PUT_BACKED identities + 22
+duplicate files sharing identities).  The 25 files that previously lacked
+`test_ce_anchor_*` now have synthesized `test_concrete_replay_*` functions.
+
+Reproduce the reconciliation with:
+```bash
+python3 notes/coverage/scripts/rq1_frozen_obligation_reconcile.py \
+  --results-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT \
+  --json-out /tmp/rq1-frozen-obligation-reconcile.json
+```
+
 Reproduce this snapshot with the authoritative read-only audit:
 
 ```bash
@@ -52,6 +74,45 @@ python3 notes/coverage/scripts/rq1_frozen_obligation_reconcile.py \
   --results-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT \
   --json-out /tmp/rq1-frozen-obligation-reconcile.json
 ```
+
+### Why 377 Physical Concrete Replays Are Not PUTs
+
+This is a **disjoint obligation-level classification** of the `377`
+`CONCRETE_ONLY` identities above.  It is calculated from the retained
+strict-valid rows and the actual zero-argument test functions, not from an
+aggregate counter.  The cause names describe the recorded pipeline path that
+produced a concrete replay; they do **not** prove that the target has no
+semantic PUT.
+
+| Recorded cause | Obligations | Meaning and first repair direction |
+|---|---:|---|
+| `NO_GENERALIZABLE_COORDINATE` | 153 | Stage 2 reached a concrete witness but reported no usable coordinate. Improve coordinate discovery, dynamic/aggregate rendering, or parameter selection. |
+| `WITNESS_NOT_CERTIFIED` | 144 | A witness completed but region certification did not. Repair certification/scoping or solver/model issue before re-running Stage 4. |
+| `NO_RENDERABLE_FREE_COORDINATE_LEGACY` | 40 | Older rows explicitly say `NOT PARAMETERIZED`: all rendered coordinates are singleton/pinned or none are rendered. Repair coordinate rendering/omission rules. |
+| `CERTIFIED_REGION_CONCRETE_FALLBACK` | 15 | A certified region existed, but the retained Stage-4 route deliberately emitted only concrete fallback. Inspect materialization/PUT gates; do not rerun Stage 2 first. |
+| `CERTIFIED_REGION_NOT_PARAMETERIZED` | 11 | Certified-region provenance remains, but no parameterized body was retained. Inspect Stage-4 emission and Forge materialization. |
+| `STAGE2_TIMEOUT_WITNESS` | 6 | The run timed out after a witness. Reduce focus/model complexity before allocating more time. |
+| `LEGACY_CERTIFIED_REGION_NOT_PARAMETERIZED` | 3 | Legacy spelling of certified-region provenance with only a concrete body. Treat as Stage-4 materialization work. |
+| `SOURCE_GROUNDED_CONCRETE_REPLAY` | 3 | A source-grounded concrete recipe was used rather than a verifier-backed parameterized obligation. Add a sound explicit PUT recipe if semantics permit it. |
+| `SOURCE_GROUNDED_CALLABLE_RECOVERY` | 1 | Callable recovery produced only a concrete test. Needs a unit-specific PUT/oracle recipe. |
+| `CONSTRUCTOR_REVERT_ONLY` | 1 | Only a constructor-revert replay was retained. Do not count it as a PUT; decide whether the target has a deployable scenario. |
+| **Total** | **377** | |
+
+The audit JSON contains the identity and all contributing strict rows under
+`concrete_only_causes`.  Recompute the table instead of editing it by hand:
+
+```bash
+python3 notes/coverage/scripts/rq1_frozen_obligation_reconcile.py \
+  --results-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT \
+  --json-out /tmp/rq1-frozen-obligation-reconcile.json
+jq '.concrete_only_cause_counts' /tmp/rq1-frozen-obligation-reconcile.json
+```
+
+Priority for conversion work: first inspect the 26 certified-region entries
+(`15 + 11`), because Stage 2 need not be repeated; then resolve the 144
+uncertified witnesses and 153 no-coordinate cases by shared pipeline cause.
+The 40 legacy no-renderable-coordinate entries should be handled with the
+same coordinate/rendering work, not by counting them as failed Forge tests.
 
 ## RQ3 Data for Anchor Migration
 
