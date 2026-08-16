@@ -33,6 +33,7 @@ from put_all import (  # noqa: E402
     _strict_extcall_source_projection_error, certified_ce_sha256, forge_json_status_map)
 
 DEFAULT_LEDGER = HERE.parent / "rq1_ce_obligations.frozen.json"
+DEFAULT_RECOVERY_POOL = HERE.parent / "rq1_recovery_pool_521.frozen.json"
 
 
 def _obligation_id(case: str, key: tuple) -> tuple[str, str, str, str, str]:
@@ -1251,23 +1252,44 @@ def validate_ledger(path: Path, obligation_ids: set[tuple]) -> None:
 
 
 def reconcile_ledger(path: Path, generalized: set[tuple], unresolved_strength: set[tuple],
-                     not_generalized: set[tuple]) -> None:
+                     not_generalized: set[tuple]) -> dict:
     """Keep frozen identities whose current physical evidence became unreadable."""
     doc = json.loads(path.read_text())
     frozen = {tuple(item) for item in doc.get("obligations") or []}
     observed = generalized | unresolved_strength | not_generalized
     added = observed - frozen
-    if added:
-        raise RuntimeError(f"frozen CE ledger drift: added={len(added)}, missing=0; "
-                           "use --freeze-ledger only after explicitly approving a new population")
-    unresolved_strength.update(frozen - observed)
+    missing = frozen - observed
+    generalized.intersection_update(frozen)
+    unresolved_strength.intersection_update(frozen)
+    not_generalized.intersection_update(frozen)
+    unresolved_strength.update(missing)
+    return {"observed_added": len(added), "frozen_missing": len(missing)}
+
+
+def recovery_pool_counts(path: Path, generalized: set[tuple], frozen: set[tuple]) -> dict:
+    """Report progress over the immutable 521-item valid-no-PUT recovery pool."""
+    document = json.loads(path.read_text())
+    rows = document.get("rows") or []
+    pool = {tuple(row.get("identity") or ()) for row in rows}
+    if (document.get("schema") != "veriput-rq1-recovery-pool/v1"
+            or len(pool) != 521 or not pool <= frozen):
+        raise RuntimeError("invalid frozen RQ1 recovery pool")
+    recovered = pool & generalized
+    return {
+        "initial_valid_no_put": len(pool),
+        "generalized": len(recovered),
+        "remaining_valid_no_put": len(pool - recovered),
+    }
 
 
 def inventory(result_root: Path, ledger: Path | None = None) -> dict:
     """Partition unique CE identities into generalized and not-generalized."""
     generalized, unresolved_strength, not_generalized = obligations(result_root)
+    drift = {"observed_added": 0, "frozen_missing": 0}
+    frozen = generalized | unresolved_strength | not_generalized
     if ledger is not None:
-        reconcile_ledger(ledger, generalized, unresolved_strength, not_generalized)
+        frozen = {tuple(item) for item in json.loads(ledger.read_text()).get("obligations") or []}
+        drift = reconcile_ledger(ledger, generalized, unresolved_strength, not_generalized)
     population = generalized | unresolved_strength | not_generalized
 
     counts = {
@@ -1281,6 +1303,11 @@ def inventory(result_root: Path, ledger: Path | None = None) -> dict:
         "scope": "canonical-current",
         "grain": "instrumented path / CE obligation",
         "artifact_counts": counts,
+        "frozen_population": {
+            "total": len(frozen),
+            "drift": drift,
+        },
+        "recovery_pool": recovery_pool_counts(DEFAULT_RECOVERY_POOL, generalized, frozen),
         "definitions": {
             "generalized_ce_obligations":
             ("Unique target/path_function/unit/enc/piece identities backed by a current "
