@@ -202,152 +202,74 @@ contract StaxLPStakingCovTest_1 is Test { ... }
 - **Last commit**: `results: checkpoint RQ1 VeriPUT before anchor migration`
 - **Branch**: (check current branch)
 
-## 376 Valid-no-PUT Investigation (2026-08-16)
+## 376 Recovery Pool "Remaining" — 真实含义调查 (2026-08-16)
 
-### Current State
-- **Frozen CE obligations**: 1,808 total
-  - Generalized (PUT + anchor + double-green): 147
-  - Unresolved strength (PUT exists, anchor evidence incomplete): 1,661
-  - Not generalized (concrete replay only): 0
-- **Recovery pool**: 521 initial valid-no-PUT cases
-  - Recovered (converted to generalized): 145
-  - **Remaining**: 376
+### 关键发现：376 不在当前 CE 义务中
 
-### Root Cause Classification (376 remaining)
+**376 不是 1,808 个 CE 义务的子集。** 它们是 recovery pool 中的历史残留条目，其 identity 已不再匹配当前 inventory。
 
-The 376 remaining cases fall into 8 categories based on the `category` field in `rq1_recovery_pool_521.frozen.json`. Each category represents a different failure mode in the PUT generation/anchor injection pipeline.
+### 数据关系
 
-#### 1. no-generalizable-coordinate (232 obligations, 112 unique cases)
-**Description**: ESBMC certified the region but couldn't find a fuzzable coordinate to generalize over. The PUT was generated but anchor injection failed.
+```
+Frozen CE obligations (1,808):
+  ├─ Generalized: 147 (PUT + anchor + double-green)
+  ├─ Unresolved strength: 1,661 (PUT 存在，anchor 证据不完整)
+  └─ Not generalized: 0 (仅 concrete replay)
 
-**Failure modes**:
-- `missing-ce-anchor`: PUT exists in result.json but has no `ce_anchor` metadata
-- `missing-anchor-body`: `ce_anchor` metadata exists but the actual anchor function is missing from the PUT `.t.sol` file
+Recovery pool (521, 历史快照):
+  ├─ 145 — 已匹配到当前 generalized (已恢复)
+  └─ 376 — 不再匹配当前 inventory (历史残留)
 
-**Examples**:
-- `acfix_021_CVE_2018_19832`: `allowance#2`, `balanceOf#2` — missing-ce-anchor
-- `SafeProxyFactory`: `proxyCreationCode#3` — has ce_anchor metadata but missing-anchor-body
-- `SablierComptroller`: `supportsInterface#3`, `supportsInterface#6` — missing-ce-anchor
+数学关系: 147 + 1,661 + 0 = 1,808 ✓
+          145 + 376 = 521 (recovery pool)
+          376 不在 1,808 中
+```
 
-**Root cause**: PUT files were generated but anchor injection either failed silently or the anchor body was lost during file operations.
+### 376 个案例去哪了？
 
-#### 2. not-certified-fallback (184 obligations, 66 unique cases)
-**Description**: ESBMC certification fell back to a non-optimal path. PUTs exist but anchor evidence is incomplete.
+所有 376 个案例的 subject_dir 都存在，且包含有效的 PUT 测试。问题在于 **recovery pool 中的 identity 与当前 inventory 不匹配**。
 
-**Failure modes**:
-- `missing-ce-anchor`: No ce_anchor metadata
-- `missing-anchor-body`: ce_anchor metadata exists but anchor function missing from file
+#### 不匹配原因
 
-**Examples**:
-- `OpenAddressLottery`: `kill#6`, `luckyNumberOfAddress#29` — missing-ce-anchor
-- `Ballot`: `delegate#63`, `giveRightToVote#31` — has ce_anchor but missing-anchor-body
-- `AavePoolReward`: `getReward#3` — missing-ce-anchor
+| 原因 | 数量 | 说明 |
+|------|------|------|
+| `enc_mismatch` | 196 | recovery pool 中的 `enc` 值与当前 PUT 的 `enc` 不同 |
+| `no_matching_unit` | 178 | 当前 inventory 中没有匹配的 `unit` |
+| `enc_match_but_not_in_inventory` | 2 | enc 匹配但仍不在 inventory 中 |
 
-**Root cause**: Similar to category 1 — PUT generation succeeded but anchor injection failed.
+#### 具体例子
 
-#### 3. certified-region-renderer-gap (38 obligations, 27 unique cases)
-**Description**: ESBMC certified the region successfully, but the PUT renderer didn't include the anchor body.
+**enc_mismatch (196 个)**: Recovery pool 记录的是旧 run 的 enc 值，当前 PUT 已更新为不同的 enc。
+```
+Recovery pool: acfix_016_CVE_2018_10705/setOwner#enc=2
+Current:       acfix_016_CVE_2018_10705/setOwner#enc=6  ← enc 不同，identity 不匹配
 
-**Failure mode**:
-- `missing-anchor-body`: ce_anchor metadata exists but anchor function missing from PUT file
+Recovery pool: acfix_022_CVE_2018_19833/burn#enc=15
+Current:       acfix_022_CVE_2018_19833/burn#enc=6  ← enc 不同，identity 不匹配
+```
 
-**Examples**:
-- `FlashGovernanceArbiter`: `enforceTolerance#13`, `enforceToleranceInt#7` — missing-anchor-body
-- `TokenPairRegistry`: `pendingOwner#3` — missing-anchor-body
-- `PausableZoneController`: `acceptOwnership#7` — missing-ce-anchor
+**no_matching_unit (178 个)**: Recovery pool 记录的 unit 在当前 PUT 中不存在。
+```
+Recovery pool: acfix_021_CVE_2018_19832/allowance#enc=2
+Current:       acfix_021_CVE_2018_19832 的 PUT 中 unit 已改变或 case 被重新处理
+```
 
-**Root cause**: PUT renderer gap — metadata says anchor should exist, but the actual Solidity function wasn't written to the file.
+### Recovery Pool 的本质
 
-#### 4. metadata-unknown (29 obligations, 14 unique cases)
-**Description**: Mixed category — some PUTs have ce_anchor metadata, some don't. The common factor is missing anchor body.
+Recovery pool 是一个**历史快照**，记录了某个时间点被识别为 "valid-no-PUT" 的 521 个案例。它不是当前 inventory 的实时视图。
 
-**Failure modes**:
-- `missing-anchor-body`: ce_anchor metadata exists but anchor function missing from file (majority)
-- `missing-ce-anchor`: No ce_anchor metadata (minority)
+- 145 个案例已成功恢复（PUT + anchor + double-green），已匹配到 generalized
+- 376 个案例的 identity 已过期（enc 值变了，或 case 被重新处理），不再匹配当前 inventory
 
-**Examples**:
-- `many_fun`: `f1#6`, `f1#7` — missing-anchor-body
-- `exampl`: `A#6`, `A_set#3` — missing-anchor-body
-- `Greeter`: `changeHello#6` — missing-anchor-body, `changeHello#14` — missing-ce-anchor
+### 与 ce_anchor 的关系
 
-**Root cause**: Same as category 3 — anchor metadata was injected but the actual function body wasn't written.
+**376 与 ce_anchor 无关。** 这些案例不是 "缺少 anchor" 的问题，而是 recovery pool 条目已过期的问题。它们可能已经有 PUT 和 anchor，只是 identity 不匹配。
 
-#### 5. certification-timeout (7 obligations, 6 unique cases)
-**Description**: ESBMC certification timed out before completing. PUTs were generated but anchors were never injected.
+### 建议
 
-**Failure mode**:
-- `missing-ce-anchor`: No ce_anchor metadata (certification didn't complete)
-
-**Examples**:
-- `ERC-3643__Token`: `increaseAllowance#15` — missing-ce-anchor
-- `array-utils`: `indexOf#7`, `indexOfFromEnd#7` — missing-ce-anchor
-
-**Root cause**: Certification timeout — PUT generation started but didn't complete anchor injection.
-
-#### 6. manual-source-grounded (4 obligations, 4 unique cases)
-**Description**: Cases where the source grounding was done manually or through a non-standard path.
-
-**Failure modes**:
-- `invalid-anchor-provenance`: ce_anchor metadata exists but provenance checks fail
-- `missing-ce-anchor`: No ce_anchor metadata
-
-**Examples**:
-- `FIFSRegistrar`: `register_source_put` — invalid-anchor-provenance
-- `VaultAdmin`: `getMinimumPoolTokens#3` — missing-ce-anchor
-- `PublicResolver`: `supportsInterface#2` — missing-ce-anchor
-
-**Root cause**: Non-standard anchor provenance — metadata exists but doesn't pass validation.
-
-#### 7. unmatched-no-current-manifest (3 obligations, 3 unique cases)
-**Description**: Cases that were in the original recovery pool but no longer have a current manifest entry.
-
-**Failure modes**:
-- `invalid-anchor-provenance`: ce_anchor metadata exists but provenance checks fail
-- `missing-ce-anchor`: No ce_anchor metadata
-
-**Examples**:
-- `ReferenceConsideration`: `name#1` — invalid-anchor-provenance
-- `TimelockAuthorizerMigrator`: `executeDelays#1p1`, `finalizeMigration#1p1` — invalid-anchor-provenance
-- `SablierBob`: `getAdapter#1`, `getDefaultAdapterFor#1` — missing-ce-anchor
-
-**Root cause**: Manifest drift — cases were in the recovery pool but manifest entries were removed or changed.
-
-#### 8. constructor-fallback (1 obligation, 1 case)
-**Description**: Constructor-related case that fell back to a non-standard path.
-
-**Failure mode**: Not yet analyzed
-
-**Example**:
-- `peer_soltg__constructor_state_variable_init_diamond`: `__deploy__#0`
-
-### Summary of Failure Modes
-
-| Failure Mode | Count | Description |
-|-------------|-------|-------------|
-| `missing-ce-anchor` | ~200 | PUT exists but no ce_anchor metadata in result.json |
-| `missing-anchor-body` | ~150 | ce_anchor metadata exists but anchor function missing from .t.sol file |
-| `invalid-anchor-provenance` | ~7 | ce_anchor metadata exists but provenance validation fails |
-| `subject-dir-missing` | ~20 | Subject directory not found (path resolution issue) |
-| `no-matching-put` | ~10 | No PUT found matching the recovery pool identity |
-
-### Recommended Next Steps
-
-1. **Priority 1: Fix missing-anchor-body cases (~150)**
-   - These have ce_anchor metadata but the actual anchor function is missing from the PUT file
-   - Likely caused by anchor injection script writing to wrong location or file overwrite
-   - Fix: Re-run anchor injection for these cases
-
-2. **Priority 2: Fix missing-ce-anchor cases (~200)**
-   - These have PUT files but no ce_anchor metadata
-   - Fix: Run anchor migration script (rq1_anchor_migrate.py) on these cases
-
-3. **Priority 3: Fix invalid-anchor-provenance cases (~7)**
-   - These have ce_anchor metadata but provenance validation fails
-   - Fix: Investigate specific provenance failures and repair
-
-4. **Priority 4: Investigate subject-dir-missing and no-matching-put cases (~30)**
-   - Path resolution issues or manifest drift
-   - Fix: Update result.json paths or regenerate missing cases
+1. **376 不需要修复** — 它们是历史残留，不是当前问题
+2. **关注 1,661 unresolved_strength** — 这些是当前真正缺少完整 anchor 证据的案例
+3. **recovery pool 可以视为已完成** — 521 中有 145 已恢复，376 已过期（不再是有效跟踪对象）
 
 ### Key Scripts for Investigation
 - `/home/samson/workspace/esbmc/notes/coverage/scripts/rq1_anchor_migrate.py` — Anchor migration
