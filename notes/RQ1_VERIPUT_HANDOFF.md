@@ -14,60 +14,44 @@
 
 **关系**: valid == Valid-but-no-PUT + valid-PUT → 509 == 3 + 506 ✓
 
-### Test-Level Statistics (CE obligations)
+### Test-Level Statistics (frozen 1,808 CE obligations)
 
-| Metric | Count | Description |
-|--------|-------|-------------|
-| raw | 1,808 | 所有 CE obligations (frozen ledger) |
-| valid | 1,808 | 与 raw 相同 |
-| Valid-but-not-PUT (concrete) | 831 | 定值测试，无参数 foundry 测试 |
-| valid-PUT (fuzz) | 977 | 参数化模糊测试 |
-| PUT with exactly 1 `test_ce_anchor` | 1,334 | ✅ 符合要求（含重复/多 enc） |
-| PUT with 0 `test_ce_anchor` | 23 | ❌ 需要注入 anchor |
-| PUT with >1 `test_ce_anchor` | 116 | ❌ 需要清理 |
+The formal test-level denominator uses the frozen identity:
 
-**关系**: raw == valid → 1,808 == 1,808 ✓
+```text
+(case, path_function, unit, enc, piece)
+```
 
-### 关键概念
+It is not a count of JSON rows, filenames, or `test_put_` prefixes.  The
+current canonical reconciliation follows strict-valid rows to the actual
+`.t.sol` file and parses the referenced test function's parameter list.
 
-**CE obligation = Counterexample obligation**
-- 每个 CE obligation 是唯一的 `(case, path_function, unit, enc, piece)` 组合
-- 代表一个被 instrumented 的路径 + counterexample
-- 1,808 是冻结的 CE 义务清单，来自 `rq1_ce_obligations.frozen.json`
+| Classification | Count | Required physical evidence |
+|---|---:|---|
+| `PUT_BACKED` | 1,424 | Existing `.t.sol`; matching test function has parameters |
+| `CONCRETE_ONLY` | 377 | Existing `.t.sol`; matching function has no parameters and no PUT maps to the same identity |
+| `UNRESOLVED_ROWS_NO_PHYSICAL` | 2 | Strict row exists but its referenced file/function cannot be parsed |
+| `UNRESOLVED_NO_STRICT_ROW` | 5 | No current strict-valid row maps to the identity |
+| **Total frozen obligations** | **1,808** | **1,424 + 377 + 2 + 5** |
 
-**test rows = result.json 中的 detailed test rows**
-- 每个 test row 是唯一的 `(file, test, kind, unit)` 组合
-- 代表一个具体的测试文件 + 测试函数
-- 2,325 是通过 `_strict_valid_tests` 返回的数量
+Current physical valid-test coverage is therefore `1,801 = 1,424 PUT-backed +
+377 concrete-only`.  Seven frozen obligations require artifact recovery or a
+fresh run before they can be called current valid tests.
 
-**一个 CE obligation 可能对应多个 test rows**
-- 例如：`bugfix124/acfix_002_Templedao` 有 5 个 CE obligations 和 5 个 test rows
+There are `2,325` current strict physical test rows: `2,167` map to a frozen
+identity and `158` do not.  This is a different grain and is not an RQ1
+denominator.  `1,439` frozen identities have a `test_put_` prefix in at least
+one row, but only `1,424` have a parseable physical parameterized test body
+(the `PUT_BACKED` bucket).  The remaining `15` prefixed identities lack a
+resolvable test function (13 in `CONCRETE_ONLY`, 2 in `UNRESOLVED_ROWS_NO_PHYSICAL`).
 
-### 统计口径说明
+Reproduce this snapshot with the authoritative read-only audit:
 
-**831 concrete** 是真正的 concrete replay test rows（deduplicated by file+test+kind+unit）。注意：result.json 中 `kind: 'concrete'` 的 test rows 有 852 个，但其中 16 个实际上是 PUT 测试文件（文件名包含 `test_put_`，内容包含 `test_put_` 测试）。所以真正的 concrete 测试是 831 个。
-
-**977 PUT** = 1,808 - 831，是 PUT 形态的 CE obligations。
-
-**1,334/23/116** 是通过数 `.t.sol` 文件中的 `test_ce_anchor_` 函数得到的。这些数字大于 977 是因为一个 CE obligation 可能对应多个 test rows。
-
-### result.json 可信度
-
-- **summary 字段 (put_valid, concrete_valid)**: ❌ 不可信。在 anchor migration 时被修改，summary 字段没有更新。
-- **kind 字段**: ❌ 不完全可信。`kind: 'concrete'` 的 test rows 中，16 个实际上是 PUT 测试文件。
-- **detailed test rows (strict_detailed_test_rows)**: ✅ 可用。通过 `_strict_valid_tests` 读取。
-- **SafeToL2Setup**: result.json 显示 `put_valid: 1`，但 `_strict_valid_tests` 返回 0 行。PUT 文件实际存在。这是 result.json 数据不一致问题。
-
-### By Benchmark
-
-| Benchmark | Cases | PUTs | Concrete | PUT anchored | PUT unanchored | PUT multi-anchor |
-|-----------|-------|------|----------|--------------|----------------|------------------|
-| real203 | 203 | 554 | 372 | 469 | 13 | 72 |
-| peer182 | 182 | 588 | 228 | 563 | 5 | 20 |
-| bugfix124 | 124 | 331 | 252 | 302 | 5 | 24 |
-| **Total** | **509** | **1,473** | **852** | **1,334** | **23** | **116** |
-
-**Note**: The `generalized_ce_obligations`, `unresolved_strength_ce_obligations`, and `not_generalized_ce_obligations` fields in JSON files are **misleading** and should be ignored. Always verify by counting `test_ce_anchor_` functions in `.t.sol` files directly.
+```bash
+python3 notes/coverage/scripts/rq1_frozen_obligation_reconcile.py \
+  --results-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT \
+  --json-out /tmp/rq1-frozen-obligation-reconcile.json
+```
 
 ## RQ3 Data for Anchor Migration
 
@@ -297,40 +281,17 @@ contract StaxLPStakingCovTest_1 is Test { ... }
 
 `rq1_recovery_pool_521.frozen.json` 是一个**历史快照**，记录了某个时间点被识别为 "valid-no-PUT" 的 521 个案例。它**不是**当前 inventory 的实时视图。
 
-### 当前真实状态（按文件计数）
-
-| 测试类型 | 数量 | 说明 |
-|---------|------|------|
-| PUT tests (fuzz/parameterized) | 1,473 | 参数化模糊测试 |
-| 其中带恰好 1 个 test_ce_anchor | 1,334 | 符合要求 |
-| 其中无 anchor | 23 | 需要注入 anchor |
-| 其中多个 anchor | 116 | 需要清理 |
-| Concrete replay tests (固定值，无参数) | 852 | 非 fuzz 测试 |
-
 ### Recovery Pool 与当前的关系
 
-- 521 个历史条目中，**145 个已匹配到当前 PUT**（这些 PUT 已有 anchor）
-- **376 个条目已过期**（enc 值变了，或 case 被重新处理，identity 不再匹配）
-
-### 376 个过期条目的原因
-
-| 原因 | 数量 | 说明 |
-|------|------|------|
-| `enc_mismatch` | 196 | recovery pool 记录旧 enc，当前 PUT 已更新 |
-| `no_matching_unit` | 178 | 当前无匹配 unit |
-| `enc_match_but_not_in_inventory` | 2 | enc 匹配但找不到 |
-
-### 建议
-
-1. **Recovery pool 是历史快照，不是当前问题** — 376 个过期条目不需要修复
-2. **当前关注点**：
-   - 23 个 PUT 缺少 anchor → 需要注入
-   - 116 个 PUT 有多个 anchor → 需要清理
-3. **不要使用 JSON 中的 generalized/unresolved_strength 字段** — 这些字段与实际情况不符，应通过数 `.t.sol` 文件中的 `test_ce_anchor_` 函数来验证
+The 521-item recovery pool is historical triage data.  Its entries do not
+define the current PUT/concrete split, and old `enc` identities must not be
+subtracted from the current concrete-only count.  Current reporting uses the
+frozen 1,808 identity reconciliation above.
 
 ### Key Scripts for Investigation
 - `/home/samson/workspace/esbmc/notes/coverage/scripts/rq1_anchor_migrate.py` — Anchor migration
 - `/home/samson/workspace/esbmc/notes/coverage/scripts/rq1_final_test_inventory.py` — Obligation classification
+- `/home/samson/workspace/esbmc/notes/coverage/scripts/rq1_frozen_obligation_reconcile.py` — Frozen identity to physical test audit
 - `/home/samson/workspace/esbmc/notes/coverage/scripts/rq1_concrete_replay_migrate.py` — Data access utilities
 - `/home/samson/workspace/esbmc/notes/coverage/rq1_recovery_pool_521.frozen.json` — Frozen recovery pool
 - `/home/samson/workspace/esbmc/notes/coverage/rq1_ce_obligations.frozen.json` — Frozen CE obligations
