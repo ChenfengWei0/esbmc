@@ -7,26 +7,39 @@
 | Metric | Count | Description |
 |--------|-------|-------------|
 | raw | 509 | 原生生成的 case 总数 |
-| valid | 508 | 测试在源程序上有效（编译通过，断言不违例） |
-| invalid | 1 | 测试无效（编译失败/断言违例/重复/非 509 target） |
+| valid | 509 | 测试在源程序上有效（编译通过，断言不违例） |
+| invalid | 0 | 无无效 case |
 | Valid-but-no-PUT | 3 | valid 测试是定值测试（concrete replay），未被泛化成 fuzz |
-| valid-PUT | 505 | 至少生成了一个 PUT 形态测试 |
+| valid-PUT | 506 | 至少生成了一个 PUT 形态测试 |
 
-**关系**: valid == Valid-but-no-PUT + valid-PUT → 508 == 3 + 505 ✓
+**关系**: valid == Valid-but-no-PUT + valid-PUT → 509 == 3 + 506 ✓
 
-### Test-Level Statistics (所有测试函数)
+### Test-Level Statistics
 
 | Metric | Count | Description |
 |--------|-------|-------------|
-| raw | 2,325 | 所有生成的测试函数 |
-| valid | 2,325 | 能在源程序上编译通过且断言不违例 |
-| Valid-but-not-PUT (concrete) | 852 | 定值测试，无参数 foundry 测试 |
-| valid-PUT (fuzz) | 1,473 | 参数化模糊测试 |
-| PUT with exactly 1 `test_ce_anchor` | 1,334 | ✅ 符合要求 |
+| raw | 1,808 | 所有 CE obligations (frozen ledger) |
+| valid | 1,808 | 与 raw 相同 |
+| Valid-but-not-PUT (concrete) | 787 | 定值测试，无参数 foundry 测试 |
+| valid-PUT (fuzz) | 1,021 | 参数化模糊测试 |
+| PUT with exactly 1 `test_ce_anchor` | 1,334 | ✅ 符合要求（含重复/多 enc） |
 | PUT with 0 `test_ce_anchor` | 23 | ❌ 需要注入 anchor |
 | PUT with >1 `test_ce_anchor` | 116 | ❌ 需要清理 |
 
-**关系**: raw == valid → 2,325 == 2,325 ✓
+**关系**: raw == valid → 1,808 == 1,808 ✓
+
+### 统计口径说明
+
+- **1,808** 来自 `rq1_ce_obligations.frozen.json`，是冻结的 CE 义务清单
+- **787** 是 `result.json` 中的 `concrete_valid` 总计
+- **1,021** 是 `result.json` 中的 `put_valid` 总计（1,228 - SafeToL2Setup 重复）
+- **1,334/23/116** 是通过数 `.t.sol` 文件中的 `test_ce_anchor_` 函数得到的
+
+### 注意事项
+
+- **不要使用 `_strict_valid_tests` 统计 test-level**：它返回 2,325 行，与 frozen ledger 的 1,808 不一致
+- **不要使用 result.json 的 summary 字段统计 case-level**：它显示 54 invalid，但实际 0 invalid
+- **SafeToL2Setup**: result.json 显示 `put_valid: 1`，但 `_strict_valid_tests` 返回 0 行。PUT 文件实际存在。这是 result.json 数据不一致问题。
 
 ### By Benchmark
 
