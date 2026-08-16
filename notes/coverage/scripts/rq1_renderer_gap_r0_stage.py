@@ -109,7 +109,7 @@ def normalise_r0(source: str, unit: str) -> str | None:
         r"\s*\1 = true;\n"
         r"\s*assertTrue\(\1, \"fixed witness call must complete\"\);"
     )
-    result, count = direct.subn("\n    \\2", source)
+    result, count = direct.subn("\n    \\2;", source)
     return result if count == 1 else None
 
 
