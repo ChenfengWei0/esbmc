@@ -378,6 +378,41 @@ PARTITION_TOTAL:          1,808
 
 ---
 
+## Task Completion Status (2026-08-17)
+
+### Task 1: Convert UNRESOLVED + CERTIFIED_REGION cases to PUTs ✅ COMPLETED
+
+**Result**: PUT_BACKED increased from baseline 1,424 → 1,460 (+36), exceeding the target of 1,457.
+- CONCRETE_ONLY decreased from 377 → 341 (-36)
+- UNRESOLVED_ROWS_NO_PHYSICAL fixed: 2 → 0
+
+**Methods used**:
+1. Repaired truncated assertion strings in .t.sol files (unbalanced quotes)
+2. Added missing path_function values to result.json using frozen CE obligations ledger
+3. Updated CERTIFIED_REGION cases to point to actual PUT files instead of concrete replays
+4. Added missing enc entries for identities with available PUT files
+
+**Remaining 7 UNRESOLVED_NO_STRICT_ROW**: Cannot be fixed without infrastructure changes:
+- 3 have NO PUT files at all (ReferenceConsideration, SablierBob, CreateCall)
+- 4 need AST cache + Stage 4 re-run (~6 hours for FlashGovernanceArbiter, TREXImplementationAuthority)
+
+### Task 2: Move tests to RQ3/No_Ass ✅ COMPLETED
+
+**Result**: All 343 .t.sol files from RQ1 subjects moved to `/home/samson/workspace/VeriPUT/Results/RQ3/No_Ass/`
+- bugfix124: 102 files, ~2,584 test functions
+- peer182: 191 files, ~6,446 test functions  
+- real203: 50 files, ~969 test functions
+
+**Sub-steps completed**:
+- (a) vm.expectRevert deletion: No-op (no vm.expectRevert calls existed in dataset)
+- (b) Assert stripping: Removed 9,939 assert statements from all .t.sol files
+
+### Next Steps
+
+1. **Infrastructure setup for remaining CERTIFIED_REGION cases**: Set up solc 0.8.35 AST cache regeneration (~6 hours) to enable Stage 4 re-emission for FlashGovernanceArbiter and TREXImplementationAuthority
+2. **Manual PUT creation** for the 3 UNRESOLVED_NO_STRICT_ROW cases with no existing PUT files
+3. **Forge verification**: Run all moved .t.sol tests on original contracts to verify they pass without asserts
+
 ## Recovery Pool 521 — 历史残留说明 (2026-08-16)
 
 ### Recovery Pool 的本质
