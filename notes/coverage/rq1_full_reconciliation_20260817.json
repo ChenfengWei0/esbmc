@@ -1,0 +1,9 @@
+{
+  "schema": "veriput-rq1-frozen-obligation-reconcile/v1",
+  "method": "{'identity': ['case', 'path_function', 'unit', 'enc', 'piece'], 'row_filter': 'rq1_concrete_replay_migrate._strict_valid_tests', 'physical_classification': 'actual Solidity test function parameter lis",
+  "inputs": "{'results_root': '/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT', 'ledger': '/home/samson/workspace/esbmc/notes/coverage/rq1_ce_obligations.frozen.json', 'frozen_obligation_count': 1808}",
+  "counts": "{'PUT_BACKED': 1460, 'CONCRETE_ONLY': 341, 'UNRESOLVED_ROWS_NO_PHYSICAL': 0, 'UNRESOLVED_NO_STRICT_ROW': 7, 'PHYSICAL_VALID_TOTAL': 1801, 'UNRESOLVED_TOTAL': 7, 'PARTITION_TOTAL': 1808, 'all_current_s",
+  "concrete_only_cause_counts": "{'CERTIFIED_REGION_CONCRETE_FALLBACK': 3, 'CERTIFIED_REGION_NOT_PARAMETERIZED': 7, 'CONSTRUCTOR_REVERT_ONLY': 1, 'LEGACY_CERTIFIED_REGION_NOT_PARAMETERIZED': 3, 'NO_GENERALIZABLE_COORDINATE': 153, 'NO",
+  "identities": "{'PUT_BACKED': [{'identity': ['bugfix124/acfix_002_Templedao', 'sol:@C@StaxLPStaking@F@setMigrator#2281', 'setMigrator', '6', ''], 'rows': [{'file': '/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT",
+  "concrete_only_causes": "{'CERTIFIED_REGION_CONCRETE_FALLBACK': [{'identity': ['real203/compound-finance__comet__AssetListFactory', 'sol:@C@AssetListFactory@F@createAssetList#34', 'createAssetList', '2', ''], 'rows': [{'file'"
+}

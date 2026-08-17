@@ -1,0 +1,822 @@
+{
+  "contract": "St1inch",
+  "unit": "setEmergencyExit",
+  "enc": 2,
+  "depth": 1,
+  "path_function": "sol:@C@St1inch@F@setEmergencyExit#8467",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setEmergencyExit/put_gate/st1inch_St1inch__certify_gate/test/St1inchCovTest_St1inch_setEmergencyExit_put2.t.sol",
+  "test": "test_put_St1inch_setEmergencyExit_path2",
+  "piece": null,
+  "region": {
+    "emergencyExit_": [
+      "0",
+      "1"
+    ],
+    "msg.sender": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "msg.value": [
+      "1",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ]
+  },
+  "holes": {},
+  "pins": {},
+  "ladder": [
+    {
+      "var": "emergencyExit",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "emergencyExit",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    8,
+    4,
+    4,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "enabled": true,
+    "requested": 94,
+    "selected": 94,
+    "candidate_budget": 128,
+    "rendered": 0,
+    "ran": 0,
+    "refuted": 0,
+    "not_refuted": 0,
+    "not_run": 94,
+    "timed_out": false,
+    "returncode": null,
+    "fuzz_runs": 256,
+    "command": [],
+    "reason": "rollback path has no observable R2 post-state",
+    "candidates": [
+      {
+        "key": "s0:v0:equals:e0",
+        "var": "_owner",
+        "text": "post == msg.sender",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a1",
+        "var": "_owner",
+        "text": "post in [emergencyExit_, emergencyExit_]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e1",
+        "var": "_owner",
+        "text": "post == emergencyExit_",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a2",
+        "var": "_owner",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e2",
+        "var": "_owner",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a3",
+        "var": "_owner",
+        "text": "post in [5, 5]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e3",
+        "var": "_owner",
+        "text": "post == 5",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a4",
+        "var": "_owner",
+        "text": "post in [20, 20]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e4",
+        "var": "_owner",
+        "text": "post == 20",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e5",
+        "var": "_owner",
+        "text": "post == (pre + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e6",
+        "var": "_owner",
+        "text": "post == (pre - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e7",
+        "var": "_owner",
+        "text": "post == (pre * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e8",
+        "var": "_owner",
+        "text": "post == (pre + emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e9",
+        "var": "_owner",
+        "text": "post == (pre - emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e10",
+        "var": "_owner",
+        "text": "post == (pre * emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e11",
+        "var": "_owner",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e12",
+        "var": "_owner",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e13",
+        "var": "_owner",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e14",
+        "var": "_owner",
+        "text": "post == (pre + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e15",
+        "var": "_owner",
+        "text": "post == (pre - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e16",
+        "var": "_owner",
+        "text": "post == (pre * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e17",
+        "var": "_owner",
+        "text": "post == (pre + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e18",
+        "var": "_owner",
+        "text": "post == (pre - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e19",
+        "var": "_owner",
+        "text": "post == (pre * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e20",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e21",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e22",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e23",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ + emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e24",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ - emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e25",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ * emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e26",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e27",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e28",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e29",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e30",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e31",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e32",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e33",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e34",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e35",
+        "var": "_owner",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e36",
+        "var": "_owner",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e37",
+        "var": "_owner",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e38",
+        "var": "_owner",
+        "text": "post == (msg.value + emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e39",
+        "var": "_owner",
+        "text": "post == (msg.value - emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e40",
+        "var": "_owner",
+        "text": "post == (msg.value * emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e41",
+        "var": "_owner",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e42",
+        "var": "_owner",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e43",
+        "var": "_owner",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e44",
+        "var": "_owner",
+        "text": "post == (msg.value + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e45",
+        "var": "_owner",
+        "text": "post == (msg.value - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e46",
+        "var": "_owner",
+        "text": "post == (msg.value * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e47",
+        "var": "_owner",
+        "text": "post == (msg.value + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e48",
+        "var": "_owner",
+        "text": "post == (msg.value - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e49",
+        "var": "_owner",
+        "text": "post == (msg.value * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e50",
+        "var": "_owner",
+        "text": "post == (5 + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e51",
+        "var": "_owner",
+        "text": "post == (5 - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e52",
+        "var": "_owner",
+        "text": "post == (5 * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e53",
+        "var": "_owner",
+        "text": "post == (5 + emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e54",
+        "var": "_owner",
+        "text": "post == (5 - emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e55",
+        "var": "_owner",
+        "text": "post == (5 * emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e56",
+        "var": "_owner",
+        "text": "post == (5 + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e57",
+        "var": "_owner",
+        "text": "post == (5 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e58",
+        "var": "_owner",
+        "text": "post == (5 * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e59",
+        "var": "_owner",
+        "text": "post == (5 + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e60",
+        "var": "_owner",
+        "text": "post == (5 - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e61",
+        "var": "_owner",
+        "text": "post == (5 * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e62",
+        "var": "_owner",
+        "text": "post == (5 + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e63",
+        "var": "_owner",
+        "text": "post == (5 - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e64",
+        "var": "_owner",
+        "text": "post == (5 * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e65",
+        "var": "_owner",
+        "text": "post == (20 + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e66",
+        "var": "_owner",
+        "text": "post == (20 - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e67",
+        "var": "_owner",
+        "text": "post == (20 * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e68",
+        "var": "_owner",
+        "text": "post == (20 + emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e69",
+        "var": "_owner",
+        "text": "post == (20 - emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e70",
+        "var": "_owner",
+        "text": "post == (20 * emergencyExit_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e71",
+        "var": "_owner",
+        "text": "post == (20 + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e72",
+        "var": "_owner",
+        "text": "post == (20 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e73",
+        "var": "_owner",
+        "text": "post == (20 * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e74",
+        "var": "_owner",
+        "text": "post == (20 + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e75",
+        "var": "_owner",
+        "text": "post == (20 - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e76",
+        "var": "_owner",
+        "text": "post == (20 * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e77",
+        "var": "_owner",
+        "text": "post == (20 + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e78",
+        "var": "_owner",
+        "text": "post == (20 - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e79",
+        "var": "_owner",
+        "text": "post == (20 * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e80",
+        "var": "_owner",
+        "text": "post == (pre / 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e81",
+        "var": "_owner",
+        "text": "post == (pre / 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e82",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ / 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e83",
+        "var": "_owner",
+        "text": "post == (emergencyExit_ / 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e84",
+        "var": "_owner",
+        "text": "post == (msg.value / 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e85",
+        "var": "_owner",
+        "text": "post == (msg.value / 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e86",
+        "var": "_owner",
+        "text": "post == (5 / 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e87",
+        "var": "_owner",
+        "text": "post == (5 / 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e88",
+        "var": "_owner",
+        "text": "post == (20 / 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e89",
+        "var": "_owner",
+        "text": "post == (20 / 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      }
+    ]
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "emergencyExit",
+    "_owner"
+  ],
+  "oracle_vars": [
+    "emergencyExit",
+    "_owner"
+  ],
+  "slot_candidates": {
+    "asked": [],
+    "unanswered": [],
+    "rows_for_unasked_names": [
+      "_owner",
+      "emergencyExit"
+    ]
+  },
+  "esbmc_extra_args": [
+    "--z3",
+    "--tuple-node-flattener",
+    "--path-cov-fixture",
+    "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setEmergencyExit/fixture_gate.json"
+  ],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "bb9443d52f",
+    "srcDirty": true,
+    "binaryMtime": 1785965824
+  },
+  "stats": {
+    "fuzz_params": 3,
+    "lifted": [
+      "msg.sender",
+      "msg.value",
+      "emergencyExit_"
+    ],
+    "asserts": 1,
+    "state_asserts": 0,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 1,
+    "rollback_exit": true,
+    "exit_kind": "revert",
+    "return_asserts": 0,
+    "oracle_skipped": [
+      "2 layer-2/3 rung(s) DROPPED (this path exits through a ROLLBACK revert, so the value the ladder compared is the one between the write and the rollback -- a moment no test and no chain can read. A revert restores storage, so the only post-state a test can observe on this path is the pre-state, and the only layer left with anything to say is the exit kind)"
+    ],
+    "oracle_implied": [
+      "_owner: post >= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)",
+      "_owner: post <= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)"
+    ],
+    "state_stored": [],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": [
+    "slot candidates asked=0 unanswered=0",
+    "R2 ESBMC skipped: reverting path has no observable post-state"
+  ]
+}

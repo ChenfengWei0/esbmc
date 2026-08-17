@@ -1,0 +1,57 @@
+{
+  "leases": {
+    "bugfix124/acfix_fixlink_DnGmxBatchingManager": {
+      "bench": "bugfix124",
+      "category": "manual005_manual-005-012",
+      "rc": 0,
+      "status": "running",
+      "subject": "acfix_fixlink_DnGmxBatchingManager",
+      "ts": 1786417292.2695174,
+      "updated_ts": 1786417743.584294,
+      "worker_id": "local:2490303:notes/coverage/rq1_runs/manual-005-012/local_worker_4_progress.jsonl"
+    },
+    "bugfix124/acfix_fixlink_MStableYieldSource": {
+      "bench": "bugfix124",
+      "category": "manual006_manual-005-012",
+      "rc": 0,
+      "status": "done",
+      "subject": "acfix_fixlink_MStableYieldSource",
+      "ts": 1786415375.4761503,
+      "updated_ts": 1786415646.663608,
+      "worker_id": "local:2490299:notes/coverage/rq1_runs/manual-005-012/local_worker_0_progress.jsonl"
+    },
+    "bugfix124/acfix_fixlink_Product": {
+      "bench": "bugfix124",
+      "category": "manual007_manual-005-012",
+      "rc": 0,
+      "status": "done",
+      "subject": "acfix_fixlink_Product",
+      "ts": 1786417257.4771948,
+      "updated_ts": 1786417744.1115687,
+      "worker_id": "local:2490300:notes/coverage/rq1_runs/manual-005-012/local_worker_1_progress.jsonl"
+    },
+    "bugfix124/acfix_fixlink_Product2": {
+      "bench": "bugfix124",
+      "category": "manual008_manual-005-012",
+      "rc": 0,
+      "status": "done",
+      "subject": "acfix_fixlink_Product2",
+      "ts": 1786417257.4805338,
+      "updated_ts": 1786417744.1104414,
+      "worker_id": "local:2490302:notes/coverage/rq1_runs/manual-005-012/local_worker_3_progress.jsonl"
+    },
+    "bugfix124/acfix_real_FlashGovernanceArbiter": {
+      "bench": "bugfix124",
+      "category": "manual009_manual-005-012",
+      "rc": 0,
+      "status": "done",
+      "subject": "acfix_real_FlashGovernanceArbiter",
+      "ts": 1786417027.062363,
+      "updated_ts": 1786417413.3559117,
+      "worker_id": "local:2490301:notes/coverage/rq1_runs/manual-005-012/local_worker_2_progress.jsonl"
+    }
+  },
+  "reset_by": "rq1_case_batch.py start",
+  "reset_ts": 1786413927.4743829,
+  "schema": "veriput-rq1-case-leases/v1"
+}

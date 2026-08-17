@@ -1,0 +1,69 @@
+{
+  "counts": {
+    "refused": 5
+  },
+  "frozen_generalized_ce_obligations": 0,
+  "rows": [
+    {
+      "identity": [
+        "bugfix124/acfix_002_Templedao",
+        "sol:@C@StaxLPStaking@F@setRewardDistributor#1608",
+        "setRewardDistributor",
+        "6",
+        ""
+      ],
+      "reason": "first-pass recovery supports only return, normal-exit, or revert",
+      "record_identity_sha256": "a222f495e2c2a6687e5ae54b8e118010b11a70df3806704dfbdd11b3f141142d",
+      "status": "refused"
+    },
+    {
+      "identity": [
+        "bugfix124/acfix_021_CVE_2018_19832",
+        "sol:@C@NewIntelTechMedia@F@allowance#748",
+        "allowance",
+        "3",
+        ""
+      ],
+      "reason": "emitted exact CE setup differs from PUT setup",
+      "record_identity_sha256": "52fcc6b03aa6849b9093174a45c79327124ccb7d186d2d7191ae55091f3d9c6d",
+      "status": "refused"
+    },
+    {
+      "identity": [
+        "bugfix124/acfix_021_CVE_2018_19832",
+        "sol:@C@NewIntelTechMedia@F@balanceOf#505",
+        "balanceOf",
+        "3",
+        ""
+      ],
+      "reason": "emitted exact CE setup differs from PUT setup",
+      "record_identity_sha256": "07cb1a164a9f4e1b769c0e3dbe52a03a184c92e8de9732ac8f6cc5dac6b93487",
+      "status": "refused"
+    },
+    {
+      "identity": [
+        "bugfix124/acfix_022_CVE_2018_19833",
+        "sol:@C@ERCDDAToken@F@burn#258",
+        "burn",
+        "6",
+        ""
+      ],
+      "reason": "first-pass recovery supports only return, normal-exit, or revert",
+      "record_identity_sha256": "ab13732738c78e83734f64b723ba876d9e5b86d2184a6231a4b4f120bf5cbb29",
+      "status": "refused"
+    },
+    {
+      "identity": [
+        "bugfix124/acfix_022_CVE_2018_19833",
+        "sol:@C@ERCDDAToken@F@freezeAccount#220",
+        "freezeAccount",
+        "6",
+        ""
+      ],
+      "reason": "emitted exact CE setup differs from PUT setup",
+      "record_identity_sha256": "a3e35009502f2bda9debccd255debc8a99ae2d9a5406c7d700511ff8580ff975",
+      "status": "refused"
+    }
+  ],
+  "schema": "veriput-rq1-put-ce-anchor-progress/v1"
+}

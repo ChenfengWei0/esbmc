@@ -1,0 +1,90 @@
+{
+  "kind": "concrete",
+  "stage4_kind": "refusal",
+  "contract": "Animalia",
+  "unit": "decimals",
+  "enc": 2,
+  "depth": 1,
+  "path_function": "sol:@C@Animalia@F@decimals#1538",
+  "artifact_identity": "",
+  "piece": null,
+  "file": null,
+  "test": null,
+  "refused": "certified-basis-source-ce-mismatch",
+  "refusal_reason": "certified CE is not exactly rendered by the Foundry source: emitted environment coordinate msg.sender is not an exact literal",
+  "region": {
+    "msg.value": [
+      "1",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "block.basefee": "0",
+    "block.chainid": "0",
+    "block.coinbase": "0",
+    "block.number": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+    "block.prevrandao": "0",
+    "block.timestamp": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+    "tx.gasprice": "0",
+    "state._decimals": "18"
+  },
+  "establish": [],
+  "ladder": [],
+  "ladder_summary": null,
+  "ladder_refusal": null,
+  "materialization": {
+    "is_put": false,
+    "is_concrete": false,
+    "is_refusal": true,
+    "put_failure_reason": "certified-basis-source-ce-mismatch",
+    "r1r2_failure_reason": "certified-basis-source-ce-mismatch",
+    "fallback_after_put_attempt": false,
+    "wide_fuzz_coords": [],
+    "oracle_classes": [],
+    "oracle_tags": [],
+    "has_R0": false,
+    "has_R1": false,
+    "has_R2": false,
+    "has_R1_or_R2": false,
+    "oracle_class_counts": {},
+    "oracle_class_combinations": [],
+    "oracle_class_combo_counts": {},
+    "r2_requested": false,
+    "r2_fuzz_prefilter": {
+      "enabled": false
+    },
+    "r2_ladder": {}
+  },
+  "stats": {
+    "fuzz_params": 0,
+    "lifted": [],
+    "rendered_width": {},
+    "wide_fuzz_coords": [],
+    "dynamic_fuzz_coords": [],
+    "asserts": 0,
+    "state_asserts": 0,
+    "return_asserts": 0,
+    "exit_kind_asserts": 0,
+    "guarded_asserts": 0,
+    "oracle_classes": [],
+    "oracle_class_counts": {},
+    "oracle_class_combinations": [],
+    "oracle_class_combo_counts": {},
+    "oracle_coordinate_classes": [],
+    "assertion_oracles": []
+  },
+  "notes": [
+    "certified CE is not exactly rendered by the Foundry source: emitted environment coordinate msg.sender is not an exact literal"
+  ],
+  "timing": {
+    "generation_timeout_s": 300,
+    "generation_wall_s": 3.413,
+    "put_driver_wall_s": 3.613
+  },
+  "stage2_source": "certified-region-concrete-fallback",
+  "stage2_witness_check": "CERTIFIED-BASIS-REPLAY",
+  "certification_source": "structural-abi-gate",
+  "certified_detail_stage4_kind": null,
+  "certified_detail_source": "structural-abi-gate"
+}

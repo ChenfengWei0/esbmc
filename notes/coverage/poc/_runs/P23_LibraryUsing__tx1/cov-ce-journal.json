@@ -1,0 +1,581 @@
+{
+  "claims_decided": 12,
+  "claims_total": 12,
+  "complete": true,
+  "fingerprint": "867e1a03d373adad",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@P23_LibraryUsing@F@total#89:path:116\t": {
+      "claim": "sol:@C@P23_LibraryUsing@F@total#89:path:116",
+      "compact_trace": false,
+      "dropped_internal": 34,
+      "entry_storage": [
+        {
+          "name": "out",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        },
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "1"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "1"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "out",
+          "value": "1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "cap",
+          "value": "1"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "13d1f58dbf415428",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P23_LibraryUsing@F@total#89:path:2\t": {
+      "claim": "sol:@C@P23_LibraryUsing@F@total#89:path:2",
+      "compact_trace": false,
+      "dropped_internal": 33,
+      "entry_storage": [
+        {
+          "name": "out",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        },
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "1"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "1"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "out",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "cap",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "a37049aedce211e6",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P23_LibraryUsing@F@total#89:path:28\t": {
+      "claim": "sol:@C@P23_LibraryUsing@F@total#89:path:28",
+      "compact_trace": false,
+      "dropped_internal": 34,
+      "entry_storage": [
+        {
+          "name": "out",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        },
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "1"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "1"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "out",
+          "value": "1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "cap",
+          "value": "1"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "7645090e53c2536c",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P23_LibraryUsing@F@total#89:path:468\t": {
+      "claim": "sol:@C@P23_LibraryUsing@F@total#89:path:468",
+      "compact_trace": false,
+      "dropped_internal": 34,
+      "entry_storage": [
+        {
+          "name": "out",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        },
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "1"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "1"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "out",
+          "value": "0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "cap",
+          "value": "0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "29ba0bc56eb25ce6",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P23_LibraryUsing@F@total#89:path:6\t": {
+      "claim": "sol:@C@P23_LibraryUsing@F@total#89:path:6",
+      "compact_trace": false,
+      "dropped_internal": 33,
+      "entry_storage": [
+        {
+          "name": "out",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        },
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "1"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "1"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "out",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "cap",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "80d7595b26a966e6",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P23_LibraryUsing@F@total#89:path:939\t": {
+      "claim": "sol:@C@P23_LibraryUsing@F@total#89:path:939",
+      "compact_trace": false,
+      "dropped_internal": 34,
+      "entry_storage": [
+        {
+          "name": "out",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        },
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "1"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "1"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "out",
+          "value": "1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "cap",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "46bcb856e4061691",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    }
+  }
+}

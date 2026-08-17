@@ -1,0 +1,1871 @@
+{
+  "claims_decided": 26,
+  "claims_total": 26,
+  "complete": true,
+  "fingerprint": "8a15df6006dc5e96",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@P19_ReturnShapes@F@cond_call#131:path:12\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 70 function cond_call": {
+      "claim": "sol:@C@P19_ReturnShapes@F@cond_call#131:path:12",
+      "compact_trace": false,
+      "dropped_internal": 25,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 70 function cond_call",
+      "path_id_stable": "54d535e2643f8b6a",
+      "payload_symbols_protected": true,
+      "return_value": "0",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@cond_call#131:path:13\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 70 function cond_call": {
+      "claim": "sol:@C@P19_ReturnShapes@F@cond_call#131:path:13",
+      "compact_trace": false,
+      "dropped_internal": 25,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "y",
+          "value": "200"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "200"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 70 function cond_call",
+      "path_id_stable": "660640bbd2df2700",
+      "payload_symbols_protected": true,
+      "return_value": "0",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@cond_call#131:path:15\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 70 function cond_call": {
+      "claim": "sol:@C@P19_ReturnShapes@F@cond_call#131:path:15",
+      "compact_trace": false,
+      "dropped_internal": 25,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "y",
+          "value": "50"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "50"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 70 function cond_call",
+      "path_id_stable": "da9e07750346230a",
+      "payload_symbols_protected": true,
+      "return_value": "0",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@cond_call#131:path:2\t": {
+      "claim": "sol:@C@P19_ReturnShapes@F@cond_call#131:path:2",
+      "compact_trace": false,
+      "dropped_internal": 26,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "8bec1e2d227a5b37",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@sc_lit#71:path:2\t": {
+      "claim": "sol:@C@P19_ReturnShapes@F@sc_lit#71:path:2",
+      "compact_trace": false,
+      "dropped_internal": 22,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0"
+        },
+        {
+          "name": "y",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "d8c7a62d0afbd952",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@sc_lit#71:path:6\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 58 function sc_lit": {
+      "claim": "sol:@C@P19_ReturnShapes@F@sc_lit#71:path:6",
+      "compact_trace": false,
+      "dropped_internal": 21,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "10"
+        },
+        {
+          "name": "y",
+          "value": "0"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 58 function sc_lit",
+      "path_id_stable": "055db895f6a59463",
+      "payload_symbols_protected": true,
+      "return_value": "0",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@sc_lit#71:path:7\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 58 function sc_lit": {
+      "claim": "sol:@C@P19_ReturnShapes@F@sc_lit#71:path:7",
+      "compact_trace": false,
+      "dropped_internal": 21,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "y",
+          "value": "0"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 58 function sc_lit",
+      "path_id_stable": "85931da221819039",
+      "payload_symbols_protected": true,
+      "return_value": "1",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_call#92:path:12\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 62 function tern_call": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_call#92:path:12",
+      "compact_trace": false,
+      "dropped_internal": 24,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "tmp$3",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 62 function tern_call",
+      "path_id_stable": "df51f4780836448b",
+      "payload_symbols_protected": true,
+      "return_value": "1",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_call#92:path:13\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 62 function tern_call": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_call#92:path:13",
+      "compact_trace": false,
+      "dropped_internal": 24,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "y",
+          "value": "50"
+        },
+        {
+          "name": "tmp$3",
+          "value": "2"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "50"
+        },
+        {
+          "name": "y",
+          "value": "49"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 62 function tern_call",
+      "path_id_stable": "1d8152b673ee156d",
+      "payload_symbols_protected": true,
+      "return_value": "2",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_call#92:path:14\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 62 function tern_call": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_call#92:path:14",
+      "compact_trace": false,
+      "dropped_internal": 24,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "tmp$3",
+          "value": "3"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 62 function tern_call",
+      "path_id_stable": "adf42da531dfe0d9",
+      "payload_symbols_protected": true,
+      "return_value": "3",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_call#92:path:15\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 62 function tern_call": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_call#92:path:15",
+      "compact_trace": false,
+      "dropped_internal": 24,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "y",
+          "value": "200"
+        },
+        {
+          "name": "tmp$3",
+          "value": "4"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "200"
+        },
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 62 function tern_call",
+      "path_id_stable": "75f85b672e69bb27",
+      "payload_symbols_protected": true,
+      "return_value": "4",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_call#92:path:2\t": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_call#92:path:2",
+      "compact_trace": false,
+      "dropped_internal": 23,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "tmp$3",
+          "value": "4"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0"
+        },
+        {
+          "name": "y",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "f11553d94e975278",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_lit#53:path:2\t": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_lit#53:path:2",
+      "compact_trace": false,
+      "dropped_internal": 21,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0"
+        },
+        {
+          "name": "y",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "89b43803c39cedb6",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_lit#53:path:6\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 54 function tern_lit": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_lit#53:path:6",
+      "compact_trace": false,
+      "dropped_internal": 20,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 54 function tern_lit",
+      "path_id_stable": "d6b805be91990f7e",
+      "payload_symbols_protected": true,
+      "return_value": "20",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_lit#53:path:7\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 54 function tern_lit": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_lit#53:path:7",
+      "compact_trace": false,
+      "dropped_internal": 20,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 54 function tern_lit",
+      "path_id_stable": "19111785bb12ecfc",
+      "payload_symbols_protected": true,
+      "return_value": "10",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:12\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:12",
+      "compact_trace": false,
+      "dropped_internal": 24,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "100"
+        },
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested",
+      "path_id_stable": "fd09d6fed5582e55",
+      "payload_symbols_protected": true,
+      "return_value": "3",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:13\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:13",
+      "compact_trace": false,
+      "dropped_internal": 24,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested",
+      "path_id_stable": "808b46d5492f92cf",
+      "payload_symbols_protected": true,
+      "return_value": "3",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:14\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:14",
+      "compact_trace": false,
+      "dropped_internal": 24,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "100"
+        },
+        {
+          "name": "y",
+          "value": "99"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested",
+      "path_id_stable": "4f64e79686699c03",
+      "payload_symbols_protected": true,
+      "return_value": "2",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:15\tfile /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:15",
+      "compact_trace": false,
+      "dropped_internal": 24,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        }
+      ],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested",
+      "path_id_stable": "65055ccbc3709e79",
+      "payload_symbols_protected": true,
+      "return_value": "1",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:2\t": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:2",
+      "compact_trace": false,
+      "dropped_internal": 25,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0"
+        },
+        {
+          "name": "y",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "4646ca2faadffb7e",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "batch_id": "manual-005-012",
+  "case_count": 8,
+  "end_index": 12,
+  "inventory": "notes/coverage/rq1_no_valid_each_case.json",
+  "lease_file": "notes/coverage/rq1_runs/manual-005-012/leases.json",
+  "local_parallel": 5,
+  "manifest": "notes/coverage/rq1_runs/manual-005-012/manifest.tsv",
+  "prepared_ts": 1786413672.026607,
+  "remote_parallel": 3,
+  "run_dir": "notes/coverage/rq1_runs/manual-005-012",
+  "schema": "veriput-rq1-case-batch/v1",
+  "start_index": 5,
+  "state": "notes/coverage/rq1_runs/manual-005-012/supervisor.json"
+}

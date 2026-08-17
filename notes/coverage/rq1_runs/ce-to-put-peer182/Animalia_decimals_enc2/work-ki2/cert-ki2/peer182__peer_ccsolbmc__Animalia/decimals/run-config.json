@@ -1,0 +1,67 @@
+{
+  "allow_recursive_helper_enumeration": false,
+  "ast": {
+    "mtime_ns": 1786710119173799799,
+    "path": "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Peer182/subjects/peer_ccsolbmc__Animalia/flat.sol.solast",
+    "size": 628771
+  },
+  "ce_collection_only": false,
+  "claim_budget": 0,
+  "contract": "Animalia",
+  "cut_policy": "spec",
+  "enumeration_index": null,
+  "enumeration_report": null,
+  "env_coord_disagreed": true,
+  "env_coords": [
+    "msg.value"
+  ],
+  "esbmc": {
+    "mtime_ns": 1786709887703846857,
+    "path": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+    "size": 507478392
+  },
+  "esbmc_args": [
+    "--overflow-check",
+    "--div-by-zero-check",
+    "--path-cov-arith-resolve",
+    "--unwindsetname",
+    "_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33"
+  ],
+  "level0": true,
+  "level0_perturb": true,
+  "max_holes": 3,
+  "max_region_pieces": 4,
+  "max_tx": 1,
+  "memlimit": "4g",
+  "no_auto_pin_value": true,
+  "path_function": null,
+  "pin_agreed_establishable_env": true,
+  "pin_agreed_state": true,
+  "pin_env": false,
+  "pin_extcall": false,
+  "pins": [],
+  "probe_ladder": true,
+  "probe_ladder_budget": 8,
+  "probe_witnesses": 16,
+  "probes": 8,
+  "refine_rounds": 2,
+  "safety_retreat_after_tiny_cuts": 2,
+  "schema": "solidity-path-generalise-config/3",
+  "scope": "focus",
+  "shrink_rounds": 4,
+  "skip_bracket": true,
+  "slot_coord": [],
+  "slot_coords": 20,
+  "slot_dependency_policy": "solc-reference-closure/3",
+  "sol": {
+    "mtime_ns": 1785888696476862249,
+    "path": "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Peer182/subjects/peer_ccsolbmc__Animalia/flat.sol",
+    "size": 41023
+  },
+  "state_struct_fields": true,
+  "static_extcall_inseparable": false,
+  "static_uncontrolled_inseparable": true,
+  "timeout": 120,
+  "unit": "decimals",
+  "witness_check": true
+}

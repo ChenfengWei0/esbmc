@@ -1,0 +1,185 @@
+{
+  "contract": "FarmingPool",
+  "unit": "distributor",
+  "enc": 3,
+  "depth": 1,
+  "path_function": "sol:@C@FarmingPool@F@distributor#5935",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/put_roundtrip/farming/test/FarmingPoolCovTest_FarmingPool_distributor_put3.t.sol",
+  "test": "test_put_FarmingPool_distributor_path3",
+  "region": {
+    "state._distributor": [
+      "0",
+      "0"
+    ],
+    "state._owner": [
+      "1",
+      "1461501637330902918203684832716283019655932542974"
+    ],
+    "state._totalSupply": [
+      "0",
+      "0"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "msg.value": "0",
+    "state._MAX_BALANCE": "100000000000000000000000000000000"
+  },
+  "ladder": [
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_distributor",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_distributor",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_distributor",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    24,
+    12,
+    12,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "stats": {
+    "fuzz_params": 0,
+    "lifted": [],
+    "asserts": 9,
+    "oracle_skipped": [
+      "_MAX_BALANCE (no storage slot: solc's layout does not list it, so it is a constant/immutable -- a rung over it is a compile-time tautology, not an oracle)"
+    ],
+    "state_stored": [
+      "state._distributor := 0",
+      "state._totalSupply := 0"
+    ],
+    "state_skipped": [
+      "state._MAX_BALANCE (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)",
+      "state._owner in [1, 1461501637330902918203684832716283019655932542974] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query -- the rungs were proved about the constructor's own value. Establishing a fuzz-chosen value here would test entry states the proof never covered, which is how this PUT came back RED on the unmodified contract)"
+    ],
+    "env_unchecked": []
+  },
+  "notes": []
+}

@@ -1,0 +1,197 @@
+{
+  "batch_id": "manual-rolling-local-001",
+  "case_count": 5,
+  "checks": [
+    {
+      "evidence": {
+        "batch_size": 5,
+        "inventory_error": "",
+        "manifest_rows": 5
+      },
+      "name": "rolling batch has the configured runnable case count",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "missing": [
+          {
+            "bench": "bugfix124",
+            "has_section": true,
+            "has_structured_ground_truth": false,
+            "missing": [
+              "target_contract",
+              "target_functions",
+              "expected_units",
+              "expected_path",
+              "expected_region",
+              "expected_oracle",
+              "expected_r1r2",
+              "root_cause",
+              "last_failure",
+              "why_static_missed",
+              "prevention_code_change",
+              "prevention_files_read",
+              "fix_targets",
+              "source_files_read",
+              "evidence_files_read"
+            ],
+            "ok": false,
+            "state": "NO_VALID",
+            "subject": "pop_048_PrivatePool"
+          },
+          {
+            "bench": "bugfix124",
+            "has_section": true,
+            "has_structured_ground_truth": false,
+            "missing": [
+              "target_contract",
+              "target_functions",
+              "expected_units",
+              "expected_path",
+              "expected_region",
+              "expected_oracle",
+              "expected_r1r2",
+              "root_cause",
+              "last_failure",
+              "why_static_missed",
+              "prevention_code_change",
+              "prevention_files_read",
+              "fix_targets",
+              "source_files_read",
+              "evidence_files_read"
+            ],
+            "ok": false,
+            "state": "NO_VALID",
+            "subject": "pop_049_Cooler"
+          },
+          {
+            "bench": "bugfix124",
+            "has_section": true,
+            "has_structured_ground_truth": false,
+            "missing": [
+              "target_contract",
+              "target_functions",
+              "expected_units",
+              "expected_path",
+              "expected_region",
+              "expected_oracle",
+              "expected_r1r2",
+              "root_cause",
+              "last_failure",
+              "why_static_missed",
+              "prevention_code_change",
+              "prevention_files_read",
+              "fix_targets",
+              "source_files_read",
+              "evidence_files_read"
+            ],
+            "ok": false,
+            "state": "NO_VALID",
+            "subject": "pop_058_PuttyV2"
+          }
+        ]
+      },
+      "name": "structured ground truth and failure postmortem complete",
+      "ok": false
+    },
+    {
+      "evidence": [
+        {
+          "case": "bugfix124/pop_048_PrivatePool",
+          "fix_targets": [],
+          "fix_targets_not_read": [],
+          "missing_paths": [],
+          "prevention_files_read": []
+        },
+        {
+          "case": "bugfix124/pop_049_Cooler",
+          "fix_targets": [],
+          "fix_targets_not_read": [],
+          "missing_paths": [],
+          "prevention_files_read": []
+        },
+        {
+          "case": "bugfix124/pop_058_PuttyV2",
+          "fix_targets": [],
+          "fix_targets_not_read": [],
+          "missing_paths": [],
+          "prevention_files_read": []
+        }
+      ],
+      "name": "all prevention files from MD/state were read before rerun",
+      "ok": false
+    },
+    {
+      "evidence": {
+        "issue_count": 1262,
+        "md_roots": [
+          "notes"
+        ],
+        "missing_paths": [
+          "Results/results_all.py",
+          "www.regular-expressions.info/catastrophic.h"
+        ],
+        "not_in_current_batch_prevention_files_read": [
+          "Results/results_all.py",
+          "notes/coverage/scripts/rq1_case_batch.py",
+          "notes/coverage/scripts/rq1_results_adopt.py",
+          "scripts/solidity_path_generalise.py",
+          "src/goto-programs/goto_coverage.cpp",
+          "src/solidity-frontend/solidity_convert_call.cpp",
+          "src/solidity-frontend/solidity_convert_expr.cpp",
+          "src/solidity-frontend/solidity_convert_modifier.cpp",
+          "src/solidity-frontend/solidity_convert_ref.cpp",
+          "src/solidity-frontend/solidity_convert_tuple.cpp",
+          "www.regular-expressions.info/catastrophic.h"
+        ],
+        "required_file_count": 17
+      },
+      "name": "all historical prevent/prevention files were read before rerun",
+      "ok": false
+    },
+    {
+      "evidence": {
+        "local_memlimit_gib": 8,
+        "local_parallel": 5,
+        "remote_memlimit_gib": 6.0,
+        "remote_parallel": 3,
+        "remote_reserve_mem_gib": 2.0
+      },
+      "name": "local/remote resource policy fixed",
+      "ok": true
+    },
+    {
+      "evidence": [],
+      "name": "existing scheduler artifacts do not show wrong-target units",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "supervise_interval_s": 30
+      },
+      "name": "30 second intervention supervision configured",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "host": "invmut-w2",
+        "ready": false,
+        "remote_esbmc": "/home/administrator/veriput_esbmc/repo",
+        "remote_memlimit_gib": 6.0,
+        "remote_parallel": 3,
+        "remote_reserve_mem_gib": 2.0,
+        "remote_veriput": "/home/administrator/VeriPUT",
+        "required_mem_gib": 20.0,
+        "returncode": 1,
+        "stderr": "",
+        "stdout": ""
+      },
+      "name": "remote ESBMC/VeriPUT/memory preflight ready",
+      "ok": false
+    }
+  ],
+  "manifest": "notes/coverage/rq1_runs/manual-rolling-local-001/manifest.tsv",
+  "ok": false,
+  "run_dir": "notes/coverage/rq1_runs/manual-rolling-local-001",
+  "schema": "veriput-rq1-pre-run-readiness/v1"
+}

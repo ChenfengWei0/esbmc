@@ -1,0 +1,1647 @@
+{
+  "contract": "FarmingPool",
+  "unit": "setDistributor",
+  "enc": 15,
+  "depth": 3,
+  "path_function": "sol:@C@FarmingPool@F@setDistributor#5926",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/farming__Distributor__setDistributor/put_gate/farming__certify_gate/test/FarmingPoolCovTest_FarmingPool_setDistributor_put15.t.sol",
+  "test": "test_put_FarmingPool_setDistributor_path15",
+  "piece": null,
+  "region": {
+    "distributor_": [
+      "1",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "msg.value": [
+      "0",
+      "0"
+    ],
+    "msg.sender": [
+      "1",
+      "1"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "state._MAX_BALANCE": "100000000000000000000000000000000",
+    "state._distributor": "0",
+    "state._farm.farmInfo.finished": "0",
+    "state._owner": "1",
+    "state._totalSupply": "0"
+  },
+  "ladder": [
+    {
+      "var": "_distributor",
+      "text": "post == pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post != pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_distributor",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_distributor",
+      "text": "post <= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post > pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_distributor",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == distributor_",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == msg.sender",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == msg.value",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (pre + msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (pre - msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (pre * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (msg.value + pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (msg.value - pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (msg.value * pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (msg.value + msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (msg.value - msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (msg.value * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (msg.value + 0)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (msg.value - 0)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == (msg.value * 0)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [msg.value, msg.value]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, msg.value]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (pre + msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (pre - msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (pre * msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (msg.value + pre)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (msg.value - pre)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (msg.value * pre)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (msg.value + msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (msg.value - msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (msg.value * msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (msg.value + 0)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (msg.value - 0)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post in [0, (msg.value * 0)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [msg.value, msg.value] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(pre + msg.value), (pre + msg.value)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(pre - msg.value), (pre - msg.value)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(pre * msg.value), (pre * msg.value)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(msg.value + pre), (msg.value + pre)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(msg.value - pre), (msg.value - pre)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(msg.value * pre), (msg.value * pre)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(msg.value + msg.value), (msg.value + msg.value)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(msg.value - msg.value), (msg.value - msg.value)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(msg.value * msg.value), (msg.value * msg.value)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(msg.value + 0), (msg.value + 0)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(msg.value - 0), (msg.value - 0)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post - pre in [(msg.value * 0), (msg.value * 0)] with post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == msg.sender",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == msg.value",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre * pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre + msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre - msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre + 0)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre - 0)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value + pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value - pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value * pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value + msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value - msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value + 0)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value - 0)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value * 0)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (0 + pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (0 - pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (0 + msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (0 - msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (0 * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [msg.value, msg.value]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, pre]",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, msg.value]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (pre + pre)]",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (pre * pre)]",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (pre + msg.value)]",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (pre - msg.value)]",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (pre * msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (pre + 0)]",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (pre - 0)]",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (msg.value + pre)]",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (msg.value - pre)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (msg.value * pre)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (msg.value + msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (msg.value - msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (msg.value * msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (msg.value + 0)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (msg.value - 0)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (msg.value * 0)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (0 + pre)]",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (0 - pre)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (0 + msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (0 - msg.value)]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [0, (0 * msg.value)]",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    12,
+    6,
+    6,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "requested": 128,
+    "selected": 128,
+    "candidate_budget": 128,
+    "rendered": 53,
+    "ran": 51,
+    "refuted": 40,
+    "not_run": 77,
+    "not_refuted": 11,
+    "timed_out": false,
+    "returncode": 1,
+    "fuzz_runs": 256,
+    "command": [
+      "forge",
+      "test",
+      "--json",
+      "--match-contract",
+      "^FarmingPoolCovTest_FarmingPool_setDistributor_put15_FuzzR2$",
+      "--match-test",
+      "^test_put_FarmingPool_setDistributor_path15fz",
+      "--fuzz-runs",
+      "256"
+    ],
+    "candidates": [
+      {
+        "key": "s0:v0:equals:e0",
+        "var": "_distributor",
+        "text": "post == distributor_",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_FarmingPool_setDistributor_path15fz0",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_0"
+      },
+      {
+        "key": "s0:v1:equals:e0",
+        "var": "_owner",
+        "text": "post == distributor_",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_1 _owner: post == distributor_: 1 != 112472158749540213421827870201729534240019951596",
+        "test": "test_put_FarmingPool_setDistributor_path15fz1",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_1"
+      },
+      {
+        "key": "s0:v0:abs:a1",
+        "var": "_distributor",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:a1",
+        "var": "_owner",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d0",
+        "var": "_distributor",
+        "text": "post - pre in [pre, pre] with post >= pre",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_4 _distributor: post - pre in [pre, pre] with post >= pre: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz4",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_4"
+      },
+      {
+        "key": "s0:v1:equals:e1",
+        "var": "_owner",
+        "text": "post == msg.sender",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e1",
+        "var": "_distributor",
+        "text": "post == msg.sender",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:a2",
+        "var": "_owner",
+        "text": "post in [0, 0]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_7 _owner: post in [0, 0]: 1 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz7",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_7"
+      },
+      {
+        "key": "s0:v0:abs:a2",
+        "var": "_distributor",
+        "text": "post in [0, 0]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_8 _distributor: post in [0, 0]: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz8",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_8"
+      },
+      {
+        "key": "s0:v1:equals:e2",
+        "var": "_owner",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d1",
+        "var": "_distributor",
+        "text": "post - pre in [msg.value, msg.value] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac0",
+        "var": "_owner",
+        "text": "post in [0, pre]",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_FarmingPool_setDistributor_path15fz11",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_11"
+      },
+      {
+        "key": "s0:v0:equals:e2",
+        "var": "_distributor",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e3",
+        "var": "_owner",
+        "text": "post == 0",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_13 _owner: post == 0: 1 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz13",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_13"
+      },
+      {
+        "key": "s0:v0:abs:ac0",
+        "var": "_distributor",
+        "text": "post in [0, pre]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_14 _distributor: post in [0, pre]: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz14",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_14"
+      },
+      {
+        "key": "s0:v1:abs:ac1",
+        "var": "_owner",
+        "text": "post in [0, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d2",
+        "var": "_distributor",
+        "text": "post - pre in [0, 0] with post >= pre",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_16 _distributor: post - pre in [0, 0] with post >= pre: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz16",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_16"
+      },
+      {
+        "key": "s0:v1:equals:e4",
+        "var": "_owner",
+        "text": "post == (pre + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_17 _owner: post == (pre + pre): 1 != 2",
+        "test": "test_put_FarmingPool_setDistributor_path15fz17",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_17"
+      },
+      {
+        "key": "s0:v0:equals:e3",
+        "var": "_distributor",
+        "text": "post == 0",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_18 _distributor: post == 0: 112472158749540213421827870201729534240019951596 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz18",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_18"
+      },
+      {
+        "key": "s0:v1:abs:ac3",
+        "var": "_owner",
+        "text": "post in [0, (pre + pre)]",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_FarmingPool_setDistributor_path15fz19",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_19"
+      },
+      {
+        "key": "s0:v0:abs:ac1",
+        "var": "_distributor",
+        "text": "post in [0, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e5",
+        "var": "_owner",
+        "text": "post == (pre - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_21 _owner: post == (pre - pre): 1 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz21",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_21"
+      },
+      {
+        "key": "s0:v0:deltas:d3",
+        "var": "_distributor",
+        "text": "post - pre in [(pre + pre), (pre + pre)] with post >= pre",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_22 _distributor: post - pre in [(pre + pre), (pre + pre)] with post >= pre: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz22",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_22"
+      },
+      {
+        "key": "s0:v1:abs:ac4",
+        "var": "_owner",
+        "text": "post in [0, (pre - pre)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_23 _owner: post in [0, (pre - pre)]: 1 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz23",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_23"
+      },
+      {
+        "key": "s0:v0:equals:e4",
+        "var": "_distributor",
+        "text": "post == (pre + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_24 _distributor: post == (pre + pre): 112472158749540213421827870201729534240019951596 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz24",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_24"
+      },
+      {
+        "key": "s0:v1:equals:e6",
+        "var": "_owner",
+        "text": "post == (pre * pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_FarmingPool_setDistributor_path15fz25",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_25"
+      },
+      {
+        "key": "s0:v0:abs:ac3",
+        "var": "_distributor",
+        "text": "post in [0, (pre + pre)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_26 _distributor: post in [0, (pre + pre)]: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz26",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_26"
+      },
+      {
+        "key": "s0:v1:abs:ac5",
+        "var": "_owner",
+        "text": "post in [0, (pre * pre)]",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_FarmingPool_setDistributor_path15fz27",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_27"
+      },
+      {
+        "key": "s0:v0:deltas:d4",
+        "var": "_distributor",
+        "text": "post - pre in [(pre - pre), (pre - pre)] with post >= pre",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_28 _distributor: post - pre in [(pre - pre), (pre - pre)] with post >= pre: 1422444343787090142105730044232577506865824851692 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz28",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_28"
+      },
+      {
+        "key": "s0:v1:equals:e7",
+        "var": "_owner",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e5",
+        "var": "_distributor",
+        "text": "post == (pre - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_30 _distributor: post == (pre - pre): 112472158749540213421827870201729534240019951596 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz30",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_30"
+      },
+      {
+        "key": "s0:v1:abs:ac6",
+        "var": "_owner",
+        "text": "post in [0, (pre + msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:ac4",
+        "var": "_distributor",
+        "text": "post in [0, (pre - pre)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_32 _distributor: post in [0, (pre - pre)]: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz32",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_32"
+      },
+      {
+        "key": "s0:v1:equals:e8",
+        "var": "_owner",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d5",
+        "var": "_distributor",
+        "text": "post - pre in [(pre * pre), (pre * pre)] with post >= pre",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_34 _distributor: post - pre in [(pre * pre), (pre * pre)] with post >= pre: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz34",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_34"
+      },
+      {
+        "key": "s0:v1:abs:ac7",
+        "var": "_owner",
+        "text": "post in [0, (pre - msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e6",
+        "var": "_distributor",
+        "text": "post == (pre * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_36 _distributor: post == (pre * pre): 112472158749540213421827870201729534240019951596 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz36",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_36"
+      },
+      {
+        "key": "s0:v1:equals:e9",
+        "var": "_owner",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:ac5",
+        "var": "_distributor",
+        "text": "post in [0, (pre * pre)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_38 _distributor: post in [0, (pre * pre)]: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz38",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_38"
+      },
+      {
+        "key": "s0:v1:abs:ac8",
+        "var": "_owner",
+        "text": "post in [0, (pre * msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d6",
+        "var": "_distributor",
+        "text": "post - pre in [(pre + msg.value), (pre + msg.value)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e10",
+        "var": "_owner",
+        "text": "post == (pre + 0)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_FarmingPool_setDistributor_path15fz41",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_41"
+      },
+      {
+        "key": "s0:v0:equals:e7",
+        "var": "_distributor",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac9",
+        "var": "_owner",
+        "text": "post in [0, (pre + 0)]",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_FarmingPool_setDistributor_path15fz43",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_43"
+      },
+      {
+        "key": "s0:v0:abs:ac6",
+        "var": "_distributor",
+        "text": "post in [0, (pre + msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e11",
+        "var": "_owner",
+        "text": "post == (pre - 0)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_FarmingPool_setDistributor_path15fz45",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_45"
+      },
+      {
+        "key": "s0:v0:deltas:d7",
+        "var": "_distributor",
+        "text": "post - pre in [(pre - msg.value), (pre - msg.value)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac10",
+        "var": "_owner",
+        "text": "post in [0, (pre - 0)]",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_FarmingPool_setDistributor_path15fz47",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_47"
+      },
+      {
+        "key": "s0:v0:equals:e8",
+        "var": "_distributor",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e12",
+        "var": "_owner",
+        "text": "post == (pre * 0)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_49 _owner: post == (pre * 0): 1 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz49",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_49"
+      },
+      {
+        "key": "s0:v0:abs:ac7",
+        "var": "_distributor",
+        "text": "post in [0, (pre - msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac11",
+        "var": "_owner",
+        "text": "post in [0, (pre * 0)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_51 _owner: post in [0, (pre * 0)]: 1 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz51",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_51"
+      },
+      {
+        "key": "s0:v0:deltas:d8",
+        "var": "_distributor",
+        "text": "post - pre in [(pre * msg.value), (pre * msg.value)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e13",
+        "var": "_owner",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e9",
+        "var": "_distributor",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac12",
+        "var": "_owner",
+        "text": "post in [0, (msg.value + pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:ac8",
+        "var": "_distributor",
+        "text": "post in [0, (pre * msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e14",
+        "var": "_owner",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d9",
+        "var": "_distributor",
+        "text": "post - pre in [(pre + 0), (pre + 0)] with post >= pre",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_58 _distributor: post - pre in [(pre + 0), (pre + 0)] with post >= pre: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz58",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_58"
+      },
+      {
+        "key": "s0:v1:abs:ac13",
+        "var": "_owner",
+        "text": "post in [0, (msg.value - pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e10",
+        "var": "_distributor",
+        "text": "post == (pre + 0)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_60 _distributor: post == (pre + 0): 178448586663171232215919317646513402 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz60",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_60"
+      },
+      {
+        "key": "s0:v1:equals:e15",
+        "var": "_owner",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:ac9",
+        "var": "_distributor",
+        "text": "post in [0, (pre + 0)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_62 _distributor: post in [0, (pre + 0)]: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz62",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_62"
+      },
+      {
+        "key": "s0:v1:abs:ac14",
+        "var": "_owner",
+        "text": "post in [0, (msg.value * pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d10",
+        "var": "_distributor",
+        "text": "post - pre in [(pre - 0), (pre - 0)] with post >= pre",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_64 _distributor: post - pre in [(pre - 0), (pre - 0)] with post >= pre: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz64",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_64"
+      },
+      {
+        "key": "s0:v1:equals:e16",
+        "var": "_owner",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e11",
+        "var": "_distributor",
+        "text": "post == (pre - 0)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_66 _distributor: post == (pre - 0): 112472158749540213421827870201729534240019951596 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz66",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_66"
+      },
+      {
+        "key": "s0:v1:abs:ac15",
+        "var": "_owner",
+        "text": "post in [0, (msg.value + msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:ac10",
+        "var": "_distributor",
+        "text": "post in [0, (pre - 0)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_68 _distributor: post in [0, (pre - 0)]: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz68",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_68"
+      },
+      {
+        "key": "s0:v1:equals:e17",
+        "var": "_owner",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d11",
+        "var": "_distributor",
+        "text": "post - pre in [(pre * 0), (pre * 0)] with post >= pre",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_70 _distributor: post - pre in [(pre * 0), (pre * 0)] with post >= pre: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz70",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_70"
+      },
+      {
+        "key": "s0:v1:abs:ac16",
+        "var": "_owner",
+        "text": "post in [0, (msg.value - msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e12",
+        "var": "_distributor",
+        "text": "post == (pre * 0)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_72 _distributor: post == (pre * 0): 112472158749540213421827870201729534240019951596 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz72",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_72"
+      },
+      {
+        "key": "s0:v1:equals:e18",
+        "var": "_owner",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:ac11",
+        "var": "_distributor",
+        "text": "post in [0, (pre * 0)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_74 _distributor: post in [0, (pre * 0)]: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz74",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_74"
+      },
+      {
+        "key": "s0:v1:abs:ac17",
+        "var": "_owner",
+        "text": "post in [0, (msg.value * msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d12",
+        "var": "_distributor",
+        "text": "post - pre in [(msg.value + pre), (msg.value + pre)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e19",
+        "var": "_owner",
+        "text": "post == (msg.value + 0)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e13",
+        "var": "_distributor",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac18",
+        "var": "_owner",
+        "text": "post in [0, (msg.value + 0)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:ac12",
+        "var": "_distributor",
+        "text": "post in [0, (msg.value + pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e20",
+        "var": "_owner",
+        "text": "post == (msg.value - 0)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d13",
+        "var": "_distributor",
+        "text": "post - pre in [(msg.value - pre), (msg.value - pre)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac19",
+        "var": "_owner",
+        "text": "post in [0, (msg.value - 0)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e14",
+        "var": "_distributor",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e21",
+        "var": "_owner",
+        "text": "post == (msg.value * 0)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:ac13",
+        "var": "_distributor",
+        "text": "post in [0, (msg.value - pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac20",
+        "var": "_owner",
+        "text": "post in [0, (msg.value * 0)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d14",
+        "var": "_distributor",
+        "text": "post - pre in [(msg.value * pre), (msg.value * pre)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e22",
+        "var": "_owner",
+        "text": "post == (0 + pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_FarmingPool_setDistributor_path15fz89",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_89"
+      },
+      {
+        "key": "s0:v0:equals:e15",
+        "var": "_distributor",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac21",
+        "var": "_owner",
+        "text": "post in [0, (0 + pre)]",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_FarmingPool_setDistributor_path15fz91",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_91"
+      },
+      {
+        "key": "s0:v0:abs:ac14",
+        "var": "_distributor",
+        "text": "post in [0, (msg.value * pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e23",
+        "var": "_owner",
+        "text": "post == (0 - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_FarmingPool_setDistributor_path15fz93",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_93"
+      },
+      {
+        "key": "s0:v0:deltas:d15",
+        "var": "_distributor",
+        "text": "post - pre in [(msg.value + msg.value), (msg.value + msg.value)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac22",
+        "var": "_owner",
+        "text": "post in [0, (0 - pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_FarmingPool_setDistributor_path15fz95",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_95"
+      },
+      {
+        "key": "s0:v0:equals:e16",
+        "var": "_distributor",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e24",
+        "var": "_owner",
+        "text": "post == (0 * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_97 _owner: post == (0 * pre): 1 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz97",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_97"
+      },
+      {
+        "key": "s0:v0:abs:ac15",
+        "var": "_distributor",
+        "text": "post in [0, (msg.value + msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac23",
+        "var": "_owner",
+        "text": "post in [0, (0 * pre)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_99 _owner: post in [0, (0 * pre)]: 1 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz99",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_99"
+      },
+      {
+        "key": "s0:v0:deltas:d16",
+        "var": "_distributor",
+        "text": "post - pre in [(msg.value - msg.value), (msg.value - msg.value)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e25",
+        "var": "_owner",
+        "text": "post == (0 + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e17",
+        "var": "_distributor",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac24",
+        "var": "_owner",
+        "text": "post in [0, (0 + msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:ac16",
+        "var": "_distributor",
+        "text": "post in [0, (msg.value - msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e26",
+        "var": "_owner",
+        "text": "post == (0 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d17",
+        "var": "_distributor",
+        "text": "post - pre in [(msg.value * msg.value), (msg.value * msg.value)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac25",
+        "var": "_owner",
+        "text": "post in [0, (0 - msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e18",
+        "var": "_distributor",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e27",
+        "var": "_owner",
+        "text": "post == (0 * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:ac17",
+        "var": "_distributor",
+        "text": "post in [0, (msg.value * msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac26",
+        "var": "_owner",
+        "text": "post in [0, (0 * msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d18",
+        "var": "_distributor",
+        "text": "post - pre in [(msg.value + 0), (msg.value + 0)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e28",
+        "var": "_owner",
+        "text": "post == (0 + 0)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_113 _owner: post == (0 + 0): 1 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz113",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_113"
+      },
+      {
+        "key": "s0:v0:equals:e19",
+        "var": "_distributor",
+        "text": "post == (msg.value + 0)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac27",
+        "var": "_owner",
+        "text": "post in [0, (0 + 0)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_115 _owner: post in [0, (0 + 0)]: 1 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz115",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_115"
+      },
+      {
+        "key": "s0:v0:abs:ac18",
+        "var": "_distributor",
+        "text": "post in [0, (msg.value + 0)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e29",
+        "var": "_owner",
+        "text": "post == (0 - 0)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_117 _owner: post == (0 - 0): 1 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz117",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_117"
+      },
+      {
+        "key": "s0:v0:deltas:d19",
+        "var": "_distributor",
+        "text": "post - pre in [(msg.value - 0), (msg.value - 0)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac28",
+        "var": "_owner",
+        "text": "post in [0, (0 - 0)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_119 _owner: post in [0, (0 - 0)]: 1 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz119",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_119"
+      },
+      {
+        "key": "s0:v0:equals:e20",
+        "var": "_distributor",
+        "text": "post == (msg.value - 0)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e30",
+        "var": "_owner",
+        "text": "post == (0 * 0)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_121 _owner: post == (0 * 0): 1 != 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz121",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_121"
+      },
+      {
+        "key": "s0:v0:abs:ac19",
+        "var": "_distributor",
+        "text": "post in [0, (msg.value - 0)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:ac29",
+        "var": "_owner",
+        "text": "post in [0, (0 * 0)]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_123 _owner: post in [0, (0 * 0)]: 1 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz123",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_123"
+      },
+      {
+        "key": "s0:v0:deltas:d20",
+        "var": "_distributor",
+        "text": "post - pre in [(msg.value * 0), (msg.value * 0)] with post >= pre",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e21",
+        "var": "_distributor",
+        "text": "post == (msg.value * 0)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:ac20",
+        "var": "_distributor",
+        "text": "post in [0, (msg.value * 0)]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:deltas:d21",
+        "var": "_distributor",
+        "text": "post - pre in [(0 + pre), (0 + pre)] with post >= pre",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_127 _distributor: post - pre in [(0 + pre), (0 + pre)] with post >= pre: 112472158749540213421827870201729534240019951596 > 0",
+        "test": "test_put_FarmingPool_setDistributor_path15fz127",
+        "marker": "VERIPUT_CANDIDATE_62bfcb97063ee5ea7fb0750c72338607_127"
+      }
+    ],
+    "enabled": true
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "_distributor",
+    "_owner"
+  ],
+  "oracle_vars": [
+    "_distributor",
+    "_owner"
+  ],
+  "slot_candidates": {
+    "asked": [],
+    "unanswered": [],
+    "rows_for_unasked_names": [
+      "_distributor",
+      "_owner"
+    ]
+  },
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "8889d981f1",
+    "srcDirty": true,
+    "binaryMtime": 1785952462
+  },
+  "stats": {
+    "fuzz_params": 1,
+    "lifted": [
+      "distributor_"
+    ],
+    "asserts": 19,
+    "state_asserts": 19,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 0,
+    "rollback_exit": false,
+    "return_asserts": 0,
+    "oracle_skipped": [
+      "_owner: post == msg.sender (rung shape not rendered)",
+      "_owner: post == (pre + msg.value) (rung shape not rendered)",
+      "_owner: post == (pre - msg.value) (rung shape not rendered)",
+      "_owner: post == (msg.value + pre) (rung shape not rendered)",
+      "_owner: post in [0, (pre + msg.value)] (rung shape not rendered)",
+      "_owner: post in [0, (pre - msg.value)] (rung shape not rendered)",
+      "_owner: post in [0, (msg.value + pre)] (rung shape not rendered)"
+    ],
+    "oracle_implied": [
+      "_distributor: post != pre (entailed by a stronger rung that also HOLDS on _distributor, so asserting it detects nothing the stronger one misses)",
+      "_distributor: post >= pre (entailed by a stronger rung that also HOLDS on _distributor, so asserting it detects nothing the stronger one misses)",
+      "_owner: post >= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)",
+      "_owner: post <= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)"
+    ],
+    "state_stored": [
+      "state._distributor := 0",
+      "state._owner := 1",
+      "state._totalSupply := 0"
+    ],
+    "state_skipped": [
+      "state._MAX_BALANCE (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)",
+      "state._farm.farmInfo.finished (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)"
+    ],
+    "env_unchecked": []
+  },
+  "notes": [
+    "slot candidates asked=0 unanswered=0"
+  ]
+}

@@ -1,0 +1,232 @@
+{
+  "contract": "FarmingPool",
+  "unit": "setDistributor",
+  "enc": 13,
+  "depth": 3,
+  "path_function": "sol:@C@FarmingPool@F@setDistributor#5926",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/put_roundtrip/farming__certify_gate__envsender_pinowner/test/FarmingPoolCovTest_FarmingPool_setDistributor_put13.t.sol",
+  "test": "test_put_FarmingPool_setDistributor_path13",
+  "piece": null,
+  "region": {
+    "distributor_": [
+      "1",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "msg.sender": [
+      "0",
+      "18043230090504974298810923860694852094517685715"
+    ],
+    "state._distributor": [
+      "0",
+      "0"
+    ],
+    "state._totalSupply": [
+      "0",
+      "0"
+    ]
+  },
+  "holes": {
+    "msg.sender": [
+      "1"
+    ]
+  },
+  "pins": {
+    "state._owner": "1",
+    "msg.value": "0",
+    "state._MAX_BALANCE": "100000000000000000000000000000000"
+  },
+  "ladder": [
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_MAX_BALANCE",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post == pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post != pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_distributor",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_distributor",
+      "text": "post <= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_distributor",
+      "text": "post > pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_distributor",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[distributor_]",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[distributor_]",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[distributor_]",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[distributor_]",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[distributor_]",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[distributor_]",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    30,
+    15,
+    15,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "stats": {
+    "fuzz_params": 2,
+    "lifted": [
+      "msg.sender",
+      "distributor_"
+    ],
+    "asserts": 10,
+    "state_asserts": 10,
+    "return_asserts": 0,
+    "oracle_skipped": [
+      "_MAX_BALANCE (no storage slot: solc's layout does not list it, so it is a constant/immutable -- a rung over it is a compile-time tautology, not an oracle)",
+      "_distributor: post != pre (this rung asserts the state CHANGED, and the emitted call is REVERT-TOLERANT (`try {} catch {}`) because the exit kind could not be confirmed. A revert leaves storage untouched, so this assertion is FALSE on exactly the outcome the wrapper exists to tolerate -- it would produce a RED test on the unmodified contract. The `post == pre` rungs of the same ladder are unaffected: they hold on a revert too. DROPPED rather than emitted, and rather than the whole PUT being refused, because the unchanged rungs are still a sound (weaker) oracle over this region)",
+      "_distributor: post > pre (this rung asserts the state CHANGED, and the emitted call is REVERT-TOLERANT (`try {} catch {}`) because the exit kind could not be confirmed. A revert leaves storage untouched, so this assertion is FALSE on exactly the outcome the wrapper exists to tolerate -- it would produce a RED test on the unmodified contract. The `post == pre` rungs of the same ladder are unaffected: they hold on a revert too. DROPPED rather than emitted, and rather than the whole PUT being refused, because the unchanged rungs are still a sound (weaker) oracle over this region)"
+    ],
+    "state_stored": [
+      "state._distributor := 0",
+      "state._owner := 1",
+      "state._totalSupply := 0"
+    ],
+    "state_skipped": [
+      "state._MAX_BALANCE (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)"
+    ],
+    "env_unchecked": []
+  },
+  "notes": []
+}

@@ -1,0 +1,1355 @@
+{
+  "claims_decided": 42,
+  "claims_total": 180,
+  "complete": true,
+  "fingerprint": "913a93d8102de0cb",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@EscrowDst@F@cancel#1924:path:116\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:116",
+      "compact_trace": false,
+      "dropped_internal": 259,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0x1000000000000000000000000000000000000000000000000,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "4e254ae25f57f216",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@EscrowDst@F@cancel#1924:path:117\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:117",
+      "compact_trace": false,
+      "dropped_internal": 259,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0x1000000000000000000000000000000000000000000000000,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "11182b46c026b438",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@EscrowDst@F@cancel#1924:path:118\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:118",
+      "compact_trace": false,
+      "dropped_internal": 259,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0x1000000000000000000000000000000000000000000000000,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "fc81d25eb28b7f04",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@EscrowDst@F@cancel#1924:path:119\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:119",
+      "compact_trace": false,
+      "dropped_internal": 259,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0x1000000000000000000000000000000000000000000000000,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "affa1238d5127952",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@EscrowDst@F@cancel#1924:path:124\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:124",
+      "compact_trace": false,
+      "dropped_internal": 259,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0x1000000000000000000000000000000000000000000000000,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "b558e75fb036e494",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@EscrowDst@F@cancel#1924:path:125\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:125",
+      "compact_trace": false,
+      "dropped_internal": 259,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0x1000000000000000000000000000000000000000000000000,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "3d622072481daf82",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@EscrowDst@F@cancel#1924:path:126\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:126",
+      "compact_trace": false,
+      "dropped_internal": 259,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0x1000000000000000000000000000000000000000000000000,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "14dede2fcc020a86",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@EscrowDst@F@cancel#1924:path:127\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:127",
+      "compact_trace": false,
+      "dropped_internal": 259,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0x1000000000000000000000000000000000000000000000000,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "b24cf3d859e24448",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@EscrowDst@F@cancel#1924:path:2\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:2",
+      "compact_trace": false,
+      "dropped_internal": 708,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "1"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0x1000000000000000000000000000000000000000000000000,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "8a8e1e6ec7b7253d",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@EscrowDst@F@cancel#1924:path:28\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:28",
+      "compact_trace": false,
+      "dropped_internal": 192,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "8589934588"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "Immutables",
+          "value": "{ .orderHash = { .data = { 0 } } }"
+        },
+        {
+          "name": "PROXY_BYTECODE_HASH",
+          "value": "{ .data = { 0 } }"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "8b62fa54f22a86c6",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@EscrowDst@F@cancel#1924:path:30\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:30",
+      "compact_trace": false,
+      "dropped_internal": 192,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "8589934588"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "Immutables",
+          "value": "{ .orderHash = { .data = { 0 } } }"
+        },
+        {
+          "name": "PROXY_BYTECODE_HASH",
+          "value": "{ .data = { 0 } }"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "83281abc28500b18",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@EscrowDst@F@cancel#1924:path:6\t": {
+      "claim": "sol:@C@EscrowDst@F@cancel#1924:path:6",
+      "compact_trace": false,
+      "dropped_internal": 184,
+      "entry_storage": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967295"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "FACTORY",
+          "value": "0"
+        },
+        {
+          "name": "Immutables",
+          "value": "{ .orderHash = { .data = { 0 } } }"
+        },
+        {
+          "name": "PROXY_BYTECODE_HASH",
+          "value": "{ .data = { 0 } }"
+        },
+        {
+          "name": "RESCUE_DELAY",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "immutables",
+          "value": "{ .orderHash={ .data=nil, .length=nil }, .hashlock={ .data=nil, .length=nil },\n    .anon_pad$2=0,\n    .maker=0, .taker=4294967295, .token=0,\n    .amount=0, .safetyDeposit=0, .timelocks=0x1000000000000000000000000000000000000000000000000,\n    .parameters={ .offset=nil, .length=nil, .capacity=nil, .initialized=nil,\n    .anon_pad$4=nil } }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "caf9526db0ae2988",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_ACCESS_TOKEN",
+        "_ESBMC_aux_Escrow",
+        "PROXY_BYTECODE_HASH",
+        "_ESBMC_aux_IEscrowDst"
+      ],
+      "witness_count": 1
+    }
+  }
+}

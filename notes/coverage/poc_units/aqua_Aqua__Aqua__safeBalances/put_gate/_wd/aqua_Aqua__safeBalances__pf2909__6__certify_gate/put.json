@@ -1,0 +1,150 @@
+{
+  "contract": "Aqua",
+  "unit": "safeBalances",
+  "enc": 6,
+  "depth": 2,
+  "path_function": "sol:@C@Aqua@F@safeBalances#2909",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__safeBalances/put_gate/aqua_Aqua__certify_gate/test/AquaCovTest_Aqua_safeBalances_put6.t.sol",
+  "test": "test_put_Aqua_safeBalances_path6",
+  "piece": null,
+  "region": {
+    "app": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "maker": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "msg.value": [
+      "0",
+      "0"
+    ],
+    "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount": [
+      "0",
+      "0"
+    ],
+    "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].tokensCount": [
+      "0",
+      "0"
+    ],
+    "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].amount": [
+      "0",
+      "0"
+    ],
+    "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].tokensCount": [
+      "0",
+      "0"
+    ],
+    "token0": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "token1": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "state._DOCKED": "255"
+  },
+  "ladder": [],
+  "ladder_summary": null,
+  "ladder_refusal": "the slot '_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount' names the key '0x2000000000000000000000000000000000000000000000000000000000000000', which cannot be expressed: the key does not resolve to an input of this unit. Name a parameter, an environment value as `msg.sender` / `msg.value`, or a state variable at entry as `state.<field>`",
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "enabled": true,
+    "requested": 0,
+    "selected": 0,
+    "candidate_budget": 128,
+    "rendered": 0,
+    "ran": 0,
+    "refuted": 0,
+    "not_refuted": 0,
+    "not_run": 0,
+    "timed_out": false,
+    "returncode": null,
+    "fuzz_runs": 256,
+    "command": [],
+    "reason": "rollback path has no observable R2 post-state",
+    "candidates": []
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "_DOCKED",
+    "_balances"
+  ],
+  "oracle_vars": [
+    "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount",
+    "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].tokensCount",
+    "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].amount",
+    "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].tokensCount"
+  ],
+  "slot_candidates": {
+    "asked": [
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].tokensCount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].amount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].tokensCount"
+    ],
+    "unanswered": [
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].tokensCount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].amount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].tokensCount"
+    ],
+    "rows_for_unasked_names": []
+  },
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "9726473e2b",
+    "srcDirty": true,
+    "binaryMtime": 1785959547
+  },
+  "stats": {
+    "fuzz_params": 4,
+    "lifted": [
+      "maker",
+      "app",
+      "token0",
+      "token1"
+    ],
+    "asserts": 1,
+    "state_asserts": 0,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 1,
+    "rollback_exit": true,
+    "exit_kind": "revert",
+    "return_asserts": 0,
+    "oracle_skipped": [],
+    "oracle_implied": [],
+    "state_stored": [
+      "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount := 0",
+      "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].tokensCount := 0",
+      "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].amount := 0",
+      "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].tokensCount := 0"
+    ],
+    "state_skipped": [
+      "state._DOCKED (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)"
+    ],
+    "env_unchecked": []
+  },
+  "notes": [
+    "ladder refused: the slot '_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount' names the key '0x2000000000000000000000000000000000000000000000000000000000000000', which cannot be expressed: the key does not resolve to an input of this unit. Name a parameter, an environment value as `msg.sender` / `msg.value`, or a state variable at entry as `state.<field>`",
+    "slot candidates asked=4 unanswered=4",
+    "R2 ESBMC skipped: reverting path has no observable post-state"
+  ]
+}

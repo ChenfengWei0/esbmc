@@ -1,0 +1,447 @@
+{
+  "claims_decided": 10,
+  "claims_total": 10,
+  "complete": true,
+  "fingerprint": "edadbafd28dcdb4c",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:12\tfile notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:12",
+      "compact_trace": false,
+      "dropped_internal": 20,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "100"
+        },
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      ],
+      "loc": "file notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested",
+      "path_id_stable": "3bf91e5ccb77b634",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:13\tfile notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:13",
+      "compact_trace": false,
+      "dropped_internal": 20,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        }
+      ],
+      "loc": "file notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested",
+      "path_id_stable": "d5c49ad0e3d9a3fe",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:14\tfile notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:14",
+      "compact_trace": false,
+      "dropped_internal": 20,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "100"
+        },
+        {
+          "name": "y",
+          "value": "99"
+        }
+      ],
+      "loc": "file notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested",
+      "path_id_stable": "52ba33f33765865a",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:15\tfile notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:15",
+      "compact_trace": false,
+      "dropped_internal": 20,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "x",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "y",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        }
+      ],
+      "loc": "file notes/coverage/poc/P19_ReturnShapes.sol line 66 function tern_nested",
+      "path_id_stable": "1b86c36e0b533df0",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:2\t": {
+      "claim": "sol:@C@P19_ReturnShapes@F@tern_nested#115:path:2",
+      "compact_trace": false,
+      "dropped_internal": 21,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [],
+      "loc": "",
+      "path_id_stable": "2e3e0d4a4b85c7e4",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    }
+  }
+}

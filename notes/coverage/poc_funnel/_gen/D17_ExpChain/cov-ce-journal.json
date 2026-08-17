@@ -1,0 +1,1247 @@
+{
+  "claims_decided": 11,
+  "claims_total": 70,
+  "complete": false,
+  "fingerprint": "c4947169a4e32a9b",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": true,
+  "version": 3,
+  "witnesses": {
+    "arithmetic overflow on mul\tfile /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 84 function D17_ExpChainLong": {
+      "claim": "arithmetic overflow on mul",
+      "compact_trace": false,
+      "dropped_internal": 14,
+      "entry_storage": [],
+      "entry_storage_known": false,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "e0",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "e1",
+          "value": "0"
+        },
+        {
+          "name": "e10",
+          "value": "0"
+        },
+        {
+          "name": "e11",
+          "value": "0"
+        },
+        {
+          "name": "e12",
+          "value": "0"
+        },
+        {
+          "name": "e13",
+          "value": "0"
+        },
+        {
+          "name": "e14",
+          "value": "0"
+        },
+        {
+          "name": "e15",
+          "value": "0"
+        },
+        {
+          "name": "e16",
+          "value": "0"
+        },
+        {
+          "name": "e17",
+          "value": "0"
+        },
+        {
+          "name": "e18",
+          "value": "0"
+        },
+        {
+          "name": "e19",
+          "value": "0"
+        },
+        {
+          "name": "e2",
+          "value": "0"
+        },
+        {
+          "name": "e20",
+          "value": "0"
+        },
+        {
+          "name": "e21",
+          "value": "0"
+        },
+        {
+          "name": "e22",
+          "value": "0"
+        },
+        {
+          "name": "e23",
+          "value": "0"
+        },
+        {
+          "name": "e24",
+          "value": "0"
+        },
+        {
+          "name": "e25",
+          "value": "0"
+        },
+        {
+          "name": "e26",
+          "value": "0"
+        },
+        {
+          "name": "e27",
+          "value": "0"
+        },
+        {
+          "name": "e28",
+          "value": "0"
+        },
+        {
+          "name": "e29",
+          "value": "0"
+        },
+        {
+          "name": "e3",
+          "value": "0"
+        },
+        {
+          "name": "e4",
+          "value": "0"
+        },
+        {
+          "name": "e5",
+          "value": "0"
+        },
+        {
+          "name": "e6",
+          "value": "0"
+        },
+        {
+          "name": "e7",
+          "value": "0"
+        },
+        {
+          "name": "e8",
+          "value": "0"
+        },
+        {
+          "name": "e9",
+          "value": "0"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        }
+      ],
+      "inputs": [],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 84 function D17_ExpChainLong",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "arithmetic overflow on mul\tfile /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 86 function D17_ExpChainLong": {
+      "claim": "arithmetic overflow on mul",
+      "compact_trace": false,
+      "dropped_internal": 14,
+      "entry_storage": [],
+      "entry_storage_known": false,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "e0",
+          "value": "0x3FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFC0007"
+        },
+        {
+          "name": "e1",
+          "value": "0x9392EE8E921D5D073AFF322E62439FCF32D7F344649470F90"
+        },
+        {
+          "name": "e10",
+          "value": "0"
+        },
+        {
+          "name": "e11",
+          "value": "0"
+        },
+        {
+          "name": "e12",
+          "value": "0"
+        },
+        {
+          "name": "e13",
+          "value": "0"
+        },
+        {
+          "name": "e14",
+          "value": "0"
+        },
+        {
+          "name": "e15",
+          "value": "0"
+        },
+        {
+          "name": "e16",
+          "value": "0"
+        },
+        {
+          "name": "e17",
+          "value": "0"
+        },
+        {
+          "name": "e18",
+          "value": "0"
+        },
+        {
+          "name": "e19",
+          "value": "0"
+        },
+        {
+          "name": "e2",
+          "value": "0"
+        },
+        {
+          "name": "e20",
+          "value": "0"
+        },
+        {
+          "name": "e21",
+          "value": "0"
+        },
+        {
+          "name": "e22",
+          "value": "0"
+        },
+        {
+          "name": "e23",
+          "value": "0"
+        },
+        {
+          "name": "e24",
+          "value": "0"
+        },
+        {
+          "name": "e25",
+          "value": "0"
+        },
+        {
+          "name": "e26",
+          "value": "0"
+        },
+        {
+          "name": "e27",
+          "value": "0"
+        },
+        {
+          "name": "e28",
+          "value": "0"
+        },
+        {
+          "name": "e29",
+          "value": "0"
+        },
+        {
+          "name": "e3",
+          "value": "0"
+        },
+        {
+          "name": "e4",
+          "value": "0"
+        },
+        {
+          "name": "e5",
+          "value": "0"
+        },
+        {
+          "name": "e6",
+          "value": "0"
+        },
+        {
+          "name": "e7",
+          "value": "0"
+        },
+        {
+          "name": "e8",
+          "value": "0"
+        },
+        {
+          "name": "e9",
+          "value": "0"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        }
+      ],
+      "inputs": [],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 86 function D17_ExpChainLong",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "arithmetic overflow on mul\tfile /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 88 function D17_ExpChainLong": {
+      "claim": "arithmetic overflow on mul",
+      "compact_trace": false,
+      "dropped_internal": 14,
+      "entry_storage": [],
+      "entry_storage_known": false,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "e0",
+          "value": "0xA857F462D46629F06AEEAEEAEEAEEAF755555555555555558000000000000003"
+        },
+        {
+          "name": "e1",
+          "value": "0xFE95939BC0CCDB0DD19E4F2E12CD47AE3730B88370162083B"
+        },
+        {
+          "name": "e10",
+          "value": "0"
+        },
+        {
+          "name": "e11",
+          "value": "0"
+        },
+        {
+          "name": "e12",
+          "value": "0"
+        },
+        {
+          "name": "e13",
+          "value": "0"
+        },
+        {
+          "name": "e14",
+          "value": "0"
+        },
+        {
+          "name": "e15",
+          "value": "0"
+        },
+        {
+          "name": "e16",
+          "value": "0"
+        },
+        {
+          "name": "e17",
+          "value": "0"
+        },
+        {
+          "name": "e18",
+          "value": "0"
+        },
+        {
+          "name": "e19",
+          "value": "0"
+        },
+        {
+          "name": "e2",
+          "value": "0xC0636055DB130F49917AAC4718E899BF1AB4763C4ACC4F05"
+        },
+        {
+          "name": "e20",
+          "value": "0"
+        },
+        {
+          "name": "e21",
+          "value": "0"
+        },
+        {
+          "name": "e22",
+          "value": "0"
+        },
+        {
+          "name": "e23",
+          "value": "0"
+        },
+        {
+          "name": "e24",
+          "value": "0"
+        },
+        {
+          "name": "e25",
+          "value": "0"
+        },
+        {
+          "name": "e26",
+          "value": "0"
+        },
+        {
+          "name": "e27",
+          "value": "0"
+        },
+        {
+          "name": "e28",
+          "value": "0"
+        },
+        {
+          "name": "e29",
+          "value": "0"
+        },
+        {
+          "name": "e3",
+          "value": "0"
+        },
+        {
+          "name": "e4",
+          "value": "0"
+        },
+        {
+          "name": "e5",
+          "value": "0"
+        },
+        {
+          "name": "e6",
+          "value": "0"
+        },
+        {
+          "name": "e7",
+          "value": "0"
+        },
+        {
+          "name": "e8",
+          "value": "0"
+        },
+        {
+          "name": "e9",
+          "value": "0"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        }
+      ],
+      "inputs": [],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 88 function D17_ExpChainLong",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "arithmetic overflow on mul\tfile /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 90 function D17_ExpChainLong": {
+      "claim": "arithmetic overflow on mul",
+      "compact_trace": false,
+      "dropped_internal": 14,
+      "entry_storage": [],
+      "entry_storage_known": false,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "e0",
+          "value": "0xF82CB02FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFD"
+        },
+        {
+          "name": "e1",
+          "value": "0x3621F7A1360CB017D5A90D7BC8FF1D691923282BEBD0A0897"
+        },
+        {
+          "name": "e10",
+          "value": "0"
+        },
+        {
+          "name": "e11",
+          "value": "0"
+        },
+        {
+          "name": "e12",
+          "value": "0"
+        },
+        {
+          "name": "e13",
+          "value": "0"
+        },
+        {
+          "name": "e14",
+          "value": "0"
+        },
+        {
+          "name": "e15",
+          "value": "0"
+        },
+        {
+          "name": "e16",
+          "value": "0"
+        },
+        {
+          "name": "e17",
+          "value": "0"
+        },
+        {
+          "name": "e18",
+          "value": "0"
+        },
+        {
+          "name": "e19",
+          "value": "0"
+        },
+        {
+          "name": "e2",
+          "value": "0x12156469C8504F67471787ED5285F477A37670E5A381152E37"
+        },
+        {
+          "name": "e20",
+          "value": "0"
+        },
+        {
+          "name": "e21",
+          "value": "0"
+        },
+        {
+          "name": "e22",
+          "value": "0"
+        },
+        {
+          "name": "e23",
+          "value": "0"
+        },
+        {
+          "name": "e24",
+          "value": "0"
+        },
+        {
+          "name": "e25",
+          "value": "0"
+        },
+        {
+          "name": "e26",
+          "value": "0"
+        },
+        {
+          "name": "e27",
+          "value": "0"
+        },
+        {
+          "name": "e28",
+          "value": "0"
+        },
+        {
+          "name": "e29",
+          "value": "0"
+        },
+        {
+          "name": "e3",
+          "value": "0x51126C1501018FCC52F2481CAE2BBD5FC4793F850C3855A7B"
+        },
+        {
+          "name": "e4",
+          "value": "0"
+        },
+        {
+          "name": "e5",
+          "value": "0"
+        },
+        {
+          "name": "e6",
+          "value": "0"
+        },
+        {
+          "name": "e7",
+          "value": "0"
+        },
+        {
+          "name": "e8",
+          "value": "0"
+        },
+        {
+          "name": "e9",
+          "value": "0"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        }
+      ],
+      "inputs": [],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 90 function D17_ExpChainLong",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "arithmetic overflow on mul\tfile /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 92 function D17_ExpChainLong": {
+      "claim": "arithmetic overflow on mul",
+      "compact_trace": false,
+      "dropped_internal": 14,
+      "entry_storage": [],
+      "entry_storage_known": false,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "e0",
+          "value": "0xF19689CC2AFB93476EE901869D2773A79C00000000000000000000000000001B"
+        },
+        {
+          "name": "e1",
+          "value": "0xFE95939BC0CCDB0DD19E4F2E12CD47AEF8E1919E8FDCAA9C1"
+        },
+        {
+          "name": "e10",
+          "value": "0"
+        },
+        {
+          "name": "e11",
+          "value": "0"
+        },
+        {
+          "name": "e12",
+          "value": "0"
+        },
+        {
+          "name": "e13",
+          "value": "0"
+        },
+        {
+          "name": "e14",
+          "value": "0"
+        },
+        {
+          "name": "e15",
+          "value": "0"
+        },
+        {
+          "name": "e16",
+          "value": "0"
+        },
+        {
+          "name": "e17",
+          "value": "0"
+        },
+        {
+          "name": "e18",
+          "value": "0"
+        },
+        {
+          "name": "e19",
+          "value": "0"
+        },
+        {
+          "name": "e2",
+          "value": "0x52AAFD216354B236EF31B21D4D0B3630E5F2D3087679FF1D4"
+        },
+        {
+          "name": "e20",
+          "value": "0"
+        },
+        {
+          "name": "e21",
+          "value": "0"
+        },
+        {
+          "name": "e22",
+          "value": "0"
+        },
+        {
+          "name": "e23",
+          "value": "0"
+        },
+        {
+          "name": "e24",
+          "value": "0"
+        },
+        {
+          "name": "e25",
+          "value": "0"
+        },
+        {
+          "name": "e26",
+          "value": "0"
+        },
+        {
+          "name": "e27",
+          "value": "0"
+        },
+        {
+          "name": "e28",
+          "value": "0"
+        },
+        {
+          "name": "e29",
+          "value": "0"
+        },
+        {
+          "name": "e3",
+          "value": "0x412CD97337B18FCA2D7D8C6C4D8545FE33334F80366DCEDD1"
+        },
+        {
+          "name": "e4",
+          "value": "0x116ED10533BBADB0281C0F59AA5303467890C5FB88BE3B8C16"
+        },
+        {
+          "name": "e5",
+          "value": "0"
+        },
+        {
+          "name": "e6",
+          "value": "0"
+        },
+        {
+          "name": "e7",
+          "value": "0"
+        },
+        {
+          "name": "e8",
+          "value": "0"
+        },
+        {
+          "name": "e9",
+          "value": "0"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        }
+      ],
+      "inputs": [],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 92 function D17_ExpChainLong",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "arithmetic overflow on mul\tfile /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 94 function D17_ExpChainLong": {
+      "claim": "arithmetic overflow on mul",
+      "compact_trace": false,
+      "dropped_internal": 14,
+      "entry_storage": [],
+      "entry_storage_known": false,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "e0",
+          "value": "0xA857F462D46629F06AEEAEEAEEAEEAF755555555555555558000000000000003"
+        },
+        {
+          "name": "e1",
+          "value": "0xFE95939BC0CCDB0DD19E4F2E12CD47AE3730B88370162083B"
+        },
+        {
+          "name": "e10",
+          "value": "0"
+        },
+        {
+          "name": "e11",
+          "value": "0"
+        },
+        {
+          "name": "e12",
+          "value": "0"
+        },
+        {
+          "name": "e13",
+          "value": "0"
+        },
+        {
+          "name": "e14",
+          "value": "0"
+        },
+        {
+          "name": "e15",
+          "value": "0"
+        },
+        {
+          "name": "e16",
+          "value": "0"
+        },
+        {
+          "name": "e17",
+          "value": "0"
+        },
+        {
+          "name": "e18",
+          "value": "0"
+        },
+        {
+          "name": "e19",
+          "value": "0"
+        },
+        {
+          "name": "e2",
+          "value": "0xC0636055DB130F49917AAC4718E899BF1AB4763C4ACC4F05"
+        },
+        {
+          "name": "e20",
+          "value": "0"
+        },
+        {
+          "name": "e21",
+          "value": "0"
+        },
+        {
+          "name": "e22",
+          "value": "0"
+        },
+        {
+          "name": "e23",
+          "value": "0"
+        },
+        {
+          "name": "e24",
+          "value": "0"
+        },
+        {
+          "name": "e25",
+          "value": "0"
+        },
+        {
+          "name": "e26",
+          "value": "0"
+        },
+        {
+          "name": "e27",
+          "value": "0"
+        },
+        {
+          "name": "e28",
+          "value": "0"
+        },
+        {
+          "name": "e29",
+          "value": "0"
+        },
+        {
+          "name": "e3",
+          "value": "0x830194A692414ED91488CE0B0DF24D3974A1E2B89D5FE0077"
+        },
+        {
+          "name": "e4",
+          "value": "0x1253B1BD3A58B316AEEAB983AB3A57DFBDFE7C63A96312CC07"
+        },
+        {
+          "name": "e5",
+          "value": "0x41BCB8DB624D0421965F85DD0D82F756FEE9E28787BE16A00"
+        },
+        {
+          "name": "e6",
+          "value": "0"
+        },
+        {
+          "name": "e7",
+          "value": "0"
+        },
+        {
+          "name": "e8",
+          "value": "0"
+        },
+        {
+          "name": "e9",
+          "value": "0"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        }
+      ],
+      "inputs": [],
+      "loc": "file /home/samson/workspace/esbmc/notes/coverage/poc/D17_ExpChain.sol line 94 function D17_ExpChainLong",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    }
+  }
+}

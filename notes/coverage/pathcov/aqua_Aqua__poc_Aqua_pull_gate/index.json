@@ -1,0 +1,124 @@
+{
+  "schema": "veriput-pathcov-collection/2",
+  "benchmark": "aqua_Aqua",
+  "project": "aqua",
+  "primary": {
+    "name": "Aqua",
+    "kind": "contract"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__pull/inputs/aqua__Aqua.flat.sol",
+  "flatInputIdentity": {
+    "path": "/home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__pull/inputs/aqua__Aqua.flat.sol",
+    "size": 88676,
+    "mtime_ns": 1782972279290462820
+  },
+  "astInput": "/home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__pull/inputs/aqua__Aqua.flat.sol.solast",
+  "astInputIdentity": {
+    "path": "/home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__pull/inputs/aqua__Aqua.flat.sol.solast",
+    "size": 827316,
+    "mtime_ns": 1782972279294291512
+  },
+  "esbmcIdentity": {
+    "path": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+    "size": 503234168,
+    "mtime_ns": 1785974645307920454
+  },
+  "config": {
+    "mode": "per-method",
+    "scope": "single",
+    "onlyUnits": [
+      "pull"
+    ],
+    "adhocTarget": null,
+    "solidityMaxTx": 1,
+    "unwind": null,
+    "focusWith": [],
+    "instrumentOnlyUnit": false,
+    "pathCovMaxGoals": 10000,
+    "probeWitnesses": 8,
+    "memlimit": "10g",
+    "solverFlags": [],
+    "solverFlagsReason": "tool default (no solver flag passed)",
+    "outerTimeoutSeconds": 600,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "Aqua__pull",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__pull/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__pull/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 10g --contract Aqua --focus-function pull --branch-function-coverage --path-cov-probe --all-witnesses --max-witnesses 8",
+      "cmdArgv": [
+        "/home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+        "/home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__pull/inputs/aqua__Aqua.flat.sol.solast",
+        "--sol",
+        "/home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__pull/inputs/aqua__Aqua.flat.sol",
+        "--solidity-path-coverage",
+        "--solidity-max-tx",
+        "1",
+        "--cov-report-json",
+        "--path-cov-max-goals",
+        "10000",
+        "--memlimit",
+        "10g",
+        "--contract",
+        "Aqua",
+        "--focus-function",
+        "pull",
+        "--branch-function-coverage",
+        "--path-cov-probe",
+        "--all-witnesses",
+        "--max-witnesses",
+        "8"
+      ],
+      "wallSeconds": 2.79,
+      "exitCode": -11,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "binary": {
+        "head": "aeea521f12",
+        "srcDirty": true,
+        "binaryMtime": 1785974645
+      },
+      "pathsInstrumented": 5,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 0,
+      "depthBoundUnexpandedNames": [],
+      "loopsTruncatedAtUnwindBound": null,
+      "arithResolve": null,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "claimBudgetSeconds": null,
+      "claimsAbandonedOverBudget": null,
+      "verdictsPreserved": null,
+      "claimExtraSolves": null,
+      "claimVerdictsSuperseded": null,
+      "asmApproxSites": 11,
+      "asmApproxLines": [
+        492,
+        505,
+        1744,
+        1802,
+        1843,
+        2003,
+        2117,
+        2143,
+        2161,
+        2182,
+        2193
+      ],
+      "asmApproxConstructs": {
+        "YulFunctionCall:mload": 6,
+        "YulFunctionCall:mstore": 3,
+        "YulFunctionCall:call": 1,
+        "YulFunctionCall:chainid": 1
+      },
+      "asmHavocLocals": [],
+      "asmHavocStructTypes": [],
+      "contract": "Aqua",
+      "function": "pull",
+      "kind": "contract"
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/aqua_Aqua__poc_Aqua_pull_gate/reports"
+}

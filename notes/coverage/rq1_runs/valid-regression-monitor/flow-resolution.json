@@ -1,0 +1,34 @@
+{
+  "dataset": "real203",
+  "esbmc_binary_after": {
+    "executable": true,
+    "inode": 18455625,
+    "mtime_ns": 1786509436304342792,
+    "path": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+    "size": 505880488
+  },
+  "esbmc_binary_before": {
+    "executable": true,
+    "inode": 18455625,
+    "mtime_ns": 1786509436304342792,
+    "path": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+    "size": 505880488
+  },
+  "finished_at": "2026-08-12T04:40:41.390305+00:00",
+  "infrastructure_error": false,
+  "infrastructure_reasons": [],
+  "log": "notes/coverage/rq1_runs/valid-regression-monitor/logs/resolution-flow-1786509636361947057.log",
+  "new_quality": "valid-PUT-no-R1R2",
+  "pid": 2692258,
+  "rerun_completion_status": "ok",
+  "rerun_failure_reason": null,
+  "returncode": 0,
+  "run_result": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/_valid_regression_monitor/resolution-flow-1786509636361947057/real203/subjects/sablier-labs__evm-monorepo__FlowNFTDescriptor/result.json",
+  "schema": "veriput-rq1-regression-resolution/v1",
+  "started_at": "2026-08-12T04:40:36.362060+00:00",
+  "subject_id": "sablier-labs__evm-monorepo__FlowNFTDescriptor",
+  "timed_out": false,
+  "unit": "tokenURI",
+  "valid_now": true,
+  "wall_s": 5.028
+}

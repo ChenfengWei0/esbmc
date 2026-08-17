@@ -1,0 +1,1088 @@
+{
+  "contract": "St1inch",
+  "unit": "setMaxLossRatio",
+  "enc": 13,
+  "depth": 3,
+  "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setMaxLossRatio/put_gate/st1inch_St1inch__certify_gate/test/St1inchCovTest_St1inch_setMaxLossRatio_put13.t.sol",
+  "test": "test_put_St1inch_setMaxLossRatio_path13",
+  "piece": null,
+  "region": {
+    "msg.sender": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "msg.value": [
+      "0",
+      "0"
+    ],
+    "maxLossRatio_": [
+      "0",
+      "1000000000"
+    ]
+  },
+  "holes": {
+    "msg.sender": [
+      "1"
+    ]
+  },
+  "pins": {
+    "state._owner": "1"
+  },
+  "ladder": [
+    {
+      "var": "maxLossRatio",
+      "text": "post == pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post <= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    12,
+    3,
+    9,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "enabled": true,
+    "requested": 128,
+    "selected": 128,
+    "candidate_budget": 128,
+    "rendered": 0,
+    "ran": 0,
+    "refuted": 0,
+    "not_refuted": 0,
+    "not_run": 128,
+    "timed_out": false,
+    "returncode": null,
+    "fuzz_runs": 256,
+    "command": [],
+    "reason": "rollback path has no observable R2 post-state",
+    "candidates": [
+      {
+        "key": "s0:v0:equals:e0",
+        "var": "_owner",
+        "text": "post == msg.sender",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e0",
+        "var": "maxLossRatio",
+        "text": "post == maxLossRatio_",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a1",
+        "var": "_owner",
+        "text": "post in [maxLossRatio_, maxLossRatio_]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:abs:a1",
+        "var": "maxLossRatio",
+        "text": "post in [maxLossRatio_, maxLossRatio_]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e1",
+        "var": "_owner",
+        "text": "post == state._owner",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e1",
+        "var": "maxLossRatio",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a2",
+        "var": "_owner",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:abs:a2",
+        "var": "maxLossRatio",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e2",
+        "var": "_owner",
+        "text": "post == maxLossRatio_",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e2",
+        "var": "maxLossRatio",
+        "text": "post == 5",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a3",
+        "var": "_owner",
+        "text": "post in [5, 5]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:abs:a3",
+        "var": "maxLossRatio",
+        "text": "post in [5, 5]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e3",
+        "var": "_owner",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e3",
+        "var": "maxLossRatio",
+        "text": "post == 20",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a4",
+        "var": "_owner",
+        "text": "post in [20, 20]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:abs:a4",
+        "var": "maxLossRatio",
+        "text": "post in [20, 20]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e4",
+        "var": "_owner",
+        "text": "post == 5",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e4",
+        "var": "maxLossRatio",
+        "text": "post == (pre + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e5",
+        "var": "_owner",
+        "text": "post == 20",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e5",
+        "var": "maxLossRatio",
+        "text": "post == (pre - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e6",
+        "var": "_owner",
+        "text": "post == (pre + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e6",
+        "var": "maxLossRatio",
+        "text": "post == (pre * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e7",
+        "var": "_owner",
+        "text": "post == (pre - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e7",
+        "var": "maxLossRatio",
+        "text": "post == (pre + maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e8",
+        "var": "_owner",
+        "text": "post == (pre * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e8",
+        "var": "maxLossRatio",
+        "text": "post == (pre - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e9",
+        "var": "_owner",
+        "text": "post == (pre + maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e9",
+        "var": "maxLossRatio",
+        "text": "post == (pre * maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e10",
+        "var": "_owner",
+        "text": "post == (pre - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e10",
+        "var": "maxLossRatio",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e11",
+        "var": "_owner",
+        "text": "post == (pre * maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e11",
+        "var": "maxLossRatio",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e12",
+        "var": "_owner",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e12",
+        "var": "maxLossRatio",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e13",
+        "var": "_owner",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e13",
+        "var": "maxLossRatio",
+        "text": "post == (pre + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e14",
+        "var": "_owner",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e14",
+        "var": "maxLossRatio",
+        "text": "post == (pre - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e15",
+        "var": "_owner",
+        "text": "post == (pre + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e15",
+        "var": "maxLossRatio",
+        "text": "post == (pre * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e16",
+        "var": "_owner",
+        "text": "post == (pre - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e16",
+        "var": "maxLossRatio",
+        "text": "post == (pre + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e17",
+        "var": "_owner",
+        "text": "post == (pre * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e17",
+        "var": "maxLossRatio",
+        "text": "post == (pre - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e18",
+        "var": "_owner",
+        "text": "post == (pre + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e18",
+        "var": "maxLossRatio",
+        "text": "post == (pre * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e19",
+        "var": "_owner",
+        "text": "post == (pre - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e19",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e20",
+        "var": "_owner",
+        "text": "post == (pre * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e20",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e21",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e21",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e22",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e22",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ + maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e23",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e23",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e24",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ + maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e24",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ * maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e25",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e25",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e26",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ * maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e26",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e27",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e27",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e28",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e28",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e29",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e29",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e30",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e30",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e31",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e31",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e32",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e32",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e33",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e33",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e34",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e34",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e35",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e35",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e36",
+        "var": "_owner",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e36",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e37",
+        "var": "_owner",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e37",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value + maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e38",
+        "var": "_owner",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e38",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e39",
+        "var": "_owner",
+        "text": "post == (msg.value + maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e39",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value * maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e40",
+        "var": "_owner",
+        "text": "post == (msg.value - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e40",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e41",
+        "var": "_owner",
+        "text": "post == (msg.value * maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e41",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e42",
+        "var": "_owner",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e42",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e43",
+        "var": "_owner",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e43",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e44",
+        "var": "_owner",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e44",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e45",
+        "var": "_owner",
+        "text": "post == (msg.value + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e45",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e46",
+        "var": "_owner",
+        "text": "post == (msg.value - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e46",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e47",
+        "var": "_owner",
+        "text": "post == (msg.value * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e47",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e48",
+        "var": "_owner",
+        "text": "post == (msg.value + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e48",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e49",
+        "var": "_owner",
+        "text": "post == (msg.value - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e49",
+        "var": "maxLossRatio",
+        "text": "post == (5 + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e50",
+        "var": "_owner",
+        "text": "post == (msg.value * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e50",
+        "var": "maxLossRatio",
+        "text": "post == (5 - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e51",
+        "var": "_owner",
+        "text": "post == (5 + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e51",
+        "var": "maxLossRatio",
+        "text": "post == (5 * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e52",
+        "var": "_owner",
+        "text": "post == (5 - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e52",
+        "var": "maxLossRatio",
+        "text": "post == (5 + maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e53",
+        "var": "_owner",
+        "text": "post == (5 * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e53",
+        "var": "maxLossRatio",
+        "text": "post == (5 - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e54",
+        "var": "_owner",
+        "text": "post == (5 + maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e54",
+        "var": "maxLossRatio",
+        "text": "post == (5 * maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e55",
+        "var": "_owner",
+        "text": "post == (5 - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e55",
+        "var": "maxLossRatio",
+        "text": "post == (5 + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e56",
+        "var": "_owner",
+        "text": "post == (5 * maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e56",
+        "var": "maxLossRatio",
+        "text": "post == (5 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e57",
+        "var": "_owner",
+        "text": "post == (5 + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e57",
+        "var": "maxLossRatio",
+        "text": "post == (5 * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e58",
+        "var": "_owner",
+        "text": "post == (5 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e58",
+        "var": "maxLossRatio",
+        "text": "post == (5 + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e59",
+        "var": "_owner",
+        "text": "post == (5 * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e59",
+        "var": "maxLossRatio",
+        "text": "post == (5 - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      }
+    ]
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "_ONE_E9",
+    "maxLossRatio",
+    "_owner"
+  ],
+  "oracle_vars": [
+    "maxLossRatio",
+    "_owner"
+  ],
+  "slot_candidates": {
+    "asked": [],
+    "unanswered": [],
+    "rows_for_unasked_names": [
+      "_owner",
+      "maxLossRatio"
+    ]
+  },
+  "esbmc_extra_args": [
+    "--z3",
+    "--tuple-node-flattener",
+    "--path-cov-fixture",
+    "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setMaxLossRatio/fixture_gate.json"
+  ],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "f52984d5d6",
+    "srcDirty": true,
+    "binaryMtime": 1785965824
+  },
+  "stats": {
+    "fuzz_params": 2,
+    "lifted": [
+      "msg.sender",
+      "maxLossRatio_"
+    ],
+    "asserts": 1,
+    "state_asserts": 0,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 1,
+    "rollback_exit": true,
+    "exit_kind": "revert",
+    "return_asserts": 0,
+    "oracle_skipped": [
+      "1 layer-2/3 rung(s) DROPPED (this path exits through a ROLLBACK revert, so the value the ladder compared is the one between the write and the rollback -- a moment no test and no chain can read. A revert restores storage, so the only post-state a test can observe on this path is the pre-state, and the only layer left with anything to say is the exit kind)"
+    ],
+    "oracle_implied": [
+      "_owner: post >= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)",
+      "_owner: post <= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)"
+    ],
+    "state_stored": [
+      "state._owner := 1"
+    ],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": [
+    "slot candidates asked=0 unanswered=0",
+    "R2 ESBMC skipped: reverting path has no observable post-state"
+  ]
+}

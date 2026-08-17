@@ -1,0 +1,201 @@
+{
+  "bucket_counts": {
+    "VALID_PUT_R1R2": 1
+  },
+  "count": 1,
+  "repair_ticket_candidates": [],
+  "results_root": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT",
+  "rows": [
+    {
+      "bench": "bugfix124",
+      "bucket": "VALID_PUT_R1R2",
+      "has_put_json": false,
+      "has_result_json": true,
+      "put_valid": 1,
+      "r1r2": 1,
+      "recovered_valid_tests": [
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0",
+            "R1"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMajority/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DAO_hasMajority_path15",
+          "unit": "hasMajority",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMajority/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "hasMajority",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0",
+            "R1"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMinority/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DAO_hasMinority_path15",
+          "unit": "hasMinority",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMinority/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "hasMinority",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0",
+            "R1"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasQuorum/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DAO_hasQuorum_path15",
+          "unit": "hasQuorum",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasQuorum/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "hasQuorum",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0",
+            "R1",
+            "R2"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__init/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DAO_init_path7",
+          "unit": "init",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__init/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "init",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__isEqual/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_0",
+          "unit": "isEqual",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__isEqual/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_0",
+          "unit": "isEqual",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__isEqual/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_1",
+          "unit": "isEqual",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__isEqual/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "isEqual",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__newAddressProposal/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "newAddressProposal",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__ct_5_Proposals_can_be_cancelled",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__newGrantProposal/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "newGrantProposal",
+          "valid_reference_test": true
+        }
+      ],
+      "relocated_summary_paths": [
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMajority/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasMinority/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__hasQuorum/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__init/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__isEqual/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__newAddressProposal/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/put/bugfix124__ct_5_Proposals_can_be_cancelled__newGrantProposal/put-summary.json"
+      ],
+      "result_file": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled/result.json",
+      "subject": "ct_5_Proposals_can_be_cancelled",
+      "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/ct_5_Proposals_can_be_cancelled",
+      "valid": 1
+    }
+  ],
+  "schema": "veriput-rq1-esbmc-result-interpret/v1"
+}

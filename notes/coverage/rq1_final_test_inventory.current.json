@@ -1,0 +1,20 @@
+{
+  "artifact_counts": {
+    "generalized_ce_obligations": 359,
+    "not_generalized_ce_obligations": 526,
+    "total_ce_obligations": 1803,
+    "unresolved_strength_ce_obligations": 918
+  },
+  "consistency_checks": {
+    "ce_obligation_partition": true
+  },
+  "definitions": {
+    "generalized_ce_obligations": "Unique target/path_function/unit/enc/piece identities backed by a current strict-valid parameterized PUT, an audited exact CE anchor body and Stage-2 provenance, and fresh source-bound green Forge runs for both tests.",
+    "not_generalized_ce_obligations": "Unique CE identities backed by an existing zero-parameter Solidity test, an audited execution-result oracle, Forge execution evidence, and no current valid PUT.",
+    "total_ce_obligations": "generalized_ce_obligations + unresolved_strength_ce_obligations + not_generalized_ce_obligations. Retry rows, PUT basis replays, same-path candidates, and manifest entries are excluded.",
+    "unresolved_strength_ce_obligations": "Unique CE identities with a current strict-valid PUT whose exact CE anchor strength evidence is missing, corrupt, stale, or not double-Forge-green, plus frozen identities whose current physical artifact is unreadable."
+  },
+  "grain": "instrumented path / CE obligation",
+  "schema": "veriput-rq1-ce-obligation-inventory/v2",
+  "scope": "canonical-current"
+}

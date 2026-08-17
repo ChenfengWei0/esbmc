@@ -1,0 +1,547 @@
+{
+  "bucket_counts": {
+    "VALID_PUT_R1R2": 1
+  },
+  "count": 1,
+  "repair_ticket_candidates": [],
+  "results_root": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT",
+  "rows": [
+    {
+      "bench": "bugfix124",
+      "bucket": "VALID_PUT_R1R2",
+      "has_put_json": false,
+      "has_result_json": true,
+      "put_valid": 1,
+      "r1r2": 1,
+      "recovered_valid_tests": [
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__currentRound/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_currentRound_path3",
+          "unit": "currentRound",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__currentRound/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "currentRound",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0",
+            "R1"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__pauseDeposit/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_pauseDeposit_path7",
+          "unit": "pauseDeposit",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__pauseDeposit/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_2",
+          "unit": "pauseDeposit",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0",
+            "R1"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__pauseDeposit/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_pauseDeposit_path6",
+          "unit": "pauseDeposit",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundDeposits/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_roundDeposits_path3",
+          "unit": "roundDeposits",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundDeposits/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "roundDeposits",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundGlpStaked/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_roundGlpStaked_path3",
+          "unit": "roundGlpStaked",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundGlpStaked/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "roundGlpStaked",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundUsdcBalance/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_roundUsdcBalance_path3",
+          "unit": "roundUsdcBalance",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundUsdcBalance/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "roundUsdcBalance",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setKeeper/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_0",
+          "unit": "setKeeper",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setKeeper/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_1",
+          "unit": "setKeeper",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setThresholds/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_0",
+          "unit": "setThresholds",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setThresholds/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_1",
+          "unit": "setThresholds",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__unclaimedShares/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_unclaimedShares_path7",
+          "unit": "unclaimedShares",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__unclaimedShares/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "unclaimedShares",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__usdcBalance/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_usdcBalance_path3",
+          "unit": "usdcBalance",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__usdcBalance/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "usdcBalance",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__userDeposits/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_userDeposits_path3",
+          "unit": "userDeposits",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__userDeposits/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "userDeposits",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__currentRound/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_currentRound_path3",
+          "unit": "currentRound",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__currentRound/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "currentRound",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__pauseDeposit/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_1",
+          "unit": "pauseDeposit",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundDeposits/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_roundDeposits_path3",
+          "unit": "roundDeposits",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundDeposits/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "roundDeposits",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundGlpStaked/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_roundGlpStaked_path3",
+          "unit": "roundGlpStaked",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundGlpStaked/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "roundGlpStaked",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundUsdcBalance/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_roundUsdcBalance_path3",
+          "unit": "roundUsdcBalance",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundUsdcBalance/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "roundUsdcBalance",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setKeeper/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_0",
+          "unit": "setKeeper",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setKeeper/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_1",
+          "unit": "setKeeper",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setThresholds/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_0",
+          "unit": "setThresholds",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setThresholds/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_1",
+          "unit": "setThresholds",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__unclaimedShares/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_unclaimedShares_path7",
+          "unit": "unclaimedShares",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__unclaimedShares/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "unclaimedShares",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__unpauseDeposit/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_2",
+          "unit": "unpauseDeposit",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0",
+            "R1"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__unpauseDeposit/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_unpauseDeposit_path6",
+          "unit": "unpauseDeposit",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__usdcBalance/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_usdcBalance_path3",
+          "unit": "usdcBalance",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__usdcBalance/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "usdcBalance",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__userDeposits/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_DnGmxBatchingManager_userDeposits_path3",
+          "unit": "userDeposits",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_fixlink_DnGmxBatchingManager",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__userDeposits/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "userDeposits",
+          "valid_reference_test": true
+        }
+      ],
+      "relocated_summary_paths": [
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__currentRound/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__pauseDeposit/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundDeposits/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundGlpStaked/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundUsdcBalance/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setKeeper/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setThresholds/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__unclaimedShares/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__usdcBalance/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager.redo.1786415580.2513257/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__userDeposits/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__currentRound/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__pauseDeposit/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundDeposits/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundGlpStaked/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__roundUsdcBalance/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setKeeper/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__setThresholds/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__unclaimedShares/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__unpauseDeposit/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__usdcBalance/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/put/bugfix124__acfix_fixlink_DnGmxBatchingManager__userDeposits/put-summary.json"
+      ],
+      "result_file": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager/result.json",
+      "subject": "acfix_fixlink_DnGmxBatchingManager",
+      "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_DnGmxBatchingManager",
+      "valid": 1
+    }
+  ],
+  "schema": "veriput-rq1-esbmc-result-interpret/v1"
+}

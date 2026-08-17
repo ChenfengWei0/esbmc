@@ -1,0 +1,102 @@
+{
+  "benchmark": "aqua_Aqua",
+  "project": "aqua",
+  "primary": {
+    "name": "Aqua",
+    "kind": "contract"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__rawBalances/inputs/aqua__Aqua.flat.sol",
+  "config": {
+    "mode": "per-method",
+    "scope": "single",
+    "onlyUnits": [
+      "rawBalances"
+    ],
+    "adhocTarget": null,
+    "solidityMaxTx": 1,
+    "unwind": null,
+    "focusWith": [],
+    "instrumentOnlyUnit": false,
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "solverFlags": [],
+    "solverFlagsReason": "tool default (no solver flag passed)",
+    "outerTimeoutSeconds": 300,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "Aqua__rawBalances",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__rawBalances/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__rawBalances/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract Aqua --focus-function rawBalances",
+      "wallSeconds": 1.69,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "b8d6964b6a",
+        "srcDirty": true,
+        "binaryMtime": 1785839566
+      },
+      "pathsInstrumented": 2,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 0,
+      "depthBoundUnexpandedNames": [],
+      "loopsTruncatedAtUnwindBound": null,
+      "arithResolve": "OFF",
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "claimBudgetSeconds": 120,
+      "claimsAbandonedOverBudget": 0,
+      "verdictsPreserved": 0,
+      "claimExtraSolves": 0,
+      "claimVerdictsSuperseded": 0,
+      "asmApproxSites": 11,
+      "asmApproxLines": [
+        492,
+        505,
+        1744,
+        1802,
+        1843,
+        2003,
+        2117,
+        2143,
+        2161,
+        2182,
+        2193
+      ],
+      "asmApproxConstructs": {
+        "YulFunctionCall:mload": 6,
+        "YulFunctionCall:mstore": 3,
+        "YulFunctionCall:call": 1,
+        "YulFunctionCall:chainid": 1
+      },
+      "asmHavocLocals": [],
+      "asmHavocStructTypes": [],
+      "pathsTotal": 2,
+      "F": 2,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 2,
+        "paths_with": 2,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 2,
+        "unrecorded_steps": 0
+      },
+      "contract": "Aqua",
+      "function": "rawBalances",
+      "kind": "contract"
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/aqua_Aqua__poc_Aqua_rawBalances_gate/reports"
+}

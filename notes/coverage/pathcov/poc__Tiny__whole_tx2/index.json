@@ -1,0 +1,63 @@
+{
+  "benchmark": "poc__Tiny",
+  "project": null,
+  "primary": {
+    "name": "Tiny",
+    "kind": "contract"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/poc/Tiny.sol",
+  "config": {
+    "mode": "whole",
+    "scope": "whole",
+    "adhocTarget": "/home/samson/workspace/esbmc/notes/coverage/poc/Tiny.sol",
+    "solidityMaxTx": 2,
+    "focusWith": [],
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "solverFlags": [],
+    "solverFlagsReason": "tool default (no solver flag passed)",
+    "outerTimeoutSeconds": 60,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "whole",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/poc/Tiny.solast --sol /home/samson/workspace/esbmc/notes/coverage/poc/Tiny.sol --solidity-path-coverage --solidity-max-tx 2 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract Tiny",
+      "wallSeconds": 0.44,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "f8036664fa",
+        "srcDirty": false,
+        "binaryMtime": 1785591755
+      },
+      "pathsInstrumented": 8,
+      "unitsEnumerated": 2,
+      "depthBoundUnexpandedSites": 0,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 8,
+      "F": 8,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 19,
+        "paths_with": 8,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 8,
+        "unrecorded_steps": 0
+      }
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/poc__Tiny__whole_tx2/reports"
+}

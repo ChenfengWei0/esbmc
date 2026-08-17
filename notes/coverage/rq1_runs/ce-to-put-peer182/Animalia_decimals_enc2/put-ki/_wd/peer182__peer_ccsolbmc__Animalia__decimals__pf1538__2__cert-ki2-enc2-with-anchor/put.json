@@ -1,0 +1,3711 @@
+{
+  "kind": "put",
+  "contract": "Animalia",
+  "unit": "decimals",
+  "enc": 2,
+  "depth": 1,
+  "path_function": "sol:@C@Animalia@F@decimals#1538",
+  "artifact_identity": "",
+  "storage_layout_available": true,
+  "storage_layout_error": null,
+  "getter_signature": null,
+  "file": "/home/samson/workspace/esbmc/notes/coverage/rq1_runs/ce-to-put-peer182/Animalia_decimals_enc2/put-ki/peer182__peer_ccsolbmc__Animalia__cert-ki2-enc2-with-anchor/test/AnimaliaCovTest_Animalia_decimals_put2.t.sol",
+  "test": "test_put_Animalia_decimals_path2",
+  "piece": null,
+  "derived_by": {
+    "level0": true,
+    "level0_perturb": true,
+    "level0_points": {
+      "2": "(none)",
+      "3": "msg.value==0"
+    },
+    "probe_ladder": true,
+    "probe_ladder_budget": 8,
+    "probes": 8,
+    "geometric_bracket": false,
+    "sibling_subtraction": true,
+    "claim_budget": 0,
+    "shrink_rounds": 4,
+    "refine_rounds": 2,
+    "skip_bracket": true,
+    "cut_policy": "spec",
+    "max_region_pieces": 4,
+    "max_holes": 3,
+    "esbmc_args": [
+      "--overflow-check",
+      "--div-by-zero-check",
+      "--path-cov-arith-resolve",
+      "--unwindsetname",
+      "_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33"
+    ],
+    "scope": "focus",
+    "max_tx": 1
+  },
+  "region": {
+    "msg.value": [
+      "1",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ]
+  },
+  "holes": {},
+  "establish": [],
+  "pins": {
+    "block.basefee": "0",
+    "block.chainid": "0",
+    "block.coinbase": "0",
+    "block.number": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+    "block.prevrandao": "0",
+    "block.timestamp": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+    "tx.gasprice": "0",
+    "state._decimals": "18"
+  },
+  "ladder": [
+    {
+      "var": "_decimals",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_decimals",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_decimals",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_decimals",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_decimals",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_decimals",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "return",
+      "text": "a value IS returned on this path (REFUTED == yes)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "return",
+      "text": "return == 0",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "return",
+      "text": "return != 0",
+      "verdict": "HOLDS"
+    }
+  ],
+  "ladder_summary": [
+    9,
+    6,
+    3,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 256,
+  "r2_candidate_budget": 512,
+  "r2_fuzz_prefilter": {
+    "enabled": true,
+    "refutation_only": true,
+    "proves_candidates": false,
+    "proof_consumer": "ESBMC",
+    "requested": 220,
+    "selected": 96,
+    "candidate_budget": 96,
+    "rendered": 0,
+    "ran": 0,
+    "refuted": 0,
+    "not_refuted": 0,
+    "not_run": 220,
+    "timed_out": false,
+    "returncode": null,
+    "fuzz_runs": 64,
+    "command": [],
+    "reason": "rollback path has no observable R2 post-state",
+    "candidates": [
+      {
+        "key": "s0:v0:equals:src0",
+        "var": "return",
+        "text": "return == state._decimals",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e0",
+        "var": "_decimals",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:a1",
+        "var": "_decimals",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e1",
+        "var": "_decimals",
+        "text": "post == state._decimals",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:a2",
+        "var": "_decimals",
+        "text": "post in [state._decimals, state._decimals]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e2",
+        "var": "_decimals",
+        "text": "post == 1",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:a3",
+        "var": "_decimals",
+        "text": "post in [1, 1]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e3",
+        "var": "_decimals",
+        "text": "post == 115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:a4",
+        "var": "_decimals",
+        "text": "post in [115792089237316195423570985008687907853269984665640564039457584007913129639935, 115792089237316195423570985008687907853269984665640564039457584007913129639935]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e4",
+        "var": "_decimals",
+        "text": "post == 0",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:a5",
+        "var": "_decimals",
+        "text": "post in [0, 0]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e5",
+        "var": "_decimals",
+        "text": "post == 115792089237316195423570985008687907853269984665640564039457584007913129639934",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:a6",
+        "var": "_decimals",
+        "text": "post in [115792089237316195423570985008687907853269984665640564039457584007913129639934, 115792089237316195423570985008687907853269984665640564039457584007913129639934]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e7",
+        "var": "_decimals",
+        "text": "post == (pre + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac0",
+        "var": "_decimals",
+        "text": "post in [0, pre]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e9",
+        "var": "_decimals",
+        "text": "post == (pre * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac1",
+        "var": "_decimals",
+        "text": "post in [0, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e10",
+        "var": "_decimals",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac2",
+        "var": "_decimals",
+        "text": "post in [0, state._decimals]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e11",
+        "var": "_decimals",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac3",
+        "var": "_decimals",
+        "text": "post in [0, 1]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e12",
+        "var": "_decimals",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac4",
+        "var": "_decimals",
+        "text": "post in [0, 115792089237316195423570985008687907853269984665640564039457584007913129639935]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e13",
+        "var": "_decimals",
+        "text": "post == (pre + state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac6",
+        "var": "_decimals",
+        "text": "post in [0, 115792089237316195423570985008687907853269984665640564039457584007913129639934]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e14",
+        "var": "_decimals",
+        "text": "post == (pre - state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac8",
+        "var": "_decimals",
+        "text": "post in [0, (pre + pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e15",
+        "var": "_decimals",
+        "text": "post == (pre * state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac10",
+        "var": "_decimals",
+        "text": "post in [0, (pre * pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e16",
+        "var": "_decimals",
+        "text": "post == (pre + 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac11",
+        "var": "_decimals",
+        "text": "post in [0, (pre + msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e17",
+        "var": "_decimals",
+        "text": "post == (pre - 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac12",
+        "var": "_decimals",
+        "text": "post in [0, (pre - msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e18",
+        "var": "_decimals",
+        "text": "post == (pre * 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac13",
+        "var": "_decimals",
+        "text": "post in [0, (pre * msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e19",
+        "var": "_decimals",
+        "text": "post == (pre + 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac14",
+        "var": "_decimals",
+        "text": "post in [0, (pre + state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e20",
+        "var": "_decimals",
+        "text": "post == (pre - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac15",
+        "var": "_decimals",
+        "text": "post in [0, (pre - state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e21",
+        "var": "_decimals",
+        "text": "post == (pre * 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac16",
+        "var": "_decimals",
+        "text": "post in [0, (pre * state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e25",
+        "var": "_decimals",
+        "text": "post == (pre + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac17",
+        "var": "_decimals",
+        "text": "post in [0, (pre + 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e26",
+        "var": "_decimals",
+        "text": "post == (pre - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac18",
+        "var": "_decimals",
+        "text": "post in [0, (pre - 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e27",
+        "var": "_decimals",
+        "text": "post == (pre * 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac20",
+        "var": "_decimals",
+        "text": "post in [0, (pre + 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e32",
+        "var": "_decimals",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac21",
+        "var": "_decimals",
+        "text": "post in [0, (pre - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e34",
+        "var": "_decimals",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac22",
+        "var": "_decimals",
+        "text": "post in [0, (pre * 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e36",
+        "var": "_decimals",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac26",
+        "var": "_decimals",
+        "text": "post in [0, (pre + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e37",
+        "var": "_decimals",
+        "text": "post == (msg.value + state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac27",
+        "var": "_decimals",
+        "text": "post in [0, (pre - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e38",
+        "var": "_decimals",
+        "text": "post == (msg.value - state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac28",
+        "var": "_decimals",
+        "text": "post in [0, (pre * 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e39",
+        "var": "_decimals",
+        "text": "post == (msg.value * state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac33",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value - pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e40",
+        "var": "_decimals",
+        "text": "post == (msg.value + 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac35",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value + msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e41",
+        "var": "_decimals",
+        "text": "post == (msg.value - 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac37",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value * msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e43",
+        "var": "_decimals",
+        "text": "post == (msg.value + 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac38",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value + state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e44",
+        "var": "_decimals",
+        "text": "post == (msg.value - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac39",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value - state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e45",
+        "var": "_decimals",
+        "text": "post == (msg.value * 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac40",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value * state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e49",
+        "var": "_decimals",
+        "text": "post == (msg.value + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac41",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value + 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e50",
+        "var": "_decimals",
+        "text": "post == (msg.value - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac42",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value - 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e51",
+        "var": "_decimals",
+        "text": "post == (msg.value * 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac44",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value + 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e56",
+        "var": "_decimals",
+        "text": "post == (state._decimals - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac45",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e59",
+        "var": "_decimals",
+        "text": "post == (state._decimals - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac46",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value * 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e61",
+        "var": "_decimals",
+        "text": "post == (state._decimals + state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac50",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e63",
+        "var": "_decimals",
+        "text": "post == (state._decimals * state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac51",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e64",
+        "var": "_decimals",
+        "text": "post == (state._decimals + 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac52",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value * 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e65",
+        "var": "_decimals",
+        "text": "post == (state._decimals - 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac57",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals - pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e67",
+        "var": "_decimals",
+        "text": "post == (state._decimals + 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac60",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals - msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e68",
+        "var": "_decimals",
+        "text": "post == (state._decimals - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac62",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals + state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e69",
+        "var": "_decimals",
+        "text": "post == (state._decimals * 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac64",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals * state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e73",
+        "var": "_decimals",
+        "text": "post == (state._decimals + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac65",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals + 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e74",
+        "var": "_decimals",
+        "text": "post == (state._decimals - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac66",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals - 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e75",
+        "var": "_decimals",
+        "text": "post == (state._decimals * 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac68",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals + 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e80",
+        "var": "_decimals",
+        "text": "post == (1 - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac69",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e83",
+        "var": "_decimals",
+        "text": "post == (1 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac70",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals * 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e86",
+        "var": "_decimals",
+        "text": "post == (1 - state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac74",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e88",
+        "var": "_decimals",
+        "text": "post == (1 + 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac75",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e91",
+        "var": "_decimals",
+        "text": "post == (1 + 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac76",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals * 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e92",
+        "var": "_decimals",
+        "text": "post == (1 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac81",
+        "var": "_decimals",
+        "text": "post in [0, (1 - pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e97",
+        "var": "_decimals",
+        "text": "post == (1 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac84",
+        "var": "_decimals",
+        "text": "post in [0, (1 - msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e98",
+        "var": "_decimals",
+        "text": "post == (1 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac87",
+        "var": "_decimals",
+        "text": "post in [0, (1 - state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e104",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac89",
+        "var": "_decimals",
+        "text": "post in [0, (1 + 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e107",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac92",
+        "var": "_decimals",
+        "text": "post in [0, (1 + 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e110",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 - state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac93",
+        "var": "_decimals",
+        "text": "post in [0, (1 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e113",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 - 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac98",
+        "var": "_decimals",
+        "text": "post in [0, (1 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e115",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 + 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac99",
+        "var": "_decimals",
+        "text": "post in [0, (1 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e117",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 * 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac105",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 - pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e121",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac108",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 - msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e122",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac111",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 - state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e123",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 * 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac114",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 - 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e128",
+        "var": "_decimals",
+        "text": "post == (0 - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac116",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 + 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e131",
+        "var": "_decimals",
+        "text": "post == (0 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac118",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 * 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e134",
+        "var": "_decimals",
+        "text": "post == (0 - state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac122",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e137",
+        "var": "_decimals",
+        "text": "post == (0 - 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac123",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e140",
+        "var": "_decimals",
+        "text": "post == (0 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac124",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 * 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e146",
+        "var": "_decimals",
+        "text": "post == (0 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac129",
+        "var": "_decimals",
+        "text": "post in [0, (0 - pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e152",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac132",
+        "var": "_decimals",
+        "text": "post in [0, (0 - msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e155",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac135",
+        "var": "_decimals",
+        "text": "post in [0, (0 - state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e158",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 - state._decimals)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac138",
+        "var": "_decimals",
+        "text": "post in [0, (0 - 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e161",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 - 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac141",
+        "var": "_decimals",
+        "text": "post in [0, (0 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e164",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac147",
+        "var": "_decimals",
+        "text": "post in [0, (0 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e169",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac153",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 - pre)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e171",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 * 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac156",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 - msg.value)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e199",
+        "var": "_decimals",
+        "text": "post == (pre / 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac159",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 - state._decimals)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e200",
+        "var": "_decimals",
+        "text": "post == (pre / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac162",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 - 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e201",
+        "var": "_decimals",
+        "text": "post == (pre / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac165",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e202",
+        "var": "_decimals",
+        "text": "post == (pre / 18)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac170",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e203",
+        "var": "_decimals",
+        "text": "post == (msg.value / 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac172",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 * 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e204",
+        "var": "_decimals",
+        "text": "post == (msg.value / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac200",
+        "var": "_decimals",
+        "text": "post in [0, (pre / 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e205",
+        "var": "_decimals",
+        "text": "post == (msg.value / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac201",
+        "var": "_decimals",
+        "text": "post in [0, (pre / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e206",
+        "var": "_decimals",
+        "text": "post == (msg.value / 18)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac202",
+        "var": "_decimals",
+        "text": "post in [0, (pre / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e207",
+        "var": "_decimals",
+        "text": "post == (state._decimals / 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac203",
+        "var": "_decimals",
+        "text": "post in [0, (pre / 18)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e208",
+        "var": "_decimals",
+        "text": "post == (state._decimals / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac204",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value / 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e209",
+        "var": "_decimals",
+        "text": "post == (state._decimals / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac205",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e210",
+        "var": "_decimals",
+        "text": "post == (state._decimals / 18)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac206",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e211",
+        "var": "_decimals",
+        "text": "post == (1 / 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac207",
+        "var": "_decimals",
+        "text": "post in [0, (msg.value / 18)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e212",
+        "var": "_decimals",
+        "text": "post == (1 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac208",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals / 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e213",
+        "var": "_decimals",
+        "text": "post == (1 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac209",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e214",
+        "var": "_decimals",
+        "text": "post == (1 / 18)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac210",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e215",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac211",
+        "var": "_decimals",
+        "text": "post in [0, (state._decimals / 18)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e216",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac212",
+        "var": "_decimals",
+        "text": "post in [0, (1 / 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e217",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac213",
+        "var": "_decimals",
+        "text": "post in [0, (1 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e218",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 18)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac214",
+        "var": "_decimals",
+        "text": "post in [0, (1 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e219",
+        "var": "_decimals",
+        "text": "post == (0 / 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac215",
+        "var": "_decimals",
+        "text": "post in [0, (1 / 18)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e220",
+        "var": "_decimals",
+        "text": "post == (0 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac216",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e221",
+        "var": "_decimals",
+        "text": "post == (0 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac217",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e222",
+        "var": "_decimals",
+        "text": "post == (0 / 18)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac218",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e223",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 1)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac219",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 18)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e224",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac220",
+        "var": "_decimals",
+        "text": "post in [0, (0 / 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e225",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac221",
+        "var": "_decimals",
+        "text": "post in [0, (0 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:equals:e226",
+        "var": "_decimals",
+        "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 18)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac222",
+        "var": "_decimals",
+        "text": "post in [0, (0 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac223",
+        "var": "_decimals",
+        "text": "post in [0, (0 / 18)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac224",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 1)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac225",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac226",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s1:v0:abs:ac227",
+        "var": "_decimals",
+        "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 18)]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      }
+    ]
+  },
+  "r2_ladder": {
+    "requested": true,
+    "candidate_count": 220,
+    "candidate_combo_counts": {
+      "R2": 199,
+      "R1+R2": 21
+    },
+    "candidate_examples": [
+      {
+        "key": "s0:v0:equals:src0",
+        "var": "return",
+        "text": "return == state._decimals"
+      },
+      {
+        "key": "s1:v0:equals:e0",
+        "var": "_decimals",
+        "text": "post == msg.value"
+      },
+      {
+        "key": "s1:v0:abs:a1",
+        "var": "_decimals",
+        "text": "post in [msg.value, msg.value]"
+      },
+      {
+        "key": "s1:v0:equals:e1",
+        "var": "_decimals",
+        "text": "post == state._decimals"
+      },
+      {
+        "key": "s1:v0:abs:a2",
+        "var": "_decimals",
+        "text": "post in [state._decimals, state._decimals]"
+      },
+      {
+        "key": "s1:v0:equals:e2",
+        "var": "_decimals",
+        "text": "post == 1"
+      },
+      {
+        "key": "s1:v0:abs:a3",
+        "var": "_decimals",
+        "text": "post in [1, 1]"
+      },
+      {
+        "key": "s1:v0:equals:e3",
+        "var": "_decimals",
+        "text": "post == 115792089237316195423570985008687907853269984665640564039457584007913129639935"
+      }
+    ],
+    "dedup_dropped": 250,
+    "fuzz_refutation_only": true,
+    "fuzz_proves_candidates": false,
+    "fuzz_refuted": 0,
+    "fuzz_not_refuted": 0,
+    "fuzz_not_run": 220,
+    "fuzz_selected": 96,
+    "fuzz_rendered": 0,
+    "survivors_sent_to_esbmc": 0,
+    "esbmc_rows_total": 0,
+    "esbmc_proved": 0,
+    "esbmc_refuted": 0,
+    "esbmc_unknown": 0,
+    "proved_combo_counts": {},
+    "row_combo_counts": {},
+    "verifier_rows": [],
+    "skip_reason": "rollback path has no observable R2 post-state",
+    "proof_consumer": "ESBMC",
+    "soundness_note": "Forge fuzz is used only to refute candidates with concrete counterexamples. HOLDS/PUT-valid requires ESBMC proof."
+  },
+  "r1_oracle_ladder": {
+    "priority_vars": [
+      "_decimals"
+    ],
+    "skipped": [
+      "block.basefee: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "block.chainid: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "block.coinbase: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "block.number: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "block.prevrandao: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "block.timestamp: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "msg.value: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "tx.gasprice: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable"
+    ],
+    "source": "certified-region-state-coordinates",
+    "proof": "ESBMC path-cov-assert HOLDS rows under k-induction with max-k-step 30 and solidity-max-tx 1"
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "_decimals"
+  ],
+  "oracle_vars": [
+    "_decimals"
+  ],
+  "slot_candidates": {
+    "asked": [],
+    "unanswered": [],
+    "rows_for_unasked_names": [
+      "_decimals",
+      "return"
+    ]
+  },
+  "esbmc_extra_args": [
+    "--overflow-check",
+    "--div-by-zero-check",
+    "--path-cov-arith-resolve",
+    "--unwindsetname",
+    "_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33"
+  ],
+  "proof_strategy": {
+    "kind": "k-induction",
+    "max_k_step": 30,
+    "solidity_max_tx": 1,
+    "esbmc_args": [
+      "--k-induction",
+      "--enable-forward-condition",
+      "--max-k-step",
+      "30"
+    ]
+  },
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "constructor_staticcall_mocks": 0,
+  "constructor_param_interface_mocks": 0,
+  "constructor_param_struct_field_interface_mocks": 0,
+  "constructor_param_runtime_interface_mocks": 0,
+  "constructor_param_hascode_mocks": 0,
+  "runtime_interface_mocks": 0,
+  "runtime_interface_mock_calls": 0,
+  "runtime_staticcall_mocks": 0,
+  "stage4_kind": "certified-region",
+  "timing": {
+    "generation_timeout_s": 300,
+    "generation_wall_s": 12.76,
+    "put_driver_wall_s": 13.057
+  },
+  "materialization": {
+    "is_put": true,
+    "is_concrete": false,
+    "is_refusal": false,
+    "put_failure_reason": null,
+    "r1r2_failure_reason": null,
+    "fallback_after_put_attempt": false,
+    "wide_fuzz_coords": [
+      "msg.sender",
+      "msg.value"
+    ],
+    "oracle_classes": [
+      "R0",
+      "R1"
+    ],
+    "oracle_tags": [
+      "R0",
+      "R1"
+    ],
+    "has_R0": true,
+    "has_R1": true,
+    "has_R2": false,
+    "has_R1_or_R2": true,
+    "oracle_class_counts": {
+      "R0": 1,
+      "R1": 3
+    },
+    "oracle_class_combinations": [
+      "R0",
+      "R1"
+    ],
+    "oracle_class_combo_counts": {
+      "R1": 3,
+      "R0": 1
+    },
+    "r2_requested": true,
+    "r2_fuzz_prefilter": {
+      "enabled": true,
+      "refutation_only": true,
+      "proves_candidates": false,
+      "proof_consumer": "ESBMC",
+      "requested": 220,
+      "selected": 96,
+      "candidate_budget": 96,
+      "rendered": 0,
+      "ran": 0,
+      "refuted": 0,
+      "not_refuted": 0,
+      "not_run": 220,
+      "timed_out": false,
+      "returncode": null,
+      "fuzz_runs": 64,
+      "command": [],
+      "reason": "rollback path has no observable R2 post-state",
+      "candidates": [
+        {
+          "key": "s0:v0:equals:src0",
+          "var": "return",
+          "text": "return == state._decimals",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e0",
+          "var": "_decimals",
+          "text": "post == msg.value",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:a1",
+          "var": "_decimals",
+          "text": "post in [msg.value, msg.value]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e1",
+          "var": "_decimals",
+          "text": "post == state._decimals",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:a2",
+          "var": "_decimals",
+          "text": "post in [state._decimals, state._decimals]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e2",
+          "var": "_decimals",
+          "text": "post == 1",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:a3",
+          "var": "_decimals",
+          "text": "post in [1, 1]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e3",
+          "var": "_decimals",
+          "text": "post == 115792089237316195423570985008687907853269984665640564039457584007913129639935",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:a4",
+          "var": "_decimals",
+          "text": "post in [115792089237316195423570985008687907853269984665640564039457584007913129639935, 115792089237316195423570985008687907853269984665640564039457584007913129639935]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e4",
+          "var": "_decimals",
+          "text": "post == 0",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:a5",
+          "var": "_decimals",
+          "text": "post in [0, 0]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e5",
+          "var": "_decimals",
+          "text": "post == 115792089237316195423570985008687907853269984665640564039457584007913129639934",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:a6",
+          "var": "_decimals",
+          "text": "post in [115792089237316195423570985008687907853269984665640564039457584007913129639934, 115792089237316195423570985008687907853269984665640564039457584007913129639934]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e7",
+          "var": "_decimals",
+          "text": "post == (pre + pre)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac0",
+          "var": "_decimals",
+          "text": "post in [0, pre]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e9",
+          "var": "_decimals",
+          "text": "post == (pre * pre)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac1",
+          "var": "_decimals",
+          "text": "post in [0, msg.value]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e10",
+          "var": "_decimals",
+          "text": "post == (pre + msg.value)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac2",
+          "var": "_decimals",
+          "text": "post in [0, state._decimals]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e11",
+          "var": "_decimals",
+          "text": "post == (pre - msg.value)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac3",
+          "var": "_decimals",
+          "text": "post in [0, 1]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e12",
+          "var": "_decimals",
+          "text": "post == (pre * msg.value)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac4",
+          "var": "_decimals",
+          "text": "post in [0, 115792089237316195423570985008687907853269984665640564039457584007913129639935]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e13",
+          "var": "_decimals",
+          "text": "post == (pre + state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac6",
+          "var": "_decimals",
+          "text": "post in [0, 115792089237316195423570985008687907853269984665640564039457584007913129639934]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e14",
+          "var": "_decimals",
+          "text": "post == (pre - state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac8",
+          "var": "_decimals",
+          "text": "post in [0, (pre + pre)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e15",
+          "var": "_decimals",
+          "text": "post == (pre * state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac10",
+          "var": "_decimals",
+          "text": "post in [0, (pre * pre)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e16",
+          "var": "_decimals",
+          "text": "post == (pre + 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac11",
+          "var": "_decimals",
+          "text": "post in [0, (pre + msg.value)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e17",
+          "var": "_decimals",
+          "text": "post == (pre - 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac12",
+          "var": "_decimals",
+          "text": "post in [0, (pre - msg.value)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e18",
+          "var": "_decimals",
+          "text": "post == (pre * 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac13",
+          "var": "_decimals",
+          "text": "post in [0, (pre * msg.value)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e19",
+          "var": "_decimals",
+          "text": "post == (pre + 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac14",
+          "var": "_decimals",
+          "text": "post in [0, (pre + state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e20",
+          "var": "_decimals",
+          "text": "post == (pre - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac15",
+          "var": "_decimals",
+          "text": "post in [0, (pre - state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e21",
+          "var": "_decimals",
+          "text": "post == (pre * 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac16",
+          "var": "_decimals",
+          "text": "post in [0, (pre * state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e25",
+          "var": "_decimals",
+          "text": "post == (pre + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac17",
+          "var": "_decimals",
+          "text": "post in [0, (pre + 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e26",
+          "var": "_decimals",
+          "text": "post == (pre - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac18",
+          "var": "_decimals",
+          "text": "post in [0, (pre - 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e27",
+          "var": "_decimals",
+          "text": "post == (pre * 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac20",
+          "var": "_decimals",
+          "text": "post in [0, (pre + 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e32",
+          "var": "_decimals",
+          "text": "post == (msg.value - pre)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac21",
+          "var": "_decimals",
+          "text": "post in [0, (pre - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e34",
+          "var": "_decimals",
+          "text": "post == (msg.value + msg.value)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac22",
+          "var": "_decimals",
+          "text": "post in [0, (pre * 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e36",
+          "var": "_decimals",
+          "text": "post == (msg.value * msg.value)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac26",
+          "var": "_decimals",
+          "text": "post in [0, (pre + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e37",
+          "var": "_decimals",
+          "text": "post == (msg.value + state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac27",
+          "var": "_decimals",
+          "text": "post in [0, (pre - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e38",
+          "var": "_decimals",
+          "text": "post == (msg.value - state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac28",
+          "var": "_decimals",
+          "text": "post in [0, (pre * 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e39",
+          "var": "_decimals",
+          "text": "post == (msg.value * state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac33",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value - pre)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e40",
+          "var": "_decimals",
+          "text": "post == (msg.value + 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac35",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value + msg.value)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e41",
+          "var": "_decimals",
+          "text": "post == (msg.value - 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac37",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value * msg.value)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e43",
+          "var": "_decimals",
+          "text": "post == (msg.value + 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac38",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value + state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e44",
+          "var": "_decimals",
+          "text": "post == (msg.value - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac39",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value - state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e45",
+          "var": "_decimals",
+          "text": "post == (msg.value * 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac40",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value * state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e49",
+          "var": "_decimals",
+          "text": "post == (msg.value + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac41",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value + 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e50",
+          "var": "_decimals",
+          "text": "post == (msg.value - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac42",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value - 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e51",
+          "var": "_decimals",
+          "text": "post == (msg.value * 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac44",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value + 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e56",
+          "var": "_decimals",
+          "text": "post == (state._decimals - pre)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac45",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e59",
+          "var": "_decimals",
+          "text": "post == (state._decimals - msg.value)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac46",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value * 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e61",
+          "var": "_decimals",
+          "text": "post == (state._decimals + state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac50",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e63",
+          "var": "_decimals",
+          "text": "post == (state._decimals * state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac51",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e64",
+          "var": "_decimals",
+          "text": "post == (state._decimals + 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac52",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value * 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e65",
+          "var": "_decimals",
+          "text": "post == (state._decimals - 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac57",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals - pre)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e67",
+          "var": "_decimals",
+          "text": "post == (state._decimals + 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac60",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals - msg.value)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e68",
+          "var": "_decimals",
+          "text": "post == (state._decimals - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac62",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals + state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e69",
+          "var": "_decimals",
+          "text": "post == (state._decimals * 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac64",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals * state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e73",
+          "var": "_decimals",
+          "text": "post == (state._decimals + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac65",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals + 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e74",
+          "var": "_decimals",
+          "text": "post == (state._decimals - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac66",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals - 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e75",
+          "var": "_decimals",
+          "text": "post == (state._decimals * 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac68",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals + 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e80",
+          "var": "_decimals",
+          "text": "post == (1 - pre)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac69",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e83",
+          "var": "_decimals",
+          "text": "post == (1 - msg.value)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac70",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals * 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e86",
+          "var": "_decimals",
+          "text": "post == (1 - state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac74",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e88",
+          "var": "_decimals",
+          "text": "post == (1 + 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac75",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e91",
+          "var": "_decimals",
+          "text": "post == (1 + 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac76",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals * 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e92",
+          "var": "_decimals",
+          "text": "post == (1 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac81",
+          "var": "_decimals",
+          "text": "post in [0, (1 - pre)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e97",
+          "var": "_decimals",
+          "text": "post == (1 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac84",
+          "var": "_decimals",
+          "text": "post in [0, (1 - msg.value)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e98",
+          "var": "_decimals",
+          "text": "post == (1 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac87",
+          "var": "_decimals",
+          "text": "post in [0, (1 - state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e104",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 - pre)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac89",
+          "var": "_decimals",
+          "text": "post in [0, (1 + 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e107",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 - msg.value)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac92",
+          "var": "_decimals",
+          "text": "post in [0, (1 + 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e110",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 - state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac93",
+          "var": "_decimals",
+          "text": "post in [0, (1 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e113",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 - 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac98",
+          "var": "_decimals",
+          "text": "post in [0, (1 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e115",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 + 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac99",
+          "var": "_decimals",
+          "text": "post in [0, (1 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e117",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 * 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac105",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 - pre)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e121",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac108",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 - msg.value)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e122",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac111",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 - state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e123",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 * 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac114",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 - 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e128",
+          "var": "_decimals",
+          "text": "post == (0 - pre)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac116",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 + 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e131",
+          "var": "_decimals",
+          "text": "post == (0 - msg.value)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac118",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 * 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e134",
+          "var": "_decimals",
+          "text": "post == (0 - state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac122",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e137",
+          "var": "_decimals",
+          "text": "post == (0 - 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac123",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e140",
+          "var": "_decimals",
+          "text": "post == (0 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac124",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 * 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e146",
+          "var": "_decimals",
+          "text": "post == (0 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac129",
+          "var": "_decimals",
+          "text": "post in [0, (0 - pre)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e152",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 - pre)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac132",
+          "var": "_decimals",
+          "text": "post in [0, (0 - msg.value)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e155",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 - msg.value)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac135",
+          "var": "_decimals",
+          "text": "post in [0, (0 - state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e158",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 - state._decimals)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac138",
+          "var": "_decimals",
+          "text": "post in [0, (0 - 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e161",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 - 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac141",
+          "var": "_decimals",
+          "text": "post in [0, (0 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e164",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac147",
+          "var": "_decimals",
+          "text": "post in [0, (0 - 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e169",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac153",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 - pre)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e171",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 * 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac156",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 - msg.value)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e199",
+          "var": "_decimals",
+          "text": "post == (pre / 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac159",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 - state._decimals)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e200",
+          "var": "_decimals",
+          "text": "post == (pre / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac162",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 - 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e201",
+          "var": "_decimals",
+          "text": "post == (pre / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac165",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 - 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e202",
+          "var": "_decimals",
+          "text": "post == (pre / 18)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac170",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 + 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e203",
+          "var": "_decimals",
+          "text": "post == (msg.value / 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac172",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 * 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e204",
+          "var": "_decimals",
+          "text": "post == (msg.value / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac200",
+          "var": "_decimals",
+          "text": "post in [0, (pre / 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e205",
+          "var": "_decimals",
+          "text": "post == (msg.value / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac201",
+          "var": "_decimals",
+          "text": "post in [0, (pre / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e206",
+          "var": "_decimals",
+          "text": "post == (msg.value / 18)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac202",
+          "var": "_decimals",
+          "text": "post in [0, (pre / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e207",
+          "var": "_decimals",
+          "text": "post == (state._decimals / 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac203",
+          "var": "_decimals",
+          "text": "post in [0, (pre / 18)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e208",
+          "var": "_decimals",
+          "text": "post == (state._decimals / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac204",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value / 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e209",
+          "var": "_decimals",
+          "text": "post == (state._decimals / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac205",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e210",
+          "var": "_decimals",
+          "text": "post == (state._decimals / 18)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac206",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e211",
+          "var": "_decimals",
+          "text": "post == (1 / 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac207",
+          "var": "_decimals",
+          "text": "post in [0, (msg.value / 18)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e212",
+          "var": "_decimals",
+          "text": "post == (1 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac208",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals / 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e213",
+          "var": "_decimals",
+          "text": "post == (1 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac209",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e214",
+          "var": "_decimals",
+          "text": "post == (1 / 18)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac210",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e215",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac211",
+          "var": "_decimals",
+          "text": "post in [0, (state._decimals / 18)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e216",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac212",
+          "var": "_decimals",
+          "text": "post in [0, (1 / 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e217",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac213",
+          "var": "_decimals",
+          "text": "post in [0, (1 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e218",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 18)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac214",
+          "var": "_decimals",
+          "text": "post in [0, (1 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e219",
+          "var": "_decimals",
+          "text": "post == (0 / 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac215",
+          "var": "_decimals",
+          "text": "post in [0, (1 / 18)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e220",
+          "var": "_decimals",
+          "text": "post == (0 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac216",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e221",
+          "var": "_decimals",
+          "text": "post == (0 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac217",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e222",
+          "var": "_decimals",
+          "text": "post == (0 / 18)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac218",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e223",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 1)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac219",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639935 / 18)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e224",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac220",
+          "var": "_decimals",
+          "text": "post in [0, (0 / 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e225",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac221",
+          "var": "_decimals",
+          "text": "post in [0, (0 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:equals:e226",
+          "var": "_decimals",
+          "text": "post == (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 18)",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac222",
+          "var": "_decimals",
+          "text": "post in [0, (0 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac223",
+          "var": "_decimals",
+          "text": "post in [0, (0 / 18)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac224",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 1)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac225",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 115792089237316195423570985008687907853269984665640564039457584007913129639935)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac226",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 115792089237316195423570985008687907853269984665640564039457584007913129639934)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        },
+        {
+          "key": "s1:v0:abs:ac227",
+          "var": "_decimals",
+          "text": "post in [0, (115792089237316195423570985008687907853269984665640564039457584007913129639934 / 18)]",
+          "verdict": "NOT-RUN",
+          "reason": "rollback path has no observable R2 post-state"
+        }
+      ]
+    },
+    "r2_ladder": {
+      "requested": true,
+      "candidate_count": 220,
+      "candidate_combo_counts": {
+        "R2": 199,
+        "R1+R2": 21
+      },
+      "candidate_examples": [
+        {
+          "key": "s0:v0:equals:src0",
+          "var": "return",
+          "text": "return == state._decimals"
+        },
+        {
+          "key": "s1:v0:equals:e0",
+          "var": "_decimals",
+          "text": "post == msg.value"
+        },
+        {
+          "key": "s1:v0:abs:a1",
+          "var": "_decimals",
+          "text": "post in [msg.value, msg.value]"
+        },
+        {
+          "key": "s1:v0:equals:e1",
+          "var": "_decimals",
+          "text": "post == state._decimals"
+        },
+        {
+          "key": "s1:v0:abs:a2",
+          "var": "_decimals",
+          "text": "post in [state._decimals, state._decimals]"
+        },
+        {
+          "key": "s1:v0:equals:e2",
+          "var": "_decimals",
+          "text": "post == 1"
+        },
+        {
+          "key": "s1:v0:abs:a3",
+          "var": "_decimals",
+          "text": "post in [1, 1]"
+        },
+        {
+          "key": "s1:v0:equals:e3",
+          "var": "_decimals",
+          "text": "post == 115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        }
+      ],
+      "dedup_dropped": 250,
+      "fuzz_refutation_only": true,
+      "fuzz_proves_candidates": false,
+      "fuzz_refuted": 0,
+      "fuzz_not_refuted": 0,
+      "fuzz_not_run": 220,
+      "fuzz_selected": 96,
+      "fuzz_rendered": 0,
+      "survivors_sent_to_esbmc": 0,
+      "esbmc_rows_total": 0,
+      "esbmc_proved": 0,
+      "esbmc_refuted": 0,
+      "esbmc_unknown": 0,
+      "proved_combo_counts": {},
+      "row_combo_counts": {},
+      "verifier_rows": [],
+      "skip_reason": "rollback path has no observable R2 post-state",
+      "proof_consumer": "ESBMC",
+      "soundness_note": "Forge fuzz is used only to refute candidates with concrete counterexamples. HOLDS/PUT-valid requires ESBMC proof."
+    }
+  },
+  "binary": {
+    "head": "cec4501b43",
+    "srcDirty": true,
+    "binaryMtime": 1786709887
+  },
+  "stats": {
+    "fuzz_params": 2,
+    "lifted": [
+      "msg.sender",
+      "msg.value"
+    ],
+    "rendered_width": {
+      "msg.sender": 1461501637330902918203684832716283019655932542975,
+      "msg.value": 115792089237316195423570985008687907853269984665640564039457584007913129639935
+    },
+    "wide_fuzz_coords": [
+      "msg.sender",
+      "msg.value"
+    ],
+    "dynamic_fuzz_coords": [],
+    "asserts": 4,
+    "verifier_asserts": 3,
+    "state_asserts": 3,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 1,
+    "rollback_exit": true,
+    "exit_kind": "revert",
+    "return_asserts": 0,
+    "oracle_classes": [
+      "R0",
+      "R1"
+    ],
+    "oracle_class_counts": {
+      "R0": 1,
+      "R1": 3
+    },
+    "oracle_class_combinations": [
+      "R0",
+      "R1"
+    ],
+    "oracle_class_combo_counts": {
+      "R1": 3,
+      "R0": 1
+    },
+    "oracle_coordinate_classes": [],
+    "assertion_oracles": [
+      {
+        "layer": "state",
+        "var": "_decimals",
+        "text": "post == pre",
+        "canonical_text": "post == pre",
+        "classes": [
+          "R1"
+        ],
+        "class_combo": "R1",
+        "coordinates": [],
+        "coordinate_classes": [],
+        "verdict": "HOLDS",
+        "emitted_in_test": true,
+        "guarded": false
+      },
+      {
+        "layer": "state",
+        "var": "_decimals",
+        "text": "post >= pre",
+        "canonical_text": "post >= pre",
+        "classes": [
+          "R1"
+        ],
+        "class_combo": "R1",
+        "coordinates": [],
+        "coordinate_classes": [],
+        "verdict": "HOLDS",
+        "emitted_in_test": true,
+        "guarded": false
+      },
+      {
+        "layer": "state",
+        "var": "_decimals",
+        "text": "post <= pre",
+        "canonical_text": "post <= pre",
+        "classes": [
+          "R1"
+        ],
+        "class_combo": "R1",
+        "coordinates": [],
+        "coordinate_classes": [],
+        "verdict": "HOLDS",
+        "emitted_in_test": true,
+        "guarded": false
+      },
+      {
+        "layer": "exit",
+        "var": "exit",
+        "text": "path exits through revert",
+        "canonical_text": "path exits through revert",
+        "classes": [
+          "R0"
+        ],
+        "class_combo": "R0",
+        "coordinates": [],
+        "coordinate_classes": [],
+        "verdict": "HOLDS",
+        "emitted_in_test": true,
+        "guarded": false
+      }
+    ],
+    "oracle_skipped": [
+      "all return rungs DROPPED: the `retlive` witness came back HOLDS, not REFUTED -- no execution of this path was shown to reach a return, so every other return rung holds VACUOUSLY"
+    ],
+    "oracle_implied": [],
+    "state_stored": [
+      "state._decimals := 18"
+    ],
+    "state_skipped": [],
+    "established_relations": [],
+    "param_interface_mock_calls": 0,
+    "env_unchecked": [],
+    "path_guard_assumes": 1,
+    "path_guard_skipped": [],
+    "repaired_unsupported_skeleton": false,
+    "r1_oracle_ladder": {
+      "priority_vars": [
+        "_decimals"
+      ],
+      "skipped": [
+        "block.basefee: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "block.chainid: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "block.coinbase: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "block.number: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "block.prevrandao: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "block.timestamp: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "msg.value: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "tx.gasprice: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable"
+      ],
+      "source": "certified-region-state-coordinates",
+      "proof": "ESBMC path-cov-assert HOLDS rows under k-induction with max-k-step 30 and solidity-max-tx 1"
+    },
+    "r2_ladder": {
+      "requested": true,
+      "candidate_count": 220,
+      "candidate_combo_counts": {
+        "R2": 199,
+        "R1+R2": 21
+      },
+      "candidate_examples": [
+        {
+          "key": "s0:v0:equals:src0",
+          "var": "return",
+          "text": "return == state._decimals"
+        },
+        {
+          "key": "s1:v0:equals:e0",
+          "var": "_decimals",
+          "text": "post == msg.value"
+        },
+        {
+          "key": "s1:v0:abs:a1",
+          "var": "_decimals",
+          "text": "post in [msg.value, msg.value]"
+        },
+        {
+          "key": "s1:v0:equals:e1",
+          "var": "_decimals",
+          "text": "post == state._decimals"
+        },
+        {
+          "key": "s1:v0:abs:a2",
+          "var": "_decimals",
+          "text": "post in [state._decimals, state._decimals]"
+        },
+        {
+          "key": "s1:v0:equals:e2",
+          "var": "_decimals",
+          "text": "post == 1"
+        },
+        {
+          "key": "s1:v0:abs:a3",
+          "var": "_decimals",
+          "text": "post in [1, 1]"
+        },
+        {
+          "key": "s1:v0:equals:e3",
+          "var": "_decimals",
+          "text": "post == 115792089237316195423570985008687907853269984665640564039457584007913129639935"
+        }
+      ],
+      "dedup_dropped": 250,
+      "fuzz_refutation_only": true,
+      "fuzz_proves_candidates": false,
+      "fuzz_refuted": 0,
+      "fuzz_not_refuted": 0,
+      "fuzz_not_run": 220,
+      "fuzz_selected": 96,
+      "fuzz_rendered": 0,
+      "survivors_sent_to_esbmc": 0,
+      "esbmc_rows_total": 0,
+      "esbmc_proved": 0,
+      "esbmc_refuted": 0,
+      "esbmc_unknown": 0,
+      "proved_combo_counts": {},
+      "row_combo_counts": {},
+      "verifier_rows": [],
+      "skip_reason": "rollback path has no observable R2 post-state",
+      "proof_consumer": "ESBMC",
+      "soundness_note": "Forge fuzz is used only to refute candidates with concrete counterexamples. HOLDS/PUT-valid requires ESBMC proof."
+    }
+  },
+  "notes": [
+    "slot candidates asked=0 unanswered=0",
+    "R2 ESBMC skipped: reverting path has no observable post-state",
+    "msg.sender is absent from the certified region and pins; lifting the Foundry-executable nonzero address domain because the certification proof leaves sender unconstrained"
+  ],
+  "stage2_source": "certified-region",
+  "certification_source": "esbmc-certify",
+  "certified_detail_stage4_kind": null,
+  "certified_detail_source": "esbmc-certify",
+  "ce_anchor": {
+    "status": "refused",
+    "reason": "certified basis replay did not record a file and test"
+  }
+}

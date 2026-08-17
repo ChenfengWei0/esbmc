@@ -1,0 +1,636 @@
+{
+  "contract": "FarmingPool",
+  "unit": "deposit",
+  "enc": 2,
+  "depth": 1,
+  "path_function": "sol:@C@FarmingPool@F@deposit#6613",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/farming__FarmingPool__deposit/put_gate/farming__certify_gate/test/FarmingPoolCovTest_FarmingPool_deposit_put2.t.sol",
+  "test": "test_put_FarmingPool_deposit_path2",
+  "piece": null,
+  "region": {
+    "amount": [
+      "0",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ],
+    "state._balances[msg.sender]": [
+      "0",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ],
+    "msg.value": [
+      "1",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ],
+    "msg.sender": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "state._MAX_BALANCE": "100000000000000000000000000000000",
+    "state._distributor": "0",
+    "state._farm.farmInfo.finished": "0",
+    "state._owner": "1",
+    "state._totalSupply": "0"
+  },
+  "ladder": [
+    {
+      "var": "_totalSupply",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_totalSupply",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[msg.sender]",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[msg.sender]",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[msg.sender]",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[msg.sender]",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[msg.sender]",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[msg.sender]",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    12,
+    6,
+    6,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "enabled": true,
+    "requested": 62,
+    "selected": 62,
+    "candidate_budget": 128,
+    "rendered": 0,
+    "ran": 0,
+    "refuted": 0,
+    "not_refuted": 0,
+    "not_run": 62,
+    "timed_out": false,
+    "returncode": null,
+    "fuzz_runs": 256,
+    "command": [],
+    "reason": "rollback path has no observable R2 post-state",
+    "candidates": [
+      {
+        "key": "s0:v0:equals:e0",
+        "var": "_balances[msg.sender]",
+        "text": "post == amount",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e0",
+        "var": "_totalSupply",
+        "text": "post == amount",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a1",
+        "var": "_balances[msg.sender]",
+        "text": "post in [amount, amount]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:abs:a1",
+        "var": "_totalSupply",
+        "text": "post in [amount, amount]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e1",
+        "var": "_balances[msg.sender]",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e1",
+        "var": "_totalSupply",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a2",
+        "var": "_balances[msg.sender]",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:abs:a2",
+        "var": "_totalSupply",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e2",
+        "var": "_balances[msg.sender]",
+        "text": "post == (pre + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e2",
+        "var": "_totalSupply",
+        "text": "post == (pre + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e3",
+        "var": "_balances[msg.sender]",
+        "text": "post == (pre - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e3",
+        "var": "_totalSupply",
+        "text": "post == (pre - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e4",
+        "var": "_balances[msg.sender]",
+        "text": "post == (pre * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e4",
+        "var": "_totalSupply",
+        "text": "post == (pre * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e5",
+        "var": "_balances[msg.sender]",
+        "text": "post == (pre + amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e5",
+        "var": "_totalSupply",
+        "text": "post == (pre + amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e6",
+        "var": "_balances[msg.sender]",
+        "text": "post == (pre - amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e6",
+        "var": "_totalSupply",
+        "text": "post == (pre - amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e7",
+        "var": "_balances[msg.sender]",
+        "text": "post == (pre * amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e7",
+        "var": "_totalSupply",
+        "text": "post == (pre * amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e8",
+        "var": "_balances[msg.sender]",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e8",
+        "var": "_totalSupply",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e9",
+        "var": "_balances[msg.sender]",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e9",
+        "var": "_totalSupply",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e10",
+        "var": "_balances[msg.sender]",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e10",
+        "var": "_totalSupply",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e11",
+        "var": "_balances[msg.sender]",
+        "text": "post == (amount + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e11",
+        "var": "_totalSupply",
+        "text": "post == (amount + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e12",
+        "var": "_balances[msg.sender]",
+        "text": "post == (amount - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e12",
+        "var": "_totalSupply",
+        "text": "post == (amount - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e13",
+        "var": "_balances[msg.sender]",
+        "text": "post == (amount * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e13",
+        "var": "_totalSupply",
+        "text": "post == (amount * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e14",
+        "var": "_balances[msg.sender]",
+        "text": "post == (amount + amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e14",
+        "var": "_totalSupply",
+        "text": "post == (amount + amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e15",
+        "var": "_balances[msg.sender]",
+        "text": "post == (amount - amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e15",
+        "var": "_totalSupply",
+        "text": "post == (amount - amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e16",
+        "var": "_balances[msg.sender]",
+        "text": "post == (amount * amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e16",
+        "var": "_totalSupply",
+        "text": "post == (amount * amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e17",
+        "var": "_balances[msg.sender]",
+        "text": "post == (amount + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e17",
+        "var": "_totalSupply",
+        "text": "post == (amount + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e18",
+        "var": "_balances[msg.sender]",
+        "text": "post == (amount - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e18",
+        "var": "_totalSupply",
+        "text": "post == (amount - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e19",
+        "var": "_balances[msg.sender]",
+        "text": "post == (amount * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e19",
+        "var": "_totalSupply",
+        "text": "post == (amount * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e20",
+        "var": "_balances[msg.sender]",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e20",
+        "var": "_totalSupply",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e21",
+        "var": "_balances[msg.sender]",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e21",
+        "var": "_totalSupply",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e22",
+        "var": "_balances[msg.sender]",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e22",
+        "var": "_totalSupply",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e23",
+        "var": "_balances[msg.sender]",
+        "text": "post == (msg.value + amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e23",
+        "var": "_totalSupply",
+        "text": "post == (msg.value + amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e24",
+        "var": "_balances[msg.sender]",
+        "text": "post == (msg.value - amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e24",
+        "var": "_totalSupply",
+        "text": "post == (msg.value - amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e25",
+        "var": "_balances[msg.sender]",
+        "text": "post == (msg.value * amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e25",
+        "var": "_totalSupply",
+        "text": "post == (msg.value * amount)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e26",
+        "var": "_balances[msg.sender]",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e26",
+        "var": "_totalSupply",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e27",
+        "var": "_balances[msg.sender]",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e27",
+        "var": "_totalSupply",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e28",
+        "var": "_balances[msg.sender]",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v1:equals:e28",
+        "var": "_totalSupply",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      }
+    ]
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "STAKING_TOKEN",
+    "_MAX_BALANCE",
+    "_balances",
+    "_totalSupply"
+  ],
+  "oracle_vars": [
+    "_totalSupply",
+    "_balances[msg.sender]"
+  ],
+  "slot_candidates": {
+    "asked": [
+      "_balances[msg.sender]"
+    ],
+    "unanswered": [],
+    "rows_for_unasked_names": [
+      "_totalSupply"
+    ]
+  },
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "52c643bb8c",
+    "srcDirty": true,
+    "binaryMtime": 1785961135
+  },
+  "stats": {
+    "fuzz_params": 3,
+    "lifted": [
+      "msg.sender",
+      "msg.value",
+      "amount"
+    ],
+    "asserts": 1,
+    "state_asserts": 0,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 1,
+    "rollback_exit": true,
+    "exit_kind": "revert",
+    "return_asserts": 0,
+    "oracle_skipped": [
+      "2 layer-2/3 rung(s) DROPPED (this path exits through a ROLLBACK revert, so the value the ladder compared is the one between the write and the rollback -- a moment no test and no chain can read. A revert restores storage, so the only post-state a test can observe on this path is the pre-state, and the only layer left with anything to say is the exit kind)"
+    ],
+    "oracle_implied": [
+      "_totalSupply: post >= pre (entailed by a stronger rung that also HOLDS on _totalSupply, so asserting it detects nothing the stronger one misses)",
+      "_totalSupply: post <= pre (entailed by a stronger rung that also HOLDS on _totalSupply, so asserting it detects nothing the stronger one misses)",
+      "_balances[msg.sender]: post >= pre (entailed by a stronger rung that also HOLDS on _balances[msg.sender], so asserting it detects nothing the stronger one misses)",
+      "_balances[msg.sender]: post <= pre (entailed by a stronger rung that also HOLDS on _balances[msg.sender], so asserting it detects nothing the stronger one misses)"
+    ],
+    "state_stored": [
+      "state._distributor := 0",
+      "state._owner := 1",
+      "state._totalSupply := 0"
+    ],
+    "state_skipped": [
+      "state._MAX_BALANCE (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)",
+      "state._balances[msg.sender] in [0, 115792089237316195423570985008687907853269984665640564039457584007913129639935] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query; both endpoints are the type's own limits, so there is not even an in-region check to make)",
+      "state._farm.farmInfo.finished (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)"
+    ],
+    "env_unchecked": []
+  },
+  "notes": [
+    "slot candidates asked=1 unanswered=0",
+    "R2 ESBMC skipped: reverting path has no observable post-state"
+  ]
+}

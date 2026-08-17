@@ -1,0 +1,7 @@
+{
+  "contract": "BalancerContractRegistryInitializer",
+  "skip_constructor": true,
+  "state": {
+    "_initialized": false
+  }
+}

@@ -1,0 +1,1587 @@
+{
+  "contract": "St1inch",
+  "unit": "setMaxLossRatio",
+  "enc": 15,
+  "depth": 3,
+  "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setMaxLossRatio/put_gate/st1inch_St1inch__certify_gate/test/St1inchCovTest_St1inch_setMaxLossRatio_put15.t.sol",
+  "test": "test_put_St1inch_setMaxLossRatio_path15",
+  "piece": null,
+  "region": {
+    "msg.sender": [
+      "1",
+      "1"
+    ],
+    "msg.value": [
+      "0",
+      "0"
+    ],
+    "maxLossRatio_": [
+      "0",
+      "1000000000"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "state._owner": "1"
+  },
+  "ladder": [
+    {
+      "var": "maxLossRatio",
+      "text": "post == pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post <= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == maxLossRatio_",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == msg.value",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (pre + maxLossRatio_)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (pre - maxLossRatio_)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (pre + msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (pre - msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (pre * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (pre - 5)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (pre - 20)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (maxLossRatio_ + pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (maxLossRatio_ - pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (maxLossRatio_ + msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (maxLossRatio_ - msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (maxLossRatio_ * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value + pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value - pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value * pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value + maxLossRatio_)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value - maxLossRatio_)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value * maxLossRatio_)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value + msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value - msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value + 5)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value - 5)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value * 5)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value + 20)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value - 20)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (msg.value * 20)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (5 - maxLossRatio_)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (5 + msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (5 - msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post == (5 * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post in [maxLossRatio_, maxLossRatio_]",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "maxLossRatio",
+      "text": "post in [msg.value, msg.value]",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == msg.sender",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == state._owner",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == msg.value",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre * pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre - maxLossRatio_)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre + msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre - msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre - 5)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (pre - 20)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (maxLossRatio_ + msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (maxLossRatio_ - msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (maxLossRatio_ * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value + pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value - pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value * pre)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value + maxLossRatio_)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value - maxLossRatio_)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value * maxLossRatio_)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value + msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value - msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value + 5)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value - 5)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value * 5)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value + 20)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value - 20)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (msg.value * 20)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (5 - maxLossRatio_)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (5 + msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (5 - msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == (5 * msg.value)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post in [msg.value, msg.value]",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    12,
+    3,
+    9,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "requested": 128,
+    "selected": 128,
+    "candidate_budget": 128,
+    "rendered": 74,
+    "ran": 66,
+    "refuted": 60,
+    "not_run": 62,
+    "not_refuted": 6,
+    "timed_out": false,
+    "returncode": 1,
+    "fuzz_runs": 256,
+    "command": [
+      "forge",
+      "test",
+      "--json",
+      "--match-contract",
+      "^St1inchCovTest_St1inch_setMaxLossRatio_put15_FuzzR2$",
+      "--match-test",
+      "^test_put_St1inch_setMaxLossRatio_path15fz",
+      "--fuzz-runs",
+      "256"
+    ],
+    "candidates": [
+      {
+        "key": "s0:v0:equals:e0",
+        "var": "_owner",
+        "text": "post == msg.sender",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e0",
+        "var": "maxLossRatio",
+        "text": "post == maxLossRatio_",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz1",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_1"
+      },
+      {
+        "key": "s0:v0:abs:a1",
+        "var": "_owner",
+        "text": "post in [maxLossRatio_, maxLossRatio_]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_2 _owner: post in [maxLossRatio_, maxLossRatio_]: 1 < 82778152",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz2",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_2"
+      },
+      {
+        "key": "s0:v1:abs:a1",
+        "var": "maxLossRatio",
+        "text": "post in [maxLossRatio_, maxLossRatio_]",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz3",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_3"
+      },
+      {
+        "key": "s0:v0:equals:e1",
+        "var": "_owner",
+        "text": "post == state._owner",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e1",
+        "var": "maxLossRatio",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:a2",
+        "var": "_owner",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:a2",
+        "var": "maxLossRatio",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e2",
+        "var": "_owner",
+        "text": "post == maxLossRatio_",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_8 _owner: post == maxLossRatio_: 1 != 82778152",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz8",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_8"
+      },
+      {
+        "key": "s0:v1:equals:e2",
+        "var": "maxLossRatio",
+        "text": "post == 5",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_9 maxLossRatio: post == 5: 29726 != 5",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz9",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_9"
+      },
+      {
+        "key": "s0:v0:abs:a3",
+        "var": "_owner",
+        "text": "post in [5, 5]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_10 _owner: post in [5, 5]: 1 < 5",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz10",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_10"
+      },
+      {
+        "key": "s0:v1:abs:a3",
+        "var": "maxLossRatio",
+        "text": "post in [5, 5]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_11 maxLossRatio: post in [5, 5]: 82778152 > 5",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz11",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_11"
+      },
+      {
+        "key": "s0:v0:equals:e3",
+        "var": "_owner",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e3",
+        "var": "maxLossRatio",
+        "text": "post == 20",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_13 maxLossRatio: post == 20: 82778152 != 20",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz13",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_13"
+      },
+      {
+        "key": "s0:v0:abs:a4",
+        "var": "_owner",
+        "text": "post in [20, 20]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_14 _owner: post in [20, 20]: 1 < 20",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz14",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_14"
+      },
+      {
+        "key": "s0:v1:abs:a4",
+        "var": "maxLossRatio",
+        "text": "post in [20, 20]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_15 maxLossRatio: post in [20, 20]: 82778152 > 20",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz15",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_15"
+      },
+      {
+        "key": "s0:v0:equals:e4",
+        "var": "_owner",
+        "text": "post == 5",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_16 _owner: post == 5: 1 != 5",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz16",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_16"
+      },
+      {
+        "key": "s0:v1:equals:e4",
+        "var": "maxLossRatio",
+        "text": "post == (pre + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_17 maxLossRatio: post == (pre + pre): 82778152 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz17",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_17"
+      },
+      {
+        "key": "s0:v0:equals:e5",
+        "var": "_owner",
+        "text": "post == 20",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_18 _owner: post == 20: 1 != 20",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz18",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_18"
+      },
+      {
+        "key": "s0:v1:equals:e5",
+        "var": "maxLossRatio",
+        "text": "post == (pre - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_19 maxLossRatio: post == (pre - pre): 82778152 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz19",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_19"
+      },
+      {
+        "key": "s0:v0:equals:e6",
+        "var": "_owner",
+        "text": "post == (pre + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_20 _owner: post == (pre + pre): 1 != 2",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz20",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_20"
+      },
+      {
+        "key": "s0:v1:equals:e6",
+        "var": "maxLossRatio",
+        "text": "post == (pre * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_21 maxLossRatio: post == (pre * pre): 82778152 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz21",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_21"
+      },
+      {
+        "key": "s0:v0:equals:e7",
+        "var": "_owner",
+        "text": "post == (pre - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_22 _owner: post == (pre - pre): 1 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz22",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_22"
+      },
+      {
+        "key": "s0:v1:equals:e7",
+        "var": "maxLossRatio",
+        "text": "post == (pre + maxLossRatio_)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz23",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_23"
+      },
+      {
+        "key": "s0:v0:equals:e8",
+        "var": "_owner",
+        "text": "post == (pre * pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz24",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_24"
+      },
+      {
+        "key": "s0:v1:equals:e8",
+        "var": "maxLossRatio",
+        "text": "post == (pre - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz25",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_25"
+      },
+      {
+        "key": "s0:v0:equals:e9",
+        "var": "_owner",
+        "text": "post == (pre + maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_26 _owner: post == (pre + maxLossRatio_): 1 != 82778153",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz26",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_26"
+      },
+      {
+        "key": "s0:v1:equals:e9",
+        "var": "maxLossRatio",
+        "text": "post == (pre * maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_27 maxLossRatio: post == (pre * maxLossRatio_): 82778152 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz27",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_27"
+      },
+      {
+        "key": "s0:v0:equals:e10",
+        "var": "_owner",
+        "text": "post == (pre - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz28",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_28"
+      },
+      {
+        "key": "s0:v1:equals:e10",
+        "var": "maxLossRatio",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e11",
+        "var": "_owner",
+        "text": "post == (pre * maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_30 _owner: post == (pre * maxLossRatio_): 1 != 82778152",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz30",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_30"
+      },
+      {
+        "key": "s0:v1:equals:e11",
+        "var": "maxLossRatio",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e12",
+        "var": "_owner",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e12",
+        "var": "maxLossRatio",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e13",
+        "var": "_owner",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e13",
+        "var": "maxLossRatio",
+        "text": "post == (pre + 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_35 maxLossRatio: post == (pre + 5): 82778152 != 5",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz35",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_35"
+      },
+      {
+        "key": "s0:v0:equals:e14",
+        "var": "_owner",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e14",
+        "var": "maxLossRatio",
+        "text": "post == (pre - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz37",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_37"
+      },
+      {
+        "key": "s0:v0:equals:e15",
+        "var": "_owner",
+        "text": "post == (pre + 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_38 _owner: post == (pre + 5): 1 != 6",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz38",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_38"
+      },
+      {
+        "key": "s0:v1:equals:e15",
+        "var": "maxLossRatio",
+        "text": "post == (pre * 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_39 maxLossRatio: post == (pre * 5): 82778152 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz39",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_39"
+      },
+      {
+        "key": "s0:v0:equals:e16",
+        "var": "_owner",
+        "text": "post == (pre - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz40",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_40"
+      },
+      {
+        "key": "s0:v1:equals:e16",
+        "var": "maxLossRatio",
+        "text": "post == (pre + 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_41 maxLossRatio: post == (pre + 20): 82778152 != 20",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz41",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_41"
+      },
+      {
+        "key": "s0:v0:equals:e17",
+        "var": "_owner",
+        "text": "post == (pre * 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_42 _owner: post == (pre * 5): 1 != 5",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz42",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_42"
+      },
+      {
+        "key": "s0:v1:equals:e17",
+        "var": "maxLossRatio",
+        "text": "post == (pre - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz43",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_43"
+      },
+      {
+        "key": "s0:v0:equals:e18",
+        "var": "_owner",
+        "text": "post == (pre + 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_44 _owner: post == (pre + 20): 1 != 21",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz44",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_44"
+      },
+      {
+        "key": "s0:v1:equals:e18",
+        "var": "maxLossRatio",
+        "text": "post == (pre * 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_45 maxLossRatio: post == (pre * 20): 82778152 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz45",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_45"
+      },
+      {
+        "key": "s0:v0:equals:e19",
+        "var": "_owner",
+        "text": "post == (pre - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz46",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_46"
+      },
+      {
+        "key": "s0:v1:equals:e19",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ + pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz47",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_47"
+      },
+      {
+        "key": "s0:v0:equals:e20",
+        "var": "_owner",
+        "text": "post == (pre * 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_48 _owner: post == (pre * 20): 1 != 20",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz48",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_48"
+      },
+      {
+        "key": "s0:v1:equals:e20",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ - pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz49",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_49"
+      },
+      {
+        "key": "s0:v0:equals:e21",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_50 _owner: post == (maxLossRatio_ + pre): 1 != 82778153",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz50",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_50"
+      },
+      {
+        "key": "s0:v1:equals:e21",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_51 maxLossRatio: post == (maxLossRatio_ * pre): 82778152 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz51",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_51"
+      },
+      {
+        "key": "s0:v0:equals:e22",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_52 _owner: post == (maxLossRatio_ - pre): 1 != 29725",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz52",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_52"
+      },
+      {
+        "key": "s0:v1:equals:e22",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ + maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_53 maxLossRatio: post == (maxLossRatio_ + maxLossRatio_): 82778152 != 165556304",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz53",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_53"
+      },
+      {
+        "key": "s0:v0:equals:e23",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_54 _owner: post == (maxLossRatio_ * pre): 1 != 82778152",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz54",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_54"
+      },
+      {
+        "key": "s0:v1:equals:e23",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ - maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_55 maxLossRatio: post == (maxLossRatio_ - maxLossRatio_): 82778152 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz55",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_55"
+      },
+      {
+        "key": "s0:v0:equals:e24",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ + maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_56 _owner: post == (maxLossRatio_ + maxLossRatio_): 1 != 165556304",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz56",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_56"
+      },
+      {
+        "key": "s0:v1:equals:e24",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ * maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_57 maxLossRatio: post == (maxLossRatio_ * maxLossRatio_): 82778152 != 6852222448535104",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz57",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_57"
+      },
+      {
+        "key": "s0:v0:equals:e25",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ - maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_58 _owner: post == (maxLossRatio_ - maxLossRatio_): 1 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz58",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_58"
+      },
+      {
+        "key": "s0:v1:equals:e25",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e26",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ * maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_60 _owner: post == (maxLossRatio_ * maxLossRatio_): 1 != 6852222448535104",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz60",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_60"
+      },
+      {
+        "key": "s0:v1:equals:e26",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e27",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e27",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e28",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e28",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ + 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_65 maxLossRatio: post == (maxLossRatio_ + 5): 82778152 != 82778157",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz65",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_65"
+      },
+      {
+        "key": "s0:v0:equals:e29",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e29",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ - 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_67 maxLossRatio: post == (maxLossRatio_ - 5): 82778152 != 82778147",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz67",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_67"
+      },
+      {
+        "key": "s0:v0:equals:e30",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ + 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_68 _owner: post == (maxLossRatio_ + 5): 1 != 82778157",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz68",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_68"
+      },
+      {
+        "key": "s0:v1:equals:e30",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ * 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_69 maxLossRatio: post == (maxLossRatio_ * 5): 82778152 != 413890760",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz69",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_69"
+      },
+      {
+        "key": "s0:v0:equals:e31",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ - 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_70 _owner: post == (maxLossRatio_ - 5): 1 != 82778147",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz70",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_70"
+      },
+      {
+        "key": "s0:v1:equals:e31",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ + 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_71 maxLossRatio: post == (maxLossRatio_ + 20): 82778152 != 82778172",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz71",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_71"
+      },
+      {
+        "key": "s0:v0:equals:e32",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ * 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_72 _owner: post == (maxLossRatio_ * 5): 1 != 413890760",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz72",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_72"
+      },
+      {
+        "key": "s0:v1:equals:e32",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ - 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_73 maxLossRatio: post == (maxLossRatio_ - 20): 82778152 != 82778132",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz73",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_73"
+      },
+      {
+        "key": "s0:v0:equals:e33",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ + 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_74 _owner: post == (maxLossRatio_ + 20): 1 != 82778172",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz74",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_74"
+      },
+      {
+        "key": "s0:v1:equals:e33",
+        "var": "maxLossRatio",
+        "text": "post == (maxLossRatio_ * 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_75 maxLossRatio: post == (maxLossRatio_ * 20): 82778152 != 1655563040",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz75",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_75"
+      },
+      {
+        "key": "s0:v0:equals:e34",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ - 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_76 _owner: post == (maxLossRatio_ - 20): 1 != 82778132",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz76",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_76"
+      },
+      {
+        "key": "s0:v1:equals:e34",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e35",
+        "var": "_owner",
+        "text": "post == (maxLossRatio_ * 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_78 _owner: post == (maxLossRatio_ * 20): 1 != 1655563040",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz78",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_78"
+      },
+      {
+        "key": "s0:v1:equals:e35",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e36",
+        "var": "_owner",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e36",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e37",
+        "var": "_owner",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e37",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value + maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e38",
+        "var": "_owner",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e38",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e39",
+        "var": "_owner",
+        "text": "post == (msg.value + maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e39",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value * maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e40",
+        "var": "_owner",
+        "text": "post == (msg.value - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e40",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e41",
+        "var": "_owner",
+        "text": "post == (msg.value * maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e41",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e42",
+        "var": "_owner",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e42",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e43",
+        "var": "_owner",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e43",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e44",
+        "var": "_owner",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e44",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e45",
+        "var": "_owner",
+        "text": "post == (msg.value + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e45",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e46",
+        "var": "_owner",
+        "text": "post == (msg.value - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e46",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e47",
+        "var": "_owner",
+        "text": "post == (msg.value * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e47",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e48",
+        "var": "_owner",
+        "text": "post == (msg.value + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e48",
+        "var": "maxLossRatio",
+        "text": "post == (msg.value * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e49",
+        "var": "_owner",
+        "text": "post == (msg.value - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e49",
+        "var": "maxLossRatio",
+        "text": "post == (5 + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_107 maxLossRatio: post == (5 + pre): 82778152 != 5",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz107",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_107"
+      },
+      {
+        "key": "s0:v0:equals:e50",
+        "var": "_owner",
+        "text": "post == (msg.value * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e50",
+        "var": "maxLossRatio",
+        "text": "post == (5 - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_109 maxLossRatio: post == (5 - pre): 82778152 != 5",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz109",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_109"
+      },
+      {
+        "key": "s0:v0:equals:e51",
+        "var": "_owner",
+        "text": "post == (5 + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_110 _owner: post == (5 + pre): 1 != 6",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz110",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_110"
+      },
+      {
+        "key": "s0:v1:equals:e51",
+        "var": "maxLossRatio",
+        "text": "post == (5 * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_111 maxLossRatio: post == (5 * pre): 82778152 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz111",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_111"
+      },
+      {
+        "key": "s0:v0:equals:e52",
+        "var": "_owner",
+        "text": "post == (5 - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_112 _owner: post == (5 - pre): 1 != 4",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz112",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_112"
+      },
+      {
+        "key": "s0:v1:equals:e52",
+        "var": "maxLossRatio",
+        "text": "post == (5 + maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_113 maxLossRatio: post == (5 + maxLossRatio_): 82778152 != 82778157",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz113",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_113"
+      },
+      {
+        "key": "s0:v0:equals:e53",
+        "var": "_owner",
+        "text": "post == (5 * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_114 _owner: post == (5 * pre): 1 != 5",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz114",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_114"
+      },
+      {
+        "key": "s0:v1:equals:e53",
+        "var": "maxLossRatio",
+        "text": "post == (5 - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz115",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_115"
+      },
+      {
+        "key": "s0:v0:equals:e54",
+        "var": "_owner",
+        "text": "post == (5 + maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_116 _owner: post == (5 + maxLossRatio_): 1 != 82778157",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz116",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_116"
+      },
+      {
+        "key": "s0:v1:equals:e54",
+        "var": "maxLossRatio",
+        "text": "post == (5 * maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_117 maxLossRatio: post == (5 * maxLossRatio_): 82778152 != 413890760",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz117",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_117"
+      },
+      {
+        "key": "s0:v0:equals:e55",
+        "var": "_owner",
+        "text": "post == (5 - maxLossRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz118",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_118"
+      },
+      {
+        "key": "s0:v1:equals:e55",
+        "var": "maxLossRatio",
+        "text": "post == (5 + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e56",
+        "var": "_owner",
+        "text": "post == (5 * maxLossRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_120 _owner: post == (5 * maxLossRatio_): 1 != 413890760",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz120",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_120"
+      },
+      {
+        "key": "s0:v1:equals:e56",
+        "var": "maxLossRatio",
+        "text": "post == (5 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e57",
+        "var": "_owner",
+        "text": "post == (5 + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e57",
+        "var": "maxLossRatio",
+        "text": "post == (5 * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e58",
+        "var": "_owner",
+        "text": "post == (5 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e58",
+        "var": "maxLossRatio",
+        "text": "post == (5 + 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_125 maxLossRatio: post == (5 + 5): 82778152 != 10",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz125",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_125"
+      },
+      {
+        "key": "s0:v0:equals:e59",
+        "var": "_owner",
+        "text": "post == (5 * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e59",
+        "var": "maxLossRatio",
+        "text": "post == (5 - 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_127 maxLossRatio: post == (5 - 5): 82778152 != 0",
+        "test": "test_put_St1inch_setMaxLossRatio_path15fz127",
+        "marker": "VERIPUT_CANDIDATE_a591213ef1d8a934167494b6f2d94b5a_127"
+      }
+    ],
+    "enabled": true
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "_ONE_E9",
+    "maxLossRatio",
+    "_owner"
+  ],
+  "oracle_vars": [
+    "maxLossRatio",
+    "_owner"
+  ],
+  "slot_candidates": {
+    "asked": [],
+    "unanswered": [],
+    "rows_for_unasked_names": [
+      "_owner",
+      "maxLossRatio"
+    ]
+  },
+  "esbmc_extra_args": [
+    "--z3",
+    "--tuple-node-flattener",
+    "--path-cov-fixture",
+    "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setMaxLossRatio/fixture_gate.json"
+  ],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "f52984d5d6",
+    "srcDirty": true,
+    "binaryMtime": 1785965824
+  },
+  "stats": {
+    "fuzz_params": 1,
+    "lifted": [
+      "maxLossRatio_"
+    ],
+    "asserts": 3,
+    "state_asserts": 3,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 0,
+    "rollback_exit": false,
+    "exit_kind": "normal",
+    "return_asserts": 0,
+    "oracle_skipped": [
+      "maxLossRatio: post == (maxLossRatio_ + msg.value) (rung shape not rendered)",
+      "maxLossRatio: post == (maxLossRatio_ - msg.value) (rung shape not rendered)",
+      "maxLossRatio: post == (msg.value + maxLossRatio_) (rung shape not rendered)",
+      "_owner: post == msg.sender (rung shape not rendered)",
+      "_owner: post == state._owner (rung shape not rendered)",
+      "_owner: post == (pre + msg.value) (rung shape not rendered)",
+      "_owner: post == (pre - msg.value) (rung shape not rendered)",
+      "_owner: post == (msg.value + pre) (rung shape not rendered)"
+    ],
+    "oracle_implied": [
+      "_owner: post >= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)",
+      "_owner: post <= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)",
+      "maxLossRatio: post in [maxLossRatio_, maxLossRatio_] (entailed by a stronger rung that also HOLDS on maxLossRatio, so asserting it detects nothing the stronger one misses)"
+    ],
+    "state_stored": [
+      "state._owner := 1"
+    ],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": [
+    "slot candidates asked=0 unanswered=0"
+  ]
+}

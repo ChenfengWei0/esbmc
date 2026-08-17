@@ -1,0 +1,95 @@
+{
+  "contract": "P21_ExternalCall",
+  "unit": "pull",
+  "enc": 6,
+  "depth": 2,
+  "path_function": "sol:@C@P21_ExternalCall@F@pull#47",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/put_roundtrip/poc__poc_results_skipbracket/test/P21_ExternalCallCovTest_P21_ExternalCall_pull_put6.t.sol",
+  "test": "test_put_P21_ExternalCall_pull_path6",
+  "region": {
+    "state.armed": [
+      "0",
+      "1"
+    ],
+    "state.tag": [
+      "0",
+      "400664668641232510116162577884733245167024168393219944773209633245374151002"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "msg.value": "0"
+  },
+  "ladder": [
+    {
+      "var": "armed",
+      "text": "post == pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "armed",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "tag",
+      "text": "post == pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "tag",
+      "text": "post != pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "tag",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "tag",
+      "text": "post <= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "tag",
+      "text": "post > pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "tag",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    8,
+    3,
+    5,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "stats": {
+    "fuzz_params": 0,
+    "lifted": [],
+    "asserts": 3,
+    "oracle_skipped": [],
+    "state_stored": [],
+    "state_skipped": [
+      "state.armed in [0, 1] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query -- the rungs were proved about the constructor's own value. Establishing a fuzz-chosen value here would test entry states the proof never covered, which is how this PUT came back RED on the unmodified contract)",
+      "state.tag in [0, 400664668641232510116162577884733245167024168393219944773209633245374151002] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query -- the rungs were proved about the constructor's own value. Establishing a fuzz-chosen value here would test entry states the proof never covered, which is how this PUT came back RED on the unmodified contract)"
+    ],
+    "env_unchecked": []
+  },
+  "notes": []
+}

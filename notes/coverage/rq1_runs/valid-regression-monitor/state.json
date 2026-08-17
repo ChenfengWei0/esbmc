@@ -1,0 +1,31 @@
+{
+  "alerts": "/home/samson/workspace/esbmc/notes/coverage/rq1_runs/valid-regression-monitor/regressions.jsonl",
+  "binary_stable_for_s": 10.005,
+  "binary_stable_required_s": 10.0,
+  "candidate_counts": {
+    "bugfix124:concrete": 27,
+    "bugfix124:put": 21,
+    "peer182:concrete": 5,
+    "peer182:put": 23,
+    "real203:concrete": 30,
+    "real203:put": 99
+  },
+  "candidate_total": 205,
+  "esbmc_binary": {
+    "executable": true,
+    "inode": 621254,
+    "mtime_ns": 1786559602445141373,
+    "path": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+    "size": 506715584
+  },
+  "infrastructure": "/home/samson/workspace/esbmc/notes/coverage/rq1_runs/valid-regression-monitor/infrastructure.jsonl",
+  "journal": "/home/samson/workspace/esbmc/notes/coverage/rq1_runs/valid-regression-monitor/samples.jsonl",
+  "ledger_contamination": "/home/samson/workspace/esbmc/notes/coverage/rq1_runs/valid-regression-monitor/ledger-contamination.jsonl",
+  "monitor_pid": 3999020,
+  "pending_retry": null,
+  "phase": "waiting-for-stable-esbmc",
+  "runner_generation_regressions": "/home/samson/workspace/esbmc/notes/coverage/rq1_runs/valid-regression-monitor/runner-generation-regressions.jsonl",
+  "samples_completed": 3747,
+  "schema": "veriput-rq1-valid-regression-monitor/v1",
+  "updated_at": "2026-08-12T19:33:34.122945+00:00"
+}

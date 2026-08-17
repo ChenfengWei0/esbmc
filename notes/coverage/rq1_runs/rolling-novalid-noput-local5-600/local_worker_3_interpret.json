@@ -1,0 +1,51 @@
+{
+  "bucket_counts": {
+    "CERTIFY_COUNTEREXAMPLE_REJECTED_NOT_CERTIFIED": 1
+  },
+  "count": 1,
+  "repair_ticket_candidates": [
+    {
+      "bench": "bugfix124",
+      "category": "CERTIFY_COUNTEREXAMPLE_REJECTED_NOT_CERTIFIED",
+      "logs": [
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/driver.log",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/put.json"
+      ],
+      "priority": "normal",
+      "put_valid": 0,
+      "r1r2": 0,
+      "result_bucket": "CERTIFY_COUNTEREXAMPLE_REJECTED_NOT_CERTIFIED",
+      "result_file": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+      "schema": "veriput-rq1-repair-ticket/v1",
+      "subagent_rule": "Inspect listed failure records and owning source code before editing; do not run ESBMC/RQ1 as root-cause discovery.",
+      "subject": "pop_001_Multicall",
+      "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall",
+      "suggested_write_scope": [
+        "notes/coverage/scripts/certify_all.py"
+      ],
+      "theoretical_progress_effect": "If this case is in a covered category and remains no-valid after the current progress deadline, rq1_no_valid_progress.py subtracts it from net theoretical/provisional coverage. valid-no-PUT and PUT-no-R1/R2 subtract from quality progress.",
+      "trigger_reason": "interpreted-actual-result-below-valid-put-r1r2",
+      "ts": 1786425632.8913321,
+      "valid": 0
+    }
+  ],
+  "results_root": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT",
+  "rows": [
+    {
+      "bench": "bugfix124",
+      "bucket": "CERTIFY_COUNTEREXAMPLE_REJECTED_NOT_CERTIFIED",
+      "has_put_json": false,
+      "has_result_json": true,
+      "put_valid": 0,
+      "r1r2": 0,
+      "recovered_valid_tests": [],
+      "relocated_summary_paths": [],
+      "result_file": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+      "subject": "pop_001_Multicall",
+      "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall",
+      "valid": 0
+    }
+  ],
+  "schema": "veriput-rq1-esbmc-result-interpret/v1"
+}

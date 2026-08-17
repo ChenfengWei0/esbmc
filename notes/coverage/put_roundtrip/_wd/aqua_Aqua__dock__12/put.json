@@ -1,0 +1,99 @@
+{
+  "contract": "Aqua",
+  "unit": "dock",
+  "enc": 12,
+  "depth": 3,
+  "path_function": "sol:@C@Aqua@F@dock#3088",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/put_roundtrip/aqua_Aqua/test/AquaCovTest_Aqua_dock_put12.t.sol",
+  "test": "test_put_Aqua_dock_path12",
+  "region": {
+    "app": [
+      "0",
+      "1461501637330902918203684832716283019655932542974"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "msg.value": "0"
+  },
+  "ladder": [],
+  "ladder_summary": null,
+  "ladder_refusal": null,
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [
+    "--unwindset",
+    "1:8",
+    "--unwindset",
+    "1:8",
+    "--unwindset",
+    "62:8",
+    "--unwindset",
+    "62:8",
+    "--unwindset",
+    "64:8"
+  ],
+  "unwind_attempts": [
+    {
+      "attempt": 1,
+      "k": 8,
+      "loops": [
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler"
+        ],
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler;"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock;"
+        ],
+        [
+          64,
+          "/home/samson/workspace/esbmc/src/c2goto/library/string.c",
+          298,
+          "__memset_impl"
+        ]
+      ],
+      "shapes": {
+        "assert-gate": 3,
+        "under-report-warning": 3
+      },
+      "exit": 64,
+      "wall_s": 0.0,
+      "blocker_after": null,
+      "rows_after": 0
+    }
+  ],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "stats": {
+    "fuzz_params": 1,
+    "lifted": [
+      "app"
+    ],
+    "asserts": 0,
+    "oracle_skipped": [],
+    "state_stored": [],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": []
+}

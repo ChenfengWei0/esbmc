@@ -1,0 +1,820 @@
+{
+  "benchmark": "farming",
+  "project": "farming",
+  "primary": {
+    "name": "FarmingPool",
+    "kind": "contract"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol",
+  "config": {
+    "mode": "per-method",
+    "scope": "single",
+    "onlyUnits": [],
+    "adhocTarget": null,
+    "solidityMaxTx": 1,
+    "focusWith": [],
+    "instrumentOnlyUnit": false,
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "solverFlags": [],
+    "solverFlagsReason": "tool default (no solver flag passed)",
+    "outerTimeoutSeconds": 300,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "FarmAccounting__farmedSinceCheckpointScaled",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "FarmAccounting",
+      "function": "farmedSinceCheckpointScaled",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "FarmAccounting__startFarming",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "FarmAccounting",
+      "function": "startFarming",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "FarmAccounting__stopFarming",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "FarmAccounting",
+      "function": "stopFarming",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "FarmAccounting__claim",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "FarmAccounting",
+      "function": "claim",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "UserAccounting__farmedPerToken",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "UserAccounting",
+      "function": "farmedPerToken",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "UserAccounting__farmed",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "UserAccounting",
+      "function": "farmed",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "UserAccounting__eraseFarmed",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "UserAccounting",
+      "function": "eraseFarmed",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "UserAccounting__updateFarmedPerToken",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "UserAccounting",
+      "function": "updateFarmedPerToken",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "UserAccounting__updateBalances",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "UserAccounting",
+      "function": "updateBalances",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "Distributor__setDistributor",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function setDistributor",
+      "wallSeconds": 9.12,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 5,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 5,
+      "F": 5,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 13,
+        "paths_with": 5,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 5,
+        "unrecorded_steps": 0
+      },
+      "contract": "Distributor",
+      "function": "setDistributor",
+      "kind": "contract"
+    },
+    {
+      "tag": "Distributor__distributor",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function distributor",
+      "wallSeconds": 7.01,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 2,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 2,
+      "F": 2,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 2,
+        "paths_with": 2,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 2,
+        "unrecorded_steps": 0
+      },
+      "contract": "Distributor",
+      "function": "distributor",
+      "kind": "contract"
+    },
+    {
+      "tag": "FarmingLib__makeInfo",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "FarmingLib",
+      "function": "makeInfo",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "FarmingLib__getData",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "FarmingLib",
+      "function": "getData",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "FarmingLib__startFarming",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "FarmingLib",
+      "function": "startFarming",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "FarmingLib__stopFarming",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "FarmingLib",
+      "function": "stopFarming",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "FarmingLib__farmed",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "FarmingLib",
+      "function": "farmed",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "FarmingLib__claim",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "FarmingLib",
+      "function": "claim",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "FarmingLib__updateBalances",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "FarmingLib",
+      "function": "updateBalances",
+      "kind": "library",
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      }
+    },
+    {
+      "tag": "FarmingPool__decimals",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function decimals",
+      "wallSeconds": 7.25,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 2,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 2,
+      "F": 2,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 2,
+        "paths_with": 2,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 2,
+        "unrecorded_steps": 0
+      },
+      "contract": "FarmingPool",
+      "function": "decimals",
+      "kind": "contract"
+    },
+    {
+      "tag": "FarmingPool__farmInfo",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function farmInfo",
+      "wallSeconds": 7.02,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 2,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 2,
+      "F": 2,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 2,
+        "paths_with": 2,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 2,
+        "unrecorded_steps": 0
+      },
+      "contract": "FarmingPool",
+      "function": "farmInfo",
+      "kind": "contract"
+    },
+    {
+      "tag": "FarmingPool__startFarming",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function startFarming",
+      "wallSeconds": 29.7,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 50,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 50,
+      "F": 26,
+      "U": 24,
+      "uReasons": {
+        "bounded-holds": 24,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 181,
+        "paths_with": 26,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 26,
+        "unrecorded_steps": 0
+      },
+      "contract": "FarmingPool",
+      "function": "startFarming",
+      "kind": "contract"
+    },
+    {
+      "tag": "FarmingPool__stopFarming",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function stopFarming",
+      "wallSeconds": 12.48,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 20,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 20,
+      "F": 5,
+      "U": 15,
+      "uReasons": {
+        "bounded-holds": 15,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 20,
+        "paths_with": 5,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 5,
+        "unrecorded_steps": 0
+      },
+      "contract": "FarmingPool",
+      "function": "stopFarming",
+      "kind": "contract"
+    },
+    {
+      "tag": "FarmingPool__farmed",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function farmed",
+      "wallSeconds": 8.41,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 4,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 4,
+      "F": 4,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 9,
+        "paths_with": 4,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 4,
+        "unrecorded_steps": 0
+      },
+      "contract": "FarmingPool",
+      "function": "farmed",
+      "kind": "contract"
+    },
+    {
+      "tag": "FarmingPool__deposit",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function deposit",
+      "wallSeconds": 59.39,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 154,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 154,
+      "F": 7,
+      "U": 147,
+      "uReasons": {
+        "bounded-holds": 147,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 45,
+        "paths_with": 7,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 7,
+        "unrecorded_steps": 0
+      },
+      "contract": "FarmingPool",
+      "function": "deposit",
+      "kind": "contract"
+    },
+    {
+      "tag": "FarmingPool__withdraw",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function withdraw",
+      "wallSeconds": 40.44,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 103,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 103,
+      "F": 7,
+      "U": 96,
+      "uReasons": {
+        "bounded-holds": 96,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 41,
+        "paths_with": 7,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 7,
+        "unrecorded_steps": 0
+      },
+      "contract": "FarmingPool",
+      "function": "withdraw",
+      "kind": "contract"
+    },
+    {
+      "tag": "FarmingPool__claim",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function claim",
+      "wallSeconds": 14.96,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 19,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 19,
+      "F": 10,
+      "U": 9,
+      "uReasons": {
+        "bounded-holds": 9,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 49,
+        "paths_with": 10,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 10,
+        "unrecorded_steps": 0
+      },
+      "contract": "FarmingPool",
+      "function": "claim",
+      "kind": "contract"
+    },
+    {
+      "tag": "FarmingPool__exit",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function exit",
+      "wallSeconds": 183.45,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 397,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 42,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 397,
+      "F": 37,
+      "U": 360,
+      "uReasons": {
+        "bounded-holds": 360,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 337,
+        "paths_with": 37,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 37,
+        "unrecorded_steps": 0
+      },
+      "contract": "FarmingPool",
+      "function": "exit",
+      "kind": "contract"
+    },
+    {
+      "tag": "FarmingPool__rescueFunds",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function rescueFunds",
+      "wallSeconds": 88.94,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "3f0395e60c",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 14,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 14,
+      "F": 10,
+      "U": 4,
+      "uReasons": {
+        "bounded-holds": 4,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 52,
+        "paths_with": 10,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 10,
+        "unrecorded_steps": 0
+      },
+      "contract": "FarmingPool",
+      "function": "rescueFunds",
+      "kind": "contract"
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/farming/reports"
+}

@@ -1,0 +1,149 @@
+{
+  "bucket_counts": {
+    "NO_R1R2_ORACLE": 1
+  },
+  "count": 1,
+  "repair_ticket_candidates": [
+    {
+      "bench": "bugfix124",
+      "category": "NO_R1R2_ORACLE",
+      "logs": [
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/driver.log",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/result.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put.json"
+      ],
+      "priority": "normal",
+      "put_valid": 1,
+      "r1r2": 0,
+      "result_bucket": "NO_R1R2_ORACLE",
+      "result_file": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/result.json",
+      "schema": "veriput-rq1-repair-ticket/v1",
+      "subagent_rule": "Inspect listed failure records and owning source code before editing; do not run ESBMC/RQ1 as root-cause discovery.",
+      "subject": "acfix_real_FlashGovernanceArbiter",
+      "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter",
+      "suggested_write_scope": [
+        "scripts/solidity_path_put.py",
+        "notes/coverage/scripts/put_all.py"
+      ],
+      "theoretical_progress_effect": "If this case is in a covered category and remains no-valid after the current progress deadline, rq1_no_valid_progress.py subtracts it from net theoretical/provisional coverage. valid-no-PUT and PUT-no-R1/R2 subtract from quality progress.",
+      "trigger_reason": "interpreted-actual-result-below-valid-put-r1r2",
+      "ts": 1786417413.1315773,
+      "valid": 1
+    }
+  ],
+  "results_root": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT",
+  "rows": [
+    {
+      "bench": "bugfix124",
+      "bucket": "NO_R1R2_ORACLE",
+      "has_put_json": false,
+      "has_result_json": true,
+      "put_valid": 1,
+      "r1r2": 0,
+      "recovered_valid_tests": [
+        {
+          "benchmark": "bugfix124__acfix_real_FlashGovernanceArbiter",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__enforceTolerance/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_cov_0",
+          "unit": "enforceTolerance",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_real_FlashGovernanceArbiter",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__enforceTolerance/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "enforceTolerance",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_real_FlashGovernanceArbiter",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__enforceToleranceInt/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_cov_0",
+          "unit": "enforceToleranceInt",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_real_FlashGovernanceArbiter",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__enforceToleranceInt/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "enforceToleranceInt",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_real_FlashGovernanceArbiter",
+          "forge_status": "Success",
+          "kind": "put",
+          "oracle_tags": [
+            "R0"
+          ],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__setEnforcement/put-summary.json",
+          "stage2_source": "certified-region",
+          "test": "test_put_FlashGovernanceArbiter_setEnforcement_path3",
+          "unit": "setEnforcement",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_real_FlashGovernanceArbiter",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__setEnforcement/put-summary.json",
+          "stage2_source": "no-coordinate-concrete-fallback",
+          "test": "test_cov_1",
+          "unit": "setEnforcement",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_real_FlashGovernanceArbiter",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__setGoverned/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_0",
+          "unit": "setGoverned",
+          "valid_reference_test": true
+        },
+        {
+          "benchmark": "bugfix124__acfix_real_FlashGovernanceArbiter",
+          "forge_status": "Success",
+          "kind": "concrete",
+          "oracle_tags": [],
+          "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__withdrawGovernanceAsset/put-summary.json",
+          "stage2_source": "cleared_not_certified_fallback",
+          "test": "test_cov_0",
+          "unit": "withdrawGovernanceAsset",
+          "valid_reference_test": true
+        }
+      ],
+      "relocated_summary_paths": [
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__enforceTolerance/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__enforceToleranceInt/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__setEnforcement/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__setGoverned/put-summary.json",
+        "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/put/bugfix124__acfix_real_FlashGovernanceArbiter__withdrawGovernanceAsset/put-summary.json"
+      ],
+      "result_file": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter/result.json",
+      "subject": "acfix_real_FlashGovernanceArbiter",
+      "subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_real_FlashGovernanceArbiter",
+      "valid": 1
+    }
+  ],
+  "schema": "veriput-rq1-esbmc-result-interpret/v1"
+}

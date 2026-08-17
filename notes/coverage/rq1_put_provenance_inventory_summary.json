@@ -1,0 +1,37 @@
+{
+  "aggregate_claim_gaps": 0,
+  "authoritative_put_valid_claims": 272,
+  "canonical_cases": 205,
+  "case_state": "notes/coverage/rq1_case_state.json",
+  "counts": {
+    "certify_results_exists": 272,
+    "cov_ce_journal_exists": 271,
+    "cov_report_exists": 271,
+    "final_test_selected_exists": 272,
+    "put_json_embedded_generated_file_exists": 256,
+    "put_json_identity_matches": 272,
+    "put_json_selected_exists": 272,
+    "put_selected_canonical-subject": 244,
+    "put_selected_retained-results": 28,
+    "reconstructability_full-provenance-retained": 271,
+    "reconstructability_put-record-and-test-retained": 1,
+    "same_unit_concrete_replay": 161,
+    "same_unit_concrete_replay_retained": 161,
+    "test_recorded_canonical-subject": 252,
+    "test_recorded_retained-results": 18,
+    "test_recorded_temporary": 2,
+    "test_selected_canonical-subject": 258,
+    "test_selected_retained-results": 14
+  },
+  "individually_identified_put_artifacts": 272,
+  "jsonl_records": 272,
+  "put_bearing_subjects": 124,
+  "same_unit_concrete_replay_subjects": {
+    "all_puts_have_one": 70,
+    "no_put_has_one": 46,
+    "some_puts_have_one": 8
+  },
+  "schema": "veriput-rq1-put-provenance-summary/v1",
+  "semantic_note": "A PUT is derived from a Stage-2 certified region. A sibling concrete replay, when present, is a separate fallback artifact and is not the proof basis of that PUT.",
+  "subjects_with_aggregate_claim_gaps": []
+}

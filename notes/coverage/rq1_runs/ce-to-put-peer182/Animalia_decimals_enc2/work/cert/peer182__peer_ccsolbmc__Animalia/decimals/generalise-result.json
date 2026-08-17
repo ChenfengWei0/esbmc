@@ -1,0 +1,201 @@
+{
+  "certified": [
+    {
+      "box": [
+        {
+          "hi": "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+          "holes": [],
+          "lo": "1",
+          "name": "msg.value"
+        }
+      ],
+      "ce": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+        "block.prevrandao": "0",
+        "block.timestamp": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "1",
+        "state._burnFee": "2",
+        "state._decimals": "18",
+        "state._holderFee": "1",
+        "state._maxTxAmount": "3000000000000000000000000000000",
+        "state._owner$47": "0",
+        "state._paused$527": "0",
+        "state._prevBurnFee": "2",
+        "state._prevHolderFee": "1",
+        "state._rTotal": "115792089237316195423570985008687907853269984000000000000000000000000000000000",
+        "state._tFeeTotal": "0",
+        "state._tTotal": "1000000000000000000000000000000000",
+        "state.isBuyCooldownEnabled": "1",
+        "state.teamAddr": "336906604888941620523779623333735038953966452738",
+        "state.zeroAddr": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "certification_source": "structural-abi-gate",
+      "depth": 1,
+      "enc": 2,
+      "established": [],
+      "extcall_length_coordinates": [],
+      "extcall_pins": {},
+      "piece": 1,
+      "retreated": {},
+      "verdict": "CERTIFIED"
+    },
+    {
+      "box": [
+        {
+          "hi": "0",
+          "holes": [],
+          "lo": "0",
+          "name": "msg.value"
+        }
+      ],
+      "ce": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+        "block.prevrandao": "0",
+        "block.timestamp": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "state._burnFee": "2",
+        "state._decimals": "18",
+        "state._holderFee": "1",
+        "state._maxTxAmount": "3000000000000000000000000000000",
+        "state._owner$47": "0",
+        "state._paused$527": "0",
+        "state._prevBurnFee": "2",
+        "state._prevHolderFee": "1",
+        "state._rTotal": "115792089237316195423570985008687907853269984000000000000000000000000000000000",
+        "state._tFeeTotal": "0",
+        "state._tTotal": "1000000000000000000000000000000000",
+        "state.isBuyCooldownEnabled": "1",
+        "state.teamAddr": "336906604888941620523779623333735038953966452738",
+        "state.zeroAddr": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "certification_source": "structural-abi-gate",
+      "depth": 1,
+      "enc": 3,
+      "established": [],
+      "extcall_length_coordinates": [],
+      "extcall_pins": {},
+      "piece": 1,
+      "retreated": {},
+      "verdict": "CERTIFIED"
+    }
+  ],
+  "contract": "Animalia",
+  "dropped_by_certify": [],
+  "enumerated": [
+    {
+      "depth": 1,
+      "enc": 2
+    },
+    {
+      "depth": 1,
+      "enc": 3
+    }
+  ],
+  "enumeration_source": {
+    "index": null,
+    "mode": "direct",
+    "report": {
+      "mtime_ns": 1786710124374952567,
+      "path": "/home/samson/workspace/esbmc/notes/coverage/rq1_runs/ce-to-put-peer182/Animalia_decimals_enc2/work/cert/peer182__peer_ccsolbmc__Animalia/decimals/enumeration-report.json",
+      "size": 130543
+    },
+    "salvage": null
+  },
+  "extcall_length_coordinates": [],
+  "max_tx": 1,
+  "not_certified": [],
+  "path_decisions": {
+    "2": {
+      "abi_gate_class": "reject",
+      "decisions": [
+        {
+          "arm": "fall-through",
+          "branch_claim": "msg.value == 0",
+          "column": 0,
+          "file": "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Peer182/subjects/peer_ccsolbmc__Animalia/flat.sol",
+          "function": "decimals",
+          "index": 1,
+          "line": 900,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        }
+      ]
+    },
+    "3": {
+      "abi_gate_class": "body",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Peer182/subjects/peer_ccsolbmc__Animalia/flat.sol",
+          "function": "decimals",
+          "index": 1,
+          "line": 900,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        }
+      ]
+    }
+  },
+  "path_function": "sol:@C@Animalia@F@decimals#1538",
+  "pins": {
+    "block.basefee": "0",
+    "block.chainid": "0",
+    "block.coinbase": "0",
+    "block.number": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+    "block.prevrandao": "0",
+    "block.timestamp": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+    "state._decimals": "18",
+    "tx.gasprice": "0"
+  },
+  "schema": "path-generalise-result/1",
+  "scope": "focus",
+  "state_dependency_filter": {
+    "dropped": [
+      "state._burnFee",
+      "state._holderFee",
+      "state._maxTxAmount",
+      "state._owner$47",
+      "state._paused$527",
+      "state._prevBurnFee",
+      "state._prevHolderFee",
+      "state._rTotal",
+      "state._tFeeTotal",
+      "state._tTotal",
+      "state.isBuyCooldownEnabled",
+      "state.teamAddr",
+      "state.zeroAddr"
+    ],
+    "evidence": [
+      "state._decimals dependency distance 0: function decimals#1538 at AST src 30303:9:0"
+    ],
+    "live": [
+      "_decimals"
+    ],
+    "mode": "source-closure-no-inline-assembly"
+  },
+  "unit": "decimals"
+}

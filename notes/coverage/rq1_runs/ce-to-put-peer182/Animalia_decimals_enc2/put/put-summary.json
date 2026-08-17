@@ -1,0 +1,368 @@
+{
+  "auto_partial_loops": true,
+  "auto_unwind": 2,
+  "cell": {
+    "labels": [
+      "GATE"
+    ],
+    "missing": 1,
+    "mixed": false
+  },
+  "cert_path": "/home/samson/workspace/esbmc/notes/coverage/rq1_runs/ce-to-put-peer182/Animalia_decimals_enc2/cert-enc2-with-anchor.jsonl",
+  "deliverable_b": {
+    "b": 0,
+    "certified_region_rows": 2,
+    "forge_seen": {
+      "concrete": {
+        "Failure": 0,
+        "Success": 0,
+        "other": 0
+      },
+      "put": {
+        "Failure": 0,
+        "Success": 0,
+        "other": 0
+      }
+    },
+    "foundry_replay": {
+      "final_gate_wall_s": 0.139,
+      "outside_generation_timeout": true,
+      "runs": 2,
+      "self_check_wall_s": 1.464,
+      "timeout_s_per_run": 120,
+      "timeouts": 0,
+      "wall_s": 1.603
+    },
+    "quality": {
+      "concrete_rows": 0,
+      "put_rate_among_valid": 0.0,
+      "put_rows": 0,
+      "r1r2_rate_among_valid": 0.0,
+      "r1r2_rows": 0,
+      "valid_reference_rows": 0
+    },
+    "refused": 2,
+    "rows": [
+      {
+        "assertion_backed": true,
+        "assertion_backed_non_parameterized": false,
+        "assertion_backed_parameterized": true,
+        "assertion_oracles": [
+          {
+            "canonical_text": "path exits through revert",
+            "class_combo": "R0",
+            "classes": [
+              "R0"
+            ],
+            "coordinate_classes": [],
+            "coordinates": [],
+            "emitted_in_test": true,
+            "guarded": false,
+            "layer": "exit",
+            "text": "path exits through revert",
+            "var": "exit",
+            "verdict": "HOLDS"
+          }
+        ],
+        "asserts": 1,
+        "b": false,
+        "benchmark": "peer182__peer_ccsolbmc__Animalia",
+        "ce_anchor": {
+          "reason": "certified basis replay did not record a file and test",
+          "status": "refused"
+        },
+        "ce_anchor_forge_status": null,
+        "certification_source": "structural-abi-gate",
+        "certified_detail_source": "structural-abi-gate",
+        "certified_detail_stage4_kind": null,
+        "enc": 2,
+        "exit_kind_asserts": 1,
+        "file": "/home/samson/workspace/esbmc/notes/coverage/rq1_runs/ce-to-put-peer182/Animalia_decimals_enc2/put/peer182__peer_ccsolbmc__Animalia__cert-enc2-with-anchor/test/AnimaliaCovTest_Animalia_decimals_put2.t.sol",
+        "forge_status": "Success",
+        "fuzz_params": 2,
+        "gates": {
+          "assert": null,
+          "corpus": null,
+          "fuzz": true,
+          "green": null,
+          "width": null
+        },
+        "guarded_asserts": 0,
+        "has_r1r2": false,
+        "is_concrete": false,
+        "is_put": false,
+        "kind": "put",
+        "materialization": {
+          "fallback_after_put_attempt": false,
+          "has_R0": true,
+          "has_R1": false,
+          "has_R1_or_R2": false,
+          "has_R2": false,
+          "is_concrete": false,
+          "is_put": true,
+          "is_refusal": false,
+          "oracle_class_combinations": [
+            "R0"
+          ],
+          "oracle_class_combo_counts": {
+            "R0": 1
+          },
+          "oracle_class_counts": {
+            "R0": 1
+          },
+          "oracle_classes": [
+            "R0"
+          ],
+          "oracle_tags": [
+            "R0"
+          ],
+          "put_failure_reason": null,
+          "r1r2_failure_reason": "no verifier-backed R1/R2 oracle rendered",
+          "r2_fuzz_prefilter": {
+            "candidate_budget": 96,
+            "candidates": [
+              {
+                "key": "s0:v0:equals:src0",
+                "reason": "revert path has no observable R2 post-state",
+                "text": "return == state._decimals",
+                "var": "return",
+                "verdict": "NOT-RUN"
+              }
+            ],
+            "command": [],
+            "enabled": true,
+            "fuzz_runs": 64,
+            "not_refuted": 0,
+            "not_run": 1,
+            "proof_consumer": "ESBMC",
+            "proves_candidates": false,
+            "ran": 0,
+            "reason": "revert path has no observable R2 post-state",
+            "refutation_only": true,
+            "refuted": 0,
+            "rendered": 0,
+            "requested": 1,
+            "returncode": null,
+            "selected": 1,
+            "timed_out": false
+          },
+          "r2_ladder": {
+            "candidate_combo_counts": {
+              "R2": 1
+            },
+            "candidate_count": 1,
+            "candidate_examples": [
+              {
+                "key": "s0:v0:equals:src0",
+                "text": "return == state._decimals",
+                "var": "return"
+              }
+            ],
+            "dedup_dropped": 0,
+            "esbmc_proved": 0,
+            "esbmc_refuted": 0,
+            "esbmc_rows_total": 0,
+            "esbmc_unknown": 0,
+            "fuzz_not_refuted": 0,
+            "fuzz_not_run": 1,
+            "fuzz_proves_candidates": false,
+            "fuzz_refutation_only": true,
+            "fuzz_refuted": 0,
+            "fuzz_rendered": 0,
+            "fuzz_selected": 1,
+            "proof_consumer": "ESBMC",
+            "proved_combo_counts": {},
+            "requested": true,
+            "row_combo_counts": {},
+            "skip_reason": "revert path has no observable R2 post-state",
+            "soundness_note": "Forge fuzz is used only to refute candidates with concrete counterexamples. HOLDS/PUT-valid requires ESBMC proof.",
+            "survivors_sent_to_esbmc": 0,
+            "verifier_rows": []
+          },
+          "r2_requested": true,
+          "wide_fuzz_coords": [
+            "msg.sender",
+            "msg.value"
+          ]
+        },
+        "materialized_put": true,
+        "oracle_class_combinations": [
+          "R0"
+        ],
+        "oracle_class_combo_counts": {
+          "R0": 1
+        },
+        "oracle_class_counts": {
+          "R0": 1
+        },
+        "oracle_classes": [
+          "R0"
+        ],
+        "parameterized_width": true,
+        "piece": null,
+        "put_failure_reason": "Stage 4 refused to materialize a PUT",
+        "r1r2_failure_reason": "no verifier-backed R1/R2 oracle rendered",
+        "rc": 0,
+        "refusal_reason": "certified basis replay did not record a file and test",
+        "refused": true,
+        "rendered_width": {
+          "msg.sender": 1461501637330902918203684832716283019655932542975,
+          "msg.value": 115792089237316195423570985008687907853269984665640564039457584007913129639935
+        },
+        "stage2_source": "certified-region",
+        "stage4_kind": "certified-region",
+        "stale": null,
+        "storage_layout_available": true,
+        "storage_layout_error": null,
+        "test": "test_put_Animalia_decimals_path2",
+        "timing": {
+          "generation_timeout_s": 300,
+          "generation_wall_s": 4.439,
+          "put_driver_wall_s": 4.688
+        },
+        "unconditional_asserts": 1,
+        "unit": "decimals",
+        "valid_reference_test": false,
+        "verifier_asserts": 0
+      },
+      {
+        "assertion_backed": false,
+        "assertion_backed_non_parameterized": false,
+        "assertion_backed_parameterized": false,
+        "assertion_oracles": [],
+        "asserts": 0,
+        "b": false,
+        "benchmark": "peer182__peer_ccsolbmc__Animalia",
+        "certification_source": "structural-abi-gate",
+        "certified_detail_source": "structural-abi-gate",
+        "certified_detail_stage4_kind": null,
+        "concrete_reason": null,
+        "enc": 2,
+        "exit_kind_asserts": 0,
+        "file": null,
+        "forge_status": null,
+        "fuzz_params": 0,
+        "gates": {
+          "assert": null,
+          "corpus": null,
+          "fuzz": false,
+          "green": null,
+          "width": null
+        },
+        "guarded_asserts": 0,
+        "has_r1r2": false,
+        "is_concrete": true,
+        "is_put": false,
+        "kind": "concrete",
+        "materialization": {
+          "fallback_after_put_attempt": false,
+          "has_R0": false,
+          "has_R1": false,
+          "has_R1_or_R2": false,
+          "has_R2": false,
+          "is_concrete": false,
+          "is_put": false,
+          "is_refusal": true,
+          "oracle_class_combinations": [],
+          "oracle_class_combo_counts": {},
+          "oracle_class_counts": {},
+          "oracle_classes": [],
+          "oracle_tags": [],
+          "put_failure_reason": "certified-basis-source-ce-mismatch",
+          "r1r2_failure_reason": "certified-basis-source-ce-mismatch",
+          "r2_fuzz_prefilter": {
+            "enabled": false
+          },
+          "r2_ladder": {},
+          "r2_requested": false,
+          "wide_fuzz_coords": []
+        },
+        "materialized_put": false,
+        "oracle_class_combinations": [],
+        "oracle_class_combo_counts": {},
+        "oracle_class_counts": {},
+        "oracle_classes": [],
+        "parameterized_width": false,
+        "piece": null,
+        "put_failure_reason": "certified-basis-source-ce-mismatch",
+        "r1r2_failure_reason": "certified-basis-source-ce-mismatch",
+        "rc": 1,
+        "refusal_reason": null,
+        "refused": true,
+        "rendered_width": {},
+        "stage2_source": "certified-region-concrete-fallback",
+        "stage2_witness_check": "CERTIFIED-BASIS-REPLAY",
+        "stage4_kind": "refusal",
+        "stale": null,
+        "storage_layout_available": null,
+        "storage_layout_error": null,
+        "test": null,
+        "timing": {
+          "generation_timeout_s": 300,
+          "generation_wall_s": 3.413,
+          "put_driver_wall_s": 3.613
+        },
+        "unconditional_asserts": 0,
+        "unit": "decimals",
+        "valid_reference_test": false,
+        "verifier_asserts": 0
+      }
+    ],
+    "stage2_source_counts": {
+      "certified-region": 1,
+      "certified-region-concrete-fallback": 1
+    },
+    "stage4_candidate_rows": 2,
+    "stale": 0,
+    "storage_layout_counts": {
+      "available": 1
+    },
+    "valid_reference_tests": {
+      "concrete": 0,
+      "put": 0,
+      "total": 0
+    }
+  },
+  "emission": {
+    "certified_region_rows": 2,
+    "concrete_replays_emitted": 0,
+    "puts_emitted": 1,
+    "stage4_candidate_rows": 2,
+    "with_both": 1,
+    "with_fuzz_parameters": 1,
+    "with_oracle": 1
+  },
+  "max_tx": 1,
+  "only": "sol:@C@Animalia@F@decimals#1538",
+  "quality": {
+    "concrete_rows": 0,
+    "put_rate_among_valid": 0.0,
+    "put_rows": 0,
+    "r1r2_rate_among_valid": 0.0,
+    "r1r2_rows": 0,
+    "valid_reference_rows": 0
+  },
+  "schema": "veriput-put-summary/1",
+  "scope": "focus",
+  "stage2": {
+    "certified": 1,
+    "concrete_fallback": 1,
+    "detail_unknown": 0,
+    "method_unsupported": 0,
+    "no_verdict": 0,
+    "not_certified": 0,
+    "records": 1,
+    "witnessed": 2,
+    "witnessed_unknown": 0
+  },
+  "stage4_recipe_version": "veriput-strong/27-proof-budgeted-r2",
+  "timing": {
+    "emission_wall_s": 8.309,
+    "forge_timeout_s_per_run": 120,
+    "foundry_replay_outside_generation_timeout": true,
+    "foundry_replay_wall_s": 1.603,
+    "generation_timeout_s": 300,
+    "generation_wall_s": 8.309,
+    "total_wall_s": 9.931
+  }
+}

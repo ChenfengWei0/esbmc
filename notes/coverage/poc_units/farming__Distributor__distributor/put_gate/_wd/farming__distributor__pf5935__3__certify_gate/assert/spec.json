@@ -1,0 +1,1 @@
+{"unit": "sol:@C@FarmingPool@F@distributor#5935", "enc": 3, "depth": 1, "region": [{"name": "msg.value", "lo": "0", "hi": "0"}, {"name": "state._distributor", "lo": "0", "hi": "0"}, {"name": "state._owner", "lo": "1", "hi": "1"}, {"name": "state._totalSupply", "lo": "0", "hi": "0"}], "vars_policy": "state-exact", "vars": [{"name": "_distributor"}]}

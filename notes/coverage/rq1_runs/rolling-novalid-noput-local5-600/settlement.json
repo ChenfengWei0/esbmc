@@ -1,0 +1,334 @@
+{
+  "batch_id": "rolling-novalid-noput-local5-600",
+  "bucket_counts": {
+    "NO_VALID": 4,
+    "VALID_NO_PUT": 1,
+    "put": 0,
+    "r1r2": 0,
+    "valid": 1
+  },
+  "case_count": 5,
+  "cases": [
+    {
+      "bench": "bugfix124",
+      "bucket": "NO_VALID",
+      "oracle_details": [],
+      "put_summaries": [],
+      "put_valid": 0,
+      "r1r2": 0,
+      "recovered_from_stage4_summary": false,
+      "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+      "scheduler_preflight": {
+        "bad_contract_jobs": [],
+        "exists": true,
+        "expected_contract": "MStableYieldSource",
+        "expected_units": [
+          "supplyTokenTo",
+          "redeemToken",
+          "approveMax",
+          "balanceOfToken",
+          "depositToken"
+        ],
+        "internal_target_wrappers": [],
+        "job_count": 6,
+        "ok": true,
+        "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/unit-schedule.json",
+        "schedule_contract": null,
+        "scheduled_units": [
+          "approveMax",
+          "redeemToken",
+          "supplyTokenTo",
+          "depositToken",
+          "balanceOfToken",
+          "imBalances"
+        ],
+        "target_unit_hits": [
+          "supplyTokenTo",
+          "redeemToken",
+          "approveMax",
+          "balanceOfToken",
+          "depositToken"
+        ]
+      },
+      "subject": "acfix_fixlink_MStableYieldSource",
+      "valid": 0
+    },
+    {
+      "bench": "bugfix124",
+      "bucket": "NO_VALID",
+      "oracle_details": [],
+      "put_summaries": [],
+      "put_valid": 0,
+      "r1r2": 0,
+      "recovered_from_stage4_summary": false,
+      "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/result.json",
+      "scheduler_preflight": {
+        "bad_contract_jobs": [],
+        "exists": true,
+        "expected_contract": "Product",
+        "expected_units": [
+          "settle",
+          "settleAccount",
+          "openTake",
+          "closeTake",
+          "openMake",
+          "closeMake"
+        ],
+        "internal_target_wrappers": [],
+        "job_count": 27,
+        "ok": true,
+        "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/unit-schedule.json",
+        "schedule_contract": null,
+        "scheduled_units": [
+          "settle",
+          "settleAccount",
+          "openTake",
+          "closeTake",
+          "openMake",
+          "closeMake",
+          "closeAll",
+          "updateClosed",
+          "updateOracle",
+          "openTakeFor",
+          "closeTakeFor",
+          "openMakeFor",
+          "closeMakeFor",
+          "utilizationBuffer",
+          "closed",
+          "pre",
+          "maintenance",
+          "maintenanceNext",
+          "isClosed",
+          "isLiquidating",
+          "position",
+          "latestVersion",
+          "positionAtVersion",
+          "valueAtVersion",
+          "shareAtVersion",
+          "rate",
+          "initialize"
+        ],
+        "target_unit_hits": [
+          "settle",
+          "settleAccount",
+          "openTake",
+          "closeTake",
+          "openMake",
+          "closeMake"
+        ]
+      },
+      "subject": "acfix_fixlink_Product",
+      "valid": 0
+    },
+    {
+      "bench": "bugfix124",
+      "bucket": "NO_VALID",
+      "oracle_details": [],
+      "put_summaries": [],
+      "put_valid": 0,
+      "r1r2": 0,
+      "recovered_from_stage4_summary": false,
+      "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/result.json",
+      "scheduler_preflight": {
+        "bad_contract_jobs": [],
+        "exists": true,
+        "expected_contract": "Product",
+        "expected_units": [
+          "settle",
+          "settleAccount",
+          "openTake",
+          "closeTake",
+          "openMake",
+          "closeMake"
+        ],
+        "internal_target_wrappers": [],
+        "job_count": 27,
+        "ok": true,
+        "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/unit-schedule.json",
+        "schedule_contract": null,
+        "scheduled_units": [
+          "settle",
+          "settleAccount",
+          "openTake",
+          "closeTake",
+          "openMake",
+          "closeMake",
+          "closeAll",
+          "updateClosed",
+          "updateOracle",
+          "openTakeFor",
+          "closeTakeFor",
+          "openMakeFor",
+          "closeMakeFor",
+          "utilizationBuffer",
+          "closed",
+          "pre",
+          "maintenance",
+          "maintenanceNext",
+          "isClosed",
+          "isLiquidating",
+          "position",
+          "latestVersion",
+          "positionAtVersion",
+          "valueAtVersion",
+          "shareAtVersion",
+          "rate",
+          "initialize"
+        ],
+        "target_unit_hits": [
+          "settle",
+          "settleAccount",
+          "openTake",
+          "closeTake",
+          "openMake",
+          "closeMake"
+        ]
+      },
+      "subject": "acfix_fixlink_Product2",
+      "valid": 0
+    },
+    {
+      "bench": "bugfix124",
+      "bucket": "NO_VALID",
+      "oracle_details": [
+        {
+          "assertion_oracles": [],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {},
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/put/deploy_only/put-summary.json"
+        },
+        {
+          "assertion_oracles": [],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {},
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/put/final_deploy_concrete_fallback/put-summary.json"
+        }
+      ],
+      "put_summaries": [
+        {
+          "b": null,
+          "put_rows": null,
+          "r1r2_rows": null,
+          "unit": "deploy_only",
+          "valid_reference_rows": null
+        },
+        {
+          "b": null,
+          "put_rows": null,
+          "r1r2_rows": null,
+          "unit": "final_deploy_concrete_fallback",
+          "valid_reference_rows": null
+        }
+      ],
+      "put_valid": 0,
+      "r1r2": 0,
+      "recovered_from_stage4_summary": false,
+      "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+      "scheduler_preflight": {
+        "bad_contract_jobs": [],
+        "exists": true,
+        "expected_contract": "Multicall",
+        "expected_units": [
+          "multicall"
+        ],
+        "internal_target_wrappers": [],
+        "job_count": 0,
+        "ok": true,
+        "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/unit-schedule.json",
+        "schedule_contract": null,
+        "scheduled_units": [],
+        "target_unit_hits": []
+      },
+      "subject": "pop_001_Multicall",
+      "valid": 0
+    },
+    {
+      "bench": "bugfix124",
+      "bucket": "VALID_NO_PUT",
+      "oracle_details": [
+        {
+          "assertion_oracles": [],
+          "coordinate_counts": {},
+          "oracle_tag_counts": {},
+          "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/bugfix124__pop_009_PrivatePool__flashFeeAndProtocolFee/put-summary.json"
+        }
+      ],
+      "put_summaries": [
+        {
+          "b": 0,
+          "put_rows": 0,
+          "r1r2_rows": 0,
+          "unit": "bugfix124__pop_009_PrivatePool__flashFeeAndProtocolFee",
+          "valid_reference_rows": 1
+        }
+      ],
+      "put_valid": 0,
+      "r1r2": 0,
+      "recovered_from_stage4_summary": true,
+      "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json",
+      "scheduler_preflight": {
+        "bad_contract_jobs": [],
+        "exists": true,
+        "expected_contract": "PrivatePool",
+        "expected_units": [
+          "buy",
+          "sell",
+          "execute",
+          "flashFeeAndProtocolFee",
+          "flashFee",
+          "setFeeRate",
+          "setMerkleRoot"
+        ],
+        "internal_target_wrappers": [],
+        "job_count": 23,
+        "ok": true,
+        "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/unit-schedule.json",
+        "schedule_contract": null,
+        "scheduled_units": [
+          "flashFeeAndProtocolFee",
+          "flashFee",
+          "setMerkleRoot",
+          "setFeeRate",
+          "setUseStolenNftOracle",
+          "setPayRoyalties",
+          "setVirtualReserves",
+          "setAllParameters",
+          "sell",
+          "withdraw",
+          "execute",
+          "buy",
+          "flashLoan",
+          "deposit",
+          "change",
+          "price",
+          "flashFeeToken",
+          "changeFeeQuote",
+          "buyQuote",
+          "sellQuote",
+          "availableForFlashLoan",
+          "sumWeightsAndValidateProof",
+          "initialize"
+        ],
+        "target_unit_hits": [
+          "buy",
+          "sell",
+          "execute",
+          "flashFeeAndProtocolFee",
+          "flashFee",
+          "setFeeRate",
+          "setMerkleRoot"
+        ]
+      },
+      "subject": "pop_009_PrivatePool",
+      "valid": 1
+    }
+  ],
+  "end_index": 12,
+  "inventory": "notes/coverage/rq1_no_valid_each_case.json",
+  "new_put": 0,
+  "new_r1r2": 0,
+  "new_valid": 1,
+  "schema": "veriput-rq1-batch-settlement/v1",
+  "settled_ts": 1786425658.3859107,
+  "start_index": 5
+}

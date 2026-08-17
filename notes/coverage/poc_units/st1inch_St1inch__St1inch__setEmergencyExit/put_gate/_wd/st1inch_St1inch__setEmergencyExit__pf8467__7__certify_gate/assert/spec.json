@@ -1,0 +1,1 @@
+{"unit": "sol:@C@St1inch@F@setEmergencyExit#8467", "enc": 7, "depth": 2, "region": [{"name": "emergencyExit_", "lo": "0", "hi": "1"}, {"name": "msg.sender", "lo": "1", "hi": "1"}, {"name": "msg.value", "lo": "0", "hi": "0"}], "vars_policy": "state-exact", "vars": [{"name": "emergencyExit"}, {"name": "_owner"}]}

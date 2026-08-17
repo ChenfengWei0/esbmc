@@ -1,0 +1,4398 @@
+{
+  "claims_decided": 51,
+  "claims_total": 81,
+  "complete": false,
+  "fingerprint": "374f4b0a3c804e2b",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": true,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#eq_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#eq_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#eq_minLockPeriodRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#eq_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#ge_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#ge_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#ge_minLockPeriodRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129090"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129090"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#ge_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#gt__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#gt__owner",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#gt__owner",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#gt__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#gt_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#gt_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#gt_minLockPeriodRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#gt_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#le_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#le_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#le_minLockPeriodRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#le_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#lt__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#lt__owner",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#lt__owner",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#lt__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#lt_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#lt_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#lt_minLockPeriodRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129090"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129090"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#lt_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#ne__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#ne__owner",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#ne__owner",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#ne__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#ne_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#ne_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#ne_minLockPeriodRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#ne_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#nonvacuous\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#nonvacuous",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#nonvacuous",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#nonvacuous",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2aa2_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2aa2_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2aa2_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2aa2_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee10_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee10_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee10_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee10_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee11_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee11_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee11_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee11_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee12_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee12_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee12_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee12_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee14_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee14_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee14_minLockPeriodRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "25165825"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "25165825"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee14_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee17_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee17_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee17_minLockPeriodRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee17_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee19_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee19_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee19_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "469499903"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "469499903"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee19_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee1_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee1_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee1_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee1_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee20_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee20_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee20_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129090"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129090"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee20_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee27_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee27_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee27_minLockPeriodRatio",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee27_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee34_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee34_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee34_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee34_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee35_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee35_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee35_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee35_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee36_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee36_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee36_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee36_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee38_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee38_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee38_minLockPeriodRatio",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "536870909"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "536870909"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee38_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee39_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee39_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee39_minLockPeriodRatio",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee39_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee3__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee3__owner",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee3__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee3__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee40_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee40_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee40_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee40_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee41_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee41_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee41_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee41_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee42_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee42_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee42_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee42_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee43_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee43_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee43_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee43_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee44_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee44_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee44_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee44_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee45_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee45_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee45_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee45_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee46_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee46_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee46_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee46_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee47_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee47_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee47_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee47_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee48_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee48_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee48_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee48_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee53_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee53_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee53_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129094"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129094"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee53_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee55_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee55_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee55_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee55_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee56_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee56_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee56_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee56_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee57_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee57_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee57_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee57_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee7_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee7_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee7_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "161556601"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "161556601"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee7_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee8_minLockPeriodRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450:path:15#r2ee8_minLockPeriodRatio",
+      "compact_trace": false,
+      "condition": "setMinLockPeriodRatio:path:15#r2ee8_minLockPeriodRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "0"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "minLockPeriodRatio_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+      "path_id": "15#r2ee8_minLockPeriodRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "minLockPeriodRatio"
+      ],
+      "witness_count": 1
+    }
+  }
+}

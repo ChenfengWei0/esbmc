@@ -1,0 +1,199 @@
+{
+  "claims_decided": 14,
+  "claims_total": 14,
+  "complete": true,
+  "fingerprint": "374f4b0a3c804e2b",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@St1inch@F@transfer#9188:path:2\t": {
+      "claim": "sol:@C@St1inch@F@transfer#9188:path:2",
+      "compact_trace": false,
+      "condition": "transfer:path:2",
+      "dropped_internal": 88,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "1"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [],
+      "loc": "",
+      "path_depth": 1,
+      "path_function": "sol:@C@St1inch@F@transfer#9188",
+      "path_id": "2",
+      "path_id_stable": "c91ba799eb6f3e55",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@transfer#9188:path:3\t": {
+      "claim": "sol:@C@St1inch@F@transfer#9188:path:3",
+      "compact_trace": false,
+      "condition": "transfer:path:3",
+      "dropped_internal": 88,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [],
+      "inputs": [],
+      "loc": "",
+      "path_depth": 1,
+      "path_function": "sol:@C@St1inch@F@transfer#9188",
+      "path_id": "3",
+      "path_id_stable": "fe138ab7b16de64f",
+      "payload_symbols_protected": true,
+      "return_value": "0",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN"
+      ],
+      "witness_count": 1
+    }
+  }
+}

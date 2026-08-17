@@ -1,0 +1,23 @@
+{
+  "allow_uncovered_tsv": false,
+  "bucket_state": "/tmp/veriput_rq1_bucket_state.json",
+  "case_count": 5,
+  "case_parallel": 1,
+  "esbmc_rss_limit_gib": 18,
+  "input_tsv": "notes/coverage/rq1_runs/rolling-novalid-noput-local5-600c/manifest.local.tsv",
+  "lease_file": "notes/coverage/rq1_runs/rolling-novalid-noput-local5-600c/leases.json",
+  "lease_refresh_s": 30,
+  "lease_stale_s": 1200,
+  "memory_watchdog": true,
+  "min_mem_gib": 10,
+  "pid": 3867026,
+  "process_watchdog": true,
+  "progress": "notes/coverage/rq1_runs/rolling-novalid-noput-local5-600c/local_worker_3_progress.jsonl",
+  "progress_watchdog": true,
+  "repair_tickets": "/tmp/veriput_rq1_repair_tickets.jsonl",
+  "reset_leases_on_start": false,
+  "schema": "veriput-rq1-local-worker/v1",
+  "started": true,
+  "started_ts": 1786425963.8727205,
+  "theory_manifest_required": true
+}

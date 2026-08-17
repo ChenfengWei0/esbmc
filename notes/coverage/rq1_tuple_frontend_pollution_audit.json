@@ -1,0 +1,153 @@
+{
+  "error_then_success_evidence_audit": {
+    "affected_case_count": 0,
+    "affected_cases": [],
+    "affected_concrete_test_count": 0,
+    "affected_put_test_count": 0,
+    "affected_test_count": 0,
+    "affected_tests": [],
+    "rule": "A valid test is affected only when its own put_json work directory contains a log with both a known tuple frontend error and VERIFICATION SUCCESSFUL."
+  },
+  "function_pointer_tuple_call_audit": {
+    "affected_case_count": 2,
+    "cases_without_retained_ast": [
+      "bugfix124/pop_001_Multicall",
+      "bugfix124/rc_time_manipulation__roulette__SolGPT__roulette_1round",
+      "bugfix124/rc_time_manipulation__roulette__SolGPT__roulette_2round",
+      "bugfix124/rc_time_manipulation__roulette__SolGPT__roulette_3round",
+      "bugfix124/rc_time_manipulation__roulette__SolGPT__roulette_4round",
+      "peer182/peer_solar__LotteryFor10",
+      "peer182/peer_soltg__constructor_state_variable_init",
+      "peer182/peer_soltg__constructor_state_variable_init_chain_alternate",
+      "peer182/peer_soltg__constructor_state_variable_init_diamond",
+      "peer182/peer_soltg__constructors"
+    ],
+    "fallback_declaration_match_count": 0,
+    "fallback_source_scans": [
+      {
+        "case": "bugfix124/pop_001_Multicall",
+        "function_pointer_tuple_declarations": [],
+        "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall.redo.1786445368.399759/put/final_deploy_concrete_fallback/Project/src/flat.sol"
+      },
+      {
+        "case": "bugfix124/rc_time_manipulation__roulette__SolGPT__roulette_1round",
+        "function_pointer_tuple_declarations": [],
+        "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/rc_time_manipulation__roulette__SolGPT__roulette_1round/put/structural_getter__pastBlockTime/bugfix124__rc_time_manipulation__roulette__SolGPT__roulette_1round__static-getter-cert/src/flat.sol"
+      },
+      {
+        "case": "bugfix124/rc_time_manipulation__roulette__SolGPT__roulette_2round",
+        "function_pointer_tuple_declarations": [],
+        "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/rc_time_manipulation__roulette__SolGPT__roulette_2round/put/structural_getter__pastBlockTime/bugfix124__rc_time_manipulation__roulette__SolGPT__roulette_2round__static-getter-cert/src/flat.sol"
+      },
+      {
+        "case": "bugfix124/rc_time_manipulation__roulette__SolGPT__roulette_3round",
+        "function_pointer_tuple_declarations": [],
+        "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/rc_time_manipulation__roulette__SolGPT__roulette_3round/put/structural_getter__pastBlockTime/bugfix124__rc_time_manipulation__roulette__SolGPT__roulette_3round__static-getter-cert/src/flat.sol"
+      },
+      {
+        "case": "bugfix124/rc_time_manipulation__roulette__SolGPT__roulette_4round",
+        "function_pointer_tuple_declarations": [],
+        "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/rc_time_manipulation__roulette__SolGPT__roulette_4round/put/structural_getter__pastBlockTime/bugfix124__rc_time_manipulation__roulette__SolGPT__roulette_4round__static-getter-cert/src/flat.sol"
+      },
+      {
+        "case": "peer182/peer_solar__LotteryFor10",
+        "function_pointer_tuple_declarations": [],
+        "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/peer_solar__LotteryFor10/put/structural_getter__lotterySolved/peer182__peer_solar__LotteryFor10__static-getter-cert/src/flat.sol"
+      },
+      {
+        "case": "peer182/peer_soltg__constructor_state_variable_init",
+        "function_pointer_tuple_declarations": [],
+        "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/peer_soltg__constructor_state_variable_init/put/deploy_only/Project/src/flat.sol"
+      },
+      {
+        "case": "peer182/peer_soltg__constructor_state_variable_init_chain_alternate",
+        "function_pointer_tuple_declarations": [],
+        "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/peer_soltg__constructor_state_variable_init_chain_alternate/put/deploy_only/Project/src/flat.sol"
+      },
+      {
+        "case": "peer182/peer_soltg__constructor_state_variable_init_diamond",
+        "function_pointer_tuple_declarations": [],
+        "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/peer_soltg__constructor_state_variable_init_diamond/put/deploy_only/Project/src/flat.sol"
+      },
+      {
+        "case": "peer182/peer_soltg__constructors",
+        "function_pointer_tuple_declarations": [],
+        "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/peer182/subjects/peer_soltg__constructors/put/deploy_only/Project/src/flat.sol"
+      }
+    ],
+    "fallback_sources_examined": 10,
+    "invalid_retained_asts": [],
+    "matching_call_count": 4,
+    "matching_calls": [
+      {
+        "ast": "/tmp/veriput_rq1_ast_cache/stress243/stress243__ProjectOpenSea__seaport__SeaportNavigator/flat.sol.solast",
+        "callee_variable": "fulfillmentMethod",
+        "callee_variable_id": 19081,
+        "caller": "getFulfillmentComponentsUsingMethod",
+        "caller_id": 19127,
+        "case": "real203/ProjectOpenSea__seaport__SeaportNavigator",
+        "contract": "FulfillmentGeneratorLib",
+        "source_range": "344197:60:0",
+        "tuple_type": "tuple(struct FulfillmentComponent memory[] memory[] memory,enum ItemCategory[] memory)",
+        "valid_evidence_entrypoints": [
+          "<constructor>"
+        ],
+        "valid_unit_or_constructor_reachable": false
+      },
+      {
+        "ast": "/tmp/veriput_rq1_ast_cache/stress243/stress243__ProjectOpenSea__seaport__SeaportNavigator/flat.sol.solast",
+        "callee_variable": "fulfillmentMethod",
+        "callee_variable_id": 19081,
+        "caller": "getFulfillmentComponentsUsingMethod",
+        "caller_id": 19127,
+        "case": "real203/ProjectOpenSea__seaport__SeaportNavigator",
+        "contract": "FulfillmentGeneratorLib",
+        "source_range": "344335:68:0",
+        "tuple_type": "tuple(struct FulfillmentComponent memory[] memory[] memory,enum ItemCategory[] memory)",
+        "valid_evidence_entrypoints": [
+          "<constructor>"
+        ],
+        "valid_unit_or_constructor_reachable": false
+      },
+      {
+        "ast": "/tmp/veriput_rq1_ast_cache/stress243/stress243__balancer__balancer-v3-monorepo__ECLPSurgeHook/flat.sol.solast",
+        "callee_variable": "calcGiven",
+        "callee_variable_id": 11340,
+        "caller": "calcOutGivenIn",
+        "caller_id": 11421,
+        "case": "real203/balancer__balancer-v3-monorepo__ECLPSurgeHook",
+        "contract": "GyroECLPMath",
+        "source_range": "113918:47:0",
+        "tuple_type": "tuple(int256,int256,int256)",
+        "valid_evidence_entrypoints": [
+          "<constructor>",
+          "getImbalanceSlopes"
+        ],
+        "valid_unit_or_constructor_reachable": false
+      },
+      {
+        "ast": "/tmp/veriput_rq1_ast_cache/stress243/stress243__balancer__balancer-v3-monorepo__ECLPSurgeHook/flat.sol.solast",
+        "callee_variable": "calcGiven",
+        "callee_variable_id": 11466,
+        "caller": "calcInGivenOut",
+        "caller_id": 11557,
+        "case": "real203/balancer__balancer-v3-monorepo__ECLPSurgeHook",
+        "contract": "GyroECLPMath",
+        "source_range": "115103:48:0",
+        "tuple_type": "tuple(int256,int256,int256)",
+        "valid_evidence_entrypoints": [
+          "<constructor>",
+          "getImbalanceSlopes"
+        ],
+        "valid_unit_or_constructor_reachable": false
+      }
+    ],
+    "retained_asts_examined": 195
+  },
+  "inventory": {
+    "cases": 205,
+    "state": "/home/samson/workspace/esbmc/notes/coverage/rq1_case_state.json",
+    "valid_tests_examined": 712
+  },
+  "schema": "veriput-rq1-tuple-frontend-pollution-audit/v1"
+}

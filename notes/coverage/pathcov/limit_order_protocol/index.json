@@ -1,0 +1,275 @@
+{
+  "benchmark": "limit_order_protocol",
+  "project": "limit_order_protocol",
+  "primary": {
+    "name": "MakerTraitsLib",
+    "kind": "library"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol",
+  "config": {
+    "mode": "per-method",
+    "solidityMaxTx": 1,
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "solverFlags": [],
+    "solverFlagsReason": "tool default (no solver flag passed)",
+    "outerTimeoutSeconds": 60,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "MakerTraitsLib__hasExtension",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "hasExtension",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__isAllowedSender",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "isAllowedSender",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__getExpirationTime",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "getExpirationTime",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__isExpired",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "isExpired",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__nonceOrEpoch",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "nonceOrEpoch",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__series",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "series",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__allowPartialFills",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "allowPartialFills",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__needPreInteractionCall",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "needPreInteractionCall",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__needPostInteractionCall",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "needPostInteractionCall",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__allowMultipleFills",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "allowMultipleFills",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__useBitInvalidator",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "useBitInvalidator",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__needCheckEpochManager",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "needCheckEpochManager",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__usePermit2",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "usePermit2",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    },
+    {
+      "tag": "MakerTraitsLib__unwrapWeth",
+      "cmd": null,
+      "wallSeconds": 0.0,
+      "exitCode": null,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "skipped": "library-has-no-dispatcher",
+      "skippedDetail": "a library has no dispatcher harness, so --contract <Lib> finds no verification targets; the only other route is --function, which verifies in isolation from an arbitrary state and can yield a counterexample no reachable state supports. Internal library functions are covered through their callers' paths; external ones are an unmeasured gap under this configuration",
+      "contract": "MakerTraitsLib",
+      "function": "unwrapWeth",
+      "kind": "library",
+      "binary": {
+        "head": "26ce5ef2cd",
+        "srcDirty": true,
+        "binaryMtime": 1785528054
+      }
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/limit_order_protocol/reports"
+}

@@ -1,0 +1,100 @@
+{
+  "contract": "Tiny",
+  "unit": "deposit",
+  "enc": 7,
+  "depth": 2,
+  "path_function": "sol:@C@Tiny@F@deposit#20",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc/_runs/tinyctl/test/TinyCovTest_Tiny_deposit_put7.t.sol",
+  "test": "test_put_Tiny_deposit_path7",
+  "piece": null,
+  "region": {
+    "amt": [
+      "1",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ],
+    "state.bal": [
+      "0",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "msg.value": "0"
+  },
+  "ladder": [
+    {
+      "var": "bal",
+      "text": "post == pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "bal",
+      "text": "post != pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "bal",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "bal",
+      "text": "post <= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "bal",
+      "text": "post > pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "bal",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "bal",
+      "text": "post - pre in [amt, amt] with post >= pre",
+      "verdict": "HOLDS"
+    }
+  ],
+  "ladder_summary": [
+    6,
+    3,
+    3,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "b8d6964b6a",
+    "srcDirty": true,
+    "binaryMtime": 1785877335
+  },
+  "stats": {
+    "fuzz_params": 1,
+    "lifted": [
+      "amt"
+    ],
+    "asserts": 6,
+    "state_asserts": 6,
+    "guarded_asserts": 0,
+    "return_asserts": 0,
+    "oracle_skipped": [],
+    "state_stored": [],
+    "state_skipped": [
+      "state.bal in [0, 115792089237316195423570985008687907853269984665640564039457584007913129639935] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query -- the rungs were proved about the constructor's own value. Establishing a fuzz-chosen value here would test entry states the proof never covered, which is how this PUT came back RED on the unmodified contract)"
+    ],
+    "env_unchecked": []
+  },
+  "notes": []
+}

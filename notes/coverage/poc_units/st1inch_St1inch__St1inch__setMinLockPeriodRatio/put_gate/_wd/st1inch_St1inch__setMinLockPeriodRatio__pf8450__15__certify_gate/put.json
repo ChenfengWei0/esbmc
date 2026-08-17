@@ -1,0 +1,1237 @@
+{
+  "contract": "St1inch",
+  "unit": "setMinLockPeriodRatio",
+  "enc": 15,
+  "depth": 3,
+  "path_function": "sol:@C@St1inch@F@setMinLockPeriodRatio#8450",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setMinLockPeriodRatio/put_gate/st1inch_St1inch__certify_gate/test/St1inchCovTest_St1inch_setMinLockPeriodRatio_put15.t.sol",
+  "test": "test_put_St1inch_setMinLockPeriodRatio_path15",
+  "piece": null,
+  "region": {
+    "msg.sender": [
+      "1",
+      "1"
+    ],
+    "msg.value": [
+      "0",
+      "0"
+    ],
+    "minLockPeriodRatio_": [
+      "0",
+      "1000000000"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "state._owner": "1"
+  },
+  "ladder": [
+    {
+      "var": "minLockPeriodRatio",
+      "text": "post == pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "minLockPeriodRatio",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "minLockPeriodRatio",
+      "text": "post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "minLockPeriodRatio",
+      "text": "post <= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "minLockPeriodRatio",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "minLockPeriodRatio",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    12,
+    3,
+    9,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "requested": 128,
+    "selected": 128,
+    "candidate_budget": 128,
+    "rendered": 74,
+    "ran": 66,
+    "refuted": 60,
+    "not_run": 62,
+    "not_refuted": 6,
+    "timed_out": false,
+    "returncode": 1,
+    "fuzz_runs": 256,
+    "command": [
+      "forge",
+      "test",
+      "--json",
+      "--match-contract",
+      "^St1inchCovTest_St1inch_setMinLockPeriodRatio_put15_FuzzR2$",
+      "--match-test",
+      "^test_put_St1inch_setMinLockPeriodRatio_path15fz",
+      "--fuzz-runs",
+      "256"
+    ],
+    "candidates": [
+      {
+        "key": "s0:v0:equals:e0",
+        "var": "_owner",
+        "text": "post == msg.sender",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e0",
+        "var": "minLockPeriodRatio",
+        "text": "post == minLockPeriodRatio_",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz1",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_1"
+      },
+      {
+        "key": "s0:v0:abs:a1",
+        "var": "_owner",
+        "text": "post in [minLockPeriodRatio_, minLockPeriodRatio_]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_2 _owner: post in [minLockPeriodRatio_, minLockPeriodRatio_]: 1 < 529095444",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz2",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_2"
+      },
+      {
+        "key": "s0:v1:abs:a1",
+        "var": "minLockPeriodRatio",
+        "text": "post in [minLockPeriodRatio_, minLockPeriodRatio_]",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz3",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_3"
+      },
+      {
+        "key": "s0:v0:equals:e1",
+        "var": "_owner",
+        "text": "post == state._owner",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e1",
+        "var": "minLockPeriodRatio",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:a2",
+        "var": "_owner",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:a2",
+        "var": "minLockPeriodRatio",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e2",
+        "var": "_owner",
+        "text": "post == minLockPeriodRatio_",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_8 _owner: post == minLockPeriodRatio_: 1 != 529095444",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz8",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_8"
+      },
+      {
+        "key": "s0:v1:equals:e2",
+        "var": "minLockPeriodRatio",
+        "text": "post == 5",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_9 minLockPeriodRatio: post == 5: 529095444 != 5",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz9",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_9"
+      },
+      {
+        "key": "s0:v0:abs:a3",
+        "var": "_owner",
+        "text": "post in [5, 5]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_10 _owner: post in [5, 5]: 1 < 5",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz10",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_10"
+      },
+      {
+        "key": "s0:v1:abs:a3",
+        "var": "minLockPeriodRatio",
+        "text": "post in [5, 5]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_11 minLockPeriodRatio: post in [5, 5]: 529095444 > 5",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz11",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_11"
+      },
+      {
+        "key": "s0:v0:equals:e3",
+        "var": "_owner",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e3",
+        "var": "minLockPeriodRatio",
+        "text": "post == 20",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_13 minLockPeriodRatio: post == 20: 529095444 != 20",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz13",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_13"
+      },
+      {
+        "key": "s0:v0:abs:a4",
+        "var": "_owner",
+        "text": "post in [20, 20]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_14 _owner: post in [20, 20]: 1 < 20",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz14",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_14"
+      },
+      {
+        "key": "s0:v1:abs:a4",
+        "var": "minLockPeriodRatio",
+        "text": "post in [20, 20]",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_15 minLockPeriodRatio: post in [20, 20]: 529095444 > 20",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz15",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_15"
+      },
+      {
+        "key": "s0:v0:equals:e4",
+        "var": "_owner",
+        "text": "post == 5",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_16 _owner: post == 5: 1 != 5",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz16",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_16"
+      },
+      {
+        "key": "s0:v1:equals:e4",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_17 minLockPeriodRatio: post == (pre + pre): 529095444 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz17",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_17"
+      },
+      {
+        "key": "s0:v0:equals:e5",
+        "var": "_owner",
+        "text": "post == 20",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_18 _owner: post == 20: 1 != 20",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz18",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_18"
+      },
+      {
+        "key": "s0:v1:equals:e5",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_19 minLockPeriodRatio: post == (pre - pre): 529095444 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz19",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_19"
+      },
+      {
+        "key": "s0:v0:equals:e6",
+        "var": "_owner",
+        "text": "post == (pre + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_20 _owner: post == (pre + pre): 1 != 2",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz20",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_20"
+      },
+      {
+        "key": "s0:v1:equals:e6",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_21 minLockPeriodRatio: post == (pre * pre): 529095444 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz21",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_21"
+      },
+      {
+        "key": "s0:v0:equals:e7",
+        "var": "_owner",
+        "text": "post == (pre - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_22 _owner: post == (pre - pre): 1 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz22",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_22"
+      },
+      {
+        "key": "s0:v1:equals:e7",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre + minLockPeriodRatio_)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz23",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_23"
+      },
+      {
+        "key": "s0:v0:equals:e8",
+        "var": "_owner",
+        "text": "post == (pre * pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz24",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_24"
+      },
+      {
+        "key": "s0:v1:equals:e8",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre - minLockPeriodRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz25",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_25"
+      },
+      {
+        "key": "s0:v0:equals:e9",
+        "var": "_owner",
+        "text": "post == (pre + minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_26 _owner: post == (pre + minLockPeriodRatio_): 1 != 529095445",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz26",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_26"
+      },
+      {
+        "key": "s0:v1:equals:e9",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre * minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_27 minLockPeriodRatio: post == (pre * minLockPeriodRatio_): 529095444 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz27",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_27"
+      },
+      {
+        "key": "s0:v0:equals:e10",
+        "var": "_owner",
+        "text": "post == (pre - minLockPeriodRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz28",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_28"
+      },
+      {
+        "key": "s0:v1:equals:e10",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e11",
+        "var": "_owner",
+        "text": "post == (pre * minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_30 _owner: post == (pre * minLockPeriodRatio_): 1 != 529095444",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz30",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_30"
+      },
+      {
+        "key": "s0:v1:equals:e11",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e12",
+        "var": "_owner",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e12",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e13",
+        "var": "_owner",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e13",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre + 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_35 minLockPeriodRatio: post == (pre + 5): 529095444 != 5",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz35",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_35"
+      },
+      {
+        "key": "s0:v0:equals:e14",
+        "var": "_owner",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e14",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz37",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_37"
+      },
+      {
+        "key": "s0:v0:equals:e15",
+        "var": "_owner",
+        "text": "post == (pre + 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_38 _owner: post == (pre + 5): 1 != 6",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz38",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_38"
+      },
+      {
+        "key": "s0:v1:equals:e15",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre * 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_39 minLockPeriodRatio: post == (pre * 5): 529095444 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz39",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_39"
+      },
+      {
+        "key": "s0:v0:equals:e16",
+        "var": "_owner",
+        "text": "post == (pre - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz40",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_40"
+      },
+      {
+        "key": "s0:v1:equals:e16",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre + 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_41 minLockPeriodRatio: post == (pre + 20): 529095444 != 20",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz41",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_41"
+      },
+      {
+        "key": "s0:v0:equals:e17",
+        "var": "_owner",
+        "text": "post == (pre * 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_42 _owner: post == (pre * 5): 1 != 5",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz42",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_42"
+      },
+      {
+        "key": "s0:v1:equals:e17",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz43",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_43"
+      },
+      {
+        "key": "s0:v0:equals:e18",
+        "var": "_owner",
+        "text": "post == (pre + 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_44 _owner: post == (pre + 20): 1 != 21",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz44",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_44"
+      },
+      {
+        "key": "s0:v1:equals:e18",
+        "var": "minLockPeriodRatio",
+        "text": "post == (pre * 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_45 minLockPeriodRatio: post == (pre * 20): 529095444 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz45",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_45"
+      },
+      {
+        "key": "s0:v0:equals:e19",
+        "var": "_owner",
+        "text": "post == (pre - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz46",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_46"
+      },
+      {
+        "key": "s0:v1:equals:e19",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ + pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz47",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_47"
+      },
+      {
+        "key": "s0:v0:equals:e20",
+        "var": "_owner",
+        "text": "post == (pre * 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_48 _owner: post == (pre * 20): 1 != 20",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz48",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_48"
+      },
+      {
+        "key": "s0:v1:equals:e20",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ - pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz49",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_49"
+      },
+      {
+        "key": "s0:v0:equals:e21",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_50 _owner: post == (minLockPeriodRatio_ + pre): 1 != 529095445",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz50",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_50"
+      },
+      {
+        "key": "s0:v1:equals:e21",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_51 minLockPeriodRatio: post == (minLockPeriodRatio_ * pre): 529095444 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz51",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_51"
+      },
+      {
+        "key": "s0:v0:equals:e22",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_52 _owner: post == (minLockPeriodRatio_ - pre): 1 != 529095443",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz52",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_52"
+      },
+      {
+        "key": "s0:v1:equals:e22",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ + minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_53 minLockPeriodRatio: post == (minLockPeriodRatio_ + minLockPeriodRatio_): 529095444 != 1058190888",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz53",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_53"
+      },
+      {
+        "key": "s0:v0:equals:e23",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_54 _owner: post == (minLockPeriodRatio_ * pre): 1 != 529095444",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz54",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_54"
+      },
+      {
+        "key": "s0:v1:equals:e23",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ - minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_55 minLockPeriodRatio: post == (minLockPeriodRatio_ - minLockPeriodRatio_): 529095444 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz55",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_55"
+      },
+      {
+        "key": "s0:v0:equals:e24",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ + minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_56 _owner: post == (minLockPeriodRatio_ + minLockPeriodRatio_): 1 != 1058190888",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz56",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_56"
+      },
+      {
+        "key": "s0:v1:equals:e24",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ * minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_57 minLockPeriodRatio: post == (minLockPeriodRatio_ * minLockPeriodRatio_): 529095444 != 279941988861557136",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz57",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_57"
+      },
+      {
+        "key": "s0:v0:equals:e25",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ - minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_58 _owner: post == (minLockPeriodRatio_ - minLockPeriodRatio_): 1 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz58",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_58"
+      },
+      {
+        "key": "s0:v1:equals:e25",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e26",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ * minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_60 _owner: post == (minLockPeriodRatio_ * minLockPeriodRatio_): 1 != 279941988861557136",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz60",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_60"
+      },
+      {
+        "key": "s0:v1:equals:e26",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e27",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e27",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e28",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e28",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ + 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_65 minLockPeriodRatio: post == (minLockPeriodRatio_ + 5): 529095444 != 529095449",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz65",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_65"
+      },
+      {
+        "key": "s0:v0:equals:e29",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e29",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ - 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_67 minLockPeriodRatio: post == (minLockPeriodRatio_ - 5): 529095444 != 529095439",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz67",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_67"
+      },
+      {
+        "key": "s0:v0:equals:e30",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ + 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_68 _owner: post == (minLockPeriodRatio_ + 5): 1 != 529095449",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz68",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_68"
+      },
+      {
+        "key": "s0:v1:equals:e30",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ * 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_69 minLockPeriodRatio: post == (minLockPeriodRatio_ * 5): 529095444 != 2645477220",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz69",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_69"
+      },
+      {
+        "key": "s0:v0:equals:e31",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ - 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_70 _owner: post == (minLockPeriodRatio_ - 5): 1 != 529095439",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz70",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_70"
+      },
+      {
+        "key": "s0:v1:equals:e31",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ + 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_71 minLockPeriodRatio: post == (minLockPeriodRatio_ + 20): 529095444 != 529095464",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz71",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_71"
+      },
+      {
+        "key": "s0:v0:equals:e32",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ * 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_72 _owner: post == (minLockPeriodRatio_ * 5): 1 != 2645477220",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz72",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_72"
+      },
+      {
+        "key": "s0:v1:equals:e32",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ - 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_73 minLockPeriodRatio: post == (minLockPeriodRatio_ - 20): 89492621 != 89492601",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz73",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_73"
+      },
+      {
+        "key": "s0:v0:equals:e33",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ + 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_74 _owner: post == (minLockPeriodRatio_ + 20): 1 != 529095464",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz74",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_74"
+      },
+      {
+        "key": "s0:v1:equals:e33",
+        "var": "minLockPeriodRatio",
+        "text": "post == (minLockPeriodRatio_ * 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_75 minLockPeriodRatio: post == (minLockPeriodRatio_ * 20): 529095444 != 10581908880",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz75",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_75"
+      },
+      {
+        "key": "s0:v0:equals:e34",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ - 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_76 _owner: post == (minLockPeriodRatio_ - 20): 1 != 529095424",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz76",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_76"
+      },
+      {
+        "key": "s0:v1:equals:e34",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e35",
+        "var": "_owner",
+        "text": "post == (minLockPeriodRatio_ * 20)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_78 _owner: post == (minLockPeriodRatio_ * 20): 1 != 10581908880",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz78",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_78"
+      },
+      {
+        "key": "s0:v1:equals:e35",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e36",
+        "var": "_owner",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e36",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e37",
+        "var": "_owner",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e37",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value + minLockPeriodRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e38",
+        "var": "_owner",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e38",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value - minLockPeriodRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e39",
+        "var": "_owner",
+        "text": "post == (msg.value + minLockPeriodRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e39",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value * minLockPeriodRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e40",
+        "var": "_owner",
+        "text": "post == (msg.value - minLockPeriodRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e40",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e41",
+        "var": "_owner",
+        "text": "post == (msg.value * minLockPeriodRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e41",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e42",
+        "var": "_owner",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e42",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e43",
+        "var": "_owner",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e43",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e44",
+        "var": "_owner",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e44",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e45",
+        "var": "_owner",
+        "text": "post == (msg.value + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e45",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e46",
+        "var": "_owner",
+        "text": "post == (msg.value - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e46",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e47",
+        "var": "_owner",
+        "text": "post == (msg.value * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e47",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e48",
+        "var": "_owner",
+        "text": "post == (msg.value + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e48",
+        "var": "minLockPeriodRatio",
+        "text": "post == (msg.value * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e49",
+        "var": "_owner",
+        "text": "post == (msg.value - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e49",
+        "var": "minLockPeriodRatio",
+        "text": "post == (5 + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_107 minLockPeriodRatio: post == (5 + pre): 529095444 != 5",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz107",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_107"
+      },
+      {
+        "key": "s0:v0:equals:e50",
+        "var": "_owner",
+        "text": "post == (msg.value * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e50",
+        "var": "minLockPeriodRatio",
+        "text": "post == (5 - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_109 minLockPeriodRatio: post == (5 - pre): 529095444 != 5",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz109",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_109"
+      },
+      {
+        "key": "s0:v0:equals:e51",
+        "var": "_owner",
+        "text": "post == (5 + pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_110 _owner: post == (5 + pre): 1 != 6",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz110",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_110"
+      },
+      {
+        "key": "s0:v1:equals:e51",
+        "var": "minLockPeriodRatio",
+        "text": "post == (5 * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_111 minLockPeriodRatio: post == (5 * pre): 529095444 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz111",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_111"
+      },
+      {
+        "key": "s0:v0:equals:e52",
+        "var": "_owner",
+        "text": "post == (5 - pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_112 _owner: post == (5 - pre): 1 != 4",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz112",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_112"
+      },
+      {
+        "key": "s0:v1:equals:e52",
+        "var": "minLockPeriodRatio",
+        "text": "post == (5 + minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_113 minLockPeriodRatio: post == (5 + minLockPeriodRatio_): 529095444 != 529095449",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz113",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_113"
+      },
+      {
+        "key": "s0:v0:equals:e53",
+        "var": "_owner",
+        "text": "post == (5 * pre)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_114 _owner: post == (5 * pre): 1 != 5",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz114",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_114"
+      },
+      {
+        "key": "s0:v1:equals:e53",
+        "var": "minLockPeriodRatio",
+        "text": "post == (5 - minLockPeriodRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz115",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_115"
+      },
+      {
+        "key": "s0:v0:equals:e54",
+        "var": "_owner",
+        "text": "post == (5 + minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_116 _owner: post == (5 + minLockPeriodRatio_): 1 != 529095449",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz116",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_116"
+      },
+      {
+        "key": "s0:v1:equals:e54",
+        "var": "minLockPeriodRatio",
+        "text": "post == (5 * minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_117 minLockPeriodRatio: post == (5 * minLockPeriodRatio_): 529095444 != 2645477220",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz117",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_117"
+      },
+      {
+        "key": "s0:v0:equals:e55",
+        "var": "_owner",
+        "text": "post == (5 - minLockPeriodRatio_)",
+        "verdict": "NOT-RUN",
+        "reason": "panic: arithmetic underflow or overflow (0x11)",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz118",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_118"
+      },
+      {
+        "key": "s0:v1:equals:e55",
+        "var": "minLockPeriodRatio",
+        "text": "post == (5 + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e56",
+        "var": "_owner",
+        "text": "post == (5 * minLockPeriodRatio_)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_120 _owner: post == (5 * minLockPeriodRatio_): 1 != 2645477220",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz120",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_120"
+      },
+      {
+        "key": "s0:v1:equals:e56",
+        "var": "minLockPeriodRatio",
+        "text": "post == (5 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e57",
+        "var": "_owner",
+        "text": "post == (5 + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e57",
+        "var": "minLockPeriodRatio",
+        "text": "post == (5 * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e58",
+        "var": "_owner",
+        "text": "post == (5 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e58",
+        "var": "minLockPeriodRatio",
+        "text": "post == (5 + 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_125 minLockPeriodRatio: post == (5 + 5): 529095444 != 10",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz125",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_125"
+      },
+      {
+        "key": "s0:v0:equals:e59",
+        "var": "_owner",
+        "text": "post == (5 * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e59",
+        "var": "minLockPeriodRatio",
+        "text": "post == (5 - 5)",
+        "verdict": "REFUTED",
+        "reason": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_127 minLockPeriodRatio: post == (5 - 5): 529095444 != 0",
+        "test": "test_put_St1inch_setMinLockPeriodRatio_path15fz127",
+        "marker": "VERIPUT_CANDIDATE_d14c387f07bb354805d45cabca4869c9_127"
+      }
+    ],
+    "enabled": true
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "_ONE_E9",
+    "minLockPeriodRatio",
+    "_owner"
+  ],
+  "oracle_vars": [
+    "minLockPeriodRatio",
+    "_owner"
+  ],
+  "slot_candidates": {
+    "asked": [],
+    "unanswered": [],
+    "rows_for_unasked_names": [
+      "_owner",
+      "minLockPeriodRatio"
+    ]
+  },
+  "esbmc_extra_args": [
+    "--z3",
+    "--tuple-node-flattener",
+    "--path-cov-fixture",
+    "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setMinLockPeriodRatio/fixture_gate.json"
+  ],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "a6af4ba5c7",
+    "srcDirty": true,
+    "binaryMtime": 1785965824
+  },
+  "stats": {
+    "fuzz_params": 1,
+    "lifted": [
+      "minLockPeriodRatio_"
+    ],
+    "asserts": 1,
+    "state_asserts": 1,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 0,
+    "rollback_exit": false,
+    "exit_kind": "normal",
+    "return_asserts": 0,
+    "oracle_skipped": [],
+    "oracle_implied": [
+      "_owner: post >= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)",
+      "_owner: post <= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)"
+    ],
+    "state_stored": [
+      "state._owner := 1"
+    ],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": [
+    "slot candidates asked=0 unanswered=0"
+  ]
+}

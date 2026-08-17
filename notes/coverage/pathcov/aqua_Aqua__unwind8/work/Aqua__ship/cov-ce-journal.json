@@ -1,0 +1,120 @@
+{
+  "claims_decided": 1222,
+  "claims_total": 3069,
+  "complete": true,
+  "fingerprint": "7103800811bc4415",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@Aqua@F@ship#3022:path:876\t": {
+      "claim": "sol:@C@Aqua@F@ship#3022:path:876",
+      "compact_trace": false,
+      "dropped_internal": 106,
+      "entry_storage": [
+        {
+          "name": "_DOCKED",
+          "value": "255"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_DOCKED",
+          "value": "255"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "app",
+          "value": "0"
+        },
+        {
+          "name": "strategy",
+          "value": "{ .offset=0, .length=0, .capacity=0, .initialized=1, .anon_pad$4=0 }"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "feb08c9befd1314f",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "tuple_instance$2819",
+        "tuple_instance$2909",
+        "_ESBMC_aux_IAqua",
+        "balance.amount",
+        "balance.tokensCount",
+        "_balances[0][0][0][(unsigned _ExtInt(256))(*((unsigned _ExtInt(160) *)((void *)((unsigned long int *)(&dynamic_1_array[0]) + 1))))]"
+      ],
+      "witness_count": 1
+    }
+  }
+}

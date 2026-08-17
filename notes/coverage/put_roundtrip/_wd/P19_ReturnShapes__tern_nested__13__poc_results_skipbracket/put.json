@@ -1,0 +1,50 @@
+{
+  "contract": "P19_ReturnShapes",
+  "unit": "tern_nested",
+  "enc": 13,
+  "depth": 3,
+  "path_function": "sol:@C@P19_ReturnShapes@F@tern_nested#115",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/put_roundtrip/poc__poc_results_skipbracket/test/P19_ReturnShapesCovTest_P19_ReturnShapes_tern_nested_put13.t.sol",
+  "test": "test_put_P19_ReturnShapes_tern_nested_path13",
+  "region": {
+    "x": [
+      "101",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ],
+    "y": [
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "msg.value": "0"
+  },
+  "ladder": [],
+  "ladder_summary": null,
+  "ladder_refusal": "NOT ONE candidate assertion could be formed. Every state variable of this contract was refused. Zero assertions means nothing is checked, and the run would print VERIFICATION SUCCESSFUL with exit 0 -- the same output a fully successful ladder produces. A contract whose state is entirely mappings or dynamic arrays is the common case: those are lowered to contract-scope globals, not components of the contract object",
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "stats": {
+    "fuzz_params": 2,
+    "lifted": [
+      "x",
+      "y"
+    ],
+    "asserts": 0,
+    "oracle_skipped": [],
+    "state_stored": [],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": [
+    "ladder refused: NOT ONE candidate assertion could be formed. Every state variable of this contract was refused. Zero assertions means nothing is checked, and the run would print VERIFICATION SUCCESSFUL with exit 0 -- the same output a fully successful ladder produces. A contract whose state is entirely mappings or dynamic arrays is the common case: those are lowered to contract-scope globals, not components of the contract object"
+  ]
+}

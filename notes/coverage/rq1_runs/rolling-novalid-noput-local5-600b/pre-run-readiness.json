@@ -1,0 +1,84 @@
+{
+  "batch_id": "rolling-novalid-noput-local5-600b",
+  "case_count": 5,
+  "checks": [
+    {
+      "evidence": {
+        "batch_size": 5,
+        "inventory_error": "",
+        "manifest_rows": 5
+      },
+      "name": "rolling batch has the configured runnable case count",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "disabled": true,
+        "reason": "--no-require-ground-truth"
+      },
+      "name": "structured ground truth and failure postmortem complete",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "disabled": true,
+        "reason": "--no-require-ground-truth"
+      },
+      "name": "all prevention files from MD/state were read before rerun",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "disabled": true,
+        "reason": "--no-require-ground-truth"
+      },
+      "name": "all historical prevent/prevention files were read before rerun",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "local_memlimit_gib": 8,
+        "local_parallel": 5,
+        "remote_memlimit_gib": 6.0,
+        "remote_parallel": 0,
+        "remote_reserve_mem_gib": 2.0
+      },
+      "name": "local/remote resource policy fixed",
+      "ok": true
+    },
+    {
+      "evidence": [],
+      "name": "existing scheduler artifacts do not show wrong-target units",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "supervise_interval_s": 30
+      },
+      "name": "30 second intervention supervision configured",
+      "ok": true
+    },
+    {
+      "evidence": {
+        "disabled": true,
+        "host": "invmut-w2",
+        "ready": true,
+        "remote_esbmc": "/home/administrator/veriput_esbmc/repo",
+        "remote_memlimit_gib": 6.0,
+        "remote_parallel": 0,
+        "remote_reserve_mem_gib": 2.0,
+        "remote_veriput": "/home/administrator/VeriPUT",
+        "required_mem_gib": 0.0,
+        "returncode": 0,
+        "stderr": "",
+        "stdout": "remote preflight disabled because remote_parallel=0"
+      },
+      "name": "remote ESBMC/VeriPUT/memory preflight ready",
+      "ok": true
+    }
+  ],
+  "manifest": "notes/coverage/rq1_runs/rolling-novalid-noput-local5-600b/manifest.tsv",
+  "ok": true,
+  "run_dir": "notes/coverage/rq1_runs/rolling-novalid-noput-local5-600b",
+  "schema": "veriput-rq1-pre-run-readiness/v1"
+}

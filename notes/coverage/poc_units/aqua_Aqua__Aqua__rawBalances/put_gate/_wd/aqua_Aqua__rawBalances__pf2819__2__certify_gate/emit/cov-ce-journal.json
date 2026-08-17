@@ -1,0 +1,431 @@
+{
+  "claims_decided": 47,
+  "claims_total": 47,
+  "complete": true,
+  "fingerprint": "089f181c2db4c3a9",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "arithmetic overflow on shl\tfile /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_bytes.c line 157 column 25 function bytes_static_to_uint": {
+      "claim": "arithmetic overflow on shl",
+      "compact_trace": false,
+      "dropped_internal": 80,
+      "entry_storage": [],
+      "entry_storage_known": false,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_DOCKED",
+          "value": "255"
+        }
+      ],
+      "inputs": [],
+      "loc": "file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_bytes.c line 157 column 25 function bytes_static_to_uint",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "arithmetic overflow on shl\tfile /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_bytes.c line 195 column 5 function bytes_static_to_mapping_key": {
+      "claim": "arithmetic overflow on shl",
+      "compact_trace": false,
+      "dropped_internal": 112,
+      "entry_storage": [],
+      "entry_storage_known": false,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_DOCKED",
+          "value": "255"
+        }
+      ],
+      "inputs": [],
+      "loc": "file /home/samson/workspace/esbmc/src/c2goto/library/solidity/solidity_bytes.c line 195 column 5 function bytes_static_to_mapping_key",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@Aqua@F@rawBalances#2819:path:2\t": {
+      "claim": "sol:@C@Aqua@F@rawBalances#2819:path:2",
+      "compact_trace": false,
+      "condition": "rawBalances:path:2",
+      "dropped_internal": 80,
+      "entry_storage": [
+        {
+          "name": "_DOCKED",
+          "value": "255"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "tuple_instance$21",
+          "value": "{ .mem0 = 0 }"
+        }
+      ],
+      "final_state": [
+        {
+          "name": "_DOCKED",
+          "value": "255"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "maker",
+          "value": "0"
+        },
+        {
+          "name": "app",
+          "value": "0"
+        },
+        {
+          "name": "strategyHash",
+          "value": "{ .data = { 0 } }"
+        },
+        {
+          "name": "token",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_depth": 1,
+      "path_function": "sol:@C@Aqua@F@rawBalances#2819",
+      "path_id": "2",
+      "path_id_stable": "ed25fabd122c8a68",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "tuple_instance$2819",
+        "tuple_instance$2909",
+        "_ESBMC_aux_IAqua"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@Aqua@F@rawBalances#2819:path:3\t": {
+      "claim": "sol:@C@Aqua@F@rawBalances#2819:path:3",
+      "compact_trace": false,
+      "condition": "rawBalances:path:3",
+      "dropped_internal": 113,
+      "entry_storage": [
+        {
+          "name": "_DOCKED",
+          "value": "255"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000001"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "tuple_instance$21",
+          "value": "{ .mem0 = 0 }"
+        }
+      ],
+      "final_state": [
+        {
+          "name": "_DOCKED",
+          "value": "255"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "maker",
+          "value": "0"
+        },
+        {
+          "name": "app",
+          "value": "0"
+        },
+        {
+          "name": "strategyHash",
+          "value": "{ .data = { 0 } }"
+        },
+        {
+          "name": "token",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_depth": 1,
+      "path_function": "sol:@C@Aqua@F@rawBalances#2819",
+      "path_id": "3",
+      "path_id_stable": "9ae97e8b7d2e93a6",
+      "payload_symbols_protected": true,
+      "return_value": "(0)",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "tuple_instance$2819",
+        "tuple_instance$2909",
+        "_ESBMC_aux_IAqua",
+        "tuple_instance$21.mem0",
+        "tuple_instance$2819.mem0"
+      ],
+      "witness_count": 1
+    }
+  }
+}

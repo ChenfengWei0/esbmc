@@ -1,0 +1,4678 @@
+{
+  "claims": [
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1008",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1008",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1009",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1009",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1010",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1010",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1011",
+      "exit_kind": "normal",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1011",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1012",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1012",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1013",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1013",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1014",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1014",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1015",
+      "exit_kind": "normal",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1015",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:112",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(supply > 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 6,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "0"
+      },
+      "line": 0,
+      "path_depth": 6,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "112",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:113",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(supply > 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 6,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "0"
+      },
+      "line": 0,
+      "path_depth": 6,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "113",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:116",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "supply > 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 6,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "1",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x800000000000000000000000000000000000047F27FFE14FC4FE7FC100000000",
+        "period": "0"
+      },
+      "line": 0,
+      "path_depth": 6,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "116",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:117",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "supply > 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 6,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "1",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x800000000000000000000000000000000000047F27FFE14FC4FE7FC100000000",
+        "period": "0"
+      },
+      "line": 0,
+      "path_depth": 6,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "117",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 181,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:124",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp != checkpoint",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 4,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period > return_value$__max$1)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 6,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "0x80000000000000000000000000000000000000000000000000000000FFFFFFFF"
+      },
+      "line": 0,
+      "path_depth": 6,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "124",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 181,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:125",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp != checkpoint",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 4,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period > return_value$__max$1)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 6,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "0x80000000000000000000000000000000000000000000000000000000FFFFFFFF"
+      },
+      "line": 0,
+      "path_depth": 6,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "125",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1840",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1840",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1841",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1841",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1842",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1842",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1843",
+      "exit_kind": "normal",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1843",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1844",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1844",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1845",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1845",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1846",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1846",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1847",
+      "exit_kind": "normal",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1847",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1904",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1904",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1905",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1905",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1906",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1906",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1907",
+      "exit_kind": "normal",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1907",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1908",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1908",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1909",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1909",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1910",
+      "exit_kind": "revert",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1910",
+      "revert_kind": "rollback",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "bounded_holds": true,
+      "column": 0,
+      "condition": "startFarming:path:1911",
+      "exit_kind": "normal",
+      "file": "",
+      "function": "",
+      "line": 0,
+      "path_depth": 10,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "1911",
+      "status": "U",
+      "u_reason": "bounded-holds",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 168,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:2",
+      "decisions": [
+        {
+          "arm": "fall-through",
+          "branch_claim": "msg.value == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "1",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "0"
+      },
+      "line": 0,
+      "path_depth": 1,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "2",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:228",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(supply > 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period > return_value$__max$1)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 7,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "0x80000000000000000000000000000000000000000000000000000000FFFFFFFF"
+      },
+      "line": 0,
+      "path_depth": 7,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "228",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:229",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(supply > 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period > return_value$__max$1)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 7,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "0x80000000000000000000000000000000000000000000000000000000FFFFFFFF"
+      },
+      "line": 0,
+      "path_depth": 7,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "229",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:236",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "supply > 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period > return_value$__max$1)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 7,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "0x80000000000000000000000000000000000000000000000000000000FFFFFFFF"
+      },
+      "line": 0,
+      "path_depth": 7,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "236",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:237",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "supply > 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period > return_value$__max$1)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 7,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "0x80000000000000000000000000000000000000000000000000000000FFFFFFFF"
+      },
+      "line": 0,
+      "path_depth": 7,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "237",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 181,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:508",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp != checkpoint",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 4,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(amount > _MAX_REWARD_AMOUNT)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 8,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x800000000000000000000000000000000000047F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 8,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "508",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 181,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:509",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp != checkpoint",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 4,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(amount > _MAX_REWARD_AMOUNT)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 8,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x800000000000000000000000000000000000047F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 8,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "509",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 184,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:510",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp != checkpoint",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 4,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "amount > _MAX_REWARD_AMOUNT",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 8,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 8,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "510",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0",
+        "tuple_instance$5520.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 184,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:511",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp != checkpoint",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 4,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "amount > _MAX_REWARD_AMOUNT",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 8,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "normal",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 8,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "511",
+      "return_value_known": false,
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0",
+        "tuple_instance$5520.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 174,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:6",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(msg.sender != _distributor)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "1",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 2,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "6",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 181,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:60",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp != checkpoint",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 4,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 5,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x800000000000000000000000000000000000047F27FFE14FC4FE7FC100000000",
+        "period": "0"
+      },
+      "line": 0,
+      "path_depth": 5,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "60",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 181,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:61",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp != checkpoint",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(period == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 4,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 5,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x800000000000000000000000000000000000047F27FFE14FC4FE7FC100000000",
+        "period": "0"
+      },
+      "line": 0,
+      "path_depth": 5,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "61",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:924",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(supply > 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(amount > _MAX_REWARD_AMOUNT)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 8,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 9,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x800000000000000000000000000000000000047F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "924",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:925",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(supply > 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(amount > _MAX_REWARD_AMOUNT)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 8,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 9,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x800000000000000000000000000000000000047F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "925",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 188,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:926",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(supply > 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "amount > _MAX_REWARD_AMOUNT",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 8,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 9,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "926",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0",
+        "tuple_instance$5520.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 188,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:927",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(supply > 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "amount > _MAX_REWARD_AMOUNT",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 8,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 9,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "normal",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "927",
+      "return_value_known": false,
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0",
+        "tuple_instance$5520.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:956",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "supply > 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(amount > _MAX_REWARD_AMOUNT)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 8,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 9,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x800000000000000000000000000000000000047F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "956",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 185,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:957",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "supply > 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(amount > _MAX_REWARD_AMOUNT)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 8,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 9,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x800000000000000000000000000000000000047F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "957",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 188,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:958",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "supply > 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "amount > _MAX_REWARD_AMOUNT",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 8,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(!success)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 9,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "revert",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "958",
+      "return_value_known": false,
+      "revert_kind": "rollback",
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0",
+        "tuple_instance$5520.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    },
+    {
+      "bound": {
+        "kind": "bounded",
+        "loops_truncated": true,
+        "max_tx": "1",
+        "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+        "unwind": "4"
+      },
+      "ce_extraction": {
+        "compact_trace": false,
+        "extcall_returns_unavailable_reason": "not implemented yet, and for three different reasons depending on the syntactic shape the call's result arrives in; this field does NOT say which one applies to this claim. (a) bound to a named local, or assigned inside an approximated assembly block: the value IS harvested and resolved, then dropped because the classification has buckets only for parameters and environment values and a call's return is a local. (b) low-level `(bool ok, ) = a.call(...)`: get_nondet_symbol returns nil, so the step is skipped before classification. (c) used inline, `if (c.f())`: no named local is assigned, so no trace step carries it. The _ESBMC_Nondet_Extcall_* symbols that ARE in the trace are the re-entry model's method-choice bits, not the returned value (measured: identical on two paths that disagree about it), so they are deliberately not reported here. An empty list means UNKNOWN, not 'this path performs no external call'",
+        "harness_nondets_dropped": 188,
+        "payload_symbols_exempt_from_slicing": true,
+        "return_value_unavailable_reason": "no scalar return value was captured on this path. THREE different situations produce this and the field does not say which: (a) the unit returns nothing; (b) it returns an aggregate, tuple or dynamic type, which the instrumenter does not materialise because there is no single renderable value; (c) this path exits without reaching a RETURN at all, which is the normal shape of a revert. An absent value means UNKNOWN, never 'this unit returns nothing'",
+        "scoped_to_claim": true,
+        "sliced": true,
+        "witness_count": 1
+      },
+      "column": 0,
+      "condition": "startFarming:path:959",
+      "decisions": [
+        {
+          "arm": "taken",
+          "branch_claim": "!(msg.value == 0)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 1,
+          "line": 4150,
+          "operand": 0,
+          "synthetic_abi_gate": true
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "msg.sender != _distributor",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming_onlyDistributor",
+          "index": 2,
+          "line": 3901,
+          "operand": 0
+        },
+        {
+          "arm": "fall-through",
+          "branch_claim": "!(block.timestamp != checkpoint)",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 3,
+          "line": 3822,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "supply > 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "farmedPerToken__mono_1",
+          "index": 4,
+          "line": 3824,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period == 0",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 5,
+          "line": 3766,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "period > return_value$__max$1",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 6,
+          "line": 3767,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "block.timestamp < finished",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 7,
+          "line": 3771,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "amount > _MAX_REWARD_AMOUNT",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "startFarming",
+          "index": 8,
+          "line": 3775,
+          "operand": 0
+        },
+        {
+          "arm": "taken",
+          "branch_claim": "!success",
+          "column": 0,
+          "file": "notes/coverage/inputs/farming__FarmingPool.flat.sol",
+          "function": "safeTransferFrom",
+          "index": 9,
+          "line": 532,
+          "operand": 0
+        }
+      ],
+      "entry_storage": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "env": {
+        "block.basefee": "0",
+        "block.blobbasefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.difficulty": "0",
+        "block.gaslimit": "0",
+        "block.number": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "block.prevrandao": "0",
+        "block.timestamp": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE",
+        "msg.data": "0",
+        "msg.sender": "0",
+        "msg.sig": "0",
+        "msg.value": "0",
+        "tx.gasprice": "0",
+        "tx.origin": "0"
+      },
+      "events": [
+        "sol:@C@IFarmingPool@F@RewardUpdated#6301"
+      ],
+      "exit_kind": "normal",
+      "extcall_returns": [],
+      "file": "",
+      "final_state": {
+        "_MAX_BALANCE": "0x4EE2D6D415B85ACEF8100000000",
+        "_distributor": "0",
+        "_farm": "{ .farmInfo = { .finished = 0 } }",
+        "_owner": "1",
+        "_totalSupply": "0"
+      },
+      "function": "",
+      "inputs": {
+        "amount": "0x47F27FFE14FC4FE7FC100000000",
+        "period": "1"
+      },
+      "line": 0,
+      "path_depth": 9,
+      "path_function": "sol:@C@FarmingPool@F@startFarming#6531",
+      "path_id": "959",
+      "return_value_known": false,
+      "state_written_value_unavailable": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN",
+        "tuple_instance$5757.mem0",
+        "tuple_instance$5520.mem0"
+      ],
+      "status": "F",
+      "witnessed_in_earlier_round": false
+    }
+  ],
+  "coverage_type": "solidity-path",
+  "partial": false,
+  "source_files": [],
+  "summary": {
+    "F_feasible_with_ce": 26,
+    "F_with_multiple_witnesses": 0,
+    "I_proven_unreachable": 0,
+    "U_of_which_bounded_holds": 24,
+    "U_reasons": {
+      "bounded-holds": 24,
+      "claim-budget-exceeded": 0,
+      "named-obstacle": 0,
+      "not-solved-this-run": 0,
+      "run-died-before-solving": 0,
+      "solver-unknown": 0,
+      "unit-not-entered": 0
+    },
+    "U_undecided": 24,
+    "arith_resolve": {
+      "claims_resolved": 0,
+      "conditions_seen": 0,
+      "enabled": false,
+      "seconds": 0.0,
+      "took_constrained_witness": 0
+    },
+    "arith_revert_only_paths": 0,
+    "bound": {
+      "claim_timeout_enforcement": "bitwuzla: native BITWUZLA_OPT_TIME_LIMIT_PER (per satisfiability check, milliseconds)",
+      "claim_timeout_s": 120,
+      "kind": "bounded",
+      "max_tx": "1",
+      "tx_exploration": "exactly 1 straight-line transaction(s) (no dispatcher back-edge to remove)",
+      "unwind": "4"
+    },
+    "claims_abandoned_over_budget": 0,
+    "covered": 26,
+    "decision_sequences": {
+      "decision_steps": 181,
+      "paths_with": 26,
+      "paths_without": 0,
+      "synthetic_abi_gate_steps": 26,
+      "unrecorded_steps": 0
+    },
+    "event_sequences": {
+      "event_steps": 24,
+      "paths_with_events": 24,
+      "paths_with_field": 26,
+      "paths_without_field": 0
+    },
+    "known_limitation_entry_state": "transaction entry state is the post-constructor state; contract state is not havoc'd, so paths guarded by state that an earlier transaction would have to establish are reported U at this tx bound. A U is therefore not evidence that the path is unreachable",
+    "note": "no coverage configuration can establish unreachability, so I is never emitted and every path that merely held at this exploration is reported as U with bounded_holds=true. In particular --solidity-max-tx 0 is NOT an unbounded run: it emits the `while (nondet) dispatch()` driver, whose back-edge Solidity coverage then rewrites to a SKIP, leaving one guarded transaction — strictly fewer than --solidity-max-tx 2. Use a larger --solidity-max-tx N to explore deeper, not 0",
+    "partial": false,
+    "paths_total": 50,
+    "percentage": 52.0,
+    "revert_exit_paths": 41,
+    "total": 50,
+    "uncovered": 24,
+    "witnesses_total": 26
+  }
+}

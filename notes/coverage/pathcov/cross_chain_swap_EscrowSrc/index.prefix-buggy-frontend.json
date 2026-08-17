@@ -1,0 +1,621 @@
+{
+  "benchmark": "cross_chain_swap_EscrowSrc",
+  "project": "cross_chain_swap",
+  "primary": {
+    "name": "EscrowSrc",
+    "kind": "contract"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol",
+  "config": {
+    "mode": "per-method",
+    "solidityMaxTx": 1,
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "outerTimeoutSeconds": 120,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "ProxyHashLib__computeProxyBytecodeHash",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function computeProxyBytecodeHash",
+      "wallSeconds": 1.28,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "ProxyHashLib",
+      "function": "computeProxyBytecodeHash",
+      "kind": "library"
+    },
+    {
+      "tag": "TimelocksLib__setDeployedAt",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function setDeployedAt",
+      "wallSeconds": 1.3,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "TimelocksLib",
+      "function": "setDeployedAt",
+      "kind": "library"
+    },
+    {
+      "tag": "TimelocksLib__rescueStart",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function rescueStart",
+      "wallSeconds": 1.27,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "TimelocksLib",
+      "function": "rescueStart",
+      "kind": "library"
+    },
+    {
+      "tag": "TimelocksLib__get",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function get",
+      "wallSeconds": 1.01,
+      "exitCode": 6,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "contract": "TimelocksLib",
+      "function": "get",
+      "kind": "library"
+    },
+    {
+      "tag": "ImmutablesLib__protocolFeeAmount",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function protocolFeeAmount",
+      "wallSeconds": 1.34,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "ImmutablesLib",
+      "function": "protocolFeeAmount",
+      "kind": "library"
+    },
+    {
+      "tag": "ImmutablesLib__integratorFeeAmount",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function integratorFeeAmount",
+      "wallSeconds": 1.42,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "ImmutablesLib",
+      "function": "integratorFeeAmount",
+      "kind": "library"
+    },
+    {
+      "tag": "ImmutablesLib__protocolFeeRecipient",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function protocolFeeRecipient",
+      "wallSeconds": 1.34,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "ImmutablesLib",
+      "function": "protocolFeeRecipient",
+      "kind": "library"
+    },
+    {
+      "tag": "ImmutablesLib__integratorFeeRecipient",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function integratorFeeRecipient",
+      "wallSeconds": 1.29,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "ImmutablesLib",
+      "function": "integratorFeeRecipient",
+      "kind": "library"
+    },
+    {
+      "tag": "ImmutablesLib__protocolFeeAmountCd",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function protocolFeeAmountCd",
+      "wallSeconds": 1.24,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "ImmutablesLib",
+      "function": "protocolFeeAmountCd",
+      "kind": "library"
+    },
+    {
+      "tag": "ImmutablesLib__integratorFeeAmountCd",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function integratorFeeAmountCd",
+      "wallSeconds": 1.24,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "ImmutablesLib",
+      "function": "integratorFeeAmountCd",
+      "kind": "library"
+    },
+    {
+      "tag": "ImmutablesLib__protocolFeeRecipientCd",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function protocolFeeRecipientCd",
+      "wallSeconds": 1.28,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "ImmutablesLib",
+      "function": "protocolFeeRecipientCd",
+      "kind": "library"
+    },
+    {
+      "tag": "ImmutablesLib__integratorFeeRecipientCd",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function integratorFeeRecipientCd",
+      "wallSeconds": 1.34,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "ImmutablesLib",
+      "function": "integratorFeeRecipientCd",
+      "kind": "library"
+    },
+    {
+      "tag": "ImmutablesLib__hash",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function hash",
+      "wallSeconds": 1.25,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "ImmutablesLib",
+      "function": "hash",
+      "kind": "library"
+    },
+    {
+      "tag": "ImmutablesLib__hashMem",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function hashMem",
+      "wallSeconds": 1.29,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "ImmutablesLib",
+      "function": "hashMem",
+      "kind": "library"
+    },
+    {
+      "tag": "BaseEscrow__rescueFunds",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract EscrowSrc --focus-function rescueFunds",
+      "wallSeconds": 15.99,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 31,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 31,
+      "F": 8,
+      "U": 23,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 23
+      },
+      "decisionSequences": {
+        "decision_steps": 31,
+        "paths_with": 8,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 8,
+        "unrecorded_steps": 0
+      },
+      "contract": "BaseEscrow",
+      "function": "rescueFunds",
+      "kind": "contract"
+    },
+    {
+      "tag": "EscrowSrc__withdraw",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract EscrowSrc --focus-function withdraw",
+      "wallSeconds": 12.63,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 31,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 31,
+      "F": 5,
+      "U": 26,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 26
+      },
+      "decisionSequences": {
+        "decision_steps": 14,
+        "paths_with": 5,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 5,
+        "unrecorded_steps": 0
+      },
+      "contract": "EscrowSrc",
+      "function": "withdraw",
+      "kind": "contract"
+    },
+    {
+      "tag": "EscrowSrc__withdrawTo",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract EscrowSrc --focus-function withdrawTo",
+      "wallSeconds": 12.22,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 31,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 31,
+      "F": 5,
+      "U": 26,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 26
+      },
+      "decisionSequences": {
+        "decision_steps": 14,
+        "paths_with": 5,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 5,
+        "unrecorded_steps": 0
+      },
+      "contract": "EscrowSrc",
+      "function": "withdrawTo",
+      "kind": "contract"
+    },
+    {
+      "tag": "EscrowSrc__publicWithdraw",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract EscrowSrc --focus-function publicWithdraw",
+      "wallSeconds": 41.88,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 31,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 31,
+      "F": 5,
+      "U": 26,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 26
+      },
+      "decisionSequences": {
+        "decision_steps": 14,
+        "paths_with": 5,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 5,
+        "unrecorded_steps": 0
+      },
+      "contract": "EscrowSrc",
+      "function": "publicWithdraw",
+      "kind": "contract"
+    },
+    {
+      "tag": "EscrowSrc__cancel",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract EscrowSrc --focus-function cancel",
+      "wallSeconds": 6.25,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 31,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 31,
+      "F": 4,
+      "U": 27,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 27
+      },
+      "decisionSequences": {
+        "decision_steps": 9,
+        "paths_with": 4,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 4,
+        "unrecorded_steps": 0
+      },
+      "contract": "EscrowSrc",
+      "function": "cancel",
+      "kind": "contract"
+    },
+    {
+      "tag": "EscrowSrc__publicCancel",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/cross-chain-swap__EscrowSrc.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract EscrowSrc --focus-function publicCancel",
+      "wallSeconds": 21.56,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 31,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 31,
+      "F": 4,
+      "U": 27,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 27
+      },
+      "decisionSequences": {
+        "decision_steps": 9,
+        "paths_with": 4,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 4,
+        "unrecorded_steps": 0
+      },
+      "contract": "EscrowSrc",
+      "function": "publicCancel",
+      "kind": "contract"
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/cross_chain_swap_EscrowSrc/reports"
+}

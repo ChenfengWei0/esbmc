@@ -1,0 +1,86 @@
+{
+  "contract": "P22_Inherit",
+  "unit": "useHook",
+  "enc": 6,
+  "depth": 2,
+  "path_function": "sol:@C@P22_Inherit@F@useHook#69",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/put_roundtrip/poc__poc_results_skipbracket/test/P22_InheritCovTest_P22_Inherit_useHook_put6.t.sol",
+  "test": "test_put_P22_Inherit_useHook_path6",
+  "region": {
+    "state.v": [
+      "0",
+      "0"
+    ],
+    "x": [
+      "6811299366900952671974763824040465167839410862684739061144563765171360567056",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "msg.value": "0"
+  },
+  "ladder": [
+    {
+      "var": "v",
+      "text": "post == pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "v",
+      "text": "post != pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "v",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "v",
+      "text": "post <= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "v",
+      "text": "post > pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "v",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    6,
+    3,
+    3,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "stats": {
+    "fuzz_params": 1,
+    "lifted": [
+      "x"
+    ],
+    "asserts": 3,
+    "oracle_skipped": [],
+    "state_stored": [
+      "state.v := 0"
+    ],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": []
+}

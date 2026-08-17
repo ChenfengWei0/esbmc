@@ -1,0 +1,28 @@
+{
+  "case_count": 8,
+  "local_case_count": 5,
+  "local_manifest": "notes/coverage/rq1_runs/manual-005-012/manifest.local.tsv",
+  "local_parallel": 5,
+  "manifest": "notes/coverage/rq1_runs/manual-005-012/manifest.tsv",
+  "remote_case_count": 3,
+  "remote_manifest": "notes/coverage/rq1_runs/manual-005-012/manifest.remote.tsv",
+  "remote_parallel": 3,
+  "schema": "veriput-rq1-worker-supervisor/v1",
+  "started_ts": 1786414059.8134272,
+  "stopped_pids": [
+    2490299,
+    2490300,
+    2490301,
+    2490302,
+    2490303,
+    2658079,
+    2661416,
+    2661417,
+    2661423,
+    2668572,
+    2668595,
+    2668596
+  ],
+  "stopped_ts": 1786417766.7404432,
+  "workers": []
+}

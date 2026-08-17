@@ -1,0 +1,200 @@
+{
+  "contract": "St1inch",
+  "unit": "setFeeReceiver",
+  "enc": 12,
+  "depth": 3,
+  "path_function": "sol:@C@St1inch@F@setFeeReceiver#8367",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setFeeReceiver/put_gate/st1inch_St1inch__certify_gate/test/St1inchCovTest_St1inch_setFeeReceiver_put12.t.sol",
+  "test": "test_put_St1inch_setFeeReceiver_path12",
+  "piece": null,
+  "region": {
+    "msg.value": [
+      "0",
+      "0"
+    ],
+    "feeReceiver_": [
+      "0",
+      "0"
+    ],
+    "msg.sender": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ]
+  },
+  "holes": {
+    "msg.sender": [
+      "1"
+    ]
+  },
+  "pins": {
+    "state._owner": "1"
+  },
+  "ladder": [
+    {
+      "var": "feeReceiver",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "feeReceiver",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "feeReceiver",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "feeReceiver",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "feeReceiver",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "feeReceiver",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    12,
+    6,
+    6,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "enabled": true,
+    "requested": 1,
+    "selected": 1,
+    "candidate_budget": 128,
+    "rendered": 0,
+    "ran": 0,
+    "refuted": 0,
+    "not_refuted": 0,
+    "not_run": 1,
+    "timed_out": false,
+    "returncode": null,
+    "fuzz_runs": 256,
+    "command": [],
+    "reason": "rollback path has no observable R2 post-state",
+    "candidates": [
+      {
+        "key": "s0:v0:equals:src0",
+        "var": "feeReceiver",
+        "text": "post == feeReceiver_",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      }
+    ]
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "feeReceiver",
+    "_owner"
+  ],
+  "oracle_vars": [
+    "feeReceiver",
+    "_owner"
+  ],
+  "slot_candidates": {
+    "asked": [],
+    "unanswered": [],
+    "rows_for_unasked_names": [
+      "_owner",
+      "feeReceiver"
+    ]
+  },
+  "esbmc_extra_args": [
+    "--z3",
+    "--tuple-node-flattener",
+    "--path-cov-fixture",
+    "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setFeeReceiver/fixture_gate.json"
+  ],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "611553cb6b",
+    "srcDirty": true,
+    "binaryMtime": 1785965824
+  },
+  "stats": {
+    "fuzz_params": 2,
+    "lifted": [
+      "msg.sender",
+      "feeReceiver_"
+    ],
+    "asserts": 1,
+    "state_asserts": 0,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 1,
+    "rollback_exit": true,
+    "exit_kind": "revert",
+    "return_asserts": 0,
+    "oracle_skipped": [
+      "2 layer-2/3 rung(s) DROPPED (this path exits through a ROLLBACK revert, so the value the ladder compared is the one between the write and the rollback -- a moment no test and no chain can read. A revert restores storage, so the only post-state a test can observe on this path is the pre-state, and the only layer left with anything to say is the exit kind)"
+    ],
+    "oracle_implied": [
+      "feeReceiver: post >= pre (entailed by a stronger rung that also HOLDS on feeReceiver, so asserting it detects nothing the stronger one misses)",
+      "feeReceiver: post <= pre (entailed by a stronger rung that also HOLDS on feeReceiver, so asserting it detects nothing the stronger one misses)",
+      "_owner: post >= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)",
+      "_owner: post <= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)"
+    ],
+    "state_stored": [
+      "state._owner := 1"
+    ],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": [
+    "slot candidates asked=0 unanswered=0",
+    "R2 ESBMC skipped: reverting path has no observable post-state"
+  ]
+}

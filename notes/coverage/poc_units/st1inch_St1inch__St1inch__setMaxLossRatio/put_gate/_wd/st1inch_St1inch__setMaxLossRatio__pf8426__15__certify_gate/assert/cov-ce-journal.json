@@ -1,0 +1,7180 @@
+{
+  "claims_decided": 81,
+  "claims_total": 81,
+  "complete": true,
+  "fingerprint": "374f4b0a3c804e2b",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#eq_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#eq_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#eq_maxLossRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#eq_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#ge_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#ge_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#ge_maxLossRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129090"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129090"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#ge_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#gt__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#gt__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#gt__owner",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#gt__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#gt_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#gt_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#gt_maxLossRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#gt_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#le_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#le_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#le_maxLossRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#le_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#lt__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#lt__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#lt__owner",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#lt__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#lt_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#lt_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#lt_maxLossRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "738918914"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "738918914"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#lt_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#ne__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#ne__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#ne__owner",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#ne__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#ne_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#ne_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#ne_maxLossRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#ne_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#nonvacuous\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#nonvacuous",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#nonvacuous",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#nonvacuous",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2aa2__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2aa2__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2aa2__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2aa2__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2aa2_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2aa2_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2aa2_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2aa2_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee10__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee10__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee10__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129600"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129600"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee10__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee10_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee10_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee10_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee10_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee11_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee11_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee11_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee11_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee12_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee12_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee12_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee12_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee14__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee14__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee14__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee14__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee14_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee14_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee14_maxLossRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "26921473"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "26921473"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee14_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee16__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee16__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee16__owner",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee16__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee17_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee17_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee17_maxLossRatio",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee17_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee19__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee19__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee19__owner",
+      "dropped_internal": 279,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee19__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee19_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee19_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee19_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "536969216"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "536969216"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee19_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee1_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee1_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee1_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee1_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee20_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee20_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee20_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129090"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129090"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee20_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee27__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee27__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee27__owner",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee27__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee27_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee27_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee27_maxLossRatio",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee27_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee28__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee28__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee28__owner",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee28__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee29__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee29__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee29__owner",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee29__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee34_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee34_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee34_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "10144257"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "10144257"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee34_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee35_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee35_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee35_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee35_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee36_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee36_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee36_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee36_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee37__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee37__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee37__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee37__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee38__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee38__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee38__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee38__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee38_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee38_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee38_maxLossRatio",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "536870909"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "536870909"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee38_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee39__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee39__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee39__owner",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee39__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee39_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee39_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee39_maxLossRatio",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee39_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee3__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee3__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee3__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee3__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee40__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee40__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee40__owner",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee40__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee40_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee40_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee40_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee40_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee41__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee41__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee41__owner",
+      "dropped_internal": 281,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee41__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee41_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee41_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee41_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee41_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee42__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee42__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee42__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee42__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee42_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee42_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee42_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee42_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee43__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee43__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee43__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee43__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee43_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee43_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee43_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee43_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee44__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee44__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee44__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee44__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee44_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee44_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee44_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee44_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee45__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee45__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee45__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee45__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee45_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee45_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee45_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee45_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee46__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee46__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee46__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee46__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee46_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee46_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee46_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee46_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee47__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee47__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee47__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee47__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee47_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee47_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee47_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee47_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee48__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee48__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee48__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee48__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee48_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee48_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee48_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee48_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee49__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee49__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee49__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee49__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee50__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee50__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee50__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee50__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee53_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee53_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee53_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129094"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129094"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee53_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee55__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee55__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee55__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129094"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129094"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee55__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee55_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee55_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee55_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee55_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee56_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee56_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee56_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee56_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee57__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee57__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee57__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee57__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee57_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee57_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee57_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee57_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee58__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee58__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee58__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee58__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee59__owner\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee59__owner",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee59__owner",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463129089"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee59__owner",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee7_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee7_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee7_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463126528"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "463126528"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee7_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee8_maxLossRatio\t": {
+      "claim": "sol:@C@St1inch@F@setMaxLossRatio#8426:path:15#r2ee8_maxLossRatio",
+      "compact_trace": false,
+      "condition": "setMaxLossRatio:path:15#r2ee8_maxLossRatio",
+      "dropped_internal": 280,
+      "entry_storage": [],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "1"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [
+        {
+          "name": "maxLossRatio_",
+          "value": "0"
+        },
+        {
+          "name": "return_value$__msgSender$2",
+          "value": "1"
+        }
+      ],
+      "final_state": [],
+      "inputs": [
+        {
+          "name": "maxLossRatio_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_function": "sol:@C@St1inch@F@setMaxLossRatio#8426",
+      "path_id": "15#r2ee8_maxLossRatio",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "depositors",
+        "tuple_instance$8986",
+        "tuple_instance$8949",
+        "_plugins",
+        "_balances",
+        "_allowances",
+        "TOKEN",
+        "maxLossRatio"
+      ],
+      "witness_count": 1
+    }
+  }
+}

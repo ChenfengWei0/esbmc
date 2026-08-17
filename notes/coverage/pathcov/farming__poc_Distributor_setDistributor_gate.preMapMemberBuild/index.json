@@ -1,0 +1,73 @@
+{
+  "benchmark": "farming",
+  "project": "farming",
+  "primary": {
+    "name": "FarmingPool",
+    "kind": "contract"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/poc_units/farming__Distributor__setDistributor/inputs/farming__FarmingPool.flat.sol",
+  "config": {
+    "mode": "per-method",
+    "scope": "single",
+    "onlyUnits": [
+      "setDistributor"
+    ],
+    "adhocTarget": null,
+    "solidityMaxTx": 1,
+    "unwind": null,
+    "focusWith": [],
+    "instrumentOnlyUnit": false,
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "solverFlags": [],
+    "solverFlagsReason": "tool default (no solver flag passed)",
+    "outerTimeoutSeconds": 60,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "Distributor__setDistributor",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/poc_units/farming__Distributor__setDistributor/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/poc_units/farming__Distributor__setDistributor/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function setDistributor",
+      "wallSeconds": 9.93,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "b8d6964b6a",
+        "srcDirty": false,
+        "binaryMtime": 1785720609
+      },
+      "pathsInstrumented": 5,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 5,
+      "F": 5,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 13,
+        "paths_with": 5,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 5,
+        "unrecorded_steps": 0
+      },
+      "contract": "Distributor",
+      "function": "setDistributor",
+      "kind": "contract"
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/farming__poc_Distributor_setDistributor_gate/reports"
+}

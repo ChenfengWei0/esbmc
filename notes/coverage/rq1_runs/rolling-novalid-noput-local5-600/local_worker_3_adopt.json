@@ -1,0 +1,40 @@
+{
+  "adopted": 1,
+  "count": 1,
+  "results_root": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT",
+  "rows": [
+    {
+      "adopted": true,
+      "adopted_ts": 1786425632.8461053,
+      "canonical_subject_id": "pop_001_Multicall",
+      "concrete_valid": 0,
+      "concrete_valid_count": 0,
+      "dataset": "bugfix124",
+      "has_R0": false,
+      "has_R1": false,
+      "has_R2": false,
+      "oracle_tags": [],
+      "put_valid": 0,
+      "put_valid_count": 0,
+      "schema": "veriput-rq1-adopted-subject/v1",
+      "source": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall",
+      "source_subject_dir": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall",
+      "source_subject_id": "pop_001_Multicall",
+      "subject": "pop_001_Multicall",
+      "target": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall",
+      "valid": 0,
+      "valid_count": 0,
+      "valid_put_with_R1": 0,
+      "valid_put_with_R1_count": 0,
+      "valid_put_with_R1_or_R2": 0,
+      "valid_put_with_R1_or_R2_count": 0,
+      "valid_put_with_R2": 0,
+      "valid_put_with_R2_count": 0,
+      "wall_put_s": 0.0,
+      "wall_result_s": 0.0,
+      "wall_total_s": 0.0
+    }
+  ],
+  "schema": "veriput-rq1-results-adopt/v1",
+  "source_root": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT"
+}

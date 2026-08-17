@@ -1,0 +1,133 @@
+{
+  "benchmark": "farming",
+  "project": "farming",
+  "primary": {
+    "name": "FarmingPool",
+    "kind": "contract"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/poc_units/farming__FarmingPool__deposit/inputs/farming__FarmingPool.flat.sol",
+  "config": {
+    "mode": "per-method",
+    "scope": "single",
+    "onlyUnits": [
+      "deposit"
+    ],
+    "adhocTarget": null,
+    "solidityMaxTx": 1,
+    "unwind": null,
+    "focusWith": [],
+    "instrumentOnlyUnit": false,
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "solverFlags": [],
+    "solverFlagsReason": "tool default (no solver flag passed)",
+    "outerTimeoutSeconds": 180,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "FarmingPool__deposit",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/poc_units/farming__FarmingPool__deposit/inputs/farming__FarmingPool.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/poc_units/farming__FarmingPool__deposit/inputs/farming__FarmingPool.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract FarmingPool --focus-function deposit",
+      "wallSeconds": 75.51,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "b8d6964b6a",
+        "srcDirty": true,
+        "binaryMtime": 1785871060
+      },
+      "pathsInstrumented": 154,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 38,
+      "depthBound": 4,
+      "depthBoundUnexpandedNames": [
+        "sol:@C@FarmAccounting@F@farmedSinceCheckpointScaled#5418",
+        "sol:@C@FarmingLib@F@_contextToInfo#6281",
+        "sol:@C@FarmingLib@F@_infoToContext#6291",
+        "sol:@C@FarmingLib@F@_lazyGetFarmed#6271",
+        "sol:@C@FarmingLib@F@_lazyGetSupply#6246",
+        "sol:@C@FarmingLib@F@farmedPerToken__mono_1#100005675",
+        "sol:@C@FarmingLib@F@getData#6018",
+        "sol:@C@FarmingPool@F@_approve#1523",
+        "sol:@C@Math@F@min#4047",
+        "sol:@C@SafeCast@F@toUint#3673",
+        "sol:@C@UserAccounting@F@updateFarmedPerToken#5761"
+      ],
+      "loopsTruncatedAtUnwindBound": 2,
+      "arithResolve": "OFF",
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "claimBudgetSeconds": 120,
+      "claimsAbandonedOverBudget": 0,
+      "verdictsPreserved": 0,
+      "claimExtraSolves": 0,
+      "claimVerdictsSuperseded": 0,
+      "asmApproxSites": 20,
+      "asmApproxLines": [
+        290,
+        303,
+        456,
+        514,
+        555,
+        715,
+        829,
+        855,
+        873,
+        894,
+        905,
+        1743,
+        2972,
+        3391,
+        3441,
+        3628,
+        3960,
+        3973,
+        4058,
+        4064
+      ],
+      "asmApproxConstructs": {
+        "YulFunctionCall:mload": 8,
+        "YulFunctionCall:mstore": 4,
+        "YulFunctionCall:call": 1,
+        "YulFunctionCall:chainid": 1,
+        "YulFunctionCall:staticcall": 1,
+        "YulFunctionCall:byte": 1,
+        "convert_failure": 2
+      },
+      "asmHavocLocals": [
+        "context",
+        "self"
+      ],
+      "asmHavocStructTypes": [
+        "BytesStatic",
+        "FarmingLib.Info"
+      ],
+      "pathsTotal": 154,
+      "F": 7,
+      "U": 147,
+      "uReasons": {
+        "bounded-holds": 147,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 45,
+        "paths_with": 7,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 7,
+        "unrecorded_steps": 0
+      },
+      "contract": "FarmingPool",
+      "function": "deposit",
+      "kind": "contract"
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/farming__poc_FarmingPool_deposit_gate/reports"
+}

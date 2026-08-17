@@ -1,0 +1,117 @@
+{
+  "batch_id": "manual-005-012-novalid-r3",
+  "case_count": 8,
+  "end_index": 12,
+  "ground_truth_gate": {
+    "case_count": 8,
+    "case_state": "notes/coverage/rq1_case_state.json",
+    "cases": [
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "acfix_fixlink_MStableYieldSource"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "pop_001_Multicall"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "pop_009_PrivatePool"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "pop_018_PrivatePool"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "pop_032_PuttyV2"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "pop_033_PrivatePool"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "pop_042_VaultAdapter"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "pop_046_CVXStaker"
+      }
+    ],
+    "manual_md": "notes/coverage/rq1_no_valid_manual_root_causes.md",
+    "ok": true,
+    "required_fields": [
+      "target_contract",
+      "target_functions",
+      "expected_units",
+      "expected_path",
+      "expected_region",
+      "expected_oracle",
+      "expected_r1r2",
+      "root_cause",
+      "last_failure",
+      "why_static_missed",
+      "prevention_code_change",
+      "prevention_files_read",
+      "fix_targets",
+      "source_files_read",
+      "evidence_files_read"
+    ],
+    "schema": "veriput-rq1-ground-truth-gate/v1"
+  },
+  "inventory": "notes/coverage/rq1_no_valid_each_case.json",
+  "lease_file": "notes/coverage/rq1_runs/manual-005-012-novalid-r3/leases.json",
+  "local_parallel": 5,
+  "manifest": "notes/coverage/rq1_runs/manual-005-012-novalid-r3/manifest.tsv",
+  "prepared_ts": 1786419620.5399137,
+  "remote_parallel": 3,
+  "run_dir": "notes/coverage/rq1_runs/manual-005-012-novalid-r3",
+  "run_state_filter": [
+    "NO_VALID"
+  ],
+  "schema": "veriput-rq1-case-batch/v1",
+  "selected_case_count": 8,
+  "start_index": 5,
+  "state": "notes/coverage/rq1_runs/manual-005-012-novalid-r3/supervisor.json"
+}

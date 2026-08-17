@@ -1,0 +1,113 @@
+{
+  "at_s": 1786710130.433,
+  "certified": 2,
+  "history": [
+    {
+      "at_s": 1786710119.323,
+      "contract": "Animalia",
+      "max_tx": 1,
+      "scope": "focus",
+      "stage": "started",
+      "timeout_s": 120,
+      "unit": "decimals"
+    },
+    {
+      "at_s": 1786710124.376,
+      "caveats": 2,
+      "path_function": "sol:@C@Animalia@F@decimals#1538",
+      "refused": 0,
+      "salvage": null,
+      "stage": "enumerated",
+      "witnessed": 2
+    },
+    {
+      "at_s": 1786710124.492,
+      "coord_count": 1,
+      "coords": [
+        "msg.value"
+      ],
+      "nonquery_pins": [],
+      "pins": {
+        "block.basefee": "0",
+        "block.chainid": "0",
+        "block.coinbase": "0",
+        "block.number": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+        "block.prevrandao": "0",
+        "block.timestamp": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+        "state._decimals": "18",
+        "tx.gasprice": "0"
+      },
+      "stage": "coordinates-selected",
+      "state_dependency_filter": {
+        "dropped": [
+          "state._burnFee",
+          "state._holderFee",
+          "state._maxTxAmount",
+          "state._owner$47",
+          "state._paused$527",
+          "state._prevBurnFee",
+          "state._prevHolderFee",
+          "state._rTotal",
+          "state._tFeeTotal",
+          "state._tTotal",
+          "state.isBuyCooldownEnabled",
+          "state.teamAddr",
+          "state.zeroAddr"
+        ],
+        "evidence": [
+          "state._decimals dependency distance 0: function decimals#1538 at AST src 30303:9:0"
+        ],
+        "live": [
+          "_decimals"
+        ],
+        "mode": "source-closure-no-inline-assembly"
+      },
+      "unsettable_query_pins": []
+    },
+    {
+      "at_s": 1786710124.522,
+      "candidate_values_per_direction": 2,
+      "coordinate_count": 1,
+      "path_count": 2,
+      "round_kind": "level-0",
+      "stage": "outer-round-started",
+      "timeout_s": 120
+    },
+    {
+      "at_s": 1786710126.648,
+      "failure": null,
+      "round_kind": "level-0",
+      "stage": "outer-round-finished",
+      "wall_s": 2.1
+    },
+    {
+      "at_s": 1786710126.649,
+      "candidate_values_per_direction": 6,
+      "coordinate_count": 1,
+      "path_count": 2,
+      "round_kind": "linear-refine",
+      "stage": "outer-round-started",
+      "timeout_s": 120
+    },
+    {
+      "at_s": 1786710130.432,
+      "failure": null,
+      "round_kind": "linear-refine",
+      "stage": "outer-round-finished",
+      "wall_s": 3.8
+    },
+    {
+      "at_s": 1786710130.433,
+      "certified": 2,
+      "not_certified": 0,
+      "result": "generalise-result.json",
+      "stage": "complete",
+      "witnessed": 2
+    }
+  ],
+  "not_certified": 0,
+  "result": "generalise-result.json",
+  "schema": "path-generalise-progress/1",
+  "stage": "complete",
+  "witnessed": 2
+}

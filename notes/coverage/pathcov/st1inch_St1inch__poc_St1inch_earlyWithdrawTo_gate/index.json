@@ -1,0 +1,109 @@
+{
+  "benchmark": "st1inch_St1inch",
+  "project": "st1inch",
+  "primary": {
+    "name": "St1inch",
+    "kind": "contract"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__earlyWithdrawTo/inputs/st1inch__St1inch.flat.sol",
+  "config": {
+    "mode": "per-method",
+    "scope": "single",
+    "onlyUnits": [
+      "earlyWithdrawTo"
+    ],
+    "adhocTarget": null,
+    "solidityMaxTx": 1,
+    "unwind": null,
+    "focusWith": [],
+    "instrumentOnlyUnit": false,
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "solverFlags": [
+      "--z3",
+      "--tuple-node-flattener"
+    ],
+    "solverFlagsReason": "default (bitwuzla) never returns on this benchmark: 22/22 runs killed, 0 reports, and re-measured as still not returning at 120 s after the struct-tag fix. z3 decides the encoding either way now; the flattener is kept because it is the configuration this corpus was collected under. NOTE: it does not make the claims decidable -- 5/5 solver-unknown on setFeeReceiver with and without it.",
+    "outerTimeoutSeconds": 300,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "St1inch__earlyWithdrawTo",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__earlyWithdrawTo/inputs/st1inch__St1inch.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__earlyWithdrawTo/inputs/st1inch__St1inch.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --z3 --tuple-node-flattener --contract St1inch --focus-function earlyWithdrawTo",
+      "wallSeconds": 55.05,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "b8d6964b6a",
+        "srcDirty": true,
+        "binaryMtime": 1785839566
+      },
+      "pathsInstrumented": 26,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 0,
+      "depthBoundUnexpandedNames": [],
+      "loopsTruncatedAtUnwindBound": 8,
+      "arithResolve": "OFF",
+      "degradedUnits": 12,
+      "scSitesOverCap": 0,
+      "claimBudgetSeconds": 120,
+      "claimsAbandonedOverBudget": 0,
+      "verdictsPreserved": 0,
+      "claimExtraSolves": 0,
+      "claimVerdictsSuperseded": 0,
+      "asmApproxSites": 16,
+      "asmApproxLines": [
+        350,
+        359,
+        511,
+        569,
+        609,
+        767,
+        879,
+        906,
+        925,
+        946,
+        1847,
+        2233,
+        3462,
+        3809,
+        3859
+      ],
+      "asmApproxConstructs": {
+        "YulFunctionCall:mload": 10,
+        "YulFunctionCall:mstore": 4,
+        "YulFunctionCall:call": 1,
+        "YulFunctionCall:staticcall": 1
+      },
+      "asmHavocLocals": [],
+      "asmHavocStructTypes": [],
+      "pathsTotal": 26,
+      "F": 0,
+      "U": 26,
+      "uReasons": {
+        "bounded-holds": 24,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 2,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "St1inch",
+      "function": "earlyWithdrawTo",
+      "kind": "contract"
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/st1inch_St1inch__poc_St1inch_earlyWithdrawTo_gate/reports"
+}

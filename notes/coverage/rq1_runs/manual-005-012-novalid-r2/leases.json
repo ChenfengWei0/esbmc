@@ -1,0 +1,27 @@
+{
+  "leases": {
+    "bugfix124/acfix_fixlink_MStableYieldSource": {
+      "bench": "bugfix124",
+      "category": "manual006_manual-005-012-novalid-r2",
+      "rc": 0,
+      "status": "done",
+      "subject": "acfix_fixlink_MStableYieldSource",
+      "ts": 1786417859.2946002,
+      "updated_ts": 1786418135.0454736,
+      "worker_id": "local:2670473:notes/coverage/rq1_runs/manual-005-012-novalid-r2/local_worker_0_progress.jsonl"
+    },
+    "bugfix124/ct_5_Proposals_can_be_cancelled": {
+      "bench": "bugfix124",
+      "category": "manual010_manual-005-012-novalid-r2",
+      "rc": 0,
+      "status": "done",
+      "subject": "ct_5_Proposals_can_be_cancelled",
+      "ts": 1786417859.2986324,
+      "updated_ts": 1786418265.1470945,
+      "worker_id": "local:2670474:notes/coverage/rq1_runs/manual-005-012-novalid-r2/local_worker_1_progress.jsonl"
+    }
+  },
+  "reset_by": "rq1_case_batch.py start",
+  "reset_ts": 1786417859.242214,
+  "schema": "veriput-rq1-case-leases/v1"
+}

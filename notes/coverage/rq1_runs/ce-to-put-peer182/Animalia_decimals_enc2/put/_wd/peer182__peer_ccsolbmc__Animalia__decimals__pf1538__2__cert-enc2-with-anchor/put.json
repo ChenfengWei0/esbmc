@@ -1,0 +1,427 @@
+{
+  "kind": "put",
+  "contract": "Animalia",
+  "unit": "decimals",
+  "enc": 2,
+  "depth": 1,
+  "path_function": "sol:@C@Animalia@F@decimals#1538",
+  "artifact_identity": "",
+  "storage_layout_available": true,
+  "storage_layout_error": null,
+  "getter_signature": null,
+  "file": "/home/samson/workspace/esbmc/notes/coverage/rq1_runs/ce-to-put-peer182/Animalia_decimals_enc2/put/peer182__peer_ccsolbmc__Animalia__cert-enc2-with-anchor/test/AnimaliaCovTest_Animalia_decimals_put2.t.sol",
+  "test": "test_put_Animalia_decimals_path2",
+  "piece": null,
+  "derived_by": {
+    "level0": true,
+    "level0_perturb": true,
+    "level0_points": {
+      "2": "(none)",
+      "3": "msg.value==0"
+    },
+    "probe_ladder": true,
+    "probe_ladder_budget": 8,
+    "probes": 8,
+    "geometric_bracket": false,
+    "sibling_subtraction": true,
+    "claim_budget": 0,
+    "shrink_rounds": 4,
+    "refine_rounds": 2,
+    "skip_bracket": true,
+    "cut_policy": "spec",
+    "max_region_pieces": 4,
+    "max_holes": 3,
+    "esbmc_args": [
+      "--overflow-check",
+      "--div-by-zero-check",
+      "--path-cov-arith-resolve",
+      "--unwindsetname",
+      "_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33"
+    ],
+    "scope": "focus",
+    "max_tx": 1
+  },
+  "region": {
+    "msg.value": [
+      "1",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ]
+  },
+  "holes": {},
+  "establish": [],
+  "pins": {
+    "block.basefee": "0",
+    "block.chainid": "0",
+    "block.coinbase": "0",
+    "block.number": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+    "block.prevrandao": "0",
+    "block.timestamp": "115792089237316195423570985008687907853269984665640564039457584007913129639934",
+    "tx.gasprice": "0",
+    "state._decimals": "18"
+  },
+  "ladder": [],
+  "ladder_summary": null,
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 256,
+  "r2_candidate_budget": 512,
+  "r2_fuzz_prefilter": {
+    "enabled": true,
+    "refutation_only": true,
+    "proves_candidates": false,
+    "proof_consumer": "ESBMC",
+    "requested": 1,
+    "selected": 1,
+    "candidate_budget": 96,
+    "rendered": 0,
+    "ran": 0,
+    "refuted": 0,
+    "not_refuted": 0,
+    "not_run": 1,
+    "timed_out": false,
+    "returncode": null,
+    "fuzz_runs": 64,
+    "command": [],
+    "reason": "revert path has no observable R2 post-state",
+    "candidates": [
+      {
+        "key": "s0:v0:equals:src0",
+        "var": "return",
+        "text": "return == state._decimals",
+        "verdict": "NOT-RUN",
+        "reason": "revert path has no observable R2 post-state"
+      }
+    ]
+  },
+  "r2_ladder": {
+    "requested": true,
+    "candidate_count": 1,
+    "candidate_combo_counts": {
+      "R2": 1
+    },
+    "candidate_examples": [
+      {
+        "key": "s0:v0:equals:src0",
+        "var": "return",
+        "text": "return == state._decimals"
+      }
+    ],
+    "dedup_dropped": 0,
+    "fuzz_refutation_only": true,
+    "fuzz_proves_candidates": false,
+    "fuzz_refuted": 0,
+    "fuzz_not_refuted": 0,
+    "fuzz_not_run": 1,
+    "fuzz_selected": 1,
+    "fuzz_rendered": 0,
+    "survivors_sent_to_esbmc": 0,
+    "esbmc_rows_total": 0,
+    "esbmc_proved": 0,
+    "esbmc_refuted": 0,
+    "esbmc_unknown": 0,
+    "proved_combo_counts": {},
+    "row_combo_counts": {},
+    "verifier_rows": [],
+    "skip_reason": "revert path has no observable R2 post-state",
+    "proof_consumer": "ESBMC",
+    "soundness_note": "Forge fuzz is used only to refute candidates with concrete counterexamples. HOLDS/PUT-valid requires ESBMC proof."
+  },
+  "r1_oracle_ladder": {
+    "priority_vars": [
+      "_decimals"
+    ],
+    "skipped": [
+      "block.basefee: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "block.chainid: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "block.coinbase: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "block.number: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "block.prevrandao: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "block.timestamp: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "msg.value: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+      "tx.gasprice: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable"
+    ],
+    "source": "certified-region-state-coordinates",
+    "proof": "ESBMC path-cov-assert HOLDS rows under k-induction with max-k-step 30 and solidity-max-tx 1"
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "_decimals"
+  ],
+  "oracle_vars": [
+    "_decimals"
+  ],
+  "slot_candidates": {
+    "asked": [],
+    "unanswered": [],
+    "rows_for_unasked_names": []
+  },
+  "esbmc_extra_args": [
+    "--overflow-check",
+    "--div-by-zero-check",
+    "--path-cov-arith-resolve",
+    "--unwindsetname",
+    "_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33"
+  ],
+  "proof_strategy": {
+    "kind": "k-induction",
+    "max_k_step": 30,
+    "solidity_max_tx": 1,
+    "esbmc_args": [
+      "--path-cov-arith-resolve",
+      "--k-induction",
+      "--enable-forward-condition",
+      "--max-k-step",
+      "30"
+    ]
+  },
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "constructor_staticcall_mocks": 0,
+  "constructor_param_interface_mocks": 0,
+  "constructor_param_struct_field_interface_mocks": 0,
+  "constructor_param_runtime_interface_mocks": 0,
+  "constructor_param_hascode_mocks": 0,
+  "runtime_interface_mocks": 0,
+  "runtime_interface_mock_calls": 0,
+  "runtime_staticcall_mocks": 0,
+  "stage4_kind": "certified-region",
+  "timing": {
+    "generation_timeout_s": 300,
+    "generation_wall_s": 4.439,
+    "put_driver_wall_s": 4.688
+  },
+  "materialization": {
+    "is_put": true,
+    "is_concrete": false,
+    "is_refusal": false,
+    "put_failure_reason": null,
+    "r1r2_failure_reason": "no verifier-backed R1/R2 oracle rendered",
+    "fallback_after_put_attempt": false,
+    "wide_fuzz_coords": [
+      "msg.sender",
+      "msg.value"
+    ],
+    "oracle_classes": [
+      "R0"
+    ],
+    "oracle_tags": [
+      "R0"
+    ],
+    "has_R0": true,
+    "has_R1": false,
+    "has_R2": false,
+    "has_R1_or_R2": false,
+    "oracle_class_counts": {
+      "R0": 1
+    },
+    "oracle_class_combinations": [
+      "R0"
+    ],
+    "oracle_class_combo_counts": {
+      "R0": 1
+    },
+    "r2_requested": true,
+    "r2_fuzz_prefilter": {
+      "enabled": true,
+      "refutation_only": true,
+      "proves_candidates": false,
+      "proof_consumer": "ESBMC",
+      "requested": 1,
+      "selected": 1,
+      "candidate_budget": 96,
+      "rendered": 0,
+      "ran": 0,
+      "refuted": 0,
+      "not_refuted": 0,
+      "not_run": 1,
+      "timed_out": false,
+      "returncode": null,
+      "fuzz_runs": 64,
+      "command": [],
+      "reason": "revert path has no observable R2 post-state",
+      "candidates": [
+        {
+          "key": "s0:v0:equals:src0",
+          "var": "return",
+          "text": "return == state._decimals",
+          "verdict": "NOT-RUN",
+          "reason": "revert path has no observable R2 post-state"
+        }
+      ]
+    },
+    "r2_ladder": {
+      "requested": true,
+      "candidate_count": 1,
+      "candidate_combo_counts": {
+        "R2": 1
+      },
+      "candidate_examples": [
+        {
+          "key": "s0:v0:equals:src0",
+          "var": "return",
+          "text": "return == state._decimals"
+        }
+      ],
+      "dedup_dropped": 0,
+      "fuzz_refutation_only": true,
+      "fuzz_proves_candidates": false,
+      "fuzz_refuted": 0,
+      "fuzz_not_refuted": 0,
+      "fuzz_not_run": 1,
+      "fuzz_selected": 1,
+      "fuzz_rendered": 0,
+      "survivors_sent_to_esbmc": 0,
+      "esbmc_rows_total": 0,
+      "esbmc_proved": 0,
+      "esbmc_refuted": 0,
+      "esbmc_unknown": 0,
+      "proved_combo_counts": {},
+      "row_combo_counts": {},
+      "verifier_rows": [],
+      "skip_reason": "revert path has no observable R2 post-state",
+      "proof_consumer": "ESBMC",
+      "soundness_note": "Forge fuzz is used only to refute candidates with concrete counterexamples. HOLDS/PUT-valid requires ESBMC proof."
+    }
+  },
+  "binary": {
+    "head": "cec4501b43",
+    "srcDirty": true,
+    "binaryMtime": 1786709887
+  },
+  "stats": {
+    "fuzz_params": 2,
+    "lifted": [
+      "msg.sender",
+      "msg.value"
+    ],
+    "rendered_width": {
+      "msg.sender": 1461501637330902918203684832716283019655932542975,
+      "msg.value": 115792089237316195423570985008687907853269984665640564039457584007913129639935
+    },
+    "wide_fuzz_coords": [
+      "msg.sender",
+      "msg.value"
+    ],
+    "dynamic_fuzz_coords": [],
+    "asserts": 1,
+    "verifier_asserts": 0,
+    "state_asserts": 0,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 1,
+    "rollback_exit": false,
+    "exit_kind": "revert",
+    "return_asserts": 0,
+    "oracle_classes": [
+      "R0"
+    ],
+    "oracle_class_counts": {
+      "R0": 1
+    },
+    "oracle_class_combinations": [
+      "R0"
+    ],
+    "oracle_class_combo_counts": {
+      "R0": 1
+    },
+    "oracle_coordinate_classes": [],
+    "assertion_oracles": [
+      {
+        "layer": "exit",
+        "var": "exit",
+        "text": "path exits through revert",
+        "canonical_text": "path exits through revert",
+        "classes": [
+          "R0"
+        ],
+        "class_combo": "R0",
+        "coordinates": [],
+        "coordinate_classes": [],
+        "verdict": "HOLDS",
+        "emitted_in_test": true,
+        "guarded": false
+      }
+    ],
+    "oracle_skipped": [],
+    "oracle_implied": [],
+    "state_stored": [
+      "state._decimals := 18"
+    ],
+    "state_skipped": [],
+    "established_relations": [],
+    "param_interface_mock_calls": 0,
+    "env_unchecked": [],
+    "path_guard_assumes": 1,
+    "path_guard_skipped": [],
+    "repaired_unsupported_skeleton": false,
+    "r1_oracle_ladder": {
+      "priority_vars": [
+        "_decimals"
+      ],
+      "skipped": [
+        "block.basefee: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "block.chainid: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "block.coinbase: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "block.number: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "block.prevrandao: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "block.timestamp: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "msg.value: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable",
+        "tx.gasprice: environment coordinate is establishable/checkable in Foundry, but it is not a post-state ladder variable"
+      ],
+      "source": "certified-region-state-coordinates",
+      "proof": "ESBMC path-cov-assert HOLDS rows under k-induction with max-k-step 30 and solidity-max-tx 1"
+    },
+    "r2_ladder": {
+      "requested": true,
+      "candidate_count": 1,
+      "candidate_combo_counts": {
+        "R2": 1
+      },
+      "candidate_examples": [
+        {
+          "key": "s0:v0:equals:src0",
+          "var": "return",
+          "text": "return == state._decimals"
+        }
+      ],
+      "dedup_dropped": 0,
+      "fuzz_refutation_only": true,
+      "fuzz_proves_candidates": false,
+      "fuzz_refuted": 0,
+      "fuzz_not_refuted": 0,
+      "fuzz_not_run": 1,
+      "fuzz_selected": 1,
+      "fuzz_rendered": 0,
+      "survivors_sent_to_esbmc": 0,
+      "esbmc_rows_total": 0,
+      "esbmc_proved": 0,
+      "esbmc_refuted": 0,
+      "esbmc_unknown": 0,
+      "proved_combo_counts": {},
+      "row_combo_counts": {},
+      "verifier_rows": [],
+      "skip_reason": "revert path has no observable R2 post-state",
+      "proof_consumer": "ESBMC",
+      "soundness_note": "Forge fuzz is used only to refute candidates with concrete counterexamples. HOLDS/PUT-valid requires ESBMC proof."
+    }
+  },
+  "notes": [
+    "slot candidates asked=0 unanswered=0",
+    "R2 ESBMC skipped: reverting path has no observable post-state",
+    "msg.sender is absent from the certified region and pins; lifting the Foundry-executable nonzero address domain because the certification proof leaves sender unconstrained"
+  ],
+  "stage2_source": "certified-region",
+  "certification_source": "structural-abi-gate",
+  "certified_detail_stage4_kind": null,
+  "certified_detail_source": "structural-abi-gate",
+  "ce_anchor": {
+    "status": "refused",
+    "reason": "certified basis replay did not record a file and test"
+  }
+}

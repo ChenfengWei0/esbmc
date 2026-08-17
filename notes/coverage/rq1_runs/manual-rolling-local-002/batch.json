@@ -1,0 +1,138 @@
+{
+  "batch_id": "manual-rolling-local-002",
+  "case_count": 5,
+  "end_index": 5,
+  "ground_truth_gate": {
+    "case_count": 5,
+    "case_state": "notes/coverage/rq1_case_state.json",
+    "cases": [
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "acfix_fixlink_MStableYieldSource"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": true,
+        "missing": [],
+        "ok": true,
+        "state": "NO_VALID",
+        "subject": "pop_001_Multicall"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": false,
+        "missing": [
+          "target_contract",
+          "target_functions",
+          "expected_units",
+          "expected_path",
+          "expected_region",
+          "expected_oracle",
+          "expected_r1r2",
+          "root_cause",
+          "last_failure",
+          "why_static_missed",
+          "prevention_code_change",
+          "prevention_files_read",
+          "fix_targets",
+          "source_files_read",
+          "evidence_files_read"
+        ],
+        "ok": false,
+        "state": "NO_VALID",
+        "subject": "pop_048_PrivatePool"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": false,
+        "missing": [
+          "target_contract",
+          "target_functions",
+          "expected_units",
+          "expected_path",
+          "expected_region",
+          "expected_oracle",
+          "expected_r1r2",
+          "root_cause",
+          "last_failure",
+          "why_static_missed",
+          "prevention_code_change",
+          "prevention_files_read",
+          "fix_targets",
+          "source_files_read",
+          "evidence_files_read"
+        ],
+        "ok": false,
+        "state": "NO_VALID",
+        "subject": "pop_049_Cooler"
+      },
+      {
+        "bench": "bugfix124",
+        "has_section": true,
+        "has_structured_ground_truth": false,
+        "missing": [
+          "target_contract",
+          "target_functions",
+          "expected_units",
+          "expected_path",
+          "expected_region",
+          "expected_oracle",
+          "expected_r1r2",
+          "root_cause",
+          "last_failure",
+          "why_static_missed",
+          "prevention_code_change",
+          "prevention_files_read",
+          "fix_targets",
+          "source_files_read",
+          "evidence_files_read"
+        ],
+        "ok": false,
+        "state": "NO_VALID",
+        "subject": "pop_058_PuttyV2"
+      }
+    ],
+    "manual_md": "notes/coverage/rq1_no_valid_manual_root_causes.md",
+    "ok": false,
+    "required_fields": [
+      "target_contract",
+      "target_functions",
+      "expected_units",
+      "expected_path",
+      "expected_region",
+      "expected_oracle",
+      "expected_r1r2",
+      "root_cause",
+      "last_failure",
+      "why_static_missed",
+      "prevention_code_change",
+      "prevention_files_read",
+      "fix_targets",
+      "source_files_read",
+      "evidence_files_read"
+    ],
+    "schema": "veriput-rq1-ground-truth-gate/v1"
+  },
+  "inventory": "notes/coverage/rq1_no_valid_each_case.json",
+  "lease_file": "notes/coverage/rq1_runs/manual-rolling-local-002/leases.json",
+  "local_parallel": 5,
+  "manifest": "notes/coverage/rq1_runs/manual-rolling-local-002/manifest.tsv",
+  "prepared_ts": 1786423901.916308,
+  "remote_parallel": 0,
+  "run_dir": "notes/coverage/rq1_runs/manual-rolling-local-002",
+  "run_state_filter": [
+    "NO_VALID"
+  ],
+  "schema": "veriput-rq1-case-batch/v1",
+  "selected_case_count": 5,
+  "start_index": 5,
+  "state": "notes/coverage/rq1_runs/manual-rolling-local-002/supervisor.json"
+}

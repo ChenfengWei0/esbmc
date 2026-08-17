@@ -1,0 +1,623 @@
+{
+  "batch_id": "rolling-novalid-noput-local5-600",
+  "events": [
+    {
+      "batch_id": "rolling-novalid-noput-local5-600",
+      "cases": [
+        {
+          "active_processes": 4,
+          "bench": "bugfix124",
+          "cert_bucket_counts": {},
+          "certified_regions": null,
+          "decision": "继续跑",
+          "decision_reason": "仍有活进程且尚未出现终局失败信号",
+          "put": 0,
+          "quality_bucket": "NO_VALID",
+          "r1r2": 0,
+          "stage": "Stage1/wrapper",
+          "stage4_put_rows": 0,
+          "stage4_r1r2_rows": 0,
+          "stage4_valid_rows": 0,
+          "subject": "acfix_fixlink_MStableYieldSource",
+          "valid": 0
+        },
+        {
+          "active_processes": 8,
+          "bench": "bugfix124",
+          "cert_bucket_counts": {},
+          "certified_regions": null,
+          "decision": "继续跑",
+          "decision_reason": "仍有活进程且尚未出现终局失败信号",
+          "put": 0,
+          "quality_bucket": "NO_VALID",
+          "r1r2": 0,
+          "stage": "Stage1/wrapper",
+          "stage4_put_rows": 0,
+          "stage4_r1r2_rows": 0,
+          "stage4_valid_rows": 0,
+          "subject": "acfix_fixlink_Product",
+          "valid": 0
+        },
+        {
+          "active_processes": 4,
+          "bench": "bugfix124",
+          "cert_bucket_counts": {},
+          "certified_regions": null,
+          "decision": "继续跑",
+          "decision_reason": "仍有活进程且尚未出现终局失败信号",
+          "put": 0,
+          "quality_bucket": "NO_VALID",
+          "r1r2": 0,
+          "stage": "Stage1/wrapper",
+          "stage4_put_rows": 0,
+          "stage4_r1r2_rows": 0,
+          "stage4_valid_rows": 0,
+          "subject": "acfix_fixlink_Product2",
+          "valid": 0
+        },
+        {
+          "active_processes": 1,
+          "bench": "bugfix124",
+          "cert_bucket_counts": {},
+          "certified_regions": null,
+          "decision": "继续跑",
+          "decision_reason": "仍有活进程且尚未出现终局失败信号",
+          "put": 0,
+          "quality_bucket": "NO_VALID",
+          "r1r2": 0,
+          "stage": "Stage4/PUT",
+          "stage4_put_rows": 0,
+          "stage4_r1r2_rows": 0,
+          "stage4_valid_rows": 0,
+          "subject": "pop_001_Multicall",
+          "valid": 0
+        },
+        {
+          "active_processes": 4,
+          "bench": "bugfix124",
+          "cert_bucket_counts": {},
+          "certified_regions": null,
+          "decision": "继续跑",
+          "decision_reason": "仍有活进程且尚未出现终局失败信号",
+          "put": 0,
+          "quality_bucket": "NO_VALID",
+          "r1r2": 0,
+          "stage": "Stage1/wrapper",
+          "stage4_put_rows": 0,
+          "stage4_r1r2_rows": 0,
+          "stage4_valid_rows": 0,
+          "subject": "pop_009_PrivatePool",
+          "valid": 0
+        }
+      ],
+      "hard_stop_cases": [],
+      "hard_stop_required": false,
+      "iteration": 1,
+      "local_resources": {
+        "matching_process_count": 22,
+        "matching_processes": [
+          "3816242 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/rq1_local_pump.py --tsv notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/manifest.local.tsv --state notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_0_state.json --progress notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_0_progress.jsonl --interpret-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_0_interpret.json --adopt-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_0_adopt.json --log notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_0.log --lease-file notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/leases.json --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --limit 0 --loop --timeout 600 --esbmc-run-timeout 600 --memlimit-gib 8 --jobs 1 --esbmc-rss-limit-gib 18",
+          "3816243 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/rq1_local_pump.py --tsv notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/manifest.local.tsv --state notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_1_state.json --progress notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_1_progress.jsonl --interpret-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_1_interpret.json --adopt-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_1_adopt.json --log notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_1.log --lease-file notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/leases.json --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --limit 0 --loop --timeout 600 --esbmc-run-timeout 600 --memlimit-gib 8 --jobs 1 --esbmc-rss-limit-gib 18",
+          "3816244 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/rq1_local_pump.py --tsv notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/manifest.local.tsv --state notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_2_state.json --progress notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_2_progress.jsonl --interpret-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_2_interpret.json --adopt-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_2_adopt.json --log notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_2.log --lease-file notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/leases.json --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --limit 0 --loop --timeout 600 --esbmc-run-timeout 600 --memlimit-gib 8 --jobs 1 --esbmc-rss-limit-gib 18",
+          "3816245 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/rq1_local_pump.py --tsv notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/manifest.local.tsv --state notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_3_state.json --progress notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_3_progress.jsonl --interpret-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_3_interpret.json --adopt-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_3_adopt.json --log notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_3.log --lease-file notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/leases.json --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --limit 0 --loop --timeout 600 --esbmc-run-timeout 600 --memlimit-gib 8 --jobs 1 --esbmc-rss-limit-gib 18",
+          "3816246 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/rq1_local_pump.py --tsv notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/manifest.local.tsv --state notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_4_state.json --progress notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_4_progress.jsonl --interpret-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_4_interpret.json --adopt-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_4_adopt.json --log notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_4.log --lease-file notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/leases.json --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --limit 0 --loop --timeout 600 --esbmc-run-timeout 600 --memlimit-gib 8 --jobs 1 --esbmc-rss-limit-gib 18",
+          "3816259 python3 notes/coverage/scripts/rq1_veriput_run.py --veriput-root /home/samson/workspace/VeriPUT --benchmark bugfix124 --subject-id acfix_fixlink_MStableYieldSource --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --timeout 600 --esbmc-run-timeout 600 --wrapper-grace 60 --forge-timeout 180 --memlimit-gib 8 --jobs 1 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --redo",
+          "3816261 python3 notes/coverage/scripts/rq1_veriput_run.py --veriput-root /home/samson/workspace/VeriPUT --benchmark bugfix124 --subject-id acfix_fixlink_Product --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --timeout 600 --esbmc-run-timeout 600 --wrapper-grace 60 --forge-timeout 180 --memlimit-gib 8 --jobs 1 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --redo",
+          "3816263 python3 notes/coverage/scripts/rq1_veriput_run.py --veriput-root /home/samson/workspace/VeriPUT --benchmark bugfix124 --subject-id acfix_fixlink_Product2 --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --timeout 600 --esbmc-run-timeout 600 --wrapper-grace 60 --forge-timeout 180 --memlimit-gib 8 --jobs 1 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --redo",
+          "3816265 python3 notes/coverage/scripts/rq1_veriput_run.py --veriput-root /home/samson/workspace/VeriPUT --benchmark bugfix124 --subject-id pop_001_Multicall --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --timeout 600 --esbmc-run-timeout 600 --wrapper-grace 60 --forge-timeout 180 --memlimit-gib 8 --jobs 1 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --redo",
+          "3816267 python3 notes/coverage/scripts/rq1_veriput_run.py --veriput-root /home/samson/workspace/VeriPUT --benchmark bugfix124 --subject-id pop_009_PrivatePool --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --timeout 600 --esbmc-run-timeout 600 --wrapper-grace 60 --forge-timeout 180 --memlimit-gib 8 --jobs 1 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --redo",
+          "3816339 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/certify_all.py --subject-dir /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_MStableYieldSource --subject-benchmark bugfix124 --unit approveMax --ast-cache-root /tmp/veriput_rq1_ast_cache --out /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/cert/shards/001-approveMax.jsonl --recipe-version veriput-strong/27-proof-budgeted-r2 --jobs 1 --probes 8 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --claim-budget 0 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --max-holes 3 --max-region-pieces 4 --cut-policy spec --state-struct-fields --slot-coords 20 --static-uncontrolled-inseparable --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33 --env-coord msg.sender --timeout 79 --run-timeout 79 --memlimit-gib 8 --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/cert/work --mem-fraction 0.6 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+          "3816430 /usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_MStableYieldSource/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_MStableYieldSource/flat.sol.solast --contract MStableYieldSource --unit approveMax --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 79 --memlimit 8g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/cert/work/001-approveMax/bugfix124__acfix_fixlink_MStableYieldSource/approveMax --max-holes 3 --max-region-pieces 4 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --env-coord msg.sender --slot-coords 20 --state-struct-fields --cut-policy spec --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3816621 /home/samson/workspace/esbmc/build/src/esbmc/esbmc /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_MStableYieldSource/flat.sol.solast --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_MStableYieldSource/flat.sol --contract MStableYieldSource --solidity-path-coverage --solidity-max-tx 1 --memlimit 8g --result-only --focus-function approveMax --cov-report-json --overflow-check --div-by-zero-check --path-cov-arith-resolve --unwindsetname _ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3816622 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/certify_all.py --subject-dir /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_009_PrivatePool --subject-benchmark bugfix124 --unit flashFeeAndProtocolFee --ast-cache-root /tmp/veriput_rq1_ast_cache --out /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/cert/shards/001-flashFeeAndProtocolFee.jsonl --recipe-version veriput-strong/27-proof-budgeted-r2 --jobs 1 --probes 8 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --claim-budget 0 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --max-holes 3 --max-region-pieces 4 --cut-policy spec --state-struct-fields --slot-coords 20 --static-uncontrolled-inseparable --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33 --timeout 59 --run-timeout 59 --memlimit-gib 8 --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/cert/work --mem-fraction 0.6 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+          "3816645 /usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_009_PrivatePool/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__pop_009_PrivatePool/flat.sol.solast --contract PrivatePool --unit flashFeeAndProtocolFee --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 59 --memlimit 8g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/cert/work/001-flashFeeAndProtocolFee/bugfix124__pop_009_PrivatePool/flashFeeAndProtocolFee --max-holes 3 --max-region-pieces 4 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --slot-coords 20 --state-struct-fields --cut-policy spec --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3816646 /home/samson/workspace/esbmc/build/src/esbmc/esbmc /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__pop_009_PrivatePool/flat.sol.solast --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_009_PrivatePool/flat.sol --contract PrivatePool --solidity-path-coverage --solidity-max-tx 1 --memlimit 8g --result-only --focus-function flashFeeAndProtocolFee --cov-report-json --branch-function-coverage --path-cov-probe --all-witnesses --max-witnesses 16 --overflow-check --div-by-zero-check --path-cov-arith-resolve --unwindsetname _ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3816647 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/certify_all.py --subject-dir /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product --subject-benchmark bugfix124 --unit settle --ast-cache-root /tmp/veriput_rq1_ast_cache --out /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/cert/shards/001-settle.jsonl --recipe-version veriput-strong/27-proof-budgeted-r2 --jobs 1 --probes 8 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --claim-budget 0 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --max-holes 3 --max-region-pieces 4 --cut-policy spec --state-struct-fields --slot-coords 20 --static-uncontrolled-inseparable --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33 --env-coord msg.sender --timeout 59 --run-timeout 59 --memlimit-gib 8 --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/cert/work --mem-fraction 0.6 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+          "3816648 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/certify_all.py --subject-dir /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product2 --subject-benchmark bugfix124 --unit settle --ast-cache-root /tmp/veriput_rq1_ast_cache --out /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/cert/shards/001-settle.jsonl --recipe-version veriput-strong/27-proof-budgeted-r2 --jobs 1 --probes 8 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --claim-budget 0 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --max-holes 3 --max-region-pieces 4 --cut-policy spec --state-struct-fields --slot-coords 20 --static-uncontrolled-inseparable --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33 --env-coord msg.sender --timeout 59 --run-timeout 59 --memlimit-gib 8 --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/cert/work --mem-fraction 0.6 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+          "3816703 /usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_Product/flat.sol.solast --contract Product --unit settle --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 59 --memlimit 8g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/cert/work/001-settle/bugfix124__acfix_fixlink_Product/settle --max-holes 3 --max-region-pieces 4 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --env-coord msg.sender --slot-coords 20 --state-struct-fields --cut-policy spec --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3816704 /usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product2/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_Product2/flat.sol.solast --contract Product --unit settle --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 59 --memlimit 8g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/cert/work/001-settle/bugfix124__acfix_fixlink_Product2/settle --max-holes 3 --max-region-pieces 4 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --env-coord msg.sender --slot-coords 20 --state-struct-fields --cut-policy spec --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3816773 /home/samson/workspace/esbmc/build/src/esbmc/esbmc /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_Product/flat.sol.solast --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product/flat.sol --contract Product --solidity-path-coverage --solidity-max-tx 1 --memlimit 8g --result-only --focus-function settle --cov-report-json --branch-function-coverage --path-cov-probe --all-witnesses --max-witnesses 16 --overflow-check --div-by-zero-check --path-cov-arith-resolve --unwindsetname _ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3816774 /home/samson/workspace/esbmc/build/src/esbmc/esbmc /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_Product2/flat.sol.solast --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product2/flat.sol --contract Product --solidity-path-coverage --solidity-max-tx 1 --memlimit 8g --result-only --focus-function settle --cov-report-json --branch-function-coverage --path-cov-probe --all-witnesses --max-witnesses 16 --overflow-check --div-by-zero-check --path-cov-arith-resolve --unwindsetname _ESBMC_alloc_nested_2d:0:16,nondet_string:0:33"
+        ],
+        "mem_available_gib": 38.42
+      },
+      "schema": "veriput-rq1-supervise-intervention/v1",
+      "ts": 1786425628.3031201
+    },
+    {
+      "batch_id": "rolling-novalid-noput-local5-600",
+      "cases": [
+        {
+          "active_processes": 4,
+          "bench": "bugfix124",
+          "cert_bucket_counts": {},
+          "certified_regions": null,
+          "decision": "继续跑",
+          "decision_reason": "仍有活进程且尚未出现终局失败信号",
+          "put": 0,
+          "quality_bucket": "NO_VALID",
+          "r1r2": 0,
+          "stage": "Stage1/wrapper",
+          "stage4_put_rows": 0,
+          "stage4_r1r2_rows": 0,
+          "stage4_valid_rows": 0,
+          "subject": "acfix_fixlink_MStableYieldSource",
+          "valid": 0
+        },
+        {
+          "active_processes": 8,
+          "bench": "bugfix124",
+          "cert_bucket_counts": {},
+          "certified_regions": null,
+          "decision": "继续跑",
+          "decision_reason": "仍有活进程且尚未出现终局失败信号",
+          "put": 0,
+          "quality_bucket": "NO_VALID",
+          "r1r2": 0,
+          "stage": "Stage1/wrapper",
+          "stage4_put_rows": 0,
+          "stage4_r1r2_rows": 0,
+          "stage4_valid_rows": 0,
+          "subject": "acfix_fixlink_Product",
+          "valid": 0
+        },
+        {
+          "active_processes": 4,
+          "bench": "bugfix124",
+          "cert_bucket_counts": {},
+          "certified_regions": null,
+          "decision": "继续跑",
+          "decision_reason": "仍有活进程且尚未出现终局失败信号",
+          "put": 0,
+          "quality_bucket": "NO_VALID",
+          "r1r2": 0,
+          "stage": "Stage1/wrapper",
+          "stage4_put_rows": 0,
+          "stage4_r1r2_rows": 0,
+          "stage4_valid_rows": 0,
+          "subject": "acfix_fixlink_Product2",
+          "valid": 0
+        },
+        {
+          "active_processes": 0,
+          "bench": "bugfix124",
+          "cert_bucket_counts": {},
+          "certified_regions": 0,
+          "decision": "转代码修复",
+          "decision_reason": "进程已结束且 no-valid",
+          "put": 0,
+          "quality_bucket": "no-valid",
+          "r1r2": 0,
+          "stage": "Stage4/PUT",
+          "stage4_put_rows": 0,
+          "stage4_r1r2_rows": 0,
+          "stage4_valid_rows": 0,
+          "subject": "pop_001_Multicall",
+          "valid": 0
+        },
+        {
+          "active_processes": 4,
+          "bench": "bugfix124",
+          "cert_bucket_counts": {
+            "NO-COORDINATE": 1
+          },
+          "certified_regions": null,
+          "decision": "转代码修复",
+          "decision_reason": "已有 valid 但不是 PUT；继续跑同轮不解决泛化",
+          "put": 0,
+          "quality_bucket": "VALID_NO_PUT",
+          "r1r2": 0,
+          "stage": "final/adopted",
+          "stage4_put_rows": 0,
+          "stage4_r1r2_rows": 0,
+          "stage4_valid_rows": 1,
+          "subject": "pop_009_PrivatePool",
+          "valid": 1
+        }
+      ],
+      "hard_stop_cases": [
+        {
+          "bench": "bugfix124",
+          "decision": "转代码修复",
+          "decision_reason": "已有 valid 但不是 PUT；继续跑同轮不解决泛化",
+          "subject": "pop_009_PrivatePool"
+        }
+      ],
+      "hard_stop_required": true,
+      "iteration": 2,
+      "local_resources": {
+        "matching_process_count": 21,
+        "matching_processes": [
+          "3816242 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/rq1_local_pump.py --tsv notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/manifest.local.tsv --state notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_0_state.json --progress notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_0_progress.jsonl --interpret-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_0_interpret.json --adopt-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_0_adopt.json --log notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_0.log --lease-file notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/leases.json --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --limit 0 --loop --timeout 600 --esbmc-run-timeout 600 --memlimit-gib 8 --jobs 1 --esbmc-rss-limit-gib 18",
+          "3816243 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/rq1_local_pump.py --tsv notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/manifest.local.tsv --state notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_1_state.json --progress notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_1_progress.jsonl --interpret-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_1_interpret.json --adopt-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_1_adopt.json --log notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_1.log --lease-file notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/leases.json --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --limit 0 --loop --timeout 600 --esbmc-run-timeout 600 --memlimit-gib 8 --jobs 1 --esbmc-rss-limit-gib 18",
+          "3816244 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/rq1_local_pump.py --tsv notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/manifest.local.tsv --state notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_2_state.json --progress notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_2_progress.jsonl --interpret-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_2_interpret.json --adopt-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_2_adopt.json --log notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_2.log --lease-file notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/leases.json --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --limit 0 --loop --timeout 600 --esbmc-run-timeout 600 --memlimit-gib 8 --jobs 1 --esbmc-rss-limit-gib 18",
+          "3816245 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/rq1_local_pump.py --tsv notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/manifest.local.tsv --state notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_3_state.json --progress notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_3_progress.jsonl --interpret-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_3_interpret.json --adopt-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_3_adopt.json --log notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_3.log --lease-file notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/leases.json --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --limit 0 --loop --timeout 600 --esbmc-run-timeout 600 --memlimit-gib 8 --jobs 1 --esbmc-rss-limit-gib 18",
+          "3816246 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/rq1_local_pump.py --tsv notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/manifest.local.tsv --state notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_4_state.json --progress notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_4_progress.jsonl --interpret-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_4_interpret.json --adopt-out notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_4_adopt.json --log notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/local_worker_4.log --lease-file notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/leases.json --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --limit 0 --loop --timeout 600 --esbmc-run-timeout 600 --memlimit-gib 8 --jobs 1 --esbmc-rss-limit-gib 18",
+          "3816259 python3 notes/coverage/scripts/rq1_veriput_run.py --veriput-root /home/samson/workspace/VeriPUT --benchmark bugfix124 --subject-id acfix_fixlink_MStableYieldSource --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --timeout 600 --esbmc-run-timeout 600 --wrapper-grace 60 --forge-timeout 180 --memlimit-gib 8 --jobs 1 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --redo",
+          "3816261 python3 notes/coverage/scripts/rq1_veriput_run.py --veriput-root /home/samson/workspace/VeriPUT --benchmark bugfix124 --subject-id acfix_fixlink_Product --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --timeout 600 --esbmc-run-timeout 600 --wrapper-grace 60 --forge-timeout 180 --memlimit-gib 8 --jobs 1 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --redo",
+          "3816263 python3 notes/coverage/scripts/rq1_veriput_run.py --veriput-root /home/samson/workspace/VeriPUT --benchmark bugfix124 --subject-id acfix_fixlink_Product2 --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --timeout 600 --esbmc-run-timeout 600 --wrapper-grace 60 --forge-timeout 180 --memlimit-gib 8 --jobs 1 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --redo",
+          "3816267 python3 notes/coverage/scripts/rq1_veriput_run.py --veriput-root /home/samson/workspace/VeriPUT --benchmark bugfix124 --subject-id pop_009_PrivatePool --result-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT --timeout 600 --esbmc-run-timeout 600 --wrapper-grace 60 --forge-timeout 180 --memlimit-gib 8 --jobs 1 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --redo",
+          "3816339 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/certify_all.py --subject-dir /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_MStableYieldSource --subject-benchmark bugfix124 --unit approveMax --ast-cache-root /tmp/veriput_rq1_ast_cache --out /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/cert/shards/001-approveMax.jsonl --recipe-version veriput-strong/27-proof-budgeted-r2 --jobs 1 --probes 8 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --claim-budget 0 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --max-holes 3 --max-region-pieces 4 --cut-policy spec --state-struct-fields --slot-coords 20 --static-uncontrolled-inseparable --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33 --env-coord msg.sender --timeout 79 --run-timeout 79 --memlimit-gib 8 --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/cert/work --mem-fraction 0.6 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+          "3816430 /usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_MStableYieldSource/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_MStableYieldSource/flat.sol.solast --contract MStableYieldSource --unit approveMax --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 79 --memlimit 8g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/cert/work/001-approveMax/bugfix124__acfix_fixlink_MStableYieldSource/approveMax --max-holes 3 --max-region-pieces 4 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --env-coord msg.sender --slot-coords 20 --state-struct-fields --cut-policy spec --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3816621 /home/samson/workspace/esbmc/build/src/esbmc/esbmc /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_MStableYieldSource/flat.sol.solast --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_MStableYieldSource/flat.sol --contract MStableYieldSource --solidity-path-coverage --solidity-max-tx 1 --memlimit 8g --result-only --focus-function approveMax --cov-report-json --overflow-check --div-by-zero-check --path-cov-arith-resolve --unwindsetname _ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3816647 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/certify_all.py --subject-dir /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product --subject-benchmark bugfix124 --unit settle --ast-cache-root /tmp/veriput_rq1_ast_cache --out /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/cert/shards/001-settle.jsonl --recipe-version veriput-strong/27-proof-budgeted-r2 --jobs 1 --probes 8 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --claim-budget 0 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --max-holes 3 --max-region-pieces 4 --cut-policy spec --state-struct-fields --slot-coords 20 --static-uncontrolled-inseparable --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33 --env-coord msg.sender --timeout 59 --run-timeout 59 --memlimit-gib 8 --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/cert/work --mem-fraction 0.6 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+          "3816648 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/certify_all.py --subject-dir /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product2 --subject-benchmark bugfix124 --unit settle --ast-cache-root /tmp/veriput_rq1_ast_cache --out /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/cert/shards/001-settle.jsonl --recipe-version veriput-strong/27-proof-budgeted-r2 --jobs 1 --probes 8 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --claim-budget 0 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --max-holes 3 --max-region-pieces 4 --cut-policy spec --state-struct-fields --slot-coords 20 --static-uncontrolled-inseparable --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33 --env-coord msg.sender --timeout 59 --run-timeout 59 --memlimit-gib 8 --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/cert/work --mem-fraction 0.6 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+          "3816703 /usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_Product/flat.sol.solast --contract Product --unit settle --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 59 --memlimit 8g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/cert/work/001-settle/bugfix124__acfix_fixlink_Product/settle --max-holes 3 --max-region-pieces 4 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --env-coord msg.sender --slot-coords 20 --state-struct-fields --cut-policy spec --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3816704 /usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product2/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_Product2/flat.sol.solast --contract Product --unit settle --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 59 --memlimit 8g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/cert/work/001-settle/bugfix124__acfix_fixlink_Product2/settle --max-holes 3 --max-region-pieces 4 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --env-coord msg.sender --slot-coords 20 --state-struct-fields --cut-policy spec --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3816774 /home/samson/workspace/esbmc/build/src/esbmc/esbmc /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_Product2/flat.sol.solast --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product2/flat.sol --contract Product --solidity-path-coverage --solidity-max-tx 1 --memlimit 8g --result-only --focus-function settle --cov-report-json --branch-function-coverage --path-cov-probe --all-witnesses --max-witnesses 16 --overflow-check --div-by-zero-check --path-cov-arith-resolve --unwindsetname _ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3820849 /usr/bin/python3 /home/samson/workspace/esbmc/notes/coverage/scripts/certify_all.py --subject-dir /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_009_PrivatePool --subject-benchmark bugfix124 --unit flashFee --ast-cache-root /tmp/veriput_rq1_ast_cache --out /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/cert/shards/002-flashFee.jsonl --recipe-version veriput-strong/27-proof-budgeted-r2 --jobs 1 --probes 8 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --claim-budget 0 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --max-holes 3 --max-region-pieces 4 --cut-policy spec --state-struct-fields --slot-coords 20 --static-uncontrolled-inseparable --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33 --timeout 55 --run-timeout 55 --memlimit-gib 8 --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/cert/work --mem-fraction 0.6 --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc",
+          "3820881 /usr/bin/python3 -u /home/samson/workspace/esbmc/scripts/solidity_path_generalise.py --esbmc /home/samson/workspace/esbmc/build/src/esbmc/esbmc --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_009_PrivatePool/flat.sol --ast /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__pop_009_PrivatePool/flat.sol.solast --contract PrivatePool --unit flashFee --scope focus --max-tx 1 --probes 8 --claim-budget 0 --refine-rounds 2 --shrink-rounds 4 --safety-retreat-after-tiny-cuts 2 --timeout 55 --memlimit 8g --workdir /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/cert/work/002-flashFee/bugfix124__pop_009_PrivatePool/flashFee --max-holes 3 --max-region-pieces 4 --level0 --level0-perturb --probe-witnesses 16 --probe-ladder --probe-ladder-budget 8 --static-uncontrolled-inseparable --skip-bracket --env-coord-disagreed --pin-agreed-establishable-env --pin-agreed-state --slot-coords 20 --state-struct-fields --cut-policy spec --esbmc-arg=--overflow-check --esbmc-arg=--div-by-zero-check --esbmc-arg=--path-cov-arith-resolve --esbmc-arg=--unwindsetname --esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3820950 /home/samson/workspace/esbmc/build/src/esbmc/esbmc /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__pop_009_PrivatePool/flat.sol.solast --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/pop_009_PrivatePool/flat.sol --contract PrivatePool --solidity-path-coverage --solidity-max-tx 1 --memlimit 8g --result-only --focus-function flashFee --cov-report-json --branch-function-coverage --path-cov-probe --all-witnesses --max-witnesses 16 --overflow-check --div-by-zero-check --path-cov-arith-resolve --unwindsetname _ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+          "3821106 /home/samson/workspace/esbmc/build/src/esbmc/esbmc /tmp/veriput_rq1_ast_cache/bugfix124/bugfix124__acfix_fixlink_Product/flat.sol.solast --sol /home/samson/workspace/VeriPUT/scripts/Results/workdirs/BugFix124/subjects/acfix_fixlink_Product/flat.sol --contract Product --solidity-path-coverage --solidity-max-tx 1 --memlimit 8g --result-only --focus-function settle --cov-report-json --overflow-check --div-by-zero-check --path-cov-arith-resolve --unwindsetname _ESBMC_alloc_nested_2d:0:16,nondet_string:0:33"
+        ],
+        "mem_available_gib": 38.06
+      },
+      "schema": "veriput-rq1-supervise-intervention/v1",
+      "ts": 1786425658.3290162
+    }
+  ],
+  "schema": "veriput-rq1-case-batch-supervise/v1",
+  "settlement": {
+    "batch_id": "rolling-novalid-noput-local5-600",
+    "bucket_counts": {
+      "NO_VALID": 4,
+      "VALID_NO_PUT": 1,
+      "put": 0,
+      "r1r2": 0,
+      "valid": 1
+    },
+    "case_count": 5,
+    "cases": [
+      {
+        "bench": "bugfix124",
+        "bucket": "NO_VALID",
+        "oracle_details": [],
+        "put_summaries": [],
+        "put_valid": 0,
+        "r1r2": 0,
+        "recovered_from_stage4_summary": false,
+        "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/result.json",
+        "scheduler_preflight": {
+          "bad_contract_jobs": [],
+          "exists": true,
+          "expected_contract": "MStableYieldSource",
+          "expected_units": [
+            "supplyTokenTo",
+            "redeemToken",
+            "approveMax",
+            "balanceOfToken",
+            "depositToken"
+          ],
+          "internal_target_wrappers": [],
+          "job_count": 6,
+          "ok": true,
+          "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_MStableYieldSource/unit-schedule.json",
+          "schedule_contract": null,
+          "scheduled_units": [
+            "approveMax",
+            "redeemToken",
+            "supplyTokenTo",
+            "depositToken",
+            "balanceOfToken",
+            "imBalances"
+          ],
+          "target_unit_hits": [
+            "supplyTokenTo",
+            "redeemToken",
+            "approveMax",
+            "balanceOfToken",
+            "depositToken"
+          ]
+        },
+        "subject": "acfix_fixlink_MStableYieldSource",
+        "valid": 0
+      },
+      {
+        "bench": "bugfix124",
+        "bucket": "NO_VALID",
+        "oracle_details": [],
+        "put_summaries": [],
+        "put_valid": 0,
+        "r1r2": 0,
+        "recovered_from_stage4_summary": false,
+        "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/result.json",
+        "scheduler_preflight": {
+          "bad_contract_jobs": [],
+          "exists": true,
+          "expected_contract": "Product",
+          "expected_units": [
+            "settle",
+            "settleAccount",
+            "openTake",
+            "closeTake",
+            "openMake",
+            "closeMake"
+          ],
+          "internal_target_wrappers": [],
+          "job_count": 27,
+          "ok": true,
+          "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product/unit-schedule.json",
+          "schedule_contract": null,
+          "scheduled_units": [
+            "settle",
+            "settleAccount",
+            "openTake",
+            "closeTake",
+            "openMake",
+            "closeMake",
+            "closeAll",
+            "updateClosed",
+            "updateOracle",
+            "openTakeFor",
+            "closeTakeFor",
+            "openMakeFor",
+            "closeMakeFor",
+            "utilizationBuffer",
+            "closed",
+            "pre",
+            "maintenance",
+            "maintenanceNext",
+            "isClosed",
+            "isLiquidating",
+            "position",
+            "latestVersion",
+            "positionAtVersion",
+            "valueAtVersion",
+            "shareAtVersion",
+            "rate",
+            "initialize"
+          ],
+          "target_unit_hits": [
+            "settle",
+            "settleAccount",
+            "openTake",
+            "closeTake",
+            "openMake",
+            "closeMake"
+          ]
+        },
+        "subject": "acfix_fixlink_Product",
+        "valid": 0
+      },
+      {
+        "bench": "bugfix124",
+        "bucket": "NO_VALID",
+        "oracle_details": [],
+        "put_summaries": [],
+        "put_valid": 0,
+        "r1r2": 0,
+        "recovered_from_stage4_summary": false,
+        "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/result.json",
+        "scheduler_preflight": {
+          "bad_contract_jobs": [],
+          "exists": true,
+          "expected_contract": "Product",
+          "expected_units": [
+            "settle",
+            "settleAccount",
+            "openTake",
+            "closeTake",
+            "openMake",
+            "closeMake"
+          ],
+          "internal_target_wrappers": [],
+          "job_count": 27,
+          "ok": true,
+          "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/acfix_fixlink_Product2/unit-schedule.json",
+          "schedule_contract": null,
+          "scheduled_units": [
+            "settle",
+            "settleAccount",
+            "openTake",
+            "closeTake",
+            "openMake",
+            "closeMake",
+            "closeAll",
+            "updateClosed",
+            "updateOracle",
+            "openTakeFor",
+            "closeTakeFor",
+            "openMakeFor",
+            "closeMakeFor",
+            "utilizationBuffer",
+            "closed",
+            "pre",
+            "maintenance",
+            "maintenanceNext",
+            "isClosed",
+            "isLiquidating",
+            "position",
+            "latestVersion",
+            "positionAtVersion",
+            "valueAtVersion",
+            "shareAtVersion",
+            "rate",
+            "initialize"
+          ],
+          "target_unit_hits": [
+            "settle",
+            "settleAccount",
+            "openTake",
+            "closeTake",
+            "openMake",
+            "closeMake"
+          ]
+        },
+        "subject": "acfix_fixlink_Product2",
+        "valid": 0
+      },
+      {
+        "bench": "bugfix124",
+        "bucket": "NO_VALID",
+        "oracle_details": [
+          {
+            "assertion_oracles": [],
+            "coordinate_counts": {},
+            "oracle_tag_counts": {},
+            "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/put/deploy_only/put-summary.json"
+          },
+          {
+            "assertion_oracles": [],
+            "coordinate_counts": {},
+            "oracle_tag_counts": {},
+            "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/put/final_deploy_concrete_fallback/put-summary.json"
+          }
+        ],
+        "put_summaries": [
+          {
+            "b": null,
+            "put_rows": null,
+            "r1r2_rows": null,
+            "unit": "deploy_only",
+            "valid_reference_rows": null
+          },
+          {
+            "b": null,
+            "put_rows": null,
+            "r1r2_rows": null,
+            "unit": "final_deploy_concrete_fallback",
+            "valid_reference_rows": null
+          }
+        ],
+        "put_valid": 0,
+        "r1r2": 0,
+        "recovered_from_stage4_summary": false,
+        "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/result.json",
+        "scheduler_preflight": {
+          "bad_contract_jobs": [],
+          "exists": true,
+          "expected_contract": "Multicall",
+          "expected_units": [
+            "multicall"
+          ],
+          "internal_target_wrappers": [],
+          "job_count": 0,
+          "ok": true,
+          "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_001_Multicall/unit-schedule.json",
+          "schedule_contract": null,
+          "scheduled_units": [],
+          "target_unit_hits": []
+        },
+        "subject": "pop_001_Multicall",
+        "valid": 0
+      },
+      {
+        "bench": "bugfix124",
+        "bucket": "VALID_NO_PUT",
+        "oracle_details": [
+          {
+            "assertion_oracles": [],
+            "coordinate_counts": {},
+            "oracle_tag_counts": {},
+            "summary": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/put/bugfix124__pop_009_PrivatePool__flashFeeAndProtocolFee/put-summary.json"
+          }
+        ],
+        "put_summaries": [
+          {
+            "b": 0,
+            "put_rows": 0,
+            "r1r2_rows": 0,
+            "unit": "bugfix124__pop_009_PrivatePool__flashFeeAndProtocolFee",
+            "valid_reference_rows": 1
+          }
+        ],
+        "put_valid": 0,
+        "r1r2": 0,
+        "recovered_from_stage4_summary": true,
+        "result_json": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/result.json",
+        "scheduler_preflight": {
+          "bad_contract_jobs": [],
+          "exists": true,
+          "expected_contract": "PrivatePool",
+          "expected_units": [
+            "buy",
+            "sell",
+            "execute",
+            "flashFeeAndProtocolFee",
+            "flashFee",
+            "setFeeRate",
+            "setMerkleRoot"
+          ],
+          "internal_target_wrappers": [],
+          "job_count": 23,
+          "ok": true,
+          "schedule": "/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_009_PrivatePool/unit-schedule.json",
+          "schedule_contract": null,
+          "scheduled_units": [
+            "flashFeeAndProtocolFee",
+            "flashFee",
+            "setMerkleRoot",
+            "setFeeRate",
+            "setUseStolenNftOracle",
+            "setPayRoyalties",
+            "setVirtualReserves",
+            "setAllParameters",
+            "sell",
+            "withdraw",
+            "execute",
+            "buy",
+            "flashLoan",
+            "deposit",
+            "change",
+            "price",
+            "flashFeeToken",
+            "changeFeeQuote",
+            "buyQuote",
+            "sellQuote",
+            "availableForFlashLoan",
+            "sumWeightsAndValidateProof",
+            "initialize"
+          ],
+          "target_unit_hits": [
+            "buy",
+            "sell",
+            "execute",
+            "flashFeeAndProtocolFee",
+            "flashFee",
+            "setFeeRate",
+            "setMerkleRoot"
+          ]
+        },
+        "subject": "pop_009_PrivatePool",
+        "valid": 1
+      }
+    ],
+    "end_index": 12,
+    "inventory": "notes/coverage/rq1_no_valid_each_case.json",
+    "new_put": 0,
+    "new_r1r2": 0,
+    "new_valid": 1,
+    "schema": "veriput-rq1-batch-settlement/v1",
+    "settled_ts": 1786425658.3859107,
+    "start_index": 5
+  },
+  "status": "stopped-hard-decision",
+  "stop_result": {
+    "returncode": 0,
+    "state": "notes/coverage/rq1_runs/rolling-novalid-noput-local5-600/supervisor.json",
+    "stderr": "",
+    "stopped": [
+      3816242,
+      3816243,
+      3816244,
+      3816245,
+      3816246,
+      3816259,
+      3816261,
+      3816263,
+      3816267,
+      3816339,
+      3816430,
+      3816621,
+      3816647,
+      3816648,
+      3816703,
+      3816704,
+      3816774,
+      3820849,
+      3820881,
+      3820950,
+      3821106
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+{"unit": "tern_nested", "enc": 14, "depth": 3, "region": [{"name": "x", "lo": "100", "hi": "100"}, {"name": "y", "lo": "0", "hi": "99"}, {"name": "msg.value", "lo": "0", "hi": "0"}]}

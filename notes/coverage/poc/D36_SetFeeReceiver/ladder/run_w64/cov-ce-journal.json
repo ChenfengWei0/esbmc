@@ -1,0 +1,1479 @@
+{
+  "claims_decided": 4,
+  "claims_total": 4,
+  "complete": true,
+  "fingerprint": "6c06fa2a7a9e2ef1",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@D36@F@setFeeReceiver#931:path:14\t": {
+      "claim": "sol:@C@D36@F@setFeeReceiver#931:path:14",
+      "compact_trace": false,
+      "dropped_internal": 97,
+      "entry_storage": [
+        {
+          "name": "MAX_LOCK_PERIOD",
+          "value": "63072000"
+        },
+        {
+          "name": "T0",
+          "value": "60114643976192"
+        },
+        {
+          "name": "T1",
+          "value": "0"
+        },
+        {
+          "name": "T10",
+          "value": "0"
+        },
+        {
+          "name": "T11",
+          "value": "0"
+        },
+        {
+          "name": "T12",
+          "value": "0"
+        },
+        {
+          "name": "T13",
+          "value": "0"
+        },
+        {
+          "name": "T14",
+          "value": "0"
+        },
+        {
+          "name": "T15",
+          "value": "0"
+        },
+        {
+          "name": "T16",
+          "value": "0"
+        },
+        {
+          "name": "T17",
+          "value": "0"
+        },
+        {
+          "name": "T18",
+          "value": "0"
+        },
+        {
+          "name": "T19",
+          "value": "0"
+        },
+        {
+          "name": "T2",
+          "value": "0"
+        },
+        {
+          "name": "T20",
+          "value": "0"
+        },
+        {
+          "name": "T21",
+          "value": "0"
+        },
+        {
+          "name": "T22",
+          "value": "0"
+        },
+        {
+          "name": "T23",
+          "value": "0"
+        },
+        {
+          "name": "T24",
+          "value": "0"
+        },
+        {
+          "name": "T25",
+          "value": "0"
+        },
+        {
+          "name": "T26",
+          "value": "0"
+        },
+        {
+          "name": "T27",
+          "value": "0"
+        },
+        {
+          "name": "T28",
+          "value": "0"
+        },
+        {
+          "name": "T29",
+          "value": "0"
+        },
+        {
+          "name": "T3",
+          "value": "0"
+        },
+        {
+          "name": "T4",
+          "value": "0"
+        },
+        {
+          "name": "T5",
+          "value": "0"
+        },
+        {
+          "name": "T6",
+          "value": "0"
+        },
+        {
+          "name": "T7",
+          "value": "0"
+        },
+        {
+          "name": "T8",
+          "value": "0"
+        },
+        {
+          "name": "T9",
+          "value": "0"
+        },
+        {
+          "name": "_ONE_E18",
+          "value": "1000000000000000000"
+        },
+        {
+          "name": "_VOTING_POWER_DIVIDER",
+          "value": "20"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "MAX_LOCK_PERIOD",
+          "value": "63072000"
+        },
+        {
+          "name": "T0",
+          "value": "60114643976192"
+        },
+        {
+          "name": "T1",
+          "value": "0"
+        },
+        {
+          "name": "T10",
+          "value": "0"
+        },
+        {
+          "name": "T11",
+          "value": "0"
+        },
+        {
+          "name": "T12",
+          "value": "0"
+        },
+        {
+          "name": "T13",
+          "value": "0"
+        },
+        {
+          "name": "T14",
+          "value": "0"
+        },
+        {
+          "name": "T15",
+          "value": "0"
+        },
+        {
+          "name": "T16",
+          "value": "0"
+        },
+        {
+          "name": "T17",
+          "value": "0"
+        },
+        {
+          "name": "T18",
+          "value": "0"
+        },
+        {
+          "name": "T19",
+          "value": "0"
+        },
+        {
+          "name": "T2",
+          "value": "0"
+        },
+        {
+          "name": "T20",
+          "value": "0"
+        },
+        {
+          "name": "T21",
+          "value": "0"
+        },
+        {
+          "name": "T22",
+          "value": "0"
+        },
+        {
+          "name": "T23",
+          "value": "0"
+        },
+        {
+          "name": "T24",
+          "value": "0"
+        },
+        {
+          "name": "T25",
+          "value": "0"
+        },
+        {
+          "name": "T26",
+          "value": "0"
+        },
+        {
+          "name": "T27",
+          "value": "0"
+        },
+        {
+          "name": "T28",
+          "value": "0"
+        },
+        {
+          "name": "T29",
+          "value": "0"
+        },
+        {
+          "name": "T3",
+          "value": "0"
+        },
+        {
+          "name": "T4",
+          "value": "0"
+        },
+        {
+          "name": "T5",
+          "value": "0"
+        },
+        {
+          "name": "T6",
+          "value": "0"
+        },
+        {
+          "name": "T7",
+          "value": "0"
+        },
+        {
+          "name": "T8",
+          "value": "0"
+        },
+        {
+          "name": "T9",
+          "value": "0"
+        },
+        {
+          "name": "_ONE_E18",
+          "value": "1000000000000000000"
+        },
+        {
+          "name": "_VOTING_POWER_DIVIDER",
+          "value": "20"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "feeReceiver_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "69c59bf874198f9f",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@D36@F@setFeeReceiver#931:path:15\t": {
+      "claim": "sol:@C@D36@F@setFeeReceiver#931:path:15",
+      "compact_trace": false,
+      "dropped_internal": 97,
+      "entry_storage": [
+        {
+          "name": "MAX_LOCK_PERIOD",
+          "value": "63072000"
+        },
+        {
+          "name": "T0",
+          "value": "60114643976192"
+        },
+        {
+          "name": "T1",
+          "value": "0"
+        },
+        {
+          "name": "T10",
+          "value": "0"
+        },
+        {
+          "name": "T11",
+          "value": "0"
+        },
+        {
+          "name": "T12",
+          "value": "0"
+        },
+        {
+          "name": "T13",
+          "value": "0"
+        },
+        {
+          "name": "T14",
+          "value": "0"
+        },
+        {
+          "name": "T15",
+          "value": "0"
+        },
+        {
+          "name": "T16",
+          "value": "0"
+        },
+        {
+          "name": "T17",
+          "value": "0"
+        },
+        {
+          "name": "T18",
+          "value": "0"
+        },
+        {
+          "name": "T19",
+          "value": "0"
+        },
+        {
+          "name": "T2",
+          "value": "0"
+        },
+        {
+          "name": "T20",
+          "value": "0"
+        },
+        {
+          "name": "T21",
+          "value": "0"
+        },
+        {
+          "name": "T22",
+          "value": "0"
+        },
+        {
+          "name": "T23",
+          "value": "0"
+        },
+        {
+          "name": "T24",
+          "value": "0"
+        },
+        {
+          "name": "T25",
+          "value": "0"
+        },
+        {
+          "name": "T26",
+          "value": "0"
+        },
+        {
+          "name": "T27",
+          "value": "0"
+        },
+        {
+          "name": "T28",
+          "value": "0"
+        },
+        {
+          "name": "T29",
+          "value": "0"
+        },
+        {
+          "name": "T3",
+          "value": "0"
+        },
+        {
+          "name": "T4",
+          "value": "0"
+        },
+        {
+          "name": "T5",
+          "value": "0"
+        },
+        {
+          "name": "T6",
+          "value": "0"
+        },
+        {
+          "name": "T7",
+          "value": "0"
+        },
+        {
+          "name": "T8",
+          "value": "0"
+        },
+        {
+          "name": "T9",
+          "value": "0"
+        },
+        {
+          "name": "_ONE_E18",
+          "value": "1000000000000000000"
+        },
+        {
+          "name": "_VOTING_POWER_DIVIDER",
+          "value": "20"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "MAX_LOCK_PERIOD",
+          "value": "63072000"
+        },
+        {
+          "name": "T0",
+          "value": "60114643976192"
+        },
+        {
+          "name": "T1",
+          "value": "0"
+        },
+        {
+          "name": "T10",
+          "value": "0"
+        },
+        {
+          "name": "T11",
+          "value": "0"
+        },
+        {
+          "name": "T12",
+          "value": "0"
+        },
+        {
+          "name": "T13",
+          "value": "0"
+        },
+        {
+          "name": "T14",
+          "value": "0"
+        },
+        {
+          "name": "T15",
+          "value": "0"
+        },
+        {
+          "name": "T16",
+          "value": "0"
+        },
+        {
+          "name": "T17",
+          "value": "0"
+        },
+        {
+          "name": "T18",
+          "value": "0"
+        },
+        {
+          "name": "T19",
+          "value": "0"
+        },
+        {
+          "name": "T2",
+          "value": "0"
+        },
+        {
+          "name": "T20",
+          "value": "0"
+        },
+        {
+          "name": "T21",
+          "value": "0"
+        },
+        {
+          "name": "T22",
+          "value": "0"
+        },
+        {
+          "name": "T23",
+          "value": "0"
+        },
+        {
+          "name": "T24",
+          "value": "0"
+        },
+        {
+          "name": "T25",
+          "value": "0"
+        },
+        {
+          "name": "T26",
+          "value": "0"
+        },
+        {
+          "name": "T27",
+          "value": "0"
+        },
+        {
+          "name": "T28",
+          "value": "0"
+        },
+        {
+          "name": "T29",
+          "value": "0"
+        },
+        {
+          "name": "T3",
+          "value": "0"
+        },
+        {
+          "name": "T4",
+          "value": "0"
+        },
+        {
+          "name": "T5",
+          "value": "0"
+        },
+        {
+          "name": "T6",
+          "value": "0"
+        },
+        {
+          "name": "T7",
+          "value": "0"
+        },
+        {
+          "name": "T8",
+          "value": "0"
+        },
+        {
+          "name": "T9",
+          "value": "0"
+        },
+        {
+          "name": "_ONE_E18",
+          "value": "1000000000000000000"
+        },
+        {
+          "name": "_VOTING_POWER_DIVIDER",
+          "value": "20"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "1"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "feeReceiver_",
+          "value": "1"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "3b5b2e20169e7805",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@D36@F@setFeeReceiver#931:path:2\t": {
+      "claim": "sol:@C@D36@F@setFeeReceiver#931:path:2",
+      "compact_trace": false,
+      "dropped_internal": 95,
+      "entry_storage": [
+        {
+          "name": "MAX_LOCK_PERIOD",
+          "value": "63072000"
+        },
+        {
+          "name": "T0",
+          "value": "21303104897024"
+        },
+        {
+          "name": "T1",
+          "value": "0"
+        },
+        {
+          "name": "T10",
+          "value": "0"
+        },
+        {
+          "name": "T11",
+          "value": "0"
+        },
+        {
+          "name": "T12",
+          "value": "0"
+        },
+        {
+          "name": "T13",
+          "value": "0"
+        },
+        {
+          "name": "T14",
+          "value": "0"
+        },
+        {
+          "name": "T15",
+          "value": "0"
+        },
+        {
+          "name": "T16",
+          "value": "0"
+        },
+        {
+          "name": "T17",
+          "value": "0"
+        },
+        {
+          "name": "T18",
+          "value": "0"
+        },
+        {
+          "name": "T19",
+          "value": "0"
+        },
+        {
+          "name": "T2",
+          "value": "0"
+        },
+        {
+          "name": "T20",
+          "value": "0"
+        },
+        {
+          "name": "T21",
+          "value": "0"
+        },
+        {
+          "name": "T22",
+          "value": "0"
+        },
+        {
+          "name": "T23",
+          "value": "0"
+        },
+        {
+          "name": "T24",
+          "value": "0"
+        },
+        {
+          "name": "T25",
+          "value": "0"
+        },
+        {
+          "name": "T26",
+          "value": "0"
+        },
+        {
+          "name": "T27",
+          "value": "0"
+        },
+        {
+          "name": "T28",
+          "value": "0"
+        },
+        {
+          "name": "T29",
+          "value": "0"
+        },
+        {
+          "name": "T3",
+          "value": "0"
+        },
+        {
+          "name": "T4",
+          "value": "0"
+        },
+        {
+          "name": "T5",
+          "value": "0"
+        },
+        {
+          "name": "T6",
+          "value": "0"
+        },
+        {
+          "name": "T7",
+          "value": "0"
+        },
+        {
+          "name": "T8",
+          "value": "0"
+        },
+        {
+          "name": "T9",
+          "value": "0"
+        },
+        {
+          "name": "_ONE_E18",
+          "value": "1000000000000000000"
+        },
+        {
+          "name": "_VOTING_POWER_DIVIDER",
+          "value": "20"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x4000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "32"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0x8000000000000000000000000"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "MAX_LOCK_PERIOD",
+          "value": "63072000"
+        },
+        {
+          "name": "T0",
+          "value": "21303104897024"
+        },
+        {
+          "name": "T1",
+          "value": "0"
+        },
+        {
+          "name": "T10",
+          "value": "0"
+        },
+        {
+          "name": "T11",
+          "value": "0"
+        },
+        {
+          "name": "T12",
+          "value": "0"
+        },
+        {
+          "name": "T13",
+          "value": "0"
+        },
+        {
+          "name": "T14",
+          "value": "0"
+        },
+        {
+          "name": "T15",
+          "value": "0"
+        },
+        {
+          "name": "T16",
+          "value": "0"
+        },
+        {
+          "name": "T17",
+          "value": "0"
+        },
+        {
+          "name": "T18",
+          "value": "0"
+        },
+        {
+          "name": "T19",
+          "value": "0"
+        },
+        {
+          "name": "T2",
+          "value": "0"
+        },
+        {
+          "name": "T20",
+          "value": "0"
+        },
+        {
+          "name": "T21",
+          "value": "0"
+        },
+        {
+          "name": "T22",
+          "value": "0"
+        },
+        {
+          "name": "T23",
+          "value": "0"
+        },
+        {
+          "name": "T24",
+          "value": "0"
+        },
+        {
+          "name": "T25",
+          "value": "0"
+        },
+        {
+          "name": "T26",
+          "value": "0"
+        },
+        {
+          "name": "T27",
+          "value": "0"
+        },
+        {
+          "name": "T28",
+          "value": "0"
+        },
+        {
+          "name": "T29",
+          "value": "0"
+        },
+        {
+          "name": "T3",
+          "value": "0"
+        },
+        {
+          "name": "T4",
+          "value": "0"
+        },
+        {
+          "name": "T5",
+          "value": "0"
+        },
+        {
+          "name": "T6",
+          "value": "0"
+        },
+        {
+          "name": "T7",
+          "value": "0"
+        },
+        {
+          "name": "T8",
+          "value": "0"
+        },
+        {
+          "name": "T9",
+          "value": "0"
+        },
+        {
+          "name": "_ONE_E18",
+          "value": "1000000000000000000"
+        },
+        {
+          "name": "_VOTING_POWER_DIVIDER",
+          "value": "20"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "feeReceiver_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "0f44f2714d4f962d",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@D36@F@setFeeReceiver#931:path:6\t": {
+      "claim": "sol:@C@D36@F@setFeeReceiver#931:path:6",
+      "compact_trace": false,
+      "dropped_internal": 98,
+      "entry_storage": [
+        {
+          "name": "MAX_LOCK_PERIOD",
+          "value": "63072000"
+        },
+        {
+          "name": "T0",
+          "value": "36"
+        },
+        {
+          "name": "T1",
+          "value": "0"
+        },
+        {
+          "name": "T10",
+          "value": "0"
+        },
+        {
+          "name": "T11",
+          "value": "0"
+        },
+        {
+          "name": "T12",
+          "value": "0"
+        },
+        {
+          "name": "T13",
+          "value": "0"
+        },
+        {
+          "name": "T14",
+          "value": "0"
+        },
+        {
+          "name": "T15",
+          "value": "0"
+        },
+        {
+          "name": "T16",
+          "value": "0"
+        },
+        {
+          "name": "T17",
+          "value": "0"
+        },
+        {
+          "name": "T18",
+          "value": "0"
+        },
+        {
+          "name": "T19",
+          "value": "0"
+        },
+        {
+          "name": "T2",
+          "value": "0"
+        },
+        {
+          "name": "T20",
+          "value": "0"
+        },
+        {
+          "name": "T21",
+          "value": "0"
+        },
+        {
+          "name": "T22",
+          "value": "0"
+        },
+        {
+          "name": "T23",
+          "value": "0"
+        },
+        {
+          "name": "T24",
+          "value": "0"
+        },
+        {
+          "name": "T25",
+          "value": "0"
+        },
+        {
+          "name": "T26",
+          "value": "0"
+        },
+        {
+          "name": "T27",
+          "value": "0"
+        },
+        {
+          "name": "T28",
+          "value": "0"
+        },
+        {
+          "name": "T29",
+          "value": "0"
+        },
+        {
+          "name": "T3",
+          "value": "0"
+        },
+        {
+          "name": "T4",
+          "value": "0"
+        },
+        {
+          "name": "T5",
+          "value": "0"
+        },
+        {
+          "name": "T6",
+          "value": "0"
+        },
+        {
+          "name": "T7",
+          "value": "0"
+        },
+        {
+          "name": "T8",
+          "value": "0"
+        },
+        {
+          "name": "T9",
+          "value": "0"
+        },
+        {
+          "name": "_ONE_E18",
+          "value": "1000000000000000000"
+        },
+        {
+          "name": "_VOTING_POWER_DIVIDER",
+          "value": "20"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "4"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0x2000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0x8000000000000000000000000000000000000000000000000000000000000000"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "MAX_LOCK_PERIOD",
+          "value": "63072000"
+        },
+        {
+          "name": "T0",
+          "value": "36"
+        },
+        {
+          "name": "T1",
+          "value": "0"
+        },
+        {
+          "name": "T10",
+          "value": "0"
+        },
+        {
+          "name": "T11",
+          "value": "0"
+        },
+        {
+          "name": "T12",
+          "value": "0"
+        },
+        {
+          "name": "T13",
+          "value": "0"
+        },
+        {
+          "name": "T14",
+          "value": "0"
+        },
+        {
+          "name": "T15",
+          "value": "0"
+        },
+        {
+          "name": "T16",
+          "value": "0"
+        },
+        {
+          "name": "T17",
+          "value": "0"
+        },
+        {
+          "name": "T18",
+          "value": "0"
+        },
+        {
+          "name": "T19",
+          "value": "0"
+        },
+        {
+          "name": "T2",
+          "value": "0"
+        },
+        {
+          "name": "T20",
+          "value": "0"
+        },
+        {
+          "name": "T21",
+          "value": "0"
+        },
+        {
+          "name": "T22",
+          "value": "0"
+        },
+        {
+          "name": "T23",
+          "value": "0"
+        },
+        {
+          "name": "T24",
+          "value": "0"
+        },
+        {
+          "name": "T25",
+          "value": "0"
+        },
+        {
+          "name": "T26",
+          "value": "0"
+        },
+        {
+          "name": "T27",
+          "value": "0"
+        },
+        {
+          "name": "T28",
+          "value": "0"
+        },
+        {
+          "name": "T29",
+          "value": "0"
+        },
+        {
+          "name": "T3",
+          "value": "0"
+        },
+        {
+          "name": "T4",
+          "value": "0"
+        },
+        {
+          "name": "T5",
+          "value": "0"
+        },
+        {
+          "name": "T6",
+          "value": "0"
+        },
+        {
+          "name": "T7",
+          "value": "0"
+        },
+        {
+          "name": "T8",
+          "value": "0"
+        },
+        {
+          "name": "T9",
+          "value": "0"
+        },
+        {
+          "name": "_ONE_E18",
+          "value": "1000000000000000000"
+        },
+        {
+          "name": "_VOTING_POWER_DIVIDER",
+          "value": "20"
+        },
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "4"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "feeReceiver_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "f16a662768963ebc",
+      "payload_symbols_protected": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    }
+  }
+}

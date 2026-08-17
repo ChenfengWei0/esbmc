@@ -1,0 +1,228 @@
+{
+  "claims_decided": 3,
+  "claims_total": 3,
+  "complete": true,
+  "fingerprint": "ef1d51a7681ef890",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@Animalia@F@decimals#1538:path:3#nonvacuous\tfile /home/samson/workspace/VeriPUT/scripts/Results/workdirs/Peer182/subjects/peer_ccsolbmc__Animalia/flat.sol line 901 function decimals": {
+      "claim": "sol:@C@Animalia@F@decimals#1538:path:3#nonvacuous",
+      "compact_trace": false,
+      "condition": "decimals:path:3#nonvacuous",
+      "dropped_internal": 41,
+      "entry_storage": [
+        {
+          "name": "_burnFee",
+          "value": "2"
+        },
+        {
+          "name": "_decimals",
+          "value": "18"
+        },
+        {
+          "name": "_holderFee",
+          "value": "1"
+        },
+        {
+          "name": "_maxTxAmount",
+          "value": "0x25DD85D670D35EC9BEC0000000"
+        },
+        {
+          "name": "_owner$47",
+          "value": "0"
+        },
+        {
+          "name": "_paused$527",
+          "value": "0"
+        },
+        {
+          "name": "_prevBurnFee",
+          "value": "2"
+        },
+        {
+          "name": "_prevHolderFee",
+          "value": "1"
+        },
+        {
+          "name": "_rTotal",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFDF2E6F567F692D6B76C000000000"
+        },
+        {
+          "name": "_tFeeTotal",
+          "value": "0"
+        },
+        {
+          "name": "_tTotal",
+          "value": "0x314DC6448D9338C15B0A00000000"
+        },
+        {
+          "name": "isBuyCooldownEnabled",
+          "value": "1"
+        },
+        {
+          "name": "teamAddr",
+          "value": "0x3B036A2701112D8429C38BC7DC75165E2AB2C002"
+        },
+        {
+          "name": "zeroAddr",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_burnFee",
+          "value": "2"
+        },
+        {
+          "name": "_decimals",
+          "value": "18"
+        },
+        {
+          "name": "_holderFee",
+          "value": "1"
+        },
+        {
+          "name": "_maxTxAmount",
+          "value": "0x25DD85D670D35EC9BEC0000000"
+        },
+        {
+          "name": "_owner$47",
+          "value": "0"
+        },
+        {
+          "name": "_paused$527",
+          "value": "0"
+        },
+        {
+          "name": "_prevBurnFee",
+          "value": "2"
+        },
+        {
+          "name": "_prevHolderFee",
+          "value": "1"
+        },
+        {
+          "name": "_rTotal",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFDF2E6F567F692D6B76C000000000"
+        },
+        {
+          "name": "_tFeeTotal",
+          "value": "0"
+        },
+        {
+          "name": "_tTotal",
+          "value": "0x314DC6448D9338C15B0A00000000"
+        },
+        {
+          "name": "isBuyCooldownEnabled",
+          "value": "1"
+        },
+        {
+          "name": "teamAddr",
+          "value": "0x3B036A2701112D8429C38BC7DC75165E2AB2C002"
+        },
+        {
+          "name": "zeroAddr",
+          "value": "0"
+        }
+      ],
+      "inputs": [],
+      "loc": "file /home/samson/workspace/VeriPUT/scripts/Results/workdirs/Peer182/subjects/peer_ccsolbmc__Animalia/flat.sol line 901 function decimals",
+      "path_function": "sol:@C@Animalia@F@decimals#1538",
+      "path_id": "3#nonvacuous",
+      "payload_symbols_protected": true,
+      "return_value": "18",
+      "return_value_known": true,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_rOwned",
+        "_tOwned",
+        "_allowances",
+        "_isExcluded",
+        "_excluded",
+        "_excluded_dynarray_len",
+        "buycooldown",
+        "tuple_instance$2648",
+        "tuple_instance$2697",
+        "tuple_instance$2751",
+        "tuple_instance$2798",
+        "_ESBMC_aux_Context",
+        "_ESBMC_aux_IERC20",
+        "_ESBMC_aux_Ownable",
+        "_ESBMC_aux_Pausable",
+        "MAX",
+        "_name",
+        "_symbol"
+      ],
+      "witness_count": 1
+    }
+  }
+}

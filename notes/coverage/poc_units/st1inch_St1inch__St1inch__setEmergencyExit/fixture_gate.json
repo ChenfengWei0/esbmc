@@ -1,0 +1,15 @@
+{
+  "contract": "St1inch",
+  "foundry": {
+    "constructor_args": [
+      "mk_IERC20_oneInch_",
+      "999999952502977889",
+      "address(uint160(7300))"
+    ],
+    "why": "Foundry cannot install St1inch runtimeCode directly because the contract has immutables. For replay only, deploy with a constructor value in the Solidity-checked valid expBase interval, then overwrite the ESBMC fixture scalar state."
+  },
+  "skip_constructor": true,
+  "state": {
+    "_owner": "1"
+  }
+}

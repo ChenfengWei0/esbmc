@@ -1,0 +1,319 @@
+{
+  "contract": "Aqua",
+  "unit": "dock",
+  "enc": 12,
+  "depth": 3,
+  "path_function": "sol:@C@Aqua@F@dock#3088",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/put_roundtrip/aqua_Aqua__aqua_refold/test/AquaCovTest_Aqua_dock_put12.t.sol",
+  "test": "test_put_Aqua_dock_path12",
+  "piece": null,
+  "region": {
+    "app": [
+      "0",
+      "1461501637330902918203684832716283019655932542974"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "msg.value": "0"
+  },
+  "ladder": [
+    {
+      "var": "_DOCKED",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_DOCKED",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_DOCKED",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_DOCKED",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_DOCKED",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_DOCKED",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    6,
+    3,
+    3,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [
+    "--unwindset",
+    "1:128,62:128,64:128"
+  ],
+  "unwind_attempts": [
+    {
+      "attempt": 1,
+      "k": 8,
+      "loops": [
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler"
+        ],
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler;"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock;"
+        ],
+        [
+          64,
+          "/home/samson/workspace/esbmc/src/c2goto/library/string.c",
+          298,
+          "__memset_impl"
+        ]
+      ],
+      "shapes": {
+        "assert-gate": 3,
+        "under-report-warning": 3
+      },
+      "exit": 1,
+      "wall_s": 2.4,
+      "adopted": true,
+      "blocker_after": "truncated",
+      "rows_after": 0
+    },
+    {
+      "attempt": 2,
+      "k": 16,
+      "loops": [
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler"
+        ],
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler;"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock;"
+        ],
+        [
+          64,
+          "/home/samson/workspace/esbmc/src/c2goto/library/string.c",
+          298,
+          "__memset_impl"
+        ]
+      ],
+      "shapes": {
+        "assert-gate": 3,
+        "under-report-warning": 3
+      },
+      "exit": 1,
+      "wall_s": 3.6,
+      "adopted": true,
+      "blocker_after": "truncated",
+      "rows_after": 0
+    },
+    {
+      "attempt": 3,
+      "k": 32,
+      "loops": [
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler"
+        ],
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler;"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock;"
+        ],
+        [
+          64,
+          "/home/samson/workspace/esbmc/src/c2goto/library/string.c",
+          298,
+          "__memset_impl"
+        ]
+      ],
+      "shapes": {
+        "assert-gate": 3,
+        "under-report-warning": 3
+      },
+      "exit": 1,
+      "wall_s": 6.4,
+      "adopted": true,
+      "blocker_after": "truncated",
+      "rows_after": 0
+    },
+    {
+      "attempt": 4,
+      "k": 64,
+      "loops": [
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler"
+        ],
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler;"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock;"
+        ],
+        [
+          64,
+          "/home/samson/workspace/esbmc/src/c2goto/library/string.c",
+          298,
+          "__memset_impl"
+        ]
+      ],
+      "shapes": {
+        "assert-gate": 3,
+        "under-report-warning": 3
+      },
+      "exit": 1,
+      "wall_s": 14.1,
+      "adopted": true,
+      "blocker_after": "truncated",
+      "rows_after": 0
+    },
+    {
+      "attempt": 5,
+      "k": 128,
+      "loops": [
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler"
+        ],
+        [
+          1,
+          "/home/samson/workspace/esbmc/src/c2goto/library/stdlib.c",
+          38,
+          "__ESBMC_atexit_handler;"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock"
+        ],
+        [
+          62,
+          "notes/coverage/inputs/aqua__Aqua.flat.sol",
+          2258,
+          "dock;"
+        ],
+        [
+          64,
+          "/home/samson/workspace/esbmc/src/c2goto/library/string.c",
+          298,
+          "__memset_impl"
+        ]
+      ],
+      "shapes": {
+        "assert-gate": 3,
+        "under-report-warning": 3
+      },
+      "exit": 1,
+      "wall_s": 127.0,
+      "adopted": true,
+      "blocker_after": null,
+      "rows_after": 6
+    }
+  ],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "b8d6964b6a",
+    "srcDirty": true,
+    "binaryMtime": 1785839566
+  },
+  "stats": {
+    "fuzz_params": 1,
+    "lifted": [
+      "app"
+    ],
+    "asserts": 0,
+    "state_asserts": 0,
+    "return_asserts": 0,
+    "oracle_skipped": [
+      "_DOCKED (no storage slot: solc's layout does not list it, so it is a constant/immutable -- a rung over it is a compile-time tautology, not an oracle)"
+    ],
+    "state_stored": [],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": []
+}

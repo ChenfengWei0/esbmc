@@ -1,0 +1,206 @@
+{
+  "contract": "St1inch",
+  "unit": "setFeeReceiver",
+  "enc": 15,
+  "depth": 3,
+  "path_function": "sol:@C@St1inch@F@setFeeReceiver#8367",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setFeeReceiver/put_gate/st1inch_St1inch__certify_gate/test/St1inchCovTest_St1inch_setFeeReceiver_put15.t.sol",
+  "test": "test_put_St1inch_setFeeReceiver_path15",
+  "piece": null,
+  "region": {
+    "msg.value": [
+      "0",
+      "0"
+    ],
+    "feeReceiver_": [
+      "1",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "msg.sender": [
+      "1",
+      "1"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "state._owner": "1"
+  },
+  "ladder": [
+    {
+      "var": "feeReceiver",
+      "text": "post == pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "feeReceiver",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "feeReceiver",
+      "text": "post >= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "feeReceiver",
+      "text": "post <= pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "feeReceiver",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "feeReceiver",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_owner",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_owner",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "feeReceiver",
+      "text": "post == feeReceiver_",
+      "verdict": "HOLDS"
+    }
+  ],
+  "ladder_summary": [
+    12,
+    3,
+    9,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "requested": 1,
+    "selected": 1,
+    "candidate_budget": 128,
+    "rendered": 1,
+    "ran": 1,
+    "refuted": 0,
+    "not_run": 0,
+    "not_refuted": 1,
+    "timed_out": false,
+    "returncode": 0,
+    "fuzz_runs": 256,
+    "command": [
+      "forge",
+      "test",
+      "--json",
+      "--match-contract",
+      "^St1inchCovTest_St1inch_setFeeReceiver_put15_FuzzR2$",
+      "--match-test",
+      "^test_put_St1inch_setFeeReceiver_path15fz",
+      "--fuzz-runs",
+      "256"
+    ],
+    "candidates": [
+      {
+        "key": "s0:v0:equals:src0",
+        "var": "feeReceiver",
+        "text": "post == feeReceiver_",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_St1inch_setFeeReceiver_path15fz0",
+        "marker": "VERIPUT_CANDIDATE_4ff540149ab0d279f7e90f68045d408b_0"
+      }
+    ],
+    "enabled": true
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "feeReceiver",
+    "_owner"
+  ],
+  "oracle_vars": [
+    "feeReceiver",
+    "_owner"
+  ],
+  "slot_candidates": {
+    "asked": [],
+    "unanswered": [],
+    "rows_for_unasked_names": [
+      "_owner",
+      "feeReceiver"
+    ]
+  },
+  "esbmc_extra_args": [
+    "--z3",
+    "--tuple-node-flattener",
+    "--path-cov-fixture",
+    "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__setFeeReceiver/fixture_gate.json"
+  ],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "611553cb6b",
+    "srcDirty": true,
+    "binaryMtime": 1785965824
+  },
+  "stats": {
+    "fuzz_params": 1,
+    "lifted": [
+      "feeReceiver_"
+    ],
+    "asserts": 2,
+    "state_asserts": 2,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 0,
+    "rollback_exit": false,
+    "exit_kind": "normal",
+    "return_asserts": 0,
+    "oracle_skipped": [],
+    "oracle_implied": [
+      "_owner: post >= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)",
+      "_owner: post <= pre (entailed by a stronger rung that also HOLDS on _owner, so asserting it detects nothing the stronger one misses)"
+    ],
+    "state_stored": [
+      "state._owner := 1"
+    ],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": [
+    "slot candidates asked=0 unanswered=0"
+  ]
+}

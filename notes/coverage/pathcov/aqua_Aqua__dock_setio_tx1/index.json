@@ -1,0 +1,73 @@
+{
+  "benchmark": "aqua_Aqua",
+  "project": "aqua",
+  "primary": {
+    "name": "Aqua",
+    "kind": "contract"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol",
+  "config": {
+    "mode": "per-method",
+    "scope": "set",
+    "onlyUnits": [
+      "dock"
+    ],
+    "adhocTarget": null,
+    "solidityMaxTx": 1,
+    "focusWith": [
+      "ship"
+    ],
+    "instrumentOnlyUnit": true,
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "solverFlags": [],
+    "solverFlagsReason": "tool default (no solver flag passed)",
+    "outerTimeoutSeconds": 300,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "Aqua__dock",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract Aqua --focus-function dock,ship --path-cov-instrument-only dock",
+      "wallSeconds": 19.37,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "binary": {
+        "head": "769462d2e0",
+        "srcDirty": true,
+        "binaryMtime": 1785651533
+      },
+      "pathsInstrumented": 63,
+      "unitsEnumerated": 1,
+      "nonUnitFunctionsPresent": true,
+      "depthBoundUnexpandedSites": 0,
+      "degradedUnits": 0,
+      "scSitesOverCap": 0,
+      "pathsTotal": 63,
+      "F": 2,
+      "U": 61,
+      "uReasons": {
+        "bounded-holds": 61,
+        "claim-budget-exceeded": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "run-died-before-solving": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 4,
+        "paths_with": 2,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 2,
+        "unrecorded_steps": 0
+      },
+      "contract": "Aqua",
+      "function": "dock",
+      "kind": "contract"
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/aqua_Aqua__dock_setio_tx1/reports"
+}

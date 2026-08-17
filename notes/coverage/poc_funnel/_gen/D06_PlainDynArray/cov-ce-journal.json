@@ -1,0 +1,383 @@
+{
+  "claims_decided": 10,
+  "claims_total": 10,
+  "complete": true,
+  "fingerprint": "75dff02273fc2745",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@D06_PlainDynArray@F@setFeeReceiver#41:path:2\t": {
+      "claim": "sol:@C@D06_PlainDynArray@F@setFeeReceiver#41:path:2",
+      "compact_trace": false,
+      "dropped_internal": 23,
+      "entry_storage": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        },
+        {
+          "name": "raw[-1]",
+          "value": "7"
+        },
+        {
+          "name": "raw_dynarray_len[(signed long int)(&_ESBMC_Object_D06_PlainDynArray)->$address]",
+          "value": "1"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        },
+        {
+          "name": "raw[-1]",
+          "value": "7"
+        },
+        {
+          "name": "raw_dynarray_len[(signed long int)(&_ESBMC_Object_D06_PlainDynArray)->$address]",
+          "value": "1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "r",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "aa4079e3410f13e9",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "raw",
+        "raw_dynarray_len"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@D06_PlainDynArray@F@setFeeReceiver#41:path:6\t": {
+      "claim": "sol:@C@D06_PlainDynArray@F@setFeeReceiver#41:path:6",
+      "compact_trace": false,
+      "dropped_internal": 23,
+      "entry_storage": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "4294967295"
+        },
+        {
+          "name": "raw[-1]",
+          "value": "7"
+        },
+        {
+          "name": "raw_dynarray_len[(signed long int)(&_ESBMC_Object_D06_PlainDynArray)->$address]",
+          "value": "1"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967294"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "4294967295"
+        },
+        {
+          "name": "raw[-1]",
+          "value": "7"
+        },
+        {
+          "name": "raw_dynarray_len[(signed long int)(&_ESBMC_Object_D06_PlainDynArray)->$address]",
+          "value": "1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "r",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "cd9ed8efef59bd7c",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "raw",
+        "raw_dynarray_len"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@D06_PlainDynArray@F@setFeeReceiver#41:path:7\t": {
+      "claim": "sol:@C@D06_PlainDynArray@F@setFeeReceiver#41:path:7",
+      "compact_trace": false,
+      "dropped_internal": 23,
+      "entry_storage": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        },
+        {
+          "name": "raw[-1]",
+          "value": "7"
+        },
+        {
+          "name": "raw_dynarray_len[(signed long int)(&_ESBMC_Object_D06_PlainDynArray)->$address]",
+          "value": "1"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        },
+        {
+          "name": "raw[-1]",
+          "value": "7"
+        },
+        {
+          "name": "raw_dynarray_len[(signed long int)(&_ESBMC_Object_D06_PlainDynArray)->$address]",
+          "value": "1"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "r",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "1863165b3b8680aa",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "raw",
+        "raw_dynarray_len"
+      ],
+      "witness_count": 1
+    }
+  }
+}

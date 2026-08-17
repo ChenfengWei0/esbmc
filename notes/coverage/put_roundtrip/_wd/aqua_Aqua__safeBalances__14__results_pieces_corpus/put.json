@@ -1,0 +1,131 @@
+{
+  "contract": "Aqua",
+  "unit": "safeBalances",
+  "enc": 14,
+  "depth": 3,
+  "path_function": "sol:@C@Aqua@F@safeBalances#2909",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/put_roundtrip/aqua_Aqua__results_pieces_corpus/test/AquaCovTest_Aqua_safeBalances_put14.t.sol",
+  "test": "test_put_Aqua_safeBalances_path14",
+  "piece": null,
+  "region": {
+    "app": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "maker": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "msg.sender": [
+      "0",
+      "18043230090504974298810923860694852094517685715"
+    ],
+    "token0": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "token1": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "msg.value": "0"
+  },
+  "ladder": [
+    {
+      "var": "_DOCKED",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_DOCKED",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_DOCKED",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_DOCKED",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_DOCKED",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_DOCKED",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "return",
+      "text": "a value IS returned on this path (REFUTED == yes)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "return.0",
+      "text": "return == 0",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "return.0",
+      "text": "return != 0",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "return.1",
+      "text": "return == 0",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "return.1",
+      "text": "return != 0",
+      "verdict": "HOLDS"
+    }
+  ],
+  "ladder_summary": [
+    11,
+    8,
+    3,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "stats": {
+    "fuzz_params": 5,
+    "lifted": [
+      "msg.sender",
+      "maker",
+      "app",
+      "token0",
+      "token1"
+    ],
+    "asserts": 0,
+    "state_asserts": 0,
+    "return_asserts": 0,
+    "oracle_skipped": [
+      "_DOCKED (no storage slot: solc's layout does not list it, so it is a constant/immutable -- a rung over it is a compile-time tautology, not an oracle)",
+      "all return rungs DROPPED: the `retlive` witness came back HOLDS, not REFUTED -- no execution of this path was shown to reach a return, so every other return rung holds VACUOUSLY"
+    ],
+    "state_stored": [],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": []
+}

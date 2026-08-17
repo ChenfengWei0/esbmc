@@ -1,0 +1,774 @@
+{
+  "canonical_write": false,
+  "records": [
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@EulerSavingsRate@F@balanceOf#678",
+        "piece": null,
+        "unit": "balanceOf"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@EulerSavingsRate@F@decimals#1231",
+        "piece": null,
+        "unit": "decimals"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@EulerSavingsRate@F@getESRSlot#2271",
+        "piece": null,
+        "unit": "getESRSlot"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@EulerSavingsRate@F@maxDeposit#1300",
+        "piece": null,
+        "unit": "maxDeposit"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@EulerSavingsRate@F@maxMint#1314",
+        "piece": null,
+        "unit": "maxMint"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@EulerSavingsRate@F@name#642",
+        "piece": null,
+        "unit": "name"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 3,
+        "path_function": "sol:@C@EulerSavingsRate@F@name#642",
+        "piece": null,
+        "unit": "name"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@EulerSavingsRate@F@symbol#650",
+        "piece": null,
+        "unit": "symbol"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 3,
+        "path_function": "sol:@C@EulerSavingsRate@F@symbol#650",
+        "piece": null,
+        "unit": "symbol"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@EulerSavingsRate@F@totalAssets#1844",
+        "piece": null,
+        "unit": "totalAssets"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@EulerSavingsRate@F@totalSupply#666",
+        "piece": null,
+        "unit": "totalSupply"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "peer_ccsolbmc__ClockBoxContract",
+        "contract": "ClockBoxContract",
+        "dataset": "peer182",
+        "enc": 3,
+        "path_function": "sol:@C@ClockBoxContract@F@name#128",
+        "piece": null,
+        "unit": "name"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "peer_ccsolbmc__ClockBoxContract",
+        "contract": "ClockBoxContract",
+        "dataset": "peer182",
+        "enc": 3,
+        "path_function": "sol:@C@ClockBoxContract@F@symbol#136",
+        "piece": null,
+        "unit": "symbol"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "balancer__balancer-v3-monorepo__FactoryWidePauseWindow",
+        "contract": "FactoryWidePauseWindow",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@FactoryWidePauseWindow@F@getNewPoolPauseWindowEndTime#77",
+        "piece": null,
+        "unit": "getNewPoolPauseWindowEndTime"
+      },
+      "reason": "exact forge PASS",
+      "status": "publishable"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@TREXFactory@F@getIdFactory#827",
+        "piece": null,
+        "unit": "getIdFactory"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@TREXFactory@F@getImplementationAuthority#818",
+        "piece": null,
+        "unit": "getImplementationAuthority"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@TREXFactory@F@getToken#840",
+        "piece": null,
+        "unit": "getToken"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@TREXFactory@F@owner#171",
+        "piece": null,
+        "unit": "owner"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 62,
+        "path_function": "sol:@C@TREXFactory@F@setImplementationAuthority#942",
+        "piece": null,
+        "unit": "setImplementationAuthority"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 124,
+        "path_function": "sol:@C@TREXFactory@F@setImplementationAuthority#942",
+        "piece": null,
+        "unit": "setImplementationAuthority"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 126,
+        "path_function": "sol:@C@TREXFactory@F@setImplementationAuthority#942",
+        "piece": null,
+        "unit": "setImplementationAuthority"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 248,
+        "path_function": "sol:@C@TREXFactory@F@setImplementationAuthority#942",
+        "piece": null,
+        "unit": "setImplementationAuthority"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 250,
+        "path_function": "sol:@C@TREXFactory@F@setImplementationAuthority#942",
+        "piece": null,
+        "unit": "setImplementationAuthority"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 252,
+        "path_function": "sol:@C@TREXFactory@F@setImplementationAuthority#942",
+        "piece": null,
+        "unit": "setImplementationAuthority"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 254,
+        "path_function": "sol:@C@TREXFactory@F@setImplementationAuthority#942",
+        "piece": null,
+        "unit": "setImplementationAuthority"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@TREXFactory@F@transferOwnership#219",
+        "piece": null,
+        "unit": "transferOwnership"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 12,
+        "path_function": "sol:@C@TREXFactory@F@transferOwnership#219",
+        "piece": null,
+        "unit": "transferOwnership"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 13,
+        "path_function": "sol:@C@TREXFactory@F@transferOwnership#219",
+        "piece": null,
+        "unit": "transferOwnership"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 14,
+        "path_function": "sol:@C@TREXFactory@F@transferOwnership#219",
+        "piece": null,
+        "unit": "transferOwnership"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "ERC-3643__ERC-3643__TREXFactory",
+        "contract": "TREXFactory",
+        "dataset": "real203",
+        "enc": 15,
+        "path_function": "sol:@C@TREXFactory@F@transferOwnership#219",
+        "piece": null,
+        "unit": "transferOwnership"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 3,
+        "path_function": "sol:@C@EulerSavingsRate@F@balanceOf#678",
+        "piece": null,
+        "unit": "balanceOf"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 3,
+        "path_function": "sol:@C@EulerSavingsRate@F@decimals#1231",
+        "piece": null,
+        "unit": "decimals"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 3,
+        "path_function": "sol:@C@EulerSavingsRate@F@maxDeposit#1300",
+        "piece": null,
+        "unit": "maxDeposit"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 3,
+        "path_function": "sol:@C@EulerSavingsRate@F@maxMint#1314",
+        "piece": null,
+        "unit": "maxMint"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__EulerSavingsRate",
+        "contract": "EulerSavingsRate",
+        "dataset": "real203",
+        "enc": 3,
+        "path_function": "sol:@C@EulerSavingsRate@F@totalSupply#666",
+        "piece": null,
+        "unit": "totalSupply"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@SablierEscrow@F@getBuyToken#392",
+        "piece": null,
+        "unit": "getBuyToken"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 6,
+        "path_function": "sol:@C@SablierEscrow@F@getBuyToken#392",
+        "piece": null,
+        "unit": "getBuyToken"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@SablierEscrow@F@getBuyer#372",
+        "piece": null,
+        "unit": "getBuyer"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 6,
+        "path_function": "sol:@C@SablierEscrow@F@getBuyer#372",
+        "piece": null,
+        "unit": "getBuyer"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@SablierEscrow@F@getExpiryTime#411",
+        "piece": null,
+        "unit": "getExpiryTime"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 6,
+        "path_function": "sol:@C@SablierEscrow@F@getExpiryTime#411",
+        "piece": null,
+        "unit": "getExpiryTime"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@SablierEscrow@F@getMinBuyAmount#430",
+        "piece": null,
+        "unit": "getMinBuyAmount"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 6,
+        "path_function": "sol:@C@SablierEscrow@F@getMinBuyAmount#430",
+        "piece": null,
+        "unit": "getMinBuyAmount"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@SablierEscrow@F@getSellAmount#449",
+        "piece": null,
+        "unit": "getSellAmount"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 6,
+        "path_function": "sol:@C@SablierEscrow@F@getSellAmount#449",
+        "piece": null,
+        "unit": "getSellAmount"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@SablierEscrow@F@getSellToken#488",
+        "piece": null,
+        "unit": "getSellToken"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 6,
+        "path_function": "sol:@C@SablierEscrow@F@getSellToken#488",
+        "piece": null,
+        "unit": "getSellToken"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 2,
+        "path_function": "sol:@C@SablierEscrow@F@getSeller#468",
+        "piece": null,
+        "unit": "getSeller"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 6,
+        "path_function": "sol:@C@SablierEscrow@F@getSeller#468",
+        "piece": null,
+        "unit": "getSeller"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierEscrow",
+        "contract": "SablierEscrow",
+        "dataset": "real203",
+        "enc": 6,
+        "path_function": "sol:@C@SablierEscrow@F@wasCanceled#526",
+        "piece": null,
+        "unit": "wasCanceled"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierLidoAdapter",
+        "contract": "SablierLidoAdapter",
+        "dataset": "real203",
+        "enc": 3,
+        "path_function": "sol:@C@SablierLidoAdapter@F@getLidoWithdrawalRequestIds#687",
+        "piece": null,
+        "unit": "getLidoWithdrawalRequestIds"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierLidoAdapter",
+        "contract": "SablierLidoAdapter",
+        "dataset": "real203",
+        "enc": 3,
+        "path_function": "sol:@C@SablierLidoAdapter@F@getTotalYieldBearingTokenBalance#700",
+        "piece": null,
+        "unit": "getTotalYieldBearingTokenBalance"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "sablier-labs__evm-monorepo__SablierLidoAdapter",
+        "contract": "SablierLidoAdapter",
+        "dataset": "real203",
+        "enc": 3,
+        "path_function": "sol:@C@SablierLidoAdapter@F@getVaultYieldFee#714",
+        "piece": null,
+        "unit": "getVaultYieldFee"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "peer_syntest__Core_Fi_V3",
+        "contract": "Core_Fi_V3",
+        "dataset": "peer182",
+        "enc": 1,
+        "path_function": "sol:@C@Core_Fi_V3@F@fallback#294",
+        "piece": null,
+        "unit": "fallback"
+      },
+      "reason": "exact forge test did not report one PASS",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "peer_syntest__Rootkit_finance",
+        "contract": "Rootkit_finance",
+        "dataset": "peer182",
+        "enc": 1,
+        "path_function": "sol:@C@Rootkit_finance@F@fallback#294",
+        "piece": null,
+        "unit": "fallback"
+      },
+      "reason": "exact forge test did not report one PASS",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "peer_syntest__Straight_Fire_Finance",
+        "contract": "Straight_Fire_Finance",
+        "dataset": "peer182",
+        "enc": 1,
+        "path_function": "sol:@C@Straight_Fire_Finance@F@fallback#294",
+        "piece": null,
+        "unit": "fallback"
+      },
+      "reason": "exact forge test did not report one PASS",
+      "status": "diagnostic"
+    },
+    {
+      "identity": {
+        "case": "euler-xyz__euler-vault-kit__IRMSynth",
+        "contract": "IRMSynth",
+        "dataset": "real203",
+        "enc": 60,
+        "path_function": "sol:@C@IRMSynth@F@computeInterestRateView#245",
+        "piece": null,
+        "unit": "computeInterestRateView"
+      },
+      "reason": "sealed generator refusal",
+      "status": "diagnostic"
+    }
+  ],
+  "schema": "veriput-rq3-authenticated-setup57-inventory/v1",
+  "source_partition": {
+    "path": "/tmp/rq3-setup57-final-partition.json",
+    "sha256": "445e05948d20e99d8cdc400b80da50d610c13dca522c6022193fabcbe0c6e358"
+  },
+  "source_reports": [
+    {
+      "path": "/tmp/rq3-setup57-trex-last-output-1786805968905811677/report.json",
+      "sha256": "cda7aeda60ac5aeec0e51b69f59979f8da7e6c5ac6d33660cde22d3b105abe58"
+    },
+    {
+      "path": "/tmp/rq3-euler-final-report-20260815225532-1447530-17563/report.json",
+      "sha256": "a5bf6b7851391966275fdacfa610a1f5f7506e6f0092706f12d2d9d9b7dbca05"
+    },
+    {
+      "path": "/tmp/rq3-sablier-final.SqawIp/report/report.json",
+      "sha256": "078b8530fbe0aa929032149baa046c75570360ea738a537b69b77bf533b7874b"
+    },
+    {
+      "path": "/tmp/rq3-setup57-misc-final-20260815-225547-1449095-output/report.json",
+      "sha256": "29ae6449263f054490e68cda8f9fd4f667b7b4b7d3e4f6e5a4c60b8b291fd43d"
+    }
+  ],
+  "summary": {
+    "publishable": 14,
+    "refused": 43,
+    "selected": 57
+  }
+}

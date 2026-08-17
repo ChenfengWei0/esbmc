@@ -1,0 +1,2235 @@
+{
+  "claims_decided": 31,
+  "claims_total": 31,
+  "complete": true,
+  "fingerprint": "ed3c074ef3fe0362",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#gt__MAX_BALANCE\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#gt__MAX_BALANCE",
+      "compact_trace": false,
+      "dropped_internal": 514,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFD"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "2352955391"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFD"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#gt__balances[distributor_]\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#gt__balances[distributor_]",
+      "compact_trace": false,
+      "dropped_internal": 515,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFE"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "821886974"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFE"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#gt__distributor\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#gt__distributor",
+      "compact_trace": false,
+      "dropped_internal": 514,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFD"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "2352955391"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFD"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#gt__owner\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#gt__owner",
+      "compact_trace": false,
+      "dropped_internal": 514,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000008C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "2432499706"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000008C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#gt__totalSupply\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#gt__totalSupply",
+      "compact_trace": false,
+      "dropped_internal": 516,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "821886974"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#lt__MAX_BALANCE\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#lt__MAX_BALANCE",
+      "compact_trace": false,
+      "dropped_internal": 514,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFD"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "2352955391"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFD"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#lt__balances[distributor_]\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#lt__balances[distributor_]",
+      "compact_trace": false,
+      "dropped_internal": 515,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFE"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "821886974"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFE"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#lt__distributor\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#lt__distributor",
+      "compact_trace": false,
+      "dropped_internal": 516,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000008C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "2352955391"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000008C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#lt__owner\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#lt__owner",
+      "compact_trace": false,
+      "dropped_internal": 514,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000008C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "2432499706"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000008C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#lt__totalSupply\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#lt__totalSupply",
+      "compact_trace": false,
+      "dropped_internal": 516,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "821886974"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#ne__MAX_BALANCE\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#ne__MAX_BALANCE",
+      "compact_trace": false,
+      "dropped_internal": 516,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "821886974"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#ne__balances[distributor_]\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#ne__balances[distributor_]",
+      "compact_trace": false,
+      "dropped_internal": 515,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFC"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "2558427134"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x4000000000000000000000000000000030FCFFFC"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#ne__distributor\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#ne__distributor",
+      "compact_trace": false,
+      "dropped_internal": 516,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000008C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "2558427134"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000008C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#ne__owner\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#ne__owner",
+      "compact_trace": false,
+      "dropped_internal": 516,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "821886974"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#ne__totalSupply\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#ne__totalSupply",
+      "compact_trace": false,
+      "dropped_internal": 516,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "821886974"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    },
+    "sol:@C@FarmingPool@F@setDistributor#5926:path:12#nonvacuous\t": {
+      "claim": "sol:@C@FarmingPool@F@setDistributor#5926:path:12#nonvacuous",
+      "compact_trace": false,
+      "dropped_internal": 516,
+      "entry_storage": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "821886974"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "_MAX_BALANCE",
+          "value": "0x4EE2D6D415B85ACEF8100000000"
+        },
+        {
+          "name": "_distributor",
+          "value": "0"
+        },
+        {
+          "name": "_farm",
+          "value": "{ .farmInfo = { .finished = 0 } }"
+        },
+        {
+          "name": "_owner",
+          "value": "0x800000000000000000000000000000000C3F3FFF"
+        },
+        {
+          "name": "_totalSupply",
+          "value": "0"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "distributor_",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [
+        "_balances",
+        "_allowances",
+        "_ESBMC_aux_IFarmingPool",
+        "_ESBMC_aux_Distributor",
+        "_owner",
+        "_name",
+        "_symbol",
+        "_ESBMC_aux_ERC20",
+        "STAKING_TOKEN",
+        "REWARDS_TOKEN"
+      ],
+      "witness_count": 1
+    }
+  }
+}

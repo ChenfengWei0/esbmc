@@ -1,0 +1,455 @@
+{
+  "benchmark": "limit_order_protocol",
+  "project": "limit_order_protocol",
+  "primary": {
+    "name": "MakerTraitsLib",
+    "kind": "library"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol",
+  "config": {
+    "mode": "per-method",
+    "solidityMaxTx": 1,
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "outerTimeoutSeconds": 120,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "MakerTraitsLib__hasExtension",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function hasExtension",
+      "wallSeconds": 0.33,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "hasExtension",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__isAllowedSender",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function isAllowedSender",
+      "wallSeconds": 0.32,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "isAllowedSender",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__getExpirationTime",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function getExpirationTime",
+      "wallSeconds": 0.34,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "getExpirationTime",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__isExpired",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function isExpired",
+      "wallSeconds": 0.32,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "isExpired",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__nonceOrEpoch",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function nonceOrEpoch",
+      "wallSeconds": 0.33,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "nonceOrEpoch",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__series",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function series",
+      "wallSeconds": 0.33,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "series",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__allowPartialFills",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function allowPartialFills",
+      "wallSeconds": 0.33,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "allowPartialFills",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__needPreInteractionCall",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function needPreInteractionCall",
+      "wallSeconds": 0.3,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "needPreInteractionCall",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__needPostInteractionCall",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function needPostInteractionCall",
+      "wallSeconds": 0.34,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "needPostInteractionCall",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__allowMultipleFills",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function allowMultipleFills",
+      "wallSeconds": 0.33,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "allowMultipleFills",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__useBitInvalidator",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function useBitInvalidator",
+      "wallSeconds": 0.33,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "useBitInvalidator",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__needCheckEpochManager",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function needCheckEpochManager",
+      "wallSeconds": 0.33,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "needCheckEpochManager",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__usePermit2",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function usePermit2",
+      "wallSeconds": 0.33,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "usePermit2",
+      "kind": "library"
+    },
+    {
+      "tag": "MakerTraitsLib__unwrapWeth",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/limit-order-protocol__MakerTraitsLib.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function unwrapWeth",
+      "wallSeconds": 0.31,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "MakerTraitsLib",
+      "function": "unwrapWeth",
+      "kind": "library"
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/limit_order_protocol/reports"
+}

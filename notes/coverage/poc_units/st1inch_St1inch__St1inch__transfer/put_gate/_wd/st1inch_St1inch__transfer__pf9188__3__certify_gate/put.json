@@ -1,0 +1,555 @@
+{
+  "contract": "St1inch",
+  "unit": "transfer",
+  "enc": 3,
+  "depth": 1,
+  "path_function": "sol:@C@St1inch@F@transfer#9188",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__transfer/put_gate/st1inch_St1inch__certify_gate/test/St1inchCovTest_St1inch_transfer_put3.t.sol",
+  "test": "test_put_St1inch_transfer_path3",
+  "piece": null,
+  "region": {
+    "msg.value": [
+      "0",
+      "0"
+    ]
+  },
+  "holes": {},
+  "pins": {},
+  "ladder": [
+    {
+      "var": "return",
+      "text": "a value IS returned on this path (REFUTED == yes)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "return",
+      "text": "return == false",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "return",
+      "text": "return == true",
+      "verdict": "REFUTED"
+    }
+  ],
+  "ladder_summary": [
+    3,
+    0,
+    3,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "enabled": true,
+    "requested": 62,
+    "selected": 62,
+    "candidate_budget": 128,
+    "rendered": 0,
+    "ran": 0,
+    "refuted": 0,
+    "not_refuted": 0,
+    "not_run": 62,
+    "timed_out": false,
+    "returncode": null,
+    "fuzz_runs": 256,
+    "command": [],
+    "reason": "rollback path has no observable R2 post-state",
+    "candidates": [
+      {
+        "key": "s0:v0:equals:e0",
+        "var": "return",
+        "text": "return == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a1",
+        "var": "return",
+        "text": "return in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e1",
+        "var": "return",
+        "text": "return == 5",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a2",
+        "var": "return",
+        "text": "return in [5, 5]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e2",
+        "var": "return",
+        "text": "return == 20",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:abs:a3",
+        "var": "return",
+        "text": "return in [20, 20]",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e3",
+        "var": "return",
+        "text": "return == (pre + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e4",
+        "var": "return",
+        "text": "return == (pre - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e5",
+        "var": "return",
+        "text": "return == (pre * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e6",
+        "var": "return",
+        "text": "return == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e7",
+        "var": "return",
+        "text": "return == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e8",
+        "var": "return",
+        "text": "return == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e9",
+        "var": "return",
+        "text": "return == (pre + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e10",
+        "var": "return",
+        "text": "return == (pre - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e11",
+        "var": "return",
+        "text": "return == (pre * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e12",
+        "var": "return",
+        "text": "return == (pre + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e13",
+        "var": "return",
+        "text": "return == (pre - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e14",
+        "var": "return",
+        "text": "return == (pre * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e15",
+        "var": "return",
+        "text": "return == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e16",
+        "var": "return",
+        "text": "return == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e17",
+        "var": "return",
+        "text": "return == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e18",
+        "var": "return",
+        "text": "return == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e19",
+        "var": "return",
+        "text": "return == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e20",
+        "var": "return",
+        "text": "return == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e21",
+        "var": "return",
+        "text": "return == (msg.value + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e22",
+        "var": "return",
+        "text": "return == (msg.value - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e23",
+        "var": "return",
+        "text": "return == (msg.value * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e24",
+        "var": "return",
+        "text": "return == (msg.value + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e25",
+        "var": "return",
+        "text": "return == (msg.value - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e26",
+        "var": "return",
+        "text": "return == (msg.value * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e27",
+        "var": "return",
+        "text": "return == (5 + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e28",
+        "var": "return",
+        "text": "return == (5 - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e29",
+        "var": "return",
+        "text": "return == (5 * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e30",
+        "var": "return",
+        "text": "return == (5 + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e31",
+        "var": "return",
+        "text": "return == (5 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e32",
+        "var": "return",
+        "text": "return == (5 * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e33",
+        "var": "return",
+        "text": "return == (5 + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e34",
+        "var": "return",
+        "text": "return == (5 - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e35",
+        "var": "return",
+        "text": "return == (5 * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e36",
+        "var": "return",
+        "text": "return == (5 + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e37",
+        "var": "return",
+        "text": "return == (5 - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e38",
+        "var": "return",
+        "text": "return == (5 * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e39",
+        "var": "return",
+        "text": "return == (20 + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e40",
+        "var": "return",
+        "text": "return == (20 - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e41",
+        "var": "return",
+        "text": "return == (20 * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e42",
+        "var": "return",
+        "text": "return == (20 + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e43",
+        "var": "return",
+        "text": "return == (20 - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e44",
+        "var": "return",
+        "text": "return == (20 * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e45",
+        "var": "return",
+        "text": "return == (20 + 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e46",
+        "var": "return",
+        "text": "return == (20 - 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e47",
+        "var": "return",
+        "text": "return == (20 * 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e48",
+        "var": "return",
+        "text": "return == (20 + 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e49",
+        "var": "return",
+        "text": "return == (20 - 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e50",
+        "var": "return",
+        "text": "return == (20 * 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e51",
+        "var": "return",
+        "text": "return == (pre / 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e52",
+        "var": "return",
+        "text": "return == (pre / 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e53",
+        "var": "return",
+        "text": "return == (msg.value / 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e54",
+        "var": "return",
+        "text": "return == (msg.value / 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e55",
+        "var": "return",
+        "text": "return == (5 / 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e56",
+        "var": "return",
+        "text": "return == (5 / 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e57",
+        "var": "return",
+        "text": "return == (20 / 5)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      },
+      {
+        "key": "s0:v0:equals:e58",
+        "var": "return",
+        "text": "return == (20 / 20)",
+        "verdict": "NOT-RUN",
+        "reason": "rollback path has no observable R2 post-state"
+      }
+    ]
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [],
+  "oracle_vars": [],
+  "slot_candidates": {
+    "asked": [],
+    "unanswered": [],
+    "rows_for_unasked_names": [
+      "return"
+    ]
+  },
+  "esbmc_extra_args": [
+    "--z3",
+    "--tuple-node-flattener",
+    "--path-cov-fixture",
+    "/home/samson/workspace/esbmc/notes/coverage/poc_units/st1inch_St1inch__St1inch__transfer/fixture_gate.json"
+  ],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "f4bfc7868e",
+    "srcDirty": true,
+    "binaryMtime": 1785974886
+  },
+  "stats": {
+    "fuzz_params": 2,
+    "lifted": [
+      "arg0",
+      "arg1"
+    ],
+    "asserts": 1,
+    "state_asserts": 0,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 1,
+    "rollback_exit": true,
+    "exit_kind": "revert",
+    "return_asserts": 0,
+    "oracle_skipped": [
+      "all return rungs DROPPED: no return rung HOLDS over the certified region (the value varies across it), which is a measurement, not a failure"
+    ],
+    "oracle_implied": [],
+    "state_stored": [],
+    "state_skipped": [],
+    "env_unchecked": []
+  },
+  "notes": [
+    "slot candidates asked=0 unanswered=0",
+    "R2 ESBMC skipped: reverting path has no observable post-state",
+    "emitted replay omitted arg0, arg1; lifting them as full-domain calldata fuzz inputs because the certified region leaves them unconstrained"
+  ]
+}

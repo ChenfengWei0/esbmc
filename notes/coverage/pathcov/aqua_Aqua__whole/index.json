@@ -1,0 +1,32 @@
+{
+  "benchmark": "aqua_Aqua",
+  "project": "aqua",
+  "primary": {
+    "name": "Aqua",
+    "kind": "contract"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol",
+  "config": {
+    "mode": "whole",
+    "solidityMaxTx": 1,
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "outerTimeoutSeconds": 3600,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "whole",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract Aqua",
+      "wallSeconds": 312.09,
+      "exitCode": -6,
+      "killedByOuterTimeout": false,
+      "reportPresent": false,
+      "pathsInstrumented": 2846,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/aqua_Aqua__whole/reports"
+}

@@ -1,0 +1,604 @@
+{
+  "contract": "Aqua",
+  "unit": "rawBalances",
+  "enc": 3,
+  "depth": 1,
+  "path_function": "sol:@C@Aqua@F@rawBalances#2819",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__rawBalances/put_gate/aqua_Aqua__certify_gate/test/AquaCovTest_Aqua_rawBalances_put3.t.sol",
+  "test": "test_put_Aqua_rawBalances_path3",
+  "piece": null,
+  "region": {
+    "msg.value": [
+      "0",
+      "0"
+    ],
+    "app": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount": [
+      "0",
+      "255"
+    ],
+    "token": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount": [
+      "0",
+      "452312848583266388373324160190187140051835877600158453279131187530910662655"
+    ],
+    "maker": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "state._DOCKED": "255"
+  },
+  "ladder": [
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post != pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post >= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post <= pre",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post > pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post < pre",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "return",
+      "text": "a value IS returned on this path (REFUTED == yes)",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "return.0",
+      "text": "return == 0",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "return.0",
+      "text": "return != 0",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "return.1",
+      "text": "return == 0",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "return.1",
+      "text": "return != 0",
+      "verdict": "REFUTED"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == msg.value",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (pre + pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (pre - pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (pre * pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (pre + msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (pre - msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (pre * msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (msg.value + pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (msg.value - pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (msg.value * pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (msg.value + msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (msg.value - msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post == (msg.value * msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+      "text": "post in [msg.value, msg.value]",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == msg.value",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (pre + pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (pre - pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (pre * pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (pre + msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (pre - msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (pre * msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (msg.value + pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (msg.value - pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (msg.value * pre)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (msg.value + msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (msg.value - msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post == (msg.value * msg.value)",
+      "verdict": "HOLDS"
+    },
+    {
+      "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "text": "post in [msg.value, msg.value]",
+      "verdict": "HOLDS"
+    }
+  ],
+  "ladder_summary": [
+    17,
+    8,
+    9,
+    0,
+    0
+  ],
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "requested": 28,
+    "selected": 28,
+    "candidate_budget": 128,
+    "rendered": 6,
+    "ran": 6,
+    "refuted": 0,
+    "not_run": 22,
+    "not_refuted": 6,
+    "timed_out": false,
+    "returncode": 0,
+    "fuzz_runs": 256,
+    "command": [
+      "forge",
+      "test",
+      "--json",
+      "--match-contract",
+      "^AquaCovTest_Aqua_rawBalances_put3_FuzzR2$",
+      "--match-test",
+      "^test_put_Aqua_rawBalances_path3fz",
+      "--fuzz-runs",
+      "256"
+    ],
+    "candidates": [
+      {
+        "key": "s0:v0:equals:e0",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e0",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == msg.value",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:abs:a1",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:abs:a1",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post in [msg.value, msg.value]",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e1",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (pre + pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_Aqua_rawBalances_path3fz4",
+        "marker": "VERIPUT_CANDIDATE_619cec540ed4f85a817294c00a75183b_4"
+      },
+      {
+        "key": "s0:v1:equals:e1",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (pre + pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_Aqua_rawBalances_path3fz5",
+        "marker": "VERIPUT_CANDIDATE_619cec540ed4f85a817294c00a75183b_5"
+      },
+      {
+        "key": "s0:v0:equals:e2",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (pre - pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_Aqua_rawBalances_path3fz6",
+        "marker": "VERIPUT_CANDIDATE_619cec540ed4f85a817294c00a75183b_6"
+      },
+      {
+        "key": "s0:v1:equals:e2",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (pre - pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_Aqua_rawBalances_path3fz7",
+        "marker": "VERIPUT_CANDIDATE_619cec540ed4f85a817294c00a75183b_7"
+      },
+      {
+        "key": "s0:v0:equals:e3",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (pre * pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_Aqua_rawBalances_path3fz8",
+        "marker": "VERIPUT_CANDIDATE_619cec540ed4f85a817294c00a75183b_8"
+      },
+      {
+        "key": "s0:v1:equals:e3",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (pre * pre)",
+        "verdict": "NOT-REFUTED",
+        "reason": "Forge reported Success; this is not proof",
+        "test": "test_put_Aqua_rawBalances_path3fz9",
+        "marker": "VERIPUT_CANDIDATE_619cec540ed4f85a817294c00a75183b_9"
+      },
+      {
+        "key": "s0:v0:equals:e4",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e4",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (pre + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e5",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e5",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (pre - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e6",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e6",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (pre * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e7",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e7",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (msg.value + pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e8",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e8",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (msg.value - pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e9",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e9",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (msg.value * pre)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e10",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e10",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (msg.value + msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e11",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e11",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (msg.value - msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v0:equals:e12",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      },
+      {
+        "key": "s0:v1:equals:e12",
+        "var": "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+        "text": "post == (msg.value * msg.value)",
+        "verdict": "NOT-RUN",
+        "reason": "candidate probe was not renderable"
+      }
+    ],
+    "enabled": true
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "_balances"
+  ],
+  "oracle_vars": [
+    "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+    "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount"
+  ],
+  "slot_candidates": {
+    "asked": [
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount"
+    ],
+    "unanswered": [],
+    "rows_for_unasked_names": [
+      "return",
+      "return.0",
+      "return.1"
+    ]
+  },
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "02dacbfacf",
+    "srcDirty": true,
+    "binaryMtime": 1785961135
+  },
+  "stats": {
+    "fuzz_params": 3,
+    "lifted": [
+      "maker",
+      "app",
+      "token"
+    ],
+    "asserts": 10,
+    "state_asserts": 8,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 0,
+    "rollback_exit": false,
+    "exit_kind": "normal",
+    "return_asserts": 2,
+    "oracle_skipped": [
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post == msg.value (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post == (pre + msg.value) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post == (pre - msg.value) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post == (pre * msg.value) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post == (msg.value + pre) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post == (msg.value - pre) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post == (msg.value * pre) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post == (msg.value + msg.value) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post == (msg.value - msg.value) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post == (msg.value * msg.value) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post == msg.value (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post == (pre + msg.value) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post == (pre - msg.value) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post == (pre * msg.value) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post == (msg.value + pre) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post == (msg.value - pre) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post == (msg.value * pre) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post == (msg.value + msg.value) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post == (msg.value - msg.value) (rung shape not rendered)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post == (msg.value * msg.value) (rung shape not rendered)"
+    ],
+    "oracle_implied": [
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post >= pre (entailed by a stronger rung that also HOLDS on _balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount, so asserting it detects nothing the stronger one misses)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post <= pre (entailed by a stronger rung that also HOLDS on _balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount, so asserting it detects nothing the stronger one misses)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post >= pre (entailed by a stronger rung that also HOLDS on _balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount, so asserting it detects nothing the stronger one misses)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post <= pre (entailed by a stronger rung that also HOLDS on _balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount, so asserting it detects nothing the stronger one misses)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount: post in [msg.value, msg.value] (entailed by a stronger rung that also HOLDS on _balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount, so asserting it detects nothing the stronger one misses)",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount: post in [msg.value, msg.value] (entailed by a stronger rung that also HOLDS on _balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount, so asserting it detects nothing the stronger one misses)"
+    ],
+    "state_stored": [],
+    "state_skipped": [
+      "state._DOCKED (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)",
+      "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].amount in [0, 452312848583266388373324160190187140051835877600158453279131187530910662655] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query; both endpoints are the type's own limits, so there is not even an in-region check to make)",
+      "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token].tokensCount in [0, 255] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query; both endpoints are the type's own limits, so there is not even an in-region check to make)"
+    ],
+    "env_unchecked": []
+  },
+  "notes": [
+    "slot candidates asked=2 unanswered=0"
+  ]
+}

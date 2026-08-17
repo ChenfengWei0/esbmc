@@ -1,0 +1,1 @@
+{"unit": "deposit", "enc": 7, "depth": 2, "region": [{"name": "amt", "lo": "1", "hi": "1000"}, {"name": "msg.sender", "lo": "1", "hi": "100"}], "vars": [{"name": "bal[msg.sender]", "delta_dir": "inc", "delta_lo": "amt", "delta_hi": "amt"}]}

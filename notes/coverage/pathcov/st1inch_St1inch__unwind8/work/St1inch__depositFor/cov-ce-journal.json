@@ -1,0 +1,10 @@
+{
+  "claims_decided": 16,
+  "claims_total": 16,
+  "complete": true,
+  "fingerprint": "5b56b5d8f5d4f3a7",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {}
+}

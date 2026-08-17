@@ -1,0 +1,149 @@
+{
+  "contract": "Aqua",
+  "unit": "safeBalances",
+  "enc": 2,
+  "depth": 1,
+  "path_function": "sol:@C@Aqua@F@safeBalances#2909",
+  "artifact_identity": "",
+  "file": "/home/samson/workspace/esbmc/notes/coverage/poc_units/aqua_Aqua__Aqua__safeBalances/put_gate/aqua_Aqua__certify_gate/test/AquaCovTest_Aqua_safeBalances_put2.t.sol",
+  "test": "test_put_Aqua_safeBalances_path2",
+  "piece": null,
+  "region": {
+    "app": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].amount": [
+      "0",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ],
+    "msg.value": [
+      "1",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ],
+    "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].tokensCount": [
+      "0",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ],
+    "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].tokensCount": [
+      "0",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ],
+    "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount": [
+      "0",
+      "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+    ],
+    "token1": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "token0": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ],
+    "maker": [
+      "0",
+      "1461501637330902918203684832716283019655932542975"
+    ]
+  },
+  "holes": {},
+  "pins": {
+    "state._DOCKED": "255"
+  },
+  "ladder": [],
+  "ladder_summary": null,
+  "ladder_refusal": null,
+  "r2_requested": true,
+  "r2_depth": 1,
+  "r2_term_budget": 96,
+  "r2_candidate_budget": 128,
+  "r2_fuzz_prefilter": {
+    "enabled": true,
+    "requested": 0,
+    "selected": 0,
+    "candidate_budget": 128,
+    "rendered": 0,
+    "ran": 0,
+    "refuted": 0,
+    "not_refuted": 0,
+    "not_run": 0,
+    "timed_out": false,
+    "returncode": null,
+    "fuzz_runs": 256,
+    "command": [],
+    "reason": "revert path has no observable R2 post-state",
+    "candidates": []
+  },
+  "oracle_dependency_policy": "solc-reference-closure/3",
+  "oracle_dependency_state": [
+    "_DOCKED",
+    "_balances"
+  ],
+  "oracle_vars": [
+    "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].amount",
+    "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].tokensCount",
+    "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].tokensCount",
+    "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount"
+  ],
+  "slot_candidates": {
+    "asked": [
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].amount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].tokensCount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].tokensCount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount"
+    ],
+    "unanswered": [
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].tokensCount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].amount",
+      "_balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].tokensCount"
+    ],
+    "rows_for_unasked_names": []
+  },
+  "esbmc_extra_args": [],
+  "unwind_applied_to_ladder_only": [],
+  "unwind_attempts": [],
+  "cell": {
+    "name": "GATE",
+    "scope": "focus",
+    "max_tx": 1,
+    "rule": "--focus-function at --solidity-max-tx 1, matching the LOCKED branch-coverage baseline, which is measured to run at one transaction. May NOT be quoted as the method's reach"
+  },
+  "binary": {
+    "head": "9726473e2b",
+    "srcDirty": true,
+    "binaryMtime": 1785959547
+  },
+  "stats": {
+    "fuzz_params": 5,
+    "lifted": [
+      "msg.value",
+      "maker",
+      "app",
+      "token0",
+      "token1"
+    ],
+    "asserts": 1,
+    "state_asserts": 0,
+    "guarded_asserts": 0,
+    "exit_kind_asserts": 1,
+    "rollback_exit": false,
+    "exit_kind": "revert",
+    "return_asserts": 0,
+    "oracle_skipped": [],
+    "oracle_implied": [],
+    "state_stored": [],
+    "state_skipped": [
+      "state._DOCKED (no storage slot: solc's layout does not list it, so it is a constant/immutable and no test can set it)",
+      "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].amount in [0, 115792089237316195423570985008687907853269984665640564039457584007913129639935] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query; both endpoints are the type's own limits, so there is not even an in-region check to make)",
+      "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token0].tokensCount in [0, 115792089237316195423570985008687907853269984665640564039457584007913129639935] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query; both endpoints are the type's own limits, so there is not even an in-region check to make)",
+      "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].amount in [0, 115792089237316195423570985008687907853269984665640564039457584007913129639935] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query; both endpoints are the type's own limits, so there is not even an in-region check to make)",
+      "state._balances[maker][app][0x2000000000000000000000000000000000000000000000000000000000000000][token1].tokensCount in [0, 115792089237316195423570985008687907853269984665640564039457584007913129639935] (width > 1, DROPPED: the entry state is not havoc'd, so this bound constrained nothing in the query; both endpoints are the type's own limits, so there is not even an in-region check to make)"
+    ],
+    "env_unchecked": []
+  },
+  "notes": [
+    "slot candidates asked=4 unanswered=4",
+    "R2 ESBMC skipped: reverting path has no observable post-state"
+  ]
+}

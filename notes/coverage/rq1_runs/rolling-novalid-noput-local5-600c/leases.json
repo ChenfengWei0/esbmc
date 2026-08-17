@@ -1,0 +1,57 @@
+{
+  "leases": {
+    "bugfix124/acfix_fixlink_MStableYieldSource": {
+      "bench": "bugfix124",
+      "category": "manual006_rolling-novalid-noput-local5-600c",
+      "rc": 0,
+      "status": "done",
+      "subject": "acfix_fixlink_MStableYieldSource",
+      "ts": 1786427595.0616438,
+      "updated_ts": 1786427850.5721877,
+      "worker_id": "local:3867027:notes/coverage/rq1_runs/rolling-novalid-noput-local5-600c/local_worker_4_progress.jsonl"
+    },
+    "bugfix124/acfix_fixlink_Product": {
+      "bench": "bugfix124",
+      "category": "manual007_rolling-novalid-noput-local5-600c",
+      "rc": 0,
+      "status": "running",
+      "subject": "acfix_fixlink_Product",
+      "ts": 1786428245.48756,
+      "updated_ts": 1786428275.5523138,
+      "worker_id": "local:3867023:notes/coverage/rq1_runs/rolling-novalid-noput-local5-600c/local_worker_0_progress.jsonl"
+    },
+    "bugfix124/acfix_fixlink_Product2": {
+      "bench": "bugfix124",
+      "category": "manual008_rolling-novalid-noput-local5-600c",
+      "rc": 0,
+      "status": "running",
+      "subject": "acfix_fixlink_Product2",
+      "ts": 1786428250.6036088,
+      "updated_ts": 1786428280.6736095,
+      "worker_id": "local:3867027:notes/coverage/rq1_runs/rolling-novalid-noput-local5-600c/local_worker_4_progress.jsonl"
+    },
+    "bugfix124/pop_001_Multicall": {
+      "bench": "bugfix124",
+      "category": "manual011_rolling-novalid-noput-local5-600c",
+      "rc": 0,
+      "status": "done",
+      "subject": "pop_001_Multicall",
+      "ts": 1786427174.3614643,
+      "updated_ts": 1786427179.6408887,
+      "worker_id": "local:3867023:notes/coverage/rq1_runs/rolling-novalid-noput-local5-600c/local_worker_0_progress.jsonl"
+    },
+    "bugfix124/pop_009_PrivatePool": {
+      "bench": "bugfix124",
+      "category": "manual012_rolling-novalid-noput-local5-600c",
+      "rc": -15,
+      "status": "failed",
+      "subject": "pop_009_PrivatePool",
+      "ts": 1786428050.100895,
+      "updated_ts": 1786428230.9211755,
+      "worker_id": "local:3867025:notes/coverage/rq1_runs/rolling-novalid-noput-local5-600c/local_worker_2_progress.jsonl"
+    }
+  },
+  "reset_by": "rq1_case_batch.py start",
+  "reset_ts": 1786425963.8191004,
+  "schema": "veriput-rq1-case-leases/v1"
+}

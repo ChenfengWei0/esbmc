@@ -1,0 +1,252 @@
+{
+  "benchmark": "aqua_Aqua",
+  "project": "aqua",
+  "primary": {
+    "name": "Aqua",
+    "kind": "contract"
+  },
+  "flatInput": "/home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol",
+  "config": {
+    "mode": "per-method",
+    "solidityMaxTx": 1,
+    "pathCovMaxGoals": 10000,
+    "memlimit": "8g",
+    "outerTimeoutSeconds": 120,
+    "innerEsbmcTimeout": null,
+    "innerTimeoutNote": "--timeout is deliberately NOT passed: the partial-result rescue is gated on branch_cov_active, so a path-coverage run killed by it emits nothing. Bounding is done from outside and a killed run is recorded as such rather than as a zero reach"
+  },
+  "runs": [
+    {
+      "tag": "BalanceLib__load",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function load",
+      "wallSeconds": 1.25,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "BalanceLib",
+      "function": "load",
+      "kind": "library"
+    },
+    {
+      "tag": "BalanceLib__store",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --function store",
+      "wallSeconds": 1.21,
+      "exitCode": 0,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 0,
+      "unitsEnumerated": 0,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 0,
+      "F": 0,
+      "U": 0,
+      "uReasons": {
+        "bounded-holds": 0,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 0
+      },
+      "decisionSequences": {
+        "decision_steps": 0,
+        "paths_with": 0,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 0,
+        "unrecorded_steps": 0
+      },
+      "contract": "BalanceLib",
+      "function": "store",
+      "kind": "library"
+    },
+    {
+      "tag": "Aqua__rawBalances",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract Aqua --focus-function rawBalances",
+      "wallSeconds": 2.35,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 2846,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 2846,
+      "F": 2,
+      "U": 2844,
+      "uReasons": {
+        "bounded-holds": 1,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 2843
+      },
+      "decisionSequences": {
+        "decision_steps": 3,
+        "paths_with": 2,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 2,
+        "unrecorded_steps": 0
+      },
+      "contract": "Aqua",
+      "function": "rawBalances",
+      "kind": "contract"
+    },
+    {
+      "tag": "Aqua__safeBalances",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract Aqua --focus-function safeBalances",
+      "wallSeconds": 2.78,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 2846,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 2846,
+      "F": 2,
+      "U": 2844,
+      "uReasons": {
+        "bounded-holds": 9,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 2835
+      },
+      "decisionSequences": {
+        "decision_steps": 4,
+        "paths_with": 2,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 2,
+        "unrecorded_steps": 0
+      },
+      "contract": "Aqua",
+      "function": "safeBalances",
+      "kind": "contract"
+    },
+    {
+      "tag": "Aqua__ship",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract Aqua --focus-function ship",
+      "wallSeconds": 120.31,
+      "exitCode": -1,
+      "killedByOuterTimeout": true,
+      "reportPresent": false,
+      "pathsInstrumented": 2846,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "contract": "Aqua",
+      "function": "ship",
+      "kind": "contract"
+    },
+    {
+      "tag": "Aqua__dock",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract Aqua --focus-function dock",
+      "wallSeconds": 10.95,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 2846,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 2846,
+      "F": 2,
+      "U": 2844,
+      "uReasons": {
+        "bounded-holds": 61,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 2783
+      },
+      "decisionSequences": {
+        "decision_steps": 4,
+        "paths_with": 2,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 2,
+        "unrecorded_steps": 0
+      },
+      "contract": "Aqua",
+      "function": "dock",
+      "kind": "contract"
+    },
+    {
+      "tag": "Aqua__pull",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract Aqua --focus-function pull",
+      "wallSeconds": 10.63,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 2846,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 2846,
+      "F": 5,
+      "U": 2841,
+      "uReasons": {
+        "bounded-holds": 12,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 2829
+      },
+      "decisionSequences": {
+        "decision_steps": 21,
+        "paths_with": 5,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 5,
+        "unrecorded_steps": 0
+      },
+      "contract": "Aqua",
+      "function": "pull",
+      "kind": "contract"
+    },
+    {
+      "tag": "Aqua__push",
+      "cmd": "/home/samson/workspace/esbmc/build/src/esbmc/esbmc /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol.solast --sol /home/samson/workspace/esbmc/notes/coverage/inputs/aqua__Aqua.flat.sol --solidity-path-coverage --solidity-max-tx 1 --cov-report-json --path-cov-max-goals 10000 --memlimit 8g --contract Aqua --focus-function push",
+      "wallSeconds": 3.41,
+      "exitCode": 1,
+      "killedByOuterTimeout": false,
+      "reportPresent": true,
+      "pathsInstrumented": 2846,
+      "unitsEnumerated": 6,
+      "nonUnitFunctionsPresent": true,
+      "pathsTotal": 2846,
+      "F": 2,
+      "U": 2844,
+      "uReasons": {
+        "bounded-holds": 17,
+        "named-obstacle": 0,
+        "not-solved-this-run": 0,
+        "solver-unknown": 0,
+        "unit-not-entered": 2827
+      },
+      "decisionSequences": {
+        "decision_steps": 4,
+        "paths_with": 2,
+        "paths_without": 0,
+        "synthetic_abi_gate_steps": 2,
+        "unrecorded_steps": 0
+      },
+      "contract": "Aqua",
+      "function": "push",
+      "kind": "contract"
+    }
+  ],
+  "reportsDir": "/home/samson/workspace/esbmc/notes/coverage/pathcov/aqua_Aqua/reports"
+}

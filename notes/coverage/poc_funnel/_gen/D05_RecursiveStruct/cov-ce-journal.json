@@ -1,0 +1,374 @@
+{
+  "claims_decided": 8,
+  "claims_total": 8,
+  "complete": true,
+  "fingerprint": "742f655f3726a4d5",
+  "kind": "solidity-complete-path-ce-journal",
+  "partial": false,
+  "version": 3,
+  "witnesses": {
+    "sol:@C@D05_RecursiveStruct@F@setFeeReceiver#48:path:2\t": {
+      "claim": "sol:@C@D05_RecursiveStruct@F@setFeeReceiver#48:path:2",
+      "compact_trace": false,
+      "dropped_internal": 23,
+      "entry_storage": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        },
+        {
+          "name": "root",
+          "value": "{ .value = 0 }"
+        },
+        {
+          "name": "root.value",
+          "value": "{ .={ .value = 0 }, .anon_pad$1=0, .owner=0, .feeReceiver=0,\n    .anon_pad$4=0, .root=1, .anon_pad$6=0,\n    .$address=4294967295, .anon_pad$8=0,\n    .$codehash=0, .$balance=0, .$code=0,\n    .$dynamic_pool={ .pool=&$D05_RecursiveStruct_pool#[0], .pool_cursor=0 }, ._ESBMC_bind_cname=&\"D05_RecursiveStruct\"[0],\n    .anon_pad$14=0 }"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        },
+        {
+          "name": "root",
+          "value": "{ .value = 0 }"
+        },
+        {
+          "name": "root.value",
+          "value": "{ .={ .value = 0 }, .anon_pad$1=0, .owner=0, .feeReceiver=0,\n    .anon_pad$4=0, .root=1, .anon_pad$6=0,\n    .$address=4294967295, .anon_pad$8=0,\n    .$codehash=0, .$balance=0, .$code=0,\n    .$dynamic_pool={ .pool=&$D05_RecursiveStruct_pool#[0], .pool_cursor=0 }, ._ESBMC_bind_cname=&\"D05_RecursiveStruct\"[0],\n    .anon_pad$14=0 }"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "r",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "dfa63e8a8e1cf22f",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@D05_RecursiveStruct@F@setFeeReceiver#48:path:6\t": {
+      "claim": "sol:@C@D05_RecursiveStruct@F@setFeeReceiver#48:path:6",
+      "compact_trace": false,
+      "dropped_internal": 23,
+      "entry_storage": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "4294967295"
+        },
+        {
+          "name": "root",
+          "value": "{ .value = 0 }"
+        },
+        {
+          "name": "root.value",
+          "value": "{ .={ .value = 0 }, .anon_pad$1=0, .owner=4294967295, .feeReceiver=0,\n    .anon_pad$4=0, .root=1, .anon_pad$6=0,\n    .$address=4294967295, .anon_pad$8=0,\n    .$codehash=0, .$balance=0, .$code=0,\n    .$dynamic_pool={ .pool=&$D05_RecursiveStruct_pool#[0], .pool_cursor=0 }, ._ESBMC_bind_cname=&\"D05_RecursiveStruct\"[0],\n    .anon_pad$14=0 }"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "4294967294"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "4294967295"
+        },
+        {
+          "name": "root",
+          "value": "{ .value = 0 }"
+        },
+        {
+          "name": "root.value",
+          "value": "{ .={ .value = 0 }, .anon_pad$1=0, .owner=4294967295, .feeReceiver=0,\n    .anon_pad$4=0, .root=1, .anon_pad$6=0,\n    .$address=4294967295, .anon_pad$8=0,\n    .$codehash=0, .$balance=0, .$code=0,\n    .$dynamic_pool={ .pool=&$D05_RecursiveStruct_pool#[0], .pool_cursor=0 }, ._ESBMC_bind_cname=&\"D05_RecursiveStruct\"[0],\n    .anon_pad$14=0 }"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "r",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "2054b86d0478b063",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    },
+    "sol:@C@D05_RecursiveStruct@F@setFeeReceiver#48:path:7\t": {
+      "claim": "sol:@C@D05_RecursiveStruct@F@setFeeReceiver#48:path:7",
+      "compact_trace": false,
+      "dropped_internal": 23,
+      "entry_storage": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        },
+        {
+          "name": "root",
+          "value": "{ .value = 0 }"
+        },
+        {
+          "name": "root.value",
+          "value": "{ .={ .value = 0 }, .anon_pad$1=0, .owner=0, .feeReceiver=0,\n    .anon_pad$4=0, .root=1, .anon_pad$6=0,\n    .$address=4294967295, .anon_pad$8=0,\n    .$codehash=0, .$balance=0, .$code=0,\n    .$dynamic_pool={ .pool=&$D05_RecursiveStruct_pool#[0], .pool_cursor=0 }, ._ESBMC_bind_cname=&\"D05_RecursiveStruct\"[0],\n    .anon_pad$14=0 }"
+        }
+      ],
+      "entry_storage_known": true,
+      "env": [
+        {
+          "name": "block_basefee",
+          "value": "0"
+        },
+        {
+          "name": "block_blobbasefee",
+          "value": "0"
+        },
+        {
+          "name": "block_chainid",
+          "value": "0"
+        },
+        {
+          "name": "block_coinbase",
+          "value": "0"
+        },
+        {
+          "name": "block_difficulty",
+          "value": "0"
+        },
+        {
+          "name": "block_gaslimit",
+          "value": "0"
+        },
+        {
+          "name": "block_number",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "block_prevrandao",
+          "value": "0"
+        },
+        {
+          "name": "block_timestamp",
+          "value": "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"
+        },
+        {
+          "name": "msg_data",
+          "value": "0"
+        },
+        {
+          "name": "msg_sender",
+          "value": "0"
+        },
+        {
+          "name": "msg_sig",
+          "value": "0"
+        },
+        {
+          "name": "msg_value",
+          "value": "0"
+        },
+        {
+          "name": "tx_gasprice",
+          "value": "0"
+        },
+        {
+          "name": "tx_origin",
+          "value": "0"
+        }
+      ],
+      "extcall_returns": [],
+      "final_state": [
+        {
+          "name": "feeReceiver",
+          "value": "0"
+        },
+        {
+          "name": "owner",
+          "value": "0"
+        },
+        {
+          "name": "root",
+          "value": "{ .value = 0 }"
+        },
+        {
+          "name": "root.value",
+          "value": "{ .={ .value = 0 }, .anon_pad$1=0, .owner=0, .feeReceiver=0,\n    .anon_pad$4=0, .root=1, .anon_pad$6=0,\n    .$address=4294967295, .anon_pad$8=0,\n    .$codehash=0, .$balance=0, .$code=0,\n    .$dynamic_pool={ .pool=&$D05_RecursiveStruct_pool#[0], .pool_cursor=0 }, ._ESBMC_bind_cname=&\"D05_RecursiveStruct\"[0],\n    .anon_pad$14=0 }"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "r",
+          "value": "0"
+        }
+      ],
+      "loc": "",
+      "path_id_stable": "60765808a647e699",
+      "payload_symbols_protected": true,
+      "return_value": "",
+      "return_value_known": false,
+      "revert_pre_rollback": false,
+      "scoped_to_claim": true,
+      "sliced": true,
+      "state_written_unrendered": [],
+      "witness_count": 1
+    }
+  }
+}
