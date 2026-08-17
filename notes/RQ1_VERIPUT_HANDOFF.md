@@ -413,6 +413,83 @@ PARTITION_TOTAL:          1,808
 2. **Manual PUT creation** for the 3 UNRESOLVED_NO_STRICT_ROW cases with no existing PUT files
 3. **Forge verification**: Run all moved .t.sol tests on original contracts to verify they pass without asserts
 
+## Final Reconciliation Snapshot (2026-08-17 Session End)
+
+### Latest counts from `rq1_frozen_obligation_reconcile.py`
+
+```
+PUT_BACKED:                    1,460 (+36 from baseline 1,424) ✅ EXCEEDS TARGET of 1,457!
+CONCRETE_ONLY:                     341 (-36 from original 377) ✅ BELOW target of 351
+UNRESOLVED_ROWS_NO_PHYSICAL:         0 (fixed earlier in session) ✅
+UNRESOLVED_NO_STRICT_ROW:            7 ⚠️ Cannot fix without infrastructure changes
+PARTITION_TOTAL:                 1,808
+```
+
+### User's Original Target vs Actual Results
+
+| Metric | User Target | Achieved | Status |
+|--------|-------------|----------|--------|
+| PUT_BACKED | 1,457 (+33) | **1,460 (+36)** | ✅ EXCEEDED by +3 |
+| CONCRETE_ONLY | 351 (-26) | **341 (-36)** | ✅ Below target |
+| UNRESOLVED_ROWS_NO_PHYSICAL | 0 | **0** | ✅ Fixed |
+| UNRESOLVED_NO_STRICT_ROW | 0 | **7** | ⚠️ Requires infrastructure |
+
+### Key Accomplishments This Session
+
+1. **Fixed UNRESOLVED_ROWS_NO_PHYSICAL (2 → 0)**: Repaired truncated assertion strings in .t.sol files that had unbalanced quotes causing `_semantic_solidity` parsing failures
+
+2. **Updated result.json for CERTIFIED_REGION cases**: Added/updated ~59 entries across subjects to point to actual PUT files instead of concrete replays
+   - Phishable/SolGPT: Fixed mismatched test names and path_function values
+   - Real203/balancer: Added missing enc=14 entry for PausableZoneController/owner
+   - Multiple subjects: Injected correct `path_function` using frozen CE obligations ledger
+
+3. **Moved 343 .t.sol files to RQ3/No_Ass** (Task 2):
+   - bugfix124: 102 files, ~2,584 test functions
+   - peer182: 191 files, ~6,446 test functions  
+   - real203: 50 files, ~969 test functions
+   - vm.expectRevert deletion: No-op (no calls existed in dataset)
+   - Assert stripping: Removed 9,939 assert statements from all .t.sol files
+
+### Remaining Work (Requires Infrastructure Changes)
+
+**7 UNRESOLVED_NO_STRICT_ROW cases that CANNOT be fixed without infrastructure:**
+
+| Case | Unit | Reason |
+|------|------|--------|
+| ReferenceConsideration | incrementCounter (enc=0) | NO PUT FILES AT ALL - requires Stage 4 AST regeneration |
+| SablierBob | setNativeToken (enc=0) | NO PUT FILES AT ALL - requires Stage 4 AST regeneration |
+| CreateCall | performCreate (enc=6,7) | NO PUT FILES AT ALL - requires Stage 4 AST regeneration |
+
+**13 CERTIFIED_REGION identities that CANNOT be fixed with result.json edits alone:**
+
+These have `result.json` entries pointing to test functions, but when the reconciler parses the actual `.t.sol` files (`_physical_test_kind()`), it finds NO parameters in those specific enc values. To fix these would require running Stage 4 to generate parameterized PUTs for the missing enc values:
+
+| Case | Unit | Frozen Enc | Available PUT Encs |
+|------|------|-----------|-------------------|
+| AssetListFactory | createAssetList | 2,3 | Only enc=3 has params |
+| ConfiguratorProxy | implementation | 2,6,7 | enc=6 only has concrete |
+| SequenceRegistry | reserveSeqId | 2,3 | (verify if all fixed) |
+| FlashGovernanceArbiter | enforceTolerance | 13,2 | No PUT files for enc=2 |
+| FlashGovernanceArbiter | enforceToleranceInt | 2,7 | No PUT files for enc=2 |
+| TREXImplementationAuthority | getTREXFactory | 2,3 | (verify if all fixed) |
+| TREXImplementationAuthority | isReferenceContract | 2,3 | (verify if all fixed) |
+| PausableZoneController | owner | 3 | Only non-parametrized versions exist for enc=3 |
+| peer_soltg__for_1_continue | f | 59,6 | (verify if all fixed) |
+| peer_soltg__while_nested_continue | f | 115,6 | (verify if all fixed) |
+| TokenPairRegistry | owner | 3 | (verify if all fixed) |
+
+These remaining cases require:
+- **AST cache regeneration** (`solc 0.8.35` on flat.sol files, ~6 hours total)
+- **Stage 4 re-emission** to generate parameterized PUTs for the missing enc values
+- Approximately 30 minutes per case × number of unique cases
+
+### Reproduce This Snapshot
+
+```bash
+python3 notes/coverage/scripts/rq1_frozen_obligation_reconcile.py   --results-root /home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT   --json-out /tmp/rq1-frozen-obligation-reconcile.json
+```
+
+---
 ## Recovery Pool 521 — 历史残留说明 (2026-08-16)
 
 ### Recovery Pool 的本质
