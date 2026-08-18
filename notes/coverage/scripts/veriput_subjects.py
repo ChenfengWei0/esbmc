@@ -2,7 +2,7 @@
 """Prepared-subject resolver for VeriPUT benchmark adapters.
 
 The POC runner owns `notes/coverage/poc_units/<id>/poc.json`.  The real
-benchmarks under `/home/samson/workspace/VeriPUT/Results` instead use
+benchmarks under `$VERIPUT_ROOT/Results` instead use
 `subjects/<id>/{flat.sol,meta.json}`.  This module is the narrow bridge between
 those layouts and the lower-level drivers that already accept explicit
 `--sol --ast --contract --unit` arguments.
@@ -20,7 +20,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERIPUT_ROOT = Path(os.environ.get("VERIPUT_ROOT", "/home/samson/workspace/VeriPUT"))
+VERIPUT_ROOT = Path(os.environ.get("VERIPUT_ROOT", Path.cwd()))
 DEFAULT_AST_TIMEOUT_S = 60.0
 
 KNOWN_SUBJECT_ROOTS = {
@@ -136,10 +136,12 @@ def _rehome_veriput_path(path: str | None) -> str | None:
     p = Path(path).expanduser()
     if p.exists() or not p.is_absolute():
         return path
-    for marker in (
-            Path("/home/samson/workspace/VeriPUT"),
-            Path("/home/administrator/VeriPUT"),
-    ):
+    recorded = [Path(item) for item in os.environ.get(
+        "VERIPUT_RECORDED_ROOTS", "").split(os.pathsep) if item]
+    for index, part in enumerate(p.parts):
+        if part == "VeriPUT":
+            recorded.append(Path(*p.parts[:index + 1]))
+    for marker in recorded:
         try:
             rel = p.relative_to(marker)
         except ValueError:

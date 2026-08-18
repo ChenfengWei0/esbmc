@@ -105,6 +105,8 @@ import signal
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
+from pathlib import Path
 
 
 def ensure_foundry_tools_on_path():
@@ -113,8 +115,6 @@ def ensure_foundry_tools_on_path():
     candidates = [
         os.path.expanduser("~/.foundry/bin"),
         os.path.expanduser("~/.local/bin"),
-        "/home/administrator/.foundry/bin",
-        "/home/administrator/.local/bin",
     ]
     extra = [d for d in candidates if d not in dirs and os.path.exists(os.path.join(d, "forge"))]
     if extra:
@@ -129,6 +129,9 @@ if RQ1_SCRIPT_DIR not in sys.path:
     sys.path.insert(0, RQ1_SCRIPT_DIR)
 from rq1_concrete_replay_store import (  # noqa: E402
     _oracle_binding_errors, _structured_oracle_errors)
+from rq1_anchor_events import (  # noqa: E402
+    inject_event_oracles as inject_fixed_event_oracles, load_solast as load_fixed_event_ast,
+    render_event_oracles as render_fixed_event_oracles)
 from solidity_ast_dependencies import (SLOT_DEPENDENCY_POLICY, contract_state_esbmc_store_names,
                                        path_function_declaration_id, unit_mapping_slot_accesses,
                                        unit_state_dependencies)
@@ -137,6 +140,333 @@ UINT256_MAX = (1 << 256) - 1
 ADDRESS_MAX = (1 << 160) - 1
 CHAIN_ID_MAX = (1 << 64) - 1
 DYNAMIC_RENDERED_WIDTH = 2
+
+
+@dataclass
+class OracleInputPart:
+    """One certified input subset and the oracle facts proved for it."""
+
+    part_id: str
+    region: dict
+    holes: dict
+    witness: dict
+    assertions: tuple = ()
+    depth: int = 0
+
+
+def make_oracle_input_part(part_id,
+                           region,
+                           holes,
+                           witness,
+                           assertions=(),
+                           depth=0):
+    """Normalize and validate one JSON-compatible oracle input part."""
+    normalized_region = {}
+    normalized_holes = {}
+    normalized_witness = {}
+    for name, bounds in sorted((region or {}).items()):
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+            raise ValueError(f"oracle input part {part_id}: invalid bounds for {name}")
+        lo, hi = (int(str(value), 0) for value in bounds)
+        if lo > hi:
+            raise ValueError(f"oracle input part {part_id}: empty interval for {name}")
+        normalized_region[str(name)] = (lo, hi)
+        excluded = sorted({
+            int(str(value), 0)
+            for value in (holes or {}).get(name, ()) if lo <= int(str(value), 0) <= hi
+        })
+        if excluded:
+            normalized_holes[str(name)] = tuple(excluded)
+        if name not in (witness or {}):
+            raise ValueError(f"oracle input part {part_id}: witness lacks {name}")
+        value = int(str(witness[name]), 0)
+        if value < lo or value > hi or value in excluded:
+            raise ValueError(f"oracle input part {part_id}: witness is outside {name}")
+        normalized_witness[str(name)] = value
+    return OracleInputPart(str(part_id), normalized_region, normalized_holes,
+                           normalized_witness, tuple(assertions or ()), int(depth))
+
+
+def split_oracle_input_part(part, counterexample, coordinate_order=None):
+    """Split ``part`` at a refuting input while preserving an exact union.
+
+    The child containing the old representative keeps that witness. The other
+    child receives the complete refuting input as its representative. Return
+    ``(witness_child, refutation_child, coordinate)`` or ``None`` when no
+    renderable coordinate separates the two inputs.
+    """
+    if not isinstance(part, OracleInputPart):
+        raise TypeError("oracle input split requires OracleInputPart")
+    try:
+        refuting = {
+            name: int(str((counterexample or {})[name]), 0)
+            for name in part.region
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+    for name, value in refuting.items():
+        lo, hi = part.region[name]
+        if value < lo or value > hi or value in part.holes.get(name, ()):
+            return None
+    ordered = []
+    for name in list(coordinate_order or ()) + sorted(part.region):
+        if name in part.region and name not in ordered:
+            ordered.append(name)
+    coordinate = next(
+        (name for name in ordered if part.witness[name] != refuting[name]), None)
+    if coordinate is None:
+        return None
+    lo, hi = part.region[coordinate]
+    witness_value = part.witness[coordinate]
+    refuting_value = refuting[coordinate]
+    if witness_value < refuting_value:
+        witness_bounds = (lo, refuting_value - 1)
+        refuting_bounds = (refuting_value, hi)
+    else:
+        refuting_bounds = (lo, refuting_value)
+        witness_bounds = (refuting_value + 1, hi)
+    if witness_bounds[0] > witness_bounds[1] or refuting_bounds[0] > refuting_bounds[1]:
+        return None
+
+    def child(suffix, bounds, representative):
+        region = dict(part.region)
+        region[coordinate] = bounds
+        holes = {
+            name: tuple(value for value in values
+                        if region[name][0] <= value <= region[name][1])
+            for name, values in part.holes.items()
+        }
+        holes = {name: values for name, values in holes.items() if values}
+        return make_oracle_input_part(f"{part.part_id}.{suffix}", region, holes,
+                                      representative, part.assertions, part.depth + 1)
+
+    return (child("w", witness_bounds, part.witness),
+            child("r", refuting_bounds, refuting), coordinate)
+
+
+def refine_oracle_candidate_parts(part,
+                                  candidate,
+                                  family,
+                                  initial_verdict,
+                                  initial_refutation,
+                                  verifier,
+                                  coordinate_order=None,
+                                  max_parts=4,
+                                  max_depth=2):
+    """Refine R1/R2.1/R2.3 over certified input subsets.
+
+    ``verifier(child, candidate)`` returns ``(verdict, refutation)``. A proved
+    child receives the candidate; an undecided or unsplittable child remains
+    covered without it. The child containing the known refutation is retained
+    immediately without the candidate, while the witness child is rechecked.
+    """
+    if family not in ("R1", "R2.1", "R2.3"):
+        raise ValueError(f"input-part refinement is unsupported for {family}")
+    if not isinstance(part, OracleInputPart):
+        raise TypeError("oracle refinement requires OracleInputPart")
+    max_parts = max(1, int(max_parts))
+    max_depth = max(0, int(max_depth))
+    results = []
+    queries = []
+
+    def retain(current, proved):
+        assertions = current.assertions
+        if proved and candidate not in assertions:
+            assertions += (candidate,)
+        results.append(
+            make_oracle_input_part(current.part_id, current.region, current.holes,
+                                   current.witness, assertions, current.depth))
+
+    current = part
+    verdict = str(initial_verdict or "UNDECIDED")
+    refutation = initial_refutation
+    while True:
+        if verdict == "HOLDS":
+            retain(current, True)
+            break
+        if verdict != "REFUTED" or current.depth >= max_depth or len(results) + 2 > max_parts:
+            retain(current, False)
+            break
+        coordinates = ((refutation or {}).get("coordinates")
+                       if isinstance(refutation, dict) else None)
+        split = split_oracle_input_part(current, coordinates, coordinate_order)
+        if split is None:
+            retain(current, False)
+            break
+        witness_child, refuting_child, coordinate = split
+        retain(refuting_child, False)
+        queries.append({
+            "parent_part_id": current.part_id,
+            "part_id": witness_child.part_id,
+            "coordinate": coordinate,
+            "candidate": candidate,
+            "family": family,
+        })
+        verdict, refutation = verifier(witness_child, candidate)
+        verdict = str(verdict or "UNDECIDED")
+        current = witness_child
+    return sorted(results, key=lambda value: value.part_id), queries
+
+
+def refine_oracle_parts(parts,
+                        candidates,
+                        verifier,
+                        coordinate_order=None,
+                        max_parts=4,
+                        max_depth=2):
+    """Apply each R1/R2.1/R2.3 candidate to every retained input part."""
+    current_parts = list(parts or [])
+    all_queries = []
+    for candidate, family in candidates or ():
+        next_parts = []
+        for part in current_parts:
+            verdict, refutation = verifier(part, candidate)
+            all_queries.append({
+                "part_id": part.part_id,
+                "candidate": candidate,
+                "family": family,
+                "initial": True,
+            })
+            remaining = max(1, int(max_parts) - len(next_parts))
+            refined, queries = refine_oracle_candidate_parts(
+                part,
+                candidate,
+                family,
+                verdict,
+                refutation,
+                verifier,
+                coordinate_order,
+                remaining,
+                max_depth)
+            next_parts.extend(refined)
+            all_queries.extend(queries)
+        current_parts = sorted(next_parts, key=lambda value: value.part_id)
+    return current_parts, all_queries
+
+
+def oracle_part_assert_spec(base_spec, part, variable=None, exact_vars=None):
+    """Build the assertion query for one certified oracle input part.
+
+    The path identity and establishment policy come from ``base_spec``.  Only
+    the input region is narrowed.  Holes remain exclusions rather than being
+    silently filled back into the child interval.
+    """
+    if not isinstance(part, OracleInputPart):
+        raise TypeError("oracle assertion query requires OracleInputPart")
+    spec = json.loads(json.dumps(base_spec or {}))
+    pinned = []
+    for entry in spec.get("region", []):
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        name = str(entry["name"])
+        if name not in part.region:
+            pinned.append(entry)
+    narrowed = []
+    for name, (lo, hi) in sorted(part.region.items()):
+        entry = {"name": name, "lo": str(lo), "hi": str(hi)}
+        excluded = part.holes.get(name, ())
+        if excluded:
+            entry["holes"] = [str(value) for value in excluded]
+        narrowed.append(entry)
+    spec["region"] = narrowed + pinned
+    if exact_vars is not None:
+        spec["candidate_policy"] = "exact"
+        spec["vars"] = json.loads(json.dumps(exact_vars))
+    elif variable is not None:
+        spec["vars_policy"] = "state-exact"
+        spec["vars"] = [{"name": str(variable)}]
+    return spec
+
+
+def oracle_part_candidate_verdict(rows, summary, candidate, refutations=None):
+    """Return the final verifier answer for exactly one oracle candidate."""
+    if summary is None or not isinstance(candidate, (list, tuple)) or len(candidate) != 2:
+        return "UNDECIDED", None
+    wanted = (str(candidate[0]), canonical_oracle_rung_text(candidate[1]))
+    matches = [(verdict, (refutations or {}).get(wanted)) for var, text, verdict in rows
+               if (str(var), canonical_oracle_rung_text(text)) == wanted]
+    if len(matches) != 1 or matches[0][0] not in ("HOLDS", "REFUTED"):
+        return "UNDECIDED", None
+    return matches[0]
+
+
+def oracle_input_part_record(part):
+    """Stable JSON record for one final oracle partition."""
+    if not isinstance(part, OracleInputPart):
+        raise TypeError("oracle input part record requires OracleInputPart")
+    return {
+        "part_id": part.part_id,
+        "region": {name: [str(lo), str(hi)] for name, (lo, hi) in part.region.items()},
+        "holes": {name: [str(value) for value in values]
+                  for name, values in part.holes.items()},
+        "representative": {name: str(value) for name, value in part.witness.items()},
+        "assertions": [{"var": candidate[0], "text": candidate[1]}
+                       if isinstance(candidate, (tuple, list)) and len(candidate) == 2
+                       else candidate for candidate in part.assertions],
+        "depth": part.depth,
+    }
+
+
+def merge_adjacent_oracle_parts(parts, coordinate_order=None):
+    """Merge only rectangular neighbours with identical proved assertions."""
+    current = sorted(list(parts or []), key=lambda part: tuple(
+        part.region[name] for name in (coordinate_order or sorted(part.region))))
+    changed = True
+    while changed:
+        changed = False
+        merged = []
+        index = 0
+        while index < len(current):
+            left = current[index]
+            if index + 1 >= len(current):
+                merged.append(left)
+                break
+            right = current[index + 1]
+            differing = [name for name in left.region
+                         if left.region.get(name) != right.region.get(name)]
+            coordinate = differing[0] if len(differing) == 1 else None
+            adjacent = (coordinate is not None and
+                        left.region[coordinate][1] + 1 == right.region[coordinate][0])
+            other_equal = (set(left.region) == set(right.region)
+                           and left.assertions == right.assertions
+                           and left.holes == right.holes)
+            if not (adjacent and other_equal):
+                merged.append(left)
+                index += 1
+                continue
+            region = dict(left.region)
+            region[coordinate] = (left.region[coordinate][0], right.region[coordinate][1])
+            representative = left.witness
+            merged.append(make_oracle_input_part(
+                left.part_id + "+" + right.part_id, region, left.holes,
+                representative, left.assertions, min(left.depth, right.depth)))
+            index += 2
+            changed = True
+        current = merged
+    return current
+
+
+def prepare_oracle_part_publications(parts, authenticate_representative):
+    """Attach one authenticated fixed replay to every publishable child.
+
+    ``authenticate_representative(part)`` returns an evidence dictionary or
+    ``None``.  Missing evidence drops that child rather than borrowing another
+    part's witness-specific assertions.
+    """
+    published, refused = [], []
+    for part in parts or ():
+        evidence = authenticate_representative(part)
+        if not isinstance(evidence, dict) or evidence.get("authenticated") is not True:
+            refused.append({"part_id": part.part_id,
+                            "reason": "authenticated representative replay unavailable"})
+            continue
+        coordinates = evidence.get("coordinates")
+        if coordinates != {name: str(value) for name, value in part.witness.items()}:
+            refused.append({"part_id": part.part_id,
+                            "reason": "representative replay does not match part witness"})
+            continue
+        published.append({"part": part, "representative": evidence})
+    return published, refused
 
 
 class ConcreteFallback(Exception):
@@ -336,9 +666,7 @@ def k_induction_proof_args(existing):
         if name in K_INDUCTION_PROOF_FLAGS:
             continue
         out.append(arg)
-    return out + [
-        "--k-induction", "--enable-forward-condition", "--max-k-step", "30"
-    ]
+    return out + ["--k-induction", "--enable-forward-condition", "--max-k-step", "30"]
 
 
 # ---- WHICH CELL A RUN IS IN, AND WHY THE ARTEFACT HAS TO SAY SO --------------
@@ -514,6 +842,7 @@ LADDER_SUMMARY_RE = re.compile(
 LADDER_REFUSAL_RE = re.compile(r"--path-cov-assert: unit '[^']*' -- "
                                r"REFUSING THE LADDER(?::|,|\s+)(.*)$")
 LADDER_VACUOUS_RE = re.compile(r"--path-cov-assert: THE REGION IS VACUOUS")
+LADDER_FAILED_CLAIM_RE = re.compile(r"FAILED: '(.+?) at file ")
 
 # ---- THE `RESULT:` TOKENS OF THE ASSERT GATE, AND WHY AN UNKNOWN ONE IS FATAL
 #
@@ -710,6 +1039,98 @@ def parse_ladder(log):
         if m and refusal is None:
             refusal = m.group(1)
     return (rows or partial_rows), summary, refusal, blocker
+
+
+def r2_refutation_observations(log, report, coordinate_names=None):
+    """Map refuted ladder rows to observable values from the same CE report."""
+    if isinstance(report, str):
+        try:
+            with open(report) as stream:
+                report = json.load(stream)
+        except (OSError, ValueError):
+            return {}
+    claims = {}
+    for claim in (report or {}).get("claims", []):
+        if not isinstance(claim, dict) or claim.get("status") != "F":
+            continue
+        condition = claim.get("condition")
+        if condition:
+            claims.setdefault(condition, []).append(claim)
+
+    def state_value(values, name):
+        if not isinstance(values, dict):
+            return None
+        source = name[len("state."):] if str(name).startswith("state.") else str(name)
+        if source in values:
+            return values[source]
+        normalized = lambda value: re.sub(r"\$\d+(?=\.|\[|$)", "", str(value))
+        matches = [value for key, value in values.items() if normalized(key) == source]
+        return matches[0] if len(matches) == 1 else None
+
+    out = {}
+    pending = None
+    for line in (log or "").splitlines():
+        failed = LADDER_FAILED_CLAIM_RE.search(line)
+        if failed:
+            pending = failed.group(1)
+            continue
+        row = LADDER_ROW_RE.match(line.strip()) or LADDER_PARTIAL_ROW_RE.match(line.strip())
+        if row is None:
+            continue
+        var, text, verdict = row.group(1), row.group(2).strip(), row.group(3)
+        if verdict != "REFUTED" or pending is None:
+            pending = None
+            continue
+        matched = claims.get(pending) or []
+        pending = None
+        if len(matched) != 1:
+            continue
+        claim = matched[0]
+        if var == RETURN_VAR:
+            if claim.get("return_value_known") is not True:
+                continue
+            post, pre = claim.get("return_value"), None
+        else:
+            post = state_value(claim.get("final_state"), var)
+            pre = state_value(claim.get("entry_storage"), var)
+        if post is None:
+            continue
+        observation = {"post": post, "pre": pre}
+        if coordinate_names is not None:
+            coordinates = claim_oracle_coordinate_values(claim, coordinate_names)
+            if coordinates is not None:
+                observation["coordinates"] = coordinates
+        out[(var, canonical_oracle_rung_text(text))] = observation
+    return out
+
+
+def claim_oracle_coordinate_values(claim, coordinate_names):
+    """Extract one complete renderable input point from an assertion CE."""
+    if not isinstance(claim, dict):
+        return None
+    inputs = claim.get("inputs") if isinstance(claim.get("inputs"), dict) else {}
+    env = claim.get("env") if isinstance(claim.get("env"), dict) else {}
+    state = (claim.get("entry_storage")
+             if isinstance(claim.get("entry_storage"), dict) else {})
+
+    def state_value(name):
+        source = name[len("state."):]
+        if source in state:
+            return state[source]
+        normalized = lambda value: re.sub(r"\$\d+(?=\.|\[|$)", "", str(value))
+        matches = [value for key, value in state.items() if normalized(key) == source]
+        return matches[0] if len(matches) == 1 else None
+
+    values = {}
+    for raw_name in coordinate_names or ():
+        name = str(raw_name)
+        raw = (state_value(name) if name.startswith("state.") else
+               inputs.get(name) if name in inputs else env.get(name))
+        try:
+            values[name] = int(str(raw), 0)
+        except (TypeError, ValueError):
+            return None
+    return values
 
 
 def should_retry_exact_mapping_r2_with_cvc5(spec, rows, extra_args):
@@ -2938,6 +3359,303 @@ def region_r2_literals(region, pins, params, state_types=None):
     return out, evidence
 
 
+def boundary_observation_points(region, params, witness=None, max_points=None):
+    """Coordinate-wise interior boundary points for one certified box.
+
+    The region stored by Stage 2 is already an inclusive integer box.  Start
+    from its authenticated witness (or the lower endpoint when the witness is
+    absent), then move one numeric coordinate at a time to its lower and upper
+    endpoint.  This yields at most ``2*n + 1`` points instead of the exponential
+    corner product.  Sampling proposes candidates only; it never proves them.
+    """
+    param_types = {name: sol_type for name, sol_type in (params or [])}
+    numeric = []
+    bounds = {}
+    for name, raw_bounds in sorted((region or {}).items()):
+        candidate = endpoint_candidate(name, param_types.get(name, ""))
+        if candidate is None or candidate[1] != "num":
+            continue
+        try:
+            lo, hi = (int(str(value), 0) for value in raw_bounds)
+        except (TypeError, ValueError):
+            continue
+        if lo < 0 or hi < lo or hi > UINT256_MAX:
+            continue
+        numeric.append(name)
+        bounds[name] = (lo, hi)
+    if not numeric:
+        return []
+
+    witness = witness if isinstance(witness, dict) else {}
+    base = {}
+    for name in numeric:
+        lo, hi = bounds[name]
+        try:
+            value = int(str(witness.get(name, lo)), 0)
+        except (TypeError, ValueError):
+            value = lo
+        base[name] = min(hi, max(lo, value))
+
+    points = []
+    seen = set()
+
+    def append(point, origin):
+        key = tuple((name, point[name]) for name in numeric)
+        if key in seen:
+            return
+        seen.add(key)
+        points.append({"coordinates": dict(point), "origin": origin})
+
+    append(base, "witness")
+    for name in numeric:
+        lo, hi = bounds[name]
+        lower = dict(base)
+        lower[name] = lo
+        append(lower, f"{name}.lo")
+        upper = dict(base)
+        upper[name] = hi
+        append(upper, f"{name}.hi")
+    if max_points is not None:
+        return points[:max(0, int(max_points))]
+    return points
+
+
+def boundary_observation_r2_spec(observations, directions=None, refinement_rounds=0):
+    """Turn concrete boundary observations into verifier-bound R2 proposals.
+
+    Each observation has ``values`` mapping an observable to ``post`` and,
+    optionally, ``pre``.  Min/max values are merely candidate endpoints.  The
+    returned spec must still pass the existing ESBMC R2 query before any row is
+    emitted into a PUT.
+    """
+    directions = dict(directions or {})
+    grouped = {}
+    for observation in observations or []:
+        values = observation.get("values") if isinstance(observation, dict) else None
+        if not isinstance(values, dict):
+            continue
+        for name, sample in values.items():
+            if not isinstance(sample, dict):
+                continue
+            try:
+                post = int(str(sample["post"]), 0)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if post < 0 or post > UINT256_MAX:
+                continue
+            pre = sample.get("pre")
+            try:
+                pre = None if pre is None else int(str(pre), 0)
+            except (TypeError, ValueError):
+                pre = None
+            grouped.setdefault(str(name), []).append((pre, post))
+
+    entries = []
+    for name, samples in sorted(grouped.items()):
+        posts = [post for _pre, post in samples]
+        lo, hi = min(posts), max(posts)
+        absolute_candidates = [{
+            "id": "boundary_abs",
+            "lo": {
+                "kind": "literal",
+                "value": str(lo)
+            },
+            "hi": {
+                "kind": "literal",
+                "value": str(hi)
+            },
+        }]
+        entry = {
+            "name": name,
+            "equals": [],
+            "abs": absolute_candidates,
+            "deltas": [],
+        }
+        direction = directions.get(name)
+        if direction in ("inc", "dec") and all(pre is not None for pre, _post in samples):
+            magnitudes = []
+            for pre, post in samples:
+                if direction == "inc" and post >= pre:
+                    magnitudes.append(post - pre)
+                elif direction == "dec" and pre >= post:
+                    magnitudes.append(pre - post)
+                else:
+                    magnitudes = []
+                    break
+            if magnitudes:
+                entry["deltas"].append({
+                    "id": "boundary_delta",
+                    "dir": direction,
+                    "lo": {
+                        "kind": "literal",
+                        "value": str(min(magnitudes))
+                    },
+                    "hi": {
+                        "kind": "literal",
+                        "value": str(max(magnitudes))
+                    },
+                })
+        entries.append(entry)
+    if not entries:
+        return []
+    return [{
+        "param": "boundary_observation",
+        "stage": 1,
+        "kind": "boundary-observation",
+        "r2_subfamily": "R2.2",
+        "depth": 0,
+        "refinement_budget": max(0, int(refinement_rounds)),
+        "refinement_round": 0,
+        "candidate_count": sum(len(entry["abs"]) + len(entry["deltas"]) for entry in entries),
+        "observation_count": len(observations or []),
+        "vars": entries,
+    }]
+
+
+def refine_boundary_observation_r2_spec(spec, refutations):
+    """Expand one R2.2 bound with verifier counterexample observations.
+
+    ``refutations`` maps ``(var, canonical_rung_text)`` to a ``post`` value and
+    optionally a ``pre`` value.  The certified input part is deliberately not
+    changed here: R2.2's refinement variable is the proposed output bound.
+    Return ``(refined_spec, changed)``.  A type-wide uint256 bound is dropped
+    rather than emitted as a tautological oracle.
+    """
+    refined = json.loads(json.dumps(spec or {}))
+    if refined.get("r2_subfamily") != "R2.2":
+        return refined, False
+    round_index = int(refined.get("refinement_round") or 0)
+    budget = int(refined.get("refinement_budget") or 0)
+    if round_index >= budget:
+        return refined, False
+    changed = False
+    for entry in refined.get("vars", []):
+        name = entry.get("name")
+        for kind in ("abs", "deltas"):
+            candidates = entry.get(kind) or []
+            if len(candidates) != 1:
+                continue
+            candidate = candidates[0]
+            if kind == "abs":
+                prefix = "return" if name == RETURN_VAR else "post"
+                rung = f"{prefix} in [{r2_term_text(candidate['lo'])}, " \
+                       f"{r2_term_text(candidate['hi'])}]"
+            else:
+                increasing = candidate.get("dir") == "inc"
+                prefix = "post - pre" if increasing else "pre - post"
+                relation = "post >= pre" if increasing else "pre >= post"
+                rung = f"{prefix} in [{r2_term_text(candidate['lo'])}, " \
+                       f"{r2_term_text(candidate['hi'])}] with {relation}"
+            observation = (refutations or {}).get((name, canonical_oracle_rung_text(rung)))
+            if not isinstance(observation, dict):
+                entry[kind] = []
+                continue
+            try:
+                post = int(str(observation["post"]), 0)
+                pre = observation.get("pre")
+                pre = None if pre is None else int(str(pre), 0)
+                old_lo = int(str(candidate["lo"]["value"]), 0)
+                old_hi = int(str(candidate["hi"]["value"]), 0)
+            except (KeyError, TypeError, ValueError):
+                entry[kind] = []
+                continue
+            value = post
+            if kind == "deltas":
+                if pre is None:
+                    entry[kind] = []
+                    continue
+                value = post - pre if candidate.get("dir") == "inc" else pre - post
+                if value < 0:
+                    entry[kind] = []
+                    continue
+            new_lo, new_hi = min(old_lo, value), max(old_hi, value)
+            if new_lo == old_lo and new_hi == old_hi:
+                continue
+            if new_lo == 0 and new_hi == UINT256_MAX:
+                entry[kind] = []
+                changed = True
+                continue
+            candidate["id"] = f"boundary_{kind}_refine_{round_index + 1}"
+            candidate["lo"] = {"kind": "literal", "value": str(new_lo)}
+            candidate["hi"] = {"kind": "literal", "value": str(new_hi)}
+            changed = True
+    if changed:
+        refined["refinement_round"] = round_index + 1
+        refined["vars"] = [
+            entry for entry in refined.get("vars", [])
+            if any(entry.get(kind) for kind in ("equals", "abs", "deltas"))
+        ]
+        refined["candidate_count"] = sum(
+            len(entry.get(kind) or []) for entry in refined.get("vars", [])
+            for kind in ("equals", "abs", "deltas"))
+    return refined, changed
+
+
+def fix_put_parameters_at_boundary(lines, values):
+    """Make one rendered PUT probe execute exactly one certified point.
+
+    ``build_put`` remains responsible for fixture, environment and call
+    construction.  This helper only replaces its Solidity fuzz parameters by
+    local constants.  Refuse the transformation unless every parameter has an
+    authenticated scalar value; leaving even one parameter symbolic would make
+    the resulting observation an arbitrary fuzz sample rather than a boundary
+    observation.
+    """
+    source = list(lines or [])
+    declaration = next(
+        (index for index, line in enumerate(source) if re.match(r"\s*function\s+test_put_", line)),
+        None)
+    if declaration is None:
+        return None, "rendered PUT has no test_put function"
+    match = re.match(r"^(\s*function\s+[^\(]+)\((.*)\)(\s+public\s*\{\s*)$", source[declaration])
+    if match is None:
+        return None, "rendered PUT function declaration is not a single-line signature"
+    raw_params = split_top_level(match.group(2)) if match.group(2).strip() else []
+    declarations = []
+    values = dict(values or {})
+    aliases = {
+        "p_msg_sender": "msg.sender",
+        "p_msg_value": "msg.value",
+        "p_block_timestamp": "block.timestamp",
+        "p_block_number": "block.number",
+        "p_block_chainid": "block.chainid",
+        "p_block_basefee": "block.basefee",
+        "p_block_prevrandao": "block.prevrandao",
+        "p_tx_gasprice": "tx.gasprice",
+        "p_block_coinbase": "block.coinbase",
+    }
+    for raw_param in raw_params:
+        parsed = re.match(r"^(.+?)\s+([A-Za-z_$][A-Za-z0-9_$]*)$", raw_param.strip())
+        if parsed is None:
+            return None, f"cannot parse rendered PUT parameter `{raw_param.strip()}`"
+        sol_type, name = parsed.group(1).strip(), parsed.group(2)
+        coordinate = aliases.get(name, name)
+        if coordinate not in values:
+            return None, f"boundary point has no authenticated value for `{coordinate}`"
+        literal = _concrete_return_literal(sol_type, values[coordinate])
+        if literal is None:
+            return None, (f"boundary point value for `{coordinate}` cannot be rendered "
+                          f"as `{sol_type}`")
+        declarations.append(f"    {sol_type} {name} = {literal};")
+    source[declaration] = match.group(1) + "()" + match.group(3)
+    source[declaration + 1:declaration + 1] = declarations
+    return source, None
+
+
+def boundary_probe_observed_uint(marker, result):
+    """Read the uint value exposed by an ``assertEq(value, 0, marker)`` probe."""
+    if not isinstance(result, dict):
+        return None
+    if result.get("status") == "Success":
+        return 0
+    reason = str(result.get("reason") or "")
+    match = re.fullmatch(re.escape(marker) + r"[^\n]*:\s*([0-9]+)\s*!=\s*0", reason)
+    if match is None:
+        return None
+    value = int(match.group(1))
+    return value if 0 <= value <= UINT256_MAX else None
+
+
 FORGE_RESULT_RE = re.compile(r"^\s*\[(PASS|FAIL[^\]]*)\]\s+(\w+)\s*\(")
 
 
@@ -3086,6 +3804,9 @@ def r2_candidates(specs):
     """Flatten specs fairly: one candidate per variable on each global lap."""
     variable_queues = []
     for si, spec in enumerate(specs or []):
+        subfamily = spec.get("r2_subfamily")
+        if subfamily is None:
+            subfamily = "R2.2" if spec.get("kind") == "boundary-observation" else "R2.3"
         for vi, var in enumerate(spec.get("vars", [])):
             owner = var["name"]
             kind_queues = []
@@ -3103,6 +3824,7 @@ def r2_candidates(specs):
                         "key": f"s{si}:v{vi}:{kind}:{candidate['id']}",
                         "var": owner,
                         "text": text_,
+                        "r2_subfamily": subfamily,
                     })
                 if queue:
                     kind_queues.append(queue)
@@ -3116,6 +3838,7 @@ def r2_candidates(specs):
                     "key": f"s{si}:v{vi}:deltas:{candidate['id']}",
                     "var": owner,
                     "text": text_,
+                    "r2_subfamily": subfamily,
                 })
             if delta_queue:
                 kind_queues.append(delta_queue)
@@ -3138,6 +3861,12 @@ def r2_candidates(specs):
                 next_variable_queues.append(queue)
         variable_queues = next_variable_queues
     return out
+
+
+def r2_subfamily_lookup(specs):
+    """Candidate provenance keyed by the exact verifier rung identity."""
+    return {(candidate["var"], canonical_oracle_rung_text(candidate["text"])):
+            candidate.get("r2_subfamily") for candidate in r2_candidates(specs)}
 
 
 def dedup_r2_specs_by_normalized_text(specs, point_values=None, log=print):
@@ -3235,13 +3964,25 @@ def r2_class_counter(candidates_or_rows):
     return counts
 
 
-def r2_verifier_row_accounting(rows):
+def r2_subfamily_for_rung(text, provenance=None):
+    """R2.1/R2.2/R2.3 label for one generalized numeric assertion."""
+    canonical = canonical_oracle_rung_text(text)
+    if re.fullmatch(r"(?:post|pre)\s*(?:>=|>|<=|<)\s*(?:pre|post)", canonical):
+        return "R2.1"
+    if provenance in ("R2.2", "R2.3"):
+        return provenance
+    return "R2.3"
+
+
+def r2_verifier_row_accounting(rows, family_lookup=None):
     """Verifier-backed R2 row counts. Only HOLDS is proof."""
     r2_rows = []
     for var, text, verdict in rows or []:
         classes = oracle_classes_for_rung(text)
         if "R2" not in classes:
             continue
+        subfamily = r2_subfamily_for_rung(
+            text, (family_lookup or {}).get((var, canonical_oracle_rung_text(text))))
         r2_rows.append({
             "var": var,
             "text": text,
@@ -3250,6 +3991,7 @@ def r2_verifier_row_accounting(rows):
             "class_combo": "+".join(oracle_class_summary([{
                 "classes": classes
             }])),
+            "r2_subfamily": subfamily,
         })
     return {
         "rows": r2_rows,
@@ -3260,6 +4002,10 @@ def r2_verifier_row_accounting(rows):
         "proved_combo_counts":
         r2_class_counter(row for row in r2_rows if row["verdict"] == "HOLDS"),
         "row_combo_counts": r2_class_counter(r2_rows),
+        "subfamily_counts": {
+            family: sum(row["r2_subfamily"] == family for row in r2_rows)
+            for family in ("R2.1", "R2.2", "R2.3")
+        },
     }
 
 
@@ -3270,11 +4016,15 @@ def r2_ladder_accounting(specs,
                          *,
                          requested=False,
                          dedup_dropped=0,
-                         skip_reason=None):
+                         skip_reason=None,
+                         family_lookup=None):
     """Stable R2 candidate/refute/proof metadata for RQ1 quality stats."""
     candidates = r2_candidates(specs)
     filtered = r2_candidates(filtered_specs if filtered_specs is not None else specs)
-    verifier = r2_verifier_row_accounting(verifier_rows or [])
+    candidate_families = {(candidate["var"], canonical_oracle_rung_text(candidate["text"])):
+                          candidate.get("r2_subfamily") for candidate in candidates}
+    candidate_families.update(family_lookup or {})
+    verifier = r2_verifier_row_accounting(verifier_rows or [], candidate_families)
     fuzz = fuzz_prefilter or {"enabled": False}
     return {
         "requested":
@@ -3315,6 +4065,8 @@ def r2_ladder_accounting(specs,
         verifier["proved_combo_counts"],
         "row_combo_counts":
         verifier["row_combo_counts"],
+        "r2_subfamily_counts":
+        verifier["subfamily_counts"],
         "verifier_rows":
         verifier["rows"],
         "skip_reason":
@@ -3347,7 +4099,7 @@ def filter_r2_specs(specs, verdicts):
     return [spec for spec in filtered if spec.get("vars")]
 
 
-def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
+def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print, provenance=None):
     """Run one extra ladder query per proposed R2 spec; return the NEW rows.
 
     `write_spec(path_suffix, spec_dict) -> path`, `runner(spec_path) -> text`
@@ -3374,7 +4126,8 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
     # back without a verdict does not spend it buying a second no-verdict.
     exact_delta = {}
     proven_r2_vars = set()
-    for i, s in enumerate(specs or []):
+    pending_specs = list(specs or [])
+    for i, s in enumerate(pending_specs):
         stage, kind = s.get("stage", 1), s.get("kind", "num")
         entries = s["vars"]
         pruned_by_prior_r2 = False
@@ -3385,7 +4138,7 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
                     f"`{s['param']}`): stage 1 refuted the exact delta on no "
                     f"variable, so a cap would be asked about nothing")
                 continue
-        if proven_r2_vars and kind != "source-assign":
+        if proven_r2_vars and kind not in ("source-assign", "boundary-observation"):
             before = len(entries)
             entries = [e for e in entries if e.get("name") not in proven_r2_vars]
             dropped = before - len(entries)
@@ -3406,10 +4159,20 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
         spec = dict(base_spec)
         spec["candidate_policy"] = "exact"
         spec["vars"] = entries
-        path = write_spec(f".r2_{s['param']}_s{stage}", spec)
-        log(f"[put]   R2 pass {i + 1}/{len(specs)}: stage {stage} {kind} "
+        queried = dict(s)
+        queried["vars"] = entries
+        if provenance is not None:
+            provenance.update(r2_subfamily_lookup([queried]))
+        refinement_round = int(s.get("refinement_round") or 0)
+        refinement_suffix = f"_refine{refinement_round}" if refinement_round else ""
+        path = write_spec(f".r2_{s['param']}_s{stage}{refinement_suffix}", spec)
+        log(f"[put]   R2 pass {i + 1}/{len(pending_specs)}: stage {stage} {kind} "
             f"bound by `{s['param']}` on {len(entries)} variable(s)")
-        text = runner(path)
+        run_result = runner(path)
+        if isinstance(run_result, tuple):
+            text, refutations = run_result
+        else:
+            text, refutations = run_result, {}
         rows, summary, refusal, _blocker = parse(text)
         if summary is None:
             log(f"[put]     NO R2 ROW adopted: this exact-candidate pass "
@@ -3455,6 +4218,13 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print):
         for v, t, d in fresh:
             log(f"[put]     {v}: {t}  {d}")
         out += fresh
+        if kind == "boundary-observation" and any(d == "REFUTED" for _v, _t, d in fresh):
+            refined, changed = refine_boundary_observation_r2_spec(queried, refutations)
+            if changed and refined.get("vars"):
+                pending_specs.insert(i + 1, refined)
+                log(f"[put]     R2.2 counterexample refinement scheduled round "
+                    f"{refined.get('refinement_round')} with "
+                    f"{refined.get('candidate_count')} expanded candidate(s)")
     return out
 
 
@@ -3466,7 +4236,8 @@ def maybe_run_r2_passes(specs,
                         rollback_here=False,
                         revert_here=False,
                         notes=None,
-                        log=print):
+                        log=print,
+                        provenance=None):
     """Run R2 unless this path's post-state is hidden by a reverting exit.
 
     R2 rows are post-state or delta claims. On a reverting path they are proved
@@ -3475,7 +4246,13 @@ def maybe_run_r2_passes(specs,
     query without weakening the emitted test.
     """
     if not (rollback_here or revert_here):
-        return run_r2_passes(specs, base_spec, write_spec, runner, parse, log=log)
+        return run_r2_passes(specs,
+                             base_spec,
+                             write_spec,
+                             runner,
+                             parse,
+                             log=log,
+                             provenance=provenance)
     n_candidates = len(r2_candidates(specs))
     reason = ("this path rolls back"
               if rollback_here else "Stage-1 says this path exits through a revert")
@@ -3542,11 +4319,14 @@ def oracle_classes_for_rung(text):
         return out
     pre = r"\(?\s*pre\s*\)?"
     value = r"\(?\s*(?:post|return)(?:\.\d+)?\s*\)?"
-    cmp_op = r"(?:==|!=|>=|>|<=|<)"
-    if (re.search(value + r"\s*" + cmp_op + r"\s*" + pre, stripped)
-            or re.search(pre + r"\s*" + cmp_op + r"\s*" + value, stripped)
-            or re.search(r"\bpre\s*-\s*post\s*in\s*\[", stripped)):
+    equality_op = r"(?:==|!=)"
+    direction_op = r"(?:>=|>|<=|<)"
+    if (re.search(value + r"\s*" + equality_op + r"\s*" + pre, stripped)
+            or re.search(pre + r"\s*" + equality_op + r"\s*" + value, stripped)):
         out.append("R1")
+    if (re.search(value + r"\s*" + direction_op + r"\s*" + pre, stripped)
+            or re.search(pre + r"\s*" + direction_op + r"\s*" + value, stripped)):
+        out.append("R2")
     if re.search(r"\(?\s*(post\s*-\s*pre|pre\s*-\s*post)\s*\)?\s*in\s*\[", stripped):
         out.append("R2")
     elif re.search(r"\(?\s*(post|return)(\.\d+)?\s*\)?\s*in\s*\[", stripped):
@@ -3558,7 +4338,7 @@ def oracle_classes_for_rung(text):
             rhs = strip_balanced_outer_parens(m.group(3).strip())
             if rhs != "pre":
                 out.append("R2")
-    return out
+    return list(dict.fromkeys(out))
 
 
 def canonical_oracle_rung_text(text):
@@ -3644,7 +4424,8 @@ def oracle_detail(layer,
                   verdict="HOLDS",
                   emitted_in_test=True,
                   guarded=False,
-                  r2_terms=None):
+                  r2_terms=None,
+                  r2_subfamilies=None):
     """Uniform metadata row for one emitted oracle."""
     canonical = canonical_oracle_rung_text(text)
     classes = list(classes if classes is not None else oracle_classes_for_rung(canonical))
@@ -3653,6 +4434,10 @@ def oracle_detail(layer,
         "name": name,
         "class": oracle_coordinate_class(name),
     } for name in oracle_coordinate_names_for_rung(canonical, r2_terms)]
+    r2_subfamily = None
+    if "R2" in classes:
+        r2_subfamily = r2_subfamily_for_rung(
+            canonical, (r2_subfamilies or {}).get((var, canonical)))
     return {
         "layer": layer,
         "var": var,
@@ -3666,6 +4451,13 @@ def oracle_detail(layer,
         "verdict": verdict,
         "emitted_in_test": emitted_in_test,
         "guarded": bool(guarded),
+        "r2_subfamily": r2_subfamily,
+        # State/return rungs are synthesized by the Stage-3 oracle-refinement
+        # query.  R0 is an independently selected path-exit expectation and is
+        # deliberately not tagged, so the derived RQ3 arm can remove only the
+        # refined R1/R2 assertions.
+        "refinement_source":
+        ("oracle-refinement" if any(c in ("R1", "R2") for c in classes) else None),
     }
 
 
@@ -3674,6 +4466,7 @@ def oracle_stats_summary(details):
     class_counts = {"R0": 0, "R1": 0, "R2": 0}
     combo_counts = {}
     coord_classes = set()
+    r2_subfamily_counts = {family: 0 for family in ("R2.1", "R2.2", "R2.3")}
     for d in details or []:
         for c in d.get("classes") or []:
             if c in class_counts:
@@ -3686,6 +4479,9 @@ def oracle_stats_summary(details):
             combo_counts[combo] = combo_counts.get(combo, 0) + 1
         for c in d.get("coordinate_classes") or []:
             coord_classes.add(c)
+        family = d.get("r2_subfamily")
+        if family in r2_subfamily_counts:
+            r2_subfamily_counts[family] += 1
     return {
         "oracle_classes": oracle_class_summary(details),
         "oracle_class_counts": {
@@ -3695,6 +4491,10 @@ def oracle_stats_summary(details):
         "oracle_class_combinations": sorted(combo_counts),
         "oracle_class_combo_counts": combo_counts,
         "oracle_coordinate_classes": sorted(coord_classes),
+        "r2_subfamily_counts": {
+            family: count
+            for family, count in r2_subfamily_counts.items() if count
+        },
     }
 
 
@@ -3706,7 +4506,32 @@ def empty_oracle_stats():
         "oracle_class_combinations": [],
         "oracle_class_combo_counts": {},
         "oracle_coordinate_classes": [],
+        "r2_subfamily_counts": {},
         "assertion_oracles": [],
+    }
+
+
+def concrete_oracle_stats(oracles):
+    """Populate existing assertion counters for fixed witness oracles."""
+    rows = [oracle for oracle in (oracles or []) if isinstance(oracle, dict)]
+    assertion_count = sum(
+        len([line for line in str(oracle.get("assertion") or "").splitlines() if line.strip()])
+        for oracle in rows)
+    exit_kinds = {"normal-exit", "revert", "call-status"}
+    return {
+        **empty_oracle_stats(),
+        "asserts":
+        assertion_count,
+        "verifier_asserts":
+        0,
+        "state_asserts":
+        sum(oracle.get("kind") in {"post-state", "storage-slot-post-state"} for oracle in rows),
+        "return_asserts":
+        sum(oracle.get("kind") == "return-value" for oracle in rows),
+        "exit_kind_asserts":
+        sum(oracle.get("kind") in exit_kinds for oracle in rows),
+        "assertion_oracles":
+        rows,
     }
 
 
@@ -9260,6 +10085,8 @@ NUMERIC_ENV_SETTERS = {
     "block.number": ("vm.roll", "p_block_number", "roll"),
     "block.chainid": ("vm.chainId", "p_block_chainid", "chainId"),
     "block.basefee": ("vm.fee", "p_block_basefee", "fee"),
+    "block.blobbasefee": ("vm.blobBaseFee", "p_block_blobbasefee", "blobBaseFee"),
+    "block.difficulty": ("vm.difficulty", "p_block_difficulty", "difficulty"),
     "block.prevrandao": ("vm.prevrandao", "p_block_prevrandao", "prevrandao"),
     "tx.gasprice": ("vm.txGasPrice", "p_tx_gasprice", "txGasPrice"),
 }
@@ -9310,11 +10137,22 @@ def _lit_int(expr):
 ABI_VALUE_GATE_PROJECTION = "abi-value-gate-before-body/v1"
 EXTCALL_FIXTURE_PROJECTION = "strict-low-level-call-fixture/v1"
 CONSTRUCTOR_SETUP_PROJECTION = "constructor-or-setup-exact/v1"
-CE_PROJECTION_KINDS = frozenset(("calldata-determined", "constructor-or-setup",
-                                 "path-irrelevant", "certified-region-member"))
+TARGET_CALL_CALldata_PROJECTION = "selected-target-call-calldata/v1"
+UNOBSERVED_AUX_ENV_PROJECTION = "unobserved-auxiliary-environment/v1"
+FIXED_REPLAY_STATE_PROJECTION = "fixed-replay-entry-state/v1"
+CE_PROJECTION_KINDS = frozenset(
+    ("calldata-determined", "constructor-or-setup", "path-irrelevant",
+     "certified-region-member", "unobserved-auxiliary-environment",
+     "fixed-replay-entry-state"))
 EXACT_SOURCE_ENV_METHODS = {
-    **{coord: method for coord, (_cheat, _var, method) in NUMERIC_ENV_SETTERS.items()},
-    **{coord: method for coord, (_cheat, _var, method) in ADDRESS_ENV_SETTERS.items()},
+    **{
+        coord: method
+        for coord, (_cheat, _var, method) in NUMERIC_ENV_SETTERS.items()
+    },
+    **{
+        coord: method
+        for coord, (_cheat, _var, method) in ADDRESS_ENV_SETTERS.items()
+    },
     "block.blobbasefee": "blobBaseFee",
     "block.difficulty": "difficulty",
 }
@@ -9350,8 +10188,7 @@ def abi_value_gate_ce_projection(expected, params, stage4_kind=None):
     return evidence
 
 
-def extcall_fixture_ce_projection(source, contract, unit, expected, params, region,
-                                  extcall_pins):
+def extcall_fixture_ce_projection(source, contract, unit, expected, params, region, extcall_pins):
     """Prove a narrow Foundry projection for a strict low-level-call wrapper.
 
     The certificate exists only when the complete source body consists of one
@@ -9372,8 +10209,9 @@ def extcall_fixture_ce_projection(source, contract, unit, expected, params, regi
         return None
     # Modifiers and inherited hooks could observe every projected coordinate.
     header_words = set(re.findall(r"[A-Za-z_]\w*", header_tail or ""))
-    if header_words - {"public", "external", "view", "pure", "payable", "virtual",
-                       "override", "returns"}:
+    if header_words - {
+            "public", "external", "view", "pure", "payable", "virtual", "override", "returns"
+    }:
         return None
     clean = re.sub(r"\s+", "", _mask_solidity_comments_and_strings(source_body))
     shape = re.fullmatch(
@@ -9384,8 +10222,7 @@ def extcall_fixture_ce_projection(source, contract, unit, expected, params, regi
     success_name, target_name, calldata_name = shape.groups()
     param_types = {name: _norm_ty(typ) for name, typ in named_params(params or [])}
     if (param_types.get(target_name) not in ("address", "address payable")
-            or param_types.get(calldata_name) not in
-            ("bytes", "bytes memory", "bytes calldata")):
+            or param_types.get(calldata_name) not in ("bytes", "bytes memory", "bytes calldata")):
         return None
     pins = dict(extcall_pins or {})
     if set(pins) != {"extcall." + success_name}:
@@ -9438,20 +10275,47 @@ def _ce_projection_error(name,
     certificate = evidence.get("certificate")
     if not isinstance(certificate, str) or not certificate:
         return "projection certificate is unavailable"
+    if kind == "unobserved-auxiliary-environment":
+        if certificate != UNOBSERVED_AUX_ENV_PROJECTION:
+            return f"unsupported auxiliary environment certificate {certificate!r}"
+        if name != "block.gaslimit":
+            return "auxiliary environment projection is restricted to block.gaslimit"
+        source_sha = evidence.get("source_sha256")
+        if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", source_sha):
+            return "auxiliary environment projection lacks a source SHA-256"
+        return None
+    if kind == "fixed-replay-entry-state":
+        if not name.startswith("state."):
+            return "fixed replay entry-state evidence is restricted to state coordinates"
+        if certificate != FIXED_REPLAY_STATE_PROJECTION:
+            return f"unsupported fixed replay state certificate {certificate!r}"
+        value = _normalized_concrete_ce_value(evidence.get("value"))
+        if value is None or value != expected_value:
+            return "fixed replay state evidence does not carry the exact CE value"
+        source_sha = evidence.get("source_sha256")
+        if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", source_sha):
+            return "fixed replay state evidence lacks a source SHA-256"
+        if setup_source_sha256 is not None and source_sha != setup_source_sha256:
+            return "fixed replay state evidence is not bound to this test body"
+        return None
     if kind in ("path-irrelevant", "calldata-determined"):
-        if certificate not in (ABI_VALUE_GATE_PROJECTION, EXTCALL_FIXTURE_PROJECTION):
+        if certificate not in (ABI_VALUE_GATE_PROJECTION, EXTCALL_FIXTURE_PROJECTION,
+                               TARGET_CALL_CALldata_PROJECTION):
             return f"unsupported projection certificate {certificate!r}"
+        if certificate == TARGET_CALL_CALldata_PROJECTION and kind != "calldata-determined":
+            return "selected-target-call projection is restricted to calldata"
         if kind == "calldata-determined" and name not in ("msg.data", "msg.sig"):
             return "calldata-determined evidence is restricted to msg.data/msg.sig"
+        if certificate == TARGET_CALL_CALldata_PROJECTION:
+            return None
         if name == "msg.value" and certificate == ABI_VALUE_GATE_PROJECTION:
             return "msg.value governs the ABI value gate and cannot be projected"
-        if (certificate == EXTCALL_FIXTURE_PROJECTION
-                and name == "msg.value" and expected_value != 0):
+        if (certificate == EXTCALL_FIXTURE_PROJECTION and name == "msg.value"
+                and expected_value != 0):
             return "strict low-level-call fixture requires the default zero msg.value"
         source_sha = evidence.get("source_function_sha256")
-        if (certificate == EXTCALL_FIXTURE_PROJECTION
-                and (not isinstance(source_sha, str)
-                     or not re.fullmatch(r"[0-9a-f]{64}", source_sha))):
+        if (certificate == EXTCALL_FIXTURE_PROJECTION and
+            (not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", source_sha))):
             return "strict low-level-call fixture lacks its source function hash"
         return None
     if kind == "certified-region-member":
@@ -9469,8 +10333,7 @@ def _ce_projection_error(name,
         if rendered_value is None or not lo <= rendered_value <= hi:
             return "rendered target is outside the certified region"
         source_sha = evidence.get("source_function_sha256")
-        if (not isinstance(source_sha, str)
-                or not re.fullmatch(r"[0-9a-f]{64}", source_sha)):
+        if (not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{64}", source_sha)):
             return "strict low-level-call fixture lacks its source function hash"
         return None
     # Constructor/setup state is accepted only with an exact independently
@@ -9511,15 +10374,17 @@ def _call_arguments_at(line, open_idx):
 
 
 def _extcall_fixture_mock_error(body, call_i, params, args, coordinate_evidence):
-    records = [record for record in coordinate_evidence.values()
-               if isinstance(record, dict)
-               and record.get("certificate") == EXTCALL_FIXTURE_PROJECTION]
+    records = [
+        record for record in coordinate_evidence.values()
+        if isinstance(record, dict) and record.get("certificate") == EXTCALL_FIXTURE_PROJECTION
+    ]
     if not records:
         return None
     proof = records[0]
     proof_fields = ("source_function_sha256", "target", "calldata", "success_var", "success")
-    if any(any(record.get(field) != proof.get(field) for field in proof_fields)
-           for record in records):
+    if any(
+            any(record.get(field) != proof.get(field) for field in proof_fields)
+            for record in records):
         return "strict low-level-call fixture coordinates carry different proofs"
     names = [name for name, _typ in named_params(params)]
     try:
@@ -9530,6 +10395,7 @@ def _extcall_fixture_mock_error(body, call_i, params, args, coordinate_evidence)
     if target_i >= len(args) or calldata_i >= len(args):
         return "strict low-level-call fixture arguments are absent"
     wanted_cheat = "mockCall" if proof.get("success") == 1 else "mockCallRevert"
+
     def normalized_mock_arg(expr):
         text = re.sub(r"\s+", "", expr)
         if text in ('hex""', 'bytes(hex"")', 'bytes("")'):
@@ -9681,15 +10547,15 @@ def bind_emitted_source_to_certified_ce(body,
             "certified": expected_ce[name],
             "rendered": value,
         }
-        for key in ("source_function_sha256", "target", "calldata", "success_var", "success",
-                    "lo", "hi"):
+        for key in ("source_function_sha256", "target", "calldata", "success_var", "success", "lo",
+                    "hi"):
             if key in evidence:
                 bindings[name][key] = evidence[key]
     for name in sorted(set(expected_ce) - set(rendered)):
         evidence = coordinate_evidence.get(name)
         if evidence is None:
-            return None, ("certified CE has coordinates not directly bound in the emitted source: " +
-                          name)
+            return None, (
+                "certified CE has coordinates not directly bound in the emitted source: " + name)
         error = _ce_projection_error(name,
                                      evidence,
                                      expected_ce[name],
@@ -9954,8 +10820,8 @@ def _source_type_default_expr(sol_type, seed=1, source=""):
     struct_name = struct_type.rsplit(".", 1)[-1]
     owner, fields = _struct_fields_exact(source, t) if source else (None, [])
     if fields:
-        qualified = (struct_type if "." in struct_type else
-                     f"{owner}.{struct_name}" if owner else struct_name)
+        qualified = (struct_type
+                     if "." in struct_type else f"{owner}.{struct_name}" if owner else struct_name)
         values = []
         for offset, (field_type, field_name) in enumerate(fields):
             value = _source_type_default_expr(field_type, seed + offset, source)
@@ -11114,6 +11980,7 @@ def find_unit_call(lines, unit):
     sequence that establishes the entry state and are kept verbatim.
     """
     rx = member_call_re(unit, anchored=True)
+    rx_any = member_call_re(unit, anchored=False)
     # The low-level shape is SEARCHED, not matched at the line start: the
     # emitter breaks that statement across two lines and the signature sits on
     # the second, indented and inside a string.
@@ -11124,7 +11991,8 @@ def find_unit_call(lines, unit):
         special = re.compile(r'\.call(?:\s*\{[^{}]*\})?\s*\(\s*' + payload)
     hit = None
     for i, ln in enumerate(lines):
-        if rx.match(ln) or rx_low.search(ln) or (special and special.search(ln)):
+        if (rx.match(ln) or rx_any.search(ln) or rx_low.search(ln)
+                or (special and special.search(ln))):
             hit = i
     return hit
 
@@ -11407,8 +12275,8 @@ def materialize_concrete_nonpayable_value_gate(lines,
 
 
 def materialize_concrete_certified_sender_point(lines, region, pins):
-    """Move a certified concrete basis replay off Foundry's unprankable sender 0."""
-    sender = _concrete_point_for_region("msg.sender", region or {}, pins or {}, avoid_zero=True)
+    """Move a certified concrete basis replay to a deterministic sender point."""
+    sender = _concrete_point_for_region("msg.sender", region or {}, pins or {})
     if sender is None:
         return list(lines), 0
     value = _concrete_point_for_region("msg.value", region or {}, pins or {})
@@ -11434,6 +12302,185 @@ def materialize_concrete_certified_sender_point(lines, region, pins):
         out[i:i + 1] = replacement
         changed += 1
     return out, changed
+
+
+def target_call_calldata_ce_projection(expected):
+    """Projection evidence for calldata fields fixed by the selected target call."""
+    expected_ce = normalized_concrete_ce(expected)
+    if expected_ce is None:
+        return None
+    evidence = {}
+    for name in ("msg.data", "msg.sig"):
+        if name in expected_ce:
+            evidence[name] = {
+                "kind": "calldata-determined",
+                "certificate": TARGET_CALL_CALldata_PROJECTION,
+            }
+    return evidence
+
+
+def unobserved_auxiliary_env_ce_projection(expected, flat_source, region=None, pins=None):
+    """Projection evidence for CE-only environment fields Foundry cannot set.
+
+    Some ESBMC witness journals include auxiliary environment defaults that are
+    not part of the certified box/pin set.  We may drop such a field from the
+    final source binding only when the whole flattened source does not read it;
+    otherwise the Foundry replay could execute a different path.
+    """
+    expected_ce = normalized_concrete_ce(expected)
+    if expected_ce is None:
+        return None
+    projected = {}
+    clean_source = _mask_solidity_comments_and_strings(flat_source or "")
+    certified_names = set((region or {}).keys()) | set((pins or {}).keys())
+    if ("block.gaslimit" in expected_ce and "block.gaslimit" not in certified_names
+            and not re.search(r"\bblock\s*\.\s*gaslimit\b", clean_source)):
+        projected["block.gaslimit"] = {
+            "kind": "unobserved-auxiliary-environment",
+            "certificate": UNOBSERVED_AUX_ENV_PROJECTION,
+            "source_sha256": hashlib.sha256((flat_source or "").encode("utf-8")).hexdigest(),
+        }
+    return projected
+
+
+def _certified_env_literal_lines(expected_ce):
+    lines = []
+    for coord, (cheatcode, _var_base, _method) in NUMERIC_ENV_SETTERS.items():
+        if coord not in expected_ce:
+            continue
+        value = int(expected_ce[coord])
+        if coord == "block.chainid" and (value < 0 or value > CHAIN_ID_MAX):
+            return None, f"{coord}={value} is outside Foundry vm.chainId's uint64 domain"
+        arg = f"uint256({value})" if coord == "block.prevrandao" else str(value)
+        lines.append(f"    {cheatcode}({arg});")
+    for coord, (cheatcode, _var_base, _method) in ADDRESS_ENV_SETTERS.items():
+        if coord in expected_ce:
+            lines.append(f"    {cheatcode}(address(uint160({int(expected_ce[coord])})));")
+    return lines, None
+
+
+def materialize_concrete_certified_env_point(source, test_name, unit, certified_ce):
+    """Establish exact scalar EVM environment coordinates for a fixed CE replay."""
+    expected_ce = normalized_concrete_ce(certified_ce)
+    if expected_ce is None:
+        return source, 0, "certified CE is non-scalar or malformed"
+    lines = source.splitlines()
+    fn_re = re.compile(r"^\s*function\s+" + re.escape(test_name) + r"\s*\(")
+    start = next((i for i, line in enumerate(lines) if fn_re.search(line)), None)
+    if start is None:
+        return source, 0, "certified basis test function is absent"
+    depth = 0
+    end = None
+    for index in range(start, len(lines)):
+        depth += lines[index].count("{") - lines[index].count("}")
+        if index > start and depth <= 0:
+            end = index
+            break
+    if end is None:
+        return source, 0, "certified basis test function has no closing brace"
+    body = lines[start + 1:end]
+    call_i = find_unit_call(body, unit)
+    if call_i is None:
+        return source, 0, "certified basis target call is absent"
+    stmt_i = statement_start(body, call_i)
+    insert_at = start + 1 + stmt_i
+    additions, reason = _certified_env_literal_lines(expected_ce)
+    if reason is not None:
+        return source, 0, reason
+    sender = expected_ce.get("msg.sender")
+    origin = expected_ce.get("tx.origin")
+    if origin is not None and sender is None:
+        return source, 0, "tx.origin cannot be established without an exact msg.sender prank"
+    if sender is not None:
+        if origin is None:
+            additions.append(f"    vm.prank(address(uint160({int(sender)})));")
+        else:
+            additions.append("    vm.prank(address(uint160(" + str(int(sender)) + ")), "
+                             "address(uint160(" + str(int(origin)) + ")));")
+        value = expected_ce.get("msg.value")
+        if value is not None and int(value) > 0:
+            additions.insert(0, f"    vm.deal(address(uint160({int(sender)})), {int(value)});")
+    if not additions:
+        return source, 0, None
+    lines[insert_at:insert_at] = additions
+    return "\n".join(lines) + "\n", len(additions), None
+
+
+def materialize_concrete_certified_state_point(source,
+                                               test_name,
+                                               unit,
+                                               certified_ce,
+                                               layout,
+                                               state_store_names=None):
+    """Establish exact scalar entry-state coordinates for a fixed CE replay."""
+    expected_ce = normalized_concrete_ce(certified_ce)
+    if expected_ce is None:
+        return source, 0, "certified CE is non-scalar or malformed"
+    state_items = [(name, value) for name, value in sorted(expected_ce.items())
+                   if name.startswith("state.")]
+    if not state_items:
+        return source, 0, None
+    if not isinstance(layout, dict) or not layout:
+        return source, 0, "certified CE has state coordinates but storage layout is unavailable"
+    lines = source.splitlines()
+    fn_re = re.compile(r"^\s*function\s+" + re.escape(test_name) + r"\s*\(")
+    start = next((i for i, line in enumerate(lines) if fn_re.search(line)), None)
+    if start is None:
+        return source, 0, "certified basis test function is absent"
+    depth = 0
+    end = None
+    for index in range(start, len(lines)):
+        depth += lines[index].count("{") - lines[index].count("}")
+        if index > start and depth <= 0:
+            end = index
+            break
+    if end is None:
+        return source, 0, "certified basis test function has no closing brace"
+    body = lines[start + 1:end]
+    call_i = find_unit_call(body, unit)
+    if call_i is None:
+        return source, 0, "certified basis target call is absent"
+    receiver = target_instance_for_call(body, call_i, unit) or "c0"
+    if not re.match(r"^\s*address\s*\(", receiver):
+        receiver = f"address({receiver})"
+    additions = []
+    for name, value in state_items:
+        scalar_value = _normalized_concrete_ce_value(value)
+        if not isinstance(scalar_value, int):
+            return source, 0, f"certified state coordinate {name} is not a scalar integer"
+        raw_state_name = name[len("state."):]
+        if parse_slot_name(raw_state_name)[0] is not None:
+            return source, 0, f"certified mapping state coordinate {name} is not materialized"
+        layout_name = layout_scalar_key(raw_state_name, layout, state_store_names)
+        if layout_name is None:
+            return source, 0, f"certified state coordinate {name} has no scalar storage slot"
+        slot, off, nb = layout[layout_name]
+        additions += slot_write_lines(receiver, slot, off, nb, str(scalar_value))
+        additions += slot_landing_check(receiver, slot, off, nb, str(scalar_value), name)
+    insert_at = start + 1 + statement_start(body, call_i)
+    lines[insert_at:insert_at] = additions
+    return "\n".join(lines) + "\n", len(additions), None
+
+
+def fixed_replay_state_ce_projection(expected, rendered_test_body):
+    """Projection evidence for exact entry-state stores in a fixed replay body."""
+    expected_ce = normalized_concrete_ce(expected)
+    if expected_ce is None or rendered_test_body is None:
+        return None
+    body_text = "\n".join(rendered_test_body)
+    if "vm.store(" not in body_text or "vm.load(" not in body_text:
+        return None
+    body_sha = hashlib.sha256(body_text.encode("utf-8")).hexdigest()
+    evidence = {}
+    for name, value in expected_ce.items():
+        if name.startswith("state."):
+            evidence[name] = {
+                "kind": "fixed-replay-entry-state",
+                "certificate": FIXED_REPLAY_STATE_PROJECTION,
+                "value": value,
+                "source_sha256": body_sha,
+            }
+    return evidence
 
 
 def target_instance_for_call(lines, call_i, unit):
@@ -11991,6 +13038,7 @@ def build_put(contract,
               derived_by=None,
               rollback_exit=False,
               r2_terms=None,
+              r2_subfamilies=None,
               oracle_label_prefix="",
               exit_kind=None,
               state_types=None,
@@ -13076,7 +14124,11 @@ def build_put(contract,
                             continue
                         planned_ret_asserts += a
                         oracle_details.append(
-                            oracle_detail("return", label_var, t, r2_terms=r2_terms))
+                            oracle_detail("return",
+                                          label_var,
+                                          t,
+                                          r2_terms=r2_terms,
+                                          r2_subfamilies=r2_subfamilies))
                 ret_asserts += planned_ret_asserts
                 if planned_ret_asserts:
                     ret_pre_reads += planned_ret_pre_reads
@@ -13303,7 +14355,12 @@ def build_put(contract,
             if a is None:
                 oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
                 continue
-            detail = oracle_detail("state", var, text, guarded=bool(_chg), r2_terms=r2_terms)
+            detail = oracle_detail("state",
+                                   var,
+                                   text,
+                                   guarded=bool(_chg),
+                                   r2_terms=r2_terms,
+                                   r2_subfamilies=r2_subfamilies)
             if _chg:
                 guarded += a
                 guard_notes.append(f"{var}: {text}")
@@ -13341,7 +14398,12 @@ def build_put(contract,
         if a is None:
             oracle_skipped.append(f"{var}: {text} (rung shape not rendered)")
             continue
-        detail = oracle_detail("state", var, text, guarded=bool(_chg), r2_terms=r2_terms)
+        detail = oracle_detail("state",
+                               var,
+                               text,
+                               guarded=bool(_chg),
+                               r2_terms=r2_terms,
+                               r2_subfamilies=r2_subfamilies)
         if _chg:
             guarded += a
             guard_notes.append(f"{var}: {text}")
@@ -13751,12 +14813,17 @@ def build_put(contract,
     # be an oracle on its own: a unit whose only surviving rung is a return
     # rung has no post-read at all, and the guard would have dropped its
     # assertions while the header above still announced them.
+    if post_reads or asserts or guarded or ret_asserts:
+        out.append("    // VERIPUT_ORACLE_REFINEMENT_BEGIN")
     out += post_reads
     out += asserts
     if guarded:
         out.append(f"    if ({okvar}) {{")
         out += guarded
         out.append("    }")
+    out += ret_asserts
+    if post_reads or asserts or guarded or ret_asserts:
+        out.append("    // VERIPUT_ORACLE_REFINEMENT_END")
     if catch_assert_revert:
         # LAYER 1, and it is the whole oracle for this path. `okvar` is false
         # exactly when the call reverted, and the certified region says every
@@ -13765,7 +14832,6 @@ def build_put(contract,
         out.append(f'    assertFalse({okvar}, "path enc={enc}{piece_label} exits '
                    f'through a REVERT: the call must fail on the unmodified '
                    f'contract");')
-    out += ret_asserts
     for ln in body[call_i + 1:]:
         out.append(ln)
     out.append("  }")
@@ -14355,10 +15421,9 @@ def claim_concrete_ce(claim, params=None):
         for raw_name, raw_value in values.items():
             name = prefix + str(raw_name)
             value = _normalized_concrete_ce_value(raw_value)
-            if value is None and not prefix and param_types.get(name) in (
-                    "bytes", "bytes memory", "bytes calldata"):
-                match = re.search(r"\.length\s*=\s*(0x[0-9A-Fa-f]+|[0-9]+)",
-                                  str(raw_value))
+            if value is None and not prefix and param_types.get(name) in ("bytes", "bytes memory",
+                                                                          "bytes calldata"):
+                match = re.search(r"\.length\s*=\s*(0x[0-9A-Fa-f]+|[0-9]+)", str(raw_value))
                 if match is None or int(match.group(1), 0) != 0:
                     return None
                 name = name + ".length"
@@ -14411,8 +15476,7 @@ def synthetic_claim_with_report(report_path, unit, enc, path_function, fallback)
         report = json.load(open(report_path))
     except (OSError, ValueError):
         return fallback
-    report_claim, _error = select_path_claim(report, unit, enc,
-                                              path_function=path_function)
+    report_claim, _error = select_path_claim(report, unit, enc, path_function=path_function)
     if report_claim is None:
         return fallback
     claim = dict(report_claim)
@@ -17576,9 +18640,8 @@ def runtime_low_level_success_mock_lines(forge_project, contract, unit, extcall_
             calldata_expr = 'bytes("")'
         elif re.fullmatch(r"hex\"[0-9A-Fa-f]*\"", calldata):
             calldata_expr = calldata
-        elif (re.fullmatch(r"[A-Za-z_]\w*", calldata)
-              and str(params.get(calldata) or "").strip() in
-              ("bytes", "bytes memory", "bytes calldata")):
+        elif (re.fullmatch(r"[A-Za-z_]\w*", calldata) and str(params.get(calldata) or "").strip()
+              in ("bytes", "bytes memory", "bytes calldata")):
             calldata_param = calldata
             calldata_expr = calldata
         else:
@@ -17632,19 +18695,12 @@ def apply_constructor_staticcall_mocks(lines, emitted, case, unit, contract, moc
     return out
 
 
-def apply_runtime_interface_mocks(lines,
-                                  emitted,
-                                  case,
-                                  unit,
-                                  contract,
-                                  mock_lines,
-                                  flat_source=""):
+def apply_runtime_interface_mocks(lines, emitted, case, unit, contract, mock_lines, flat_source=""):
     if not mock_lines:
         return lines
     callsite_specs = []
     static_mock_lines = []
-    marker = re.compile(
-        r"^\s*// VERIPUT_EXTCALL_CALLSITE ([A-Za-z_]\w*) ([A-Za-z_]\w*) ([01])\s*$")
+    marker = re.compile(r"^\s*// VERIPUT_EXTCALL_CALLSITE ([A-Za-z_]\w*) ([A-Za-z_]\w*) ([01])\s*$")
     for line in mock_lines:
         match = marker.match(line)
         if match:
@@ -17709,12 +18765,10 @@ def apply_runtime_interface_mocks(lines,
                 # them are intercepted before ordinary mockCall dispatch.
                 # They are therefore not executable representatives of the
                 # certified EVM address region in this local test harness.
-                rendered.append(
-                    f"{indent}vm.assume({args[target_i]} != "
-                    "address(uint160(uint256(keccak256(\"hevm cheat code\")))));")
-                rendered.append(
-                    f"{indent}vm.assume({args[target_i]} != "
-                    "address(0x000000000000000000636F6e736F6c652e6c6f67));")
+                rendered.append(f"{indent}vm.assume({args[target_i]} != "
+                                "address(uint160(uint256(keccak256(\"hevm cheat code\")))));")
+                rendered.append(f"{indent}vm.assume({args[target_i]} != "
+                                "address(0x000000000000000000636F6e736F6c652e6c6f67));")
                 rendered.append(
                     f"{indent}vm.{cheat}({args[target_i]}, {calldata_expr}, bytes(\"\"));")
         rendered.append(line)
@@ -17945,8 +18999,10 @@ def assemble_concrete_source(emitted,
                              flat_source=None,
                              region=None,
                              pins=None,
+                             state_store_names=None,
                              certified_value_gate_basis=False,
-                             certified_ce=None):
+                             certified_ce=None,
+                             certified_env_basis=False):
     """Keep exactly one concrete replay case and rename its test contract.
 
     This is the point-region fallback for a certified region that renders no
@@ -18055,6 +19111,16 @@ def assemble_concrete_source(emitted,
     source, _abstract_harness = materialize_abstract_target(source, flat_source or "", contract,
                                                             constructor_params, new_contract)
     source = re.sub(r'from "\./', 'from "../src/', source)
+    if certified_ce is not None and unit is not None:
+        source, _state_repairs, state_error = materialize_concrete_certified_state_point(
+            source, case[1], unit, certified_ce, layout or {}, state_store_names)
+        if state_error is not None:
+            raise ValueError(state_error)
+    if certified_env_basis and unit is not None and certified_ce is not None:
+        source, _env_repairs, env_error = materialize_concrete_certified_env_point(
+            source, case[1], unit, certified_ce)
+        if env_error is not None:
+            raise ValueError(env_error)
     for mock in sorted(set(re.findall(r"ESBMCMock_(\w+)", source)), key=len, reverse=True):
         source = re.sub(r"ESBMCMock_" + re.escape(mock) + r"\b", f"ESBMCMock_{mock}_{new_contract}",
                         source)
@@ -18097,8 +19163,7 @@ def certified_setup_render_error(certified_setup_body,
     if rendered_setup_body is None:
         return "certified CE setup state is absent after rendering the Foundry replay"
     if (not certified_projection_basis
-            and (certified_setup_body is None
-                 or rendered_setup_body != certified_setup_body)):
+            and (certified_setup_body is None or rendered_setup_body != certified_setup_body)):
         return "certified CE setup state changed while rendering the Foundry replay"
     return None
 
@@ -18162,8 +19227,8 @@ def _try_target_statement_span(body_text, unit):
     """Find one complete try/catch target statement, including all catches."""
     calls = list(
         re.finditer(
-            r"\b[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*" + re.escape(unit) +
-            r"\s*(?:\{[^{}]*\}\s*)?\(", body_text))
+            r"\b[A-Za-z_$][A-Za-z0-9_$]*\s*\.\s*" + re.escape(unit) + r"\s*(?:\{[^{}]*\}\s*)?\(",
+            body_text))
     if not calls:
         return None
     # Keep this selection identical to find_unit_call(): a reconstructed case
@@ -18265,8 +19330,8 @@ def add_concrete_normal_exit_oracle(source, test_name, unit, expected_exit="norm
         statement_end += 1
     call_context = "\n".join(body[statement_start:statement_end + 1])
     receiver_match = re.search(
-        r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" + re.escape(unit) +
-        r"\s*(?:\{[^{}]*\}\s*)?\(", call_context)
+        r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" + re.escape(unit) + r"\s*(?:\{[^{}]*\}\s*)?\(",
+        call_context)
     low_level_receiver = re.search(r"address\s*\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*\)\s*\.\s*call",
                                    call_context)
     receiver = receiver_match.group(1) if receiver_match else "target"
@@ -18308,8 +19373,8 @@ def add_concrete_normal_exit_oracle(source, test_name, unit, expected_exit="norm
     marker = "_veriput_concrete_completed"
     if any(marker in line for line in body):
         assertion_method = "assertTrue" if expected_exit == "normal" else "assertFalse"
-        assertion_message = ("fixed witness call must complete" if expected_exit == "normal"
-                             else "fixed witness call must revert")
+        assertion_message = ("fixed witness call must complete"
+                             if expected_exit == "normal" else "fixed witness call must revert")
         assertion = f'{assertion_method}({marker}, "{assertion_message}");'
         return source, [{
             "class": "R0",
@@ -18338,8 +19403,8 @@ def add_concrete_normal_exit_oracle(source, test_name, unit, expected_exit="norm
         rewritten_body += f"\n{indent}  {marker} = true;\n{indent}"
         rewritten_body += body_text[success_open + 1:final_catch_close + 1]
         assertion_method = "assertTrue" if expected_exit == "normal" else "assertFalse"
-        assertion_message = ("fixed witness call must complete" if expected_exit == "normal"
-                             else "fixed witness call must revert")
+        assertion_message = ("fixed witness call must complete"
+                             if expected_exit == "normal" else "fixed witness call must revert")
         rewritten_body += (f'\n{indent}{assertion_method}({marker}, '
                            f'"{assertion_message}");')
         rewritten_body += body_text[final_catch_close + 1:]
@@ -18379,8 +19444,12 @@ def add_concrete_normal_exit_oracle(source, test_name, unit, expected_exit="norm
 
 
 CONCRETE_STRUCTURED_ORACLE_KINDS = frozenset({
-    "return-value", "post-state", "storage-slot-post-state", "event-log",
-    "revert", "call-status",
+    "return-value",
+    "post-state",
+    "storage-slot-post-state",
+    "event-log",
+    "revert",
+    "call-status",
 })
 CONCRETE_ORACLE_KINDS = CONCRETE_STRUCTURED_ORACLE_KINDS | {"normal-exit"}
 
@@ -18451,8 +19520,7 @@ def _concrete_executable_statement(source, statement):
         found = source.find(statement, start)
         if found < 0:
             return False
-        first = next((offset for offset, char in enumerate(statement)
-                      if not char.isspace()), None)
+        first = next((offset for offset, char in enumerate(statement) if not char.isspace()), None)
         if first is not None and mask[found + first] != " ":
             return True
         start = found + 1
@@ -18489,8 +19557,7 @@ def reuse_authenticated_concrete_oracles(source, test_name, unit, oracles):
     if (isinstance(oracles, list) and len(oracles) == 1 and isinstance(oracles[0], dict)
             and oracles[0].get("kind") == "revert"
             and (oracles[0].get("source") != "expectRevert"
-                 or not (oracles[0].get("target_receiver")
-                         or oracles[0].get("target_contract")))):
+                 or not (oracles[0].get("target_receiver") or oracles[0].get("target_contract")))):
         mask = _concrete_oracle_code_mask(source)
         function = re.search(r"\bfunction\s+" + re.escape(test_name) + r"\s*\(", mask)
         opening = mask.find("{", function.end()) if function else -1
@@ -18518,8 +19585,7 @@ def reuse_authenticated_concrete_oracles(source, test_name, unit, oracles):
         binding_oracles = [bound]
     if (isinstance(oracles, list) and len(oracles) == 1 and isinstance(oracles[0], dict)
             and oracles[0].get("kind") == "normal-exit"):
-        _rewritten, rebuilt = add_concrete_normal_exit_oracle(
-            source, test_name, unit, "normal")
+        _rewritten, rebuilt = add_concrete_normal_exit_oracle(source, test_name, unit, "normal")
         if len(rebuilt) == 1 and rebuilt[0].get("kind") == "normal-exit":
             binding_oracles = rebuilt
     error = authenticated_concrete_oracle_error(binding_oracles)
@@ -18564,8 +19630,8 @@ def event_signatures_from_ast(ast_document):
                 params = ((node.get("parameters") or {}).get("parameters") or [])
                 types = []
                 for param in params:
-                    abi_type = _canonical_event_abi_type(
-                        (param.get("typeDescriptions") or {}).get("typeString"))
+                    abi_type = _canonical_event_abi_type((param.get("typeDescriptions")
+                                                          or {}).get("typeString"))
                     if abi_type is None:
                         return
                     types.append(abi_type)
@@ -18616,15 +19682,14 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
     if report_return is not None:
         text = str(report_return).strip()
         if text.startswith("(") and text.endswith(")"):
-            components = [part.strip() for part in split_top_level(text[1:-1])
-                          if part.strip()]
+            components = [part.strip() for part in split_top_level(text[1:-1]) if part.strip()]
             arity = len(components)
-            indexed = [oracle for oracle in oracles
-                       if oracle.get("kind") == "return-value"
-                       and oracle.get("return_index") is not None]
-            if (len(indexed) != arity
-                    or sorted(oracle.get("return_index") for oracle in indexed) !=
-                    list(range(arity))
+            indexed = [
+                oracle for oracle in oracles
+                if oracle.get("kind") == "return-value" and oracle.get("return_index") is not None
+            ]
+            if (len(indexed) != arity or sorted(oracle.get("return_index")
+                                                for oracle in indexed) != list(range(arity))
                     or any(oracle.get("return_arity") != arity for oracle in indexed)):
                 return "retained tuple return lacks complete indexed return-value oracles"
             for oracle in indexed:
@@ -18635,9 +19700,10 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
         elif "return-value" not in kinds:
             return "retained scalar return lacks an exact return-value oracle"
         else:
-            scalar_oracles = [oracle for oracle in oracles
-                              if oracle.get("kind") == "return-value"
-                              and oracle.get("return_index") is None]
+            scalar_oracles = [
+                oracle for oracle in oracles
+                if oracle.get("kind") == "return-value" and oracle.get("return_index") is None
+            ]
             expected_ok, expected = (scalar(scalar_oracles[0].get("expected"))
                                      if len(scalar_oracles) == 1 else (False, None))
             reported_ok, reported = scalar(report_return)
@@ -18649,19 +19715,22 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
     entry_state = entry_state if isinstance(entry_state, dict) else {}
     final_state = final_state if isinstance(final_state, dict) else {}
     changed_state = {
-        str(name): value for name, value in final_state.items()
-        if entry_state.get(name) != value
+        str(name): value
+        for name, value in final_state.items() if entry_state.get(name) != value
     }
     if changed_state:
-        state_oracles = [oracle for oracle in oracles
-                         if oracle.get("kind") == "storage-slot-post-state"]
+        state_oracles = [
+            oracle for oracle in oracles if oracle.get("kind") == "storage-slot-post-state"
+        ]
         covered = {str(oracle.get("storage_variable") or "") for oracle in state_oracles}
-        if covered != set(changed_state):
+        if not set(changed_state).issubset(covered):
             return "retained final_state lacks exact storage-slot-post-state coverage"
         for oracle in state_oracles:
             variable = str(oracle.get("storage_variable") or "")
+            if variable not in final_state:
+                return "storage-slot-post-state oracle is absent from retained final_state"
             expected_ok, expected = scalar(oracle.get("expected"))
-            reported_ok, reported = scalar(changed_state[variable])
+            reported_ok, reported = scalar(final_state[variable])
             if not expected_ok or not reported_ok or expected != reported:
                 return "storage-slot-post-state oracle differs from retained final_state"
     events = claim.get("events")
@@ -18681,13 +19750,19 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
                     return "event-log oracle has the wrong retained sequence position"
                 declaration = events[index]
                 match = re.search(r"#([0-9]+)$", declaration)
+                declared_id = int(match.group(1)) if match else None
                 topics = expected.get("topics")
-                signature = (event_signatures or {}).get(int(match.group(1))) if match else None
-                if (signature is None or not isinstance(topics, list) or not topics
-                        or re.fullmatch(
-                            r"keccak256\s*\(\s*([\"'])" + re.escape(signature) +
-                            r"\1\s*\)", str(topics[0]).strip()) is None):
+                if (expected.get("declaration_id") is not None
+                        and expected.get("declaration_id") != declared_id):
                     return "event-log oracle differs from retained event declaration"
+                signature = ((event_signatures or {}).get(declared_id) if declared_id else None)
+                if signature is None and expected.get("signature"):
+                    signature = str(expected.get("signature"))
+                if signature is not None:
+                    if (not isinstance(topics, list) or not topics or re.fullmatch(
+                            r"keccak256\s*\(\s*([\"'])" + re.escape(signature) + r"\1\s*\)",
+                            str(topics[0]).strip()) is None):
+                        return "event-log oracle differs from retained event declaration"
                 covered.add(index)
             if covered != set(range(len(events))):
                 return "event-log oracle does not cover the complete retained sequence"
@@ -18709,14 +19784,16 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
     exit_kind = claim.get("exit_kind")
     if exit_kind == "revert":
         revert_oracles = [oracle for oracle in oracles if oracle.get("kind") == "revert"]
-        failed_status = [oracle for oracle in oracles
-                         if oracle.get("kind") == "call-status"
-                         and oracle.get("expected") is False]
+        failed_status = [
+            oracle for oracle in oracles
+            if oracle.get("kind") == "call-status" and oracle.get("expected") is False
+        ]
         if len(revert_oracles) != 1 and len(failed_status) != 1:
             return "retained revert exit lacks an exact revert or failed-status oracle"
     elif exit_kind == "normal":
-        if any(oracle.get("kind") == "call-status"
-               and oracle.get("expected") is False for oracle in oracles):
+        if any(
+                oracle.get("kind") == "call-status" and oracle.get("expected") is False
+                for oracle in oracles):
             return "retained normal exit contradicts a failed call-status oracle"
         structured = [kind for kind in kinds if kind != "normal-exit"]
         if not structured:
@@ -18791,12 +19868,12 @@ def add_concrete_fixed_return_oracle(source, test_name, unit, rettypes, witness_
     indent = re.match(r"\s*", rebound).group(0)
     assertion = (f'assertEq({observed}, {expected}, '
                  '"fixed witness return must match");')
-    lines.insert(absolute_call + 1, indent + assertion)
+    lines.insert(end, indent + assertion)
     receiver_match = re.search(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" + re.escape(unit) + r"\s*\(",
                                rebound)
     receiver = receiver_match.group(1) if receiver_match else "target"
     return "\n".join(lines) + "\n", [{
-        "class": "R0",
+        "class": "concrete-value",
         "kind": "return-value",
         "solidity_type": return_type,
         "observed": observed,
@@ -18805,6 +19882,232 @@ def add_concrete_fixed_return_oracle(source, test_name, unit, rettypes, witness_
         "target_receiver": receiver,
         "assertion": assertion,
     }]
+
+
+def add_concrete_fixed_return_oracles(source, test_name, unit, rettypes, witness_value):
+    """Bind every scalar or tuple ABI return component to its witness value."""
+    if not rettypes or len(rettypes) == 1:
+        return add_concrete_fixed_return_oracle(source, test_name, unit, rettypes, witness_value)
+    if not isinstance(witness_value, str):
+        return source, []
+    raw = witness_value.strip()
+    if not (raw.startswith("(") and raw.endswith(")")):
+        return source, []
+    values = [part.strip() for part in split_top_level(raw[1:-1])]
+    if len(values) != len(rettypes):
+        return source, []
+    selected = _fixed_oracle_function(source, test_name)
+    if selected is None:
+        return source, []
+    lines, start, end = selected
+    body = lines[start + 1:end]
+    call_i = find_unit_call(body, unit)
+    if call_i is None:
+        return source, []
+    names = [f"_veriput_concrete_return_{index}" for index in range(len(rettypes))]
+    lhs = ", ".join(f"{sol_type} {name}" for name, (_label, sol_type) in zip(names, rettypes))
+    rebound, _reason = bind_return_lhs(body[call_i], unit, f"({lhs})")
+    if rebound is None:
+        return source, []
+    receiver_match = re.search(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" + re.escape(unit) + r"\s*\(",
+                               rebound)
+    receiver = receiver_match.group(1) if receiver_match else "target"
+    body[call_i] = rebound
+    oracles = []
+    for index, ((_label, sol_type), value, observed) in enumerate(zip(rettypes, values, names)):
+        expected = _concrete_return_literal(sol_type, value)
+        if expected is None:
+            return source, []
+        assertion = (f'assertEq({observed}, {expected}, '
+                     f'"fixed witness return component {index}");')
+        body.append(re.match(r"\s*", rebound).group(0) + assertion)
+        oracles.append({
+            "class": "concrete-value",
+            "kind": "return-value",
+            "return_index": index,
+            "return_arity": len(rettypes),
+            "solidity_type": sol_type,
+            "observed": observed,
+            "expected": expected,
+            "provenance": "stage2-witness",
+            "target_receiver": receiver,
+            "assertion": assertion,
+        })
+    lines[start + 1:end] = body
+    return "\n".join(lines) + "\n", oracles
+
+
+def _concrete_scalar(value):
+    text = str(value).strip()
+    while True:
+        cast = re.fullmatch(r"[A-Za-z_]\w*(?:\s+payable)?\s*\((.*)\)", text, re.S)
+        if cast is None:
+            break
+        text = cast.group(1).strip()
+    if text == "true":
+        return 1
+    if text == "false":
+        return 0
+    try:
+        return int(text, 0)
+    except ValueError:
+        return None
+
+
+def _fixed_oracle_function(source, test_name):
+    """Return mutable source lines and the selected function body bounds."""
+    lines = source.splitlines()
+    matcher = re.compile(r"^\s*function\s+" + re.escape(test_name) + r"\s*\(")
+    start = next((index for index, line in enumerate(lines) if matcher.search(line)), None)
+    if start is None:
+        return None
+    depth = 0
+    for end in range(start, len(lines)):
+        depth += lines[end].count("{") - lines[end].count("}")
+        if end > start and depth <= 0:
+            return lines, start, end
+    return None
+
+
+def _fixed_mapping_key(raw, solidity_type, claim):
+    value = raw.strip()
+    groups = (claim.get("inputs") or {}, claim.get("env") or {})
+    for group in groups:
+        if value in group:
+            value = str(group[value])
+            break
+    scalar = _concrete_scalar(value)
+    if scalar is None:
+        return None
+    label = _norm_ty(solidity_type)
+    if re.fullmatch(r"uint(?:\d+)?", label):
+        return f"uint256({scalar})"
+    if re.fullmatch(r"int(?:\d+)?", label):
+        return f"int256({scalar})"
+    if label == "address" or label.startswith(("contract ", "interface ")):
+        return f"address(uint160({scalar}))"
+    if label == "bool" and scalar in (0, 1):
+        return "true" if scalar else "false"
+    match = re.fullmatch(r"bytes([1-9]|[12][0-9]|3[0-2])", label)
+    if match:
+        width = int(match.group(1)) * 8
+        return f"bytes{match.group(1)}(uint{width}({scalar}))"
+    return None
+
+
+def _fixed_state_read(variable, receiver, layout, maps, state_store_names, claim):
+    mapping, keys, tail = parse_slot_name(variable)
+    if mapping is None:
+        layout_name = layout_scalar_key(variable, layout, state_store_names)
+        if layout_name is None:
+            return None, None
+        slot, offset, width = layout[layout_name]
+        expression = slot_read_expr(f"address({receiver})", slot, offset, width)
+        return expression, {
+            "storage_slot": slot,
+            "storage_offset_bytes": offset,
+            "storage_width_bytes": width,
+            "storage_variable": variable,
+            "storage_expression": expression,
+        }
+    query = mapping + tail
+    spec = maps.get(query)
+    if spec is None or len(spec) < 6:
+        return None, None
+    key_types = [spec[1]] if isinstance(spec[1], str) else list(spec[1])
+    if len(keys) != len(key_types):
+        return None, None
+    key_exprs = [_fixed_mapping_key(key, key_type, claim) for key, key_type in zip(keys, key_types)]
+    if any(expression is None for expression in key_exprs):
+        return None, None
+    slot, _key_type, width, offset = spec[:4]
+    slot_expression = map_value_slot_expr(key_exprs, spec)
+    expression = slot_read_expr_at(f"address({receiver})", slot_expression, offset, width)
+    return expression, {
+        "storage_slot": slot,
+        "storage_offset_bytes": offset,
+        "storage_width_bytes": width,
+        "storage_variable": variable,
+        "storage_slot_expression": slot_expression,
+        "storage_expression": expression,
+    }
+
+
+def add_concrete_fixed_state_oracles(source,
+                                     test_name,
+                                     unit,
+                                     claim,
+                                     layout,
+                                     maps,
+                                     state_store_names=None):
+    """Assert every exact scalar final-state value readable through storage layout."""
+    final_state = claim.get("final_state") if isinstance(claim, dict) else None
+    if not isinstance(final_state, dict) or not final_state:
+        return source, [], []
+    selected = _fixed_oracle_function(source, test_name)
+    if selected is None:
+        return source, [], ["selected concrete replay function is absent"]
+    lines, start, end = selected
+    body = lines[start + 1:end]
+    call_i = find_unit_call(body, unit)
+    receiver = target_instance_for_call(body, call_i, unit) if call_i is not None else None
+    if receiver is None:
+        return source, [], ["selected target receiver is ambiguous"]
+    injected = []
+    oracles = []
+    skipped = []
+    for index, (variable, raw_value) in enumerate(sorted(final_state.items())):
+        expression, coordinates = _fixed_state_read(str(variable), receiver, layout or {}, maps
+                                                    or {}, state_store_names or {}, claim)
+        scalar = _concrete_scalar(raw_value)
+        if expression is None or coordinates is None or scalar is None:
+            skipped.append(str(variable))
+            continue
+        width = int(coordinates["storage_width_bytes"])
+        expected = scalar % (1 << (width * 8))
+        observed = "_veriput_fixed_state_" + _slot_ident(str(variable)) + f"_{index}"
+        declaration = f"    uint256 {observed} = {expression};"
+        assertion = f"assertEq({observed}, uint256({expected}), \"fixed witness state\");"
+        injected.extend((declaration, "    " + assertion))
+        oracles.append({
+            "class": "concrete-value",
+            "kind": "storage-slot-post-state",
+            "source": "vm.load",
+            "observed": observed,
+            "expected": f"uint256({expected})",
+            "provenance": "stage2-witness",
+            "target_receiver": receiver,
+            **coordinates,
+            "assertion": assertion,
+        })
+    lines[end:end] = injected
+    return "\n".join(lines) + "\n", oracles, skipped
+
+
+def add_concrete_fixed_event_oracles(source, test_name, unit, claim, ast_path):
+    """Assert the exact retained event sequence, including topics and data."""
+    events = claim.get("events") if isinstance(claim, dict) else None
+    if not isinstance(events, list) or not events:
+        return source, [], None
+    if claim.get("exit_kind") != "normal":
+        return source, [], "reverting execution cannot retain EVM logs"
+    body = function_body_lines(source, test_name)
+    if body is None:
+        return source, [], "selected concrete replay function is absent"
+    call_i = find_unit_call(body, unit)
+    receiver = target_instance_for_call(body, call_i, unit) if call_i is not None else None
+    if receiver is None:
+        return source, [], "selected target receiver is ambiguous"
+    document = load_fixed_event_ast(Path(ast_path))
+    if not document:
+        return source, [], "retained event AST is absent or malformed"
+    try:
+        oracles = render_fixed_event_oracles(document, claim, receiver)
+        for oracle in oracles:
+            oracle["provenance"] = "stage2-witness"
+        return inject_fixed_event_oracles(source, test_name, unit, oracles), oracles, None
+    except ValueError as exc:
+        return source, [], str(exc)
 
 
 def concrete_return_mode_allowed(concrete_only, stage2_source, witness_check):
@@ -18846,12 +20149,11 @@ def certified_basis_missing_return_witness(concrete_only,
                                              stage4_kind=stage4_kind):
         return False
     has_exact_observable = any(
-        isinstance(oracle, dict)
-        and oracle.get("kind") in CONCRETE_STRUCTURED_ORACLE_KINDS
+        isinstance(oracle, dict) and oracle.get("kind") in CONCRETE_STRUCTURED_ORACLE_KINDS
         for oracle in (concrete_oracles or []))
     return (concrete_return_mode_allowed(concrete_only, stage2_source, witness_check)
-            and rettypes is not None and len(rettypes) > 0
-            and witness_value is None and not has_exact_observable)
+            and rettypes is not None and len(rettypes) > 0 and witness_value is None
+            and not has_exact_observable)
 
 
 def r2_probe_has_rendered_assertion(stats):
@@ -19074,6 +20376,207 @@ def run_forge_r2_prefilter(project,
         "command": command,
         "candidates": [evidence[candidate["key"]] for candidate in candidates],
     }
+
+
+def run_forge_boundary_observations(project,
+                                    workdir,
+                                    emitted,
+                                    case,
+                                    contract,
+                                    unit,
+                                    enc,
+                                    depth_,
+                                    path_function,
+                                    region,
+                                    holes,
+                                    pins,
+                                    params,
+                                    layout,
+                                    maps,
+                                    observable_names,
+                                    points,
+                                    base_values,
+                                    cell,
+                                    derived_by,
+                                    timeout,
+                                    fixture=None,
+                                    constructor_mocks=None,
+                                    runtime_mocks=None,
+                                    establish=None,
+                                    rettypes=None,
+                                    unit_payable=False,
+                                    state_store_names=None,
+                                    flat_source=None,
+                                    extcall_length_coordinates=None,
+                                    log=print):
+    """Observe uint post values at certified coordinate boundaries in Forge.
+
+    A probe is the ordinary PUT fixture and call with one equality-to-zero
+    assertion.  Foundry's labeled ``assertEq`` failure reports the actual uint;
+    a pass reports zero.  Every fuzz parameter is replaced by an authenticated
+    concrete value before execution.  Any unrelated failure or incomplete
+    point invalidates that observation, so this procedure can only omit a
+    proposal, never manufacture one.
+    """
+    puts, expected = [], {}
+    namespace = secrets.token_hex(12)
+    for point_index, point in enumerate(points or []):
+        values = dict(base_values or {})
+        values.update(point.get("coordinates") or {})
+        for var_index, var in enumerate(observable_names or []):
+            text_ = "return == 0" if var == RETURN_VAR else "post == 0"
+            marker = f"VERIPUT_BOUNDARY_{namespace}_{point_index}_{var_index}"
+            piece = f"bo{point_index}v{var_index}"
+            probe_rows = [(var, text_, "HOLDS")]
+            if var == RETURN_VAR:
+                probe_rows.append((RETURN_VAR, RETLIVE_PREFIX + " (REFUTED == yes)", "REFUTED"))
+            try:
+                probe, stats = build_put(contract,
+                                         unit,
+                                         enc,
+                                         depth_,
+                                         path_function,
+                                         region,
+                                         holes,
+                                         pins,
+                                         params,
+                                         emitted,
+                                         case,
+                                         layout,
+                                         probe_rows, [],
+                                         cell=cell,
+                                         rettypes=rettypes,
+                                         maps=maps,
+                                         piece_label=piece,
+                                         derived_by=derived_by,
+                                         rollback_exit=False,
+                                         r2_terms={"0": {
+                                             "kind": "literal",
+                                             "value": "0"
+                                         }},
+                                         oracle_label_prefix=marker + " ",
+                                         establish=establish,
+                                         unit_payable=unit_payable,
+                                         state_store_names=state_store_names,
+                                         flat_source=flat_source,
+                                         extcall_length_coordinates=extcall_length_coordinates)
+            except ConcreteFallback:
+                continue
+            if probe is None or not r2_probe_has_rendered_assertion(stats):
+                continue
+            if var == RETURN_VAR:
+                probe = [
+                    line.replace('"return: return == 0"', f'"{marker} return: return == 0"')
+                    for line in probe
+                ]
+            probe, error = fix_put_parameters_at_boundary(probe, values)
+            if error is not None:
+                continue
+            test_name = f"test_put_{contract}_{unit}_path{enc}{piece}"
+            puts.append(probe)
+            expected[test_name] = {
+                "marker": marker,
+                "point": point,
+                "var": var,
+            }
+    evidence = {
+        "requested_points": len(points or []),
+        "requested_observables": len(observable_names or []),
+        "rendered": len(puts),
+        "observed": 0,
+        "timed_out": False,
+        "returncode": None,
+        "command": [],
+        "observations": [],
+    }
+    if not puts:
+        evidence["reason"] = "no complete scalar boundary probe was renderable"
+        return [], evidence
+
+    base_contract = emitted.blocks[case[0]][0]
+    probe_contract = f"{base_contract}_{contract}_{unit}_put{enc}_BoundaryObservation"
+    constructor_params = source_constructor_param_types(project, contract)
+    source = assemble_put_source(emitted,
+                                 case,
+                                 puts,
+                                 probe_contract,
+                                 fixture,
+                                 layout,
+                                 contract,
+                                 unit,
+                                 constructor_mocks=constructor_mocks,
+                                 runtime_mocks=runtime_mocks,
+                                 constructor_params=constructor_params)
+    artifact = os.path.join(workdir, "boundary-observations.t.sol")
+    with open(artifact, "w") as stream:
+        stream.write(source)
+    dest = os.path.join(project, "test", f"{probe_contract}_{os.getpid()}_{time.time_ns()}.t.sol")
+    with open(dest, "w") as stream:
+        stream.write(source)
+    command = [
+        "forge",
+        "test",
+        "--json",
+        "--match-contract",
+        f"^{re.escape(probe_contract)}$",
+        "--match-test",
+        f"^test_put_{re.escape(contract)}_{re.escape(unit)}_path{enc}bo",
+    ]
+    stdout, stderr, timed_out, returncode = "", "", False, None
+    try:
+        proc = subprocess.Popen(command,
+                                cwd=project,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                start_new_session=True)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+            stdout, stderr = proc.communicate()
+        returncode = proc.returncode
+    except OSError as exc:
+        stderr = str(exc)
+    finally:
+        try:
+            os.unlink(dest)
+        except FileNotFoundError:
+            pass
+    with open(os.path.join(workdir, "boundary-observations.json"), "w") as stream:
+        stream.write(stdout)
+    with open(os.path.join(workdir, "boundary-observations.stderr"), "w") as stream:
+        stream.write(stderr)
+    evidence.update({
+        "timed_out": timed_out,
+        "returncode": returncode,
+        "command": command,
+    })
+    if timed_out:
+        evidence["reason"] = f"Forge boundary observation timed out after {timeout}s"
+        return [], evidence
+    results = forge_json_test_results(stdout)
+    by_point = {}
+    for test_name, item in expected.items():
+        value = boundary_probe_observed_uint(item["marker"], results.get(test_name))
+        if value is None:
+            continue
+        point_key = json.dumps(item["point"], sort_keys=True)
+        observation = by_point.setdefault(point_key, {
+            "point": item["point"],
+            "values": {},
+        })
+        observation["values"][item["var"]] = {"post": value}
+    observations = list(by_point.values())
+    evidence["observed"] = sum(len(item["values"]) for item in observations)
+    evidence["observations"] = observations
+    log(f"[put]   Forge boundary observations: {len(points or [])} point(s), "
+        f"{len(puts)} probe(s), {evidence['observed']} authenticated uint value(s)")
+    return observations, evidence
 
 
 # ---------------------------------------------------------------------------
@@ -19302,6 +20805,10 @@ def main():
                     "R2 ESBMC proof after the refutation-only Forge "
                     "prefilter. If the remaining PUT budget cannot cover "
                     "both, the Forge prefilter is shortened or skipped")
+    ap.add_argument("--oracle-max-parts", type=int, default=4,
+                    help="maximum certified input parts retained for R1/R2.1/R2.3")
+    ap.add_argument("--oracle-max-split-depth", type=int, default=2,
+                    help="maximum counterexample-guided input splits per oracle part")
     ap.add_argument("--derived-by",
                     default="{}",
                     metavar="JSON",
@@ -19563,6 +21070,7 @@ def main():
         dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
         with open(dest, "w") as f:
             f.write(txt)
+        fixed_stats = concrete_oracle_stats([])
         print(f"[put] WROTE deploy-only concrete replay {dest}")
         with open(os.path.join(a.workdir, "put.json"), "w") as f:
             json.dump(
@@ -19838,8 +21346,9 @@ def main():
                       "a fresh same-path witness is not an authenticated basis")
         else:
             basis_params = source_inherited_function_params(flat_source, a.contract, a.unit, None)
-            certified_ce_binding, reason = bind_emitted_claim_to_certified_ce(
-                claim, certified_ce, params=basis_params)
+            certified_ce_binding, reason = bind_emitted_claim_to_certified_ce(claim,
+                                                                              certified_ce,
+                                                                              params=basis_params)
         if certified_ce_binding is None:
             print(f"[put] REFUSED: {reason}")
             write_put_refusal_record(a.workdir,
@@ -19909,9 +21418,8 @@ def main():
             # source-level authentication checks.
             synthetic_fingerprint = certified_ce_binding["ce_sha256"]
             case_start = case[3][0]
-            emitted.lines.insert(
-                case_start,
-                f"  // witness-fingerprint-sha256: {synthetic_fingerprint}")
+            emitted.lines.insert(case_start,
+                                 f"  // witness-fingerprint-sha256: {synthetic_fingerprint}")
             with open(emitted.path, "w") as stream:
                 stream.write("\n".join(emitted.lines) + "\n")
             emitted = EmittedFile(emitted.path)
@@ -20072,25 +21580,45 @@ def main():
                      f"{len(getter_signature[0])} parameter(s), "
                      f"{len(getter_signature[1])} return value(s)")
 
-    certified_value_gate_basis = (
-        stage4_kind in ("abi-value-gate", "getter-value-gate")
-        and certified_nonpayable_value_gate_basis(
-            a.concrete_only,
-            a.concrete_stage2_source,
-            a.concrete_stage2_witness_check,
-            region=region,
-            pins=pins,
-            stage4_kind=stage4_kind))
+    certified_value_gate_basis = (stage4_kind in ("abi-value-gate", "getter-value-gate")
+                                  and certified_nonpayable_value_gate_basis(
+                                      a.concrete_only,
+                                      a.concrete_stage2_source,
+                                      a.concrete_stage2_witness_check,
+                                      region=region,
+                                      pins=pins,
+                                      stage4_kind=stage4_kind))
     value_gate_projection = (abi_value_gate_ce_projection(
         certified_ce, concrete_params, stage4_kind=stage4_kind)
                              if certified_value_gate_basis else None)
     extcall_fixture_projection = (extcall_fixture_ce_projection(
-        flat_source, a.contract, a.unit, certified_ce, concrete_params, region, extcall_pins)
-                                  if (certified_ce_binding is not None
-                                      and runtime_extcall_mocks
-                                      and not certified_value_gate_basis) else None)
-    certified_projection_basis = bool(value_gate_projection or extcall_fixture_projection)
-    source_projection_evidence = value_gate_projection or extcall_fixture_projection
+        flat_source, a.contract, a.unit, certified_ce, concrete_params, region, extcall_pins) if
+                                  (certified_ce_binding is not None and runtime_extcall_mocks
+                                   and not certified_value_gate_basis) else None)
+    calldata_projection = (target_call_calldata_ce_projection(certified_ce)
+                           if certified_ce_binding is not None else None)
+    aux_env_projection = (unobserved_auxiliary_env_ce_projection(
+        certified_ce, flat_source, region=region, pins=pins)
+                          if certified_ce_binding is not None else None)
+    certified_env_basis = False
+    if certified_ce_binding is not None:
+        exact_ce_for_env = normalized_concrete_ce(certified_ce)
+        certified_env_basis = bool(
+            isinstance(exact_ce_for_env, dict) and
+            (set(exact_ce_for_env) & (set(ESTABLISHABLE_ENV_COORDS) | {"tx.origin"})))
+    certified_state_basis = False
+    if certified_ce_binding is not None:
+        exact_ce_for_state = normalized_concrete_ce(certified_ce)
+        certified_state_basis = bool(
+            isinstance(exact_ce_for_state, dict) and
+            any(name.startswith("state.") for name in exact_ce_for_state))
+    certified_projection_basis = bool(value_gate_projection or extcall_fixture_projection
+                                      or certified_env_basis or certified_state_basis)
+    source_projection_evidence = {}
+    for projection in (value_gate_projection, extcall_fixture_projection,
+                       calldata_projection if certified_env_basis else None, aux_env_projection):
+        if projection:
+            source_projection_evidence.update(projection)
 
     if certified_ce_binding is not None and not certified_projection_basis:
         rendered_ce_sha, rendered_ce_error = bind_emitted_source_to_certified_ce(
@@ -20126,19 +21654,20 @@ def main():
             return 1
         certified_ce_binding["projection_prechecked"] = True
         projection_records = list(source_projection_evidence.values())
-        certified_ce_binding["projection_certificate"] = (
-            projection_records[0].get("certificate") if projection_records else None)
+        certified_ce_binding["projection_certificate"] = (projection_records[0].get("certificate")
+                                                          if projection_records else None)
 
     if a.concrete_only:
-        if certified_basis_missing_return_witness(a.concrete_only,
-                                                  a.concrete_stage2_source,
-                                                  a.concrete_stage2_witness_check,
-                                                  concrete_rettypes,
-                                                  a.concrete_return_value,
-                                                  stage4_kind,
-                                                  region=region,
-                                                  pins=pins,
-                                                  concrete_oracles=supplied_concrete_oracles):
+        if certified_basis_missing_return_witness(
+                a.concrete_only,
+                a.concrete_stage2_source,
+                a.concrete_stage2_witness_check,
+                concrete_rettypes, ((claim.get("return_value") if isinstance(claim, dict) else None)
+                                    or a.concrete_return_value),
+                stage4_kind,
+                region=region,
+                pins=pins,
+                concrete_oracles=supplied_concrete_oracles):
             reason = ("authenticated certified basis has a known non-void "
                       "target but no exact Stage-2 return witness")
             print(f"[put] REFUSED: {reason}")
@@ -20267,11 +21796,10 @@ def main():
             case_body, case_call_i = emitted_case_body_and_call(emitted, case, a.unit)
             print("[put]   repaired unsupported concrete-only skeleton with a "
                   "source-synthesized deployment and target call")
-        layout = None
-        if foundry_fixture and foundry_fixture.get("skip_constructor"):
-            layout, _maps, err = storage_layout(a.forge_project, a.contract)
-            if layout is None:
-                reason = (f"{err}. The concrete-only replay needs the "
+        layout, maps, layout_error = storage_layout(a.forge_project, a.contract)
+        if layout is None:
+            if foundry_fixture and foundry_fixture.get("skip_constructor"):
+                reason = (f"{layout_error}. The concrete-only replay needs the "
                           "fixture's storage writes to mirror ESBMC's skipped "
                           "constructor state.")
                 print(f"[put] REFUSED: {reason}")
@@ -20306,6 +21834,14 @@ def main():
                         f,
                         indent=2)
                 return 1
+            notes.append("fixed replay state assertions unavailable: " +
+                         str(layout_error or "forge inspect failed")[-1200:])
+            layout, maps = {}, {}
+        state_store_names = {}
+        if a.ast:
+            state_store_names, _state_store_evidence = \
+                contract_state_esbmc_store_names(a.ast, a.contract)
+        maps = add_esbmc_mapping_aliases(maps or {}, state_store_names)
         overload_label = overload_artifact_label(a.ast, a.contract, a.unit, declaration_id)
         plabel = overload_label + (f"p{a.piece}" if a.piece else "")
         cname, _cstart, _cend = emitted.blocks[case[0]]
@@ -20322,21 +21858,29 @@ def main():
                 runtime_mocks, constructor_params, concrete_params, constructor_param_mocks,
                 constructor_param_struct_field_mocks, constructor_param_runtime_mocks,
                 constructor_param_hascode_mocks, flat_source, region, pins,
-                certified_value_gate_basis, certified_ce)
+                state_store_names, certified_value_gate_basis, certified_ce,
+                certified_env_basis=certified_env_basis)
             if certified_ce_binding is not None:
                 rendered_test_body = function_body_lines(txt, case[1])
                 rendered_setup_body = function_body_lines(txt, "setUp")
-                if (not certified_projection_basis
-                        and (certified_test_body is None
-                             or rendered_test_body != certified_test_body)):
+                if (not certified_projection_basis and
+                    (certified_test_body is None or rendered_test_body != certified_test_body)):
                     raise ValueError("certified CE target call body changed while rendering the "
                                      "Foundry replay")
-                setup_render_error = certified_setup_render_error(
-                    certified_setup_body, rendered_setup_body, certified_projection_basis)
+                setup_render_error = certified_setup_render_error(certified_setup_body,
+                                                                  rendered_setup_body,
+                                                                  certified_projection_basis)
                 if setup_render_error:
                     raise ValueError(setup_render_error)
                 if certified_projection_basis:
                     rendered_call_i = find_unit_call(rendered_test_body, a.unit)
+                    rendered_body_sha = hashlib.sha256(
+                        "\n".join(rendered_test_body or []).encode("utf-8")).hexdigest()
+                    binding_evidence = dict(source_projection_evidence)
+                    state_projection = fixed_replay_state_ce_projection(certified_ce,
+                                                                        rendered_test_body)
+                    if state_projection:
+                        binding_evidence.update(state_projection)
                     source_projection = {}
                     rendered_ce_sha, rendered_ce_error = bind_emitted_source_to_certified_ce(
                         rendered_test_body,
@@ -20344,8 +21888,9 @@ def main():
                         a.unit,
                         concrete_params,
                         certified_ce,
-                        coordinate_evidence=source_projection_evidence,
-                        audit=source_projection)
+                        coordinate_evidence=binding_evidence,
+                        audit=source_projection,
+                        setup_source_sha256=rendered_body_sha)
                     if rendered_ce_sha is None:
                         raise ValueError("certified ABI value-gate CE is not authenticated by "
                                          "the final Foundry source: " + rendered_ce_error)
@@ -20365,22 +21910,37 @@ def main():
                 if oracle_error:
                     raise ValueError(oracle_error)
             else:
-                txt, concrete_oracles = add_concrete_fixed_return_oracle(
-                    txt, case[1], a.unit, concrete_rettypes,
-                    a.concrete_return_value)
-                if a.concrete_return_value is not None and not concrete_oracles:
+                concrete_oracles = []
+                witness_return = (claim.get("return_value") if isinstance(claim, dict) else None)
+                if witness_return is None:
+                    witness_return = a.concrete_return_value
+                txt, return_oracles = add_concrete_fixed_return_oracles(
+                    txt, case[1], a.unit, concrete_rettypes, witness_return)
+                if witness_return is not None and not return_oracles:
                     raise ValueError("authenticated non-void return witness could not be "
                                      "bound to the exact source-typed target call")
-                if not concrete_oracles:
-                    txt, concrete_oracles = add_concrete_normal_exit_oracle(
-                        txt, case[1], a.unit, path_exit_kind)
+                concrete_oracles.extend(return_oracles)
+                txt, event_oracles, event_error = add_concrete_fixed_event_oracles(
+                    txt, case[1], a.unit, claim, a.ast)
+                if event_error:
+                    raise ValueError("fixed replay event oracle unavailable: " + event_error)
+                concrete_oracles.extend(event_oracles)
+                txt, state_oracles, skipped_state = add_concrete_fixed_state_oracles(
+                    txt, case[1], a.unit, claim, layout, maps, state_store_names)
+                concrete_oracles.extend(state_oracles)
+                if skipped_state:
+                    notes.append("fixed replay skipped non-readable state: " +
+                                 ", ".join(skipped_state))
+                txt, exit_oracles = add_concrete_normal_exit_oracle(txt, case[1], a.unit,
+                                                                    path_exit_kind)
+                concrete_oracles.extend(exit_oracles)
             if supplied_concrete_oracles is None:
                 oracle_error = authenticated_concrete_oracle_error(concrete_oracles)
                 if oracle_error:
                     raise ValueError(oracle_error)
             if certified_ce_binding is not None:
-                claim_error = _oracle_claim_coverage_error(
-                    claim, concrete_oracles, event_signatures_from_ast_file(a.ast))
+                claim_error = _oracle_claim_coverage_error(claim, concrete_oracles,
+                                                           event_signatures_from_ast_file(a.ast))
                 if claim_error:
                     raise ValueError(claim_error)
             if certified_ce_binding is not None:
@@ -20397,13 +21957,18 @@ def main():
                 certified_ce_binding["setup_body_sha256"] = final_setup_sha
                 if certified_projection_basis:
                     certified_ce_binding["source_projection_preserved"] = {
-                        "schema": "veriput-certified-ce-source-projection/v1",
-                        "ce_sha256": certified_ce_binding.get("ce_sha256"),
-                        "coordinate_binding": certified_ce_binding.get("source_projection"),
-                        "target_call_body_sha256": certified_ce_binding.get(
-                            "pre_oracle_test_body_sha256"),
-                        "final_test_body_sha256": final_test_sha,
-                        "setup_body_sha256": final_setup_sha,
+                        "schema":
+                        "veriput-certified-ce-source-projection/v1",
+                        "ce_sha256":
+                        certified_ce_binding.get("ce_sha256"),
+                        "coordinate_binding":
+                        certified_ce_binding.get("source_projection"),
+                        "target_call_body_sha256":
+                        certified_ce_binding.get("pre_oracle_test_body_sha256"),
+                        "final_test_body_sha256":
+                        final_test_sha,
+                        "setup_body_sha256":
+                        final_setup_sha,
                     }
         except ValueError as exc:
             reason = str(exc)
@@ -20443,6 +22008,7 @@ def main():
                     f,
                     indent=2)
             return 1
+        fixed_stats = concrete_oracle_stats(concrete_oracles)
         dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
         with open(dest, "w") as f:
             f.write(txt)
@@ -20555,18 +22121,13 @@ def main():
                         "rendered_width": {},
                         "wide_fuzz_coords": [],
                         "dynamic_fuzz_coords": [],
-                        "asserts": 0,
-                        "verifier_asserts": 0,
-                        "state_asserts": 0,
-                        "return_asserts": 0,
-                        "exit_kind_asserts": 0,
                         "guarded_asserts": 0,
-                        **empty_oracle_stats(),
+                        **fixed_stats,
                     },
                     "materialization":
                     stage4_materialization_metadata(
                         "concrete",
-                        empty_oracle_stats(),
+                        fixed_stats,
                         reason=("Stage-2 concrete-only fallback; no "
                                 "assertion ladder or PUT proof was run")),
                     "notes": [
@@ -20708,6 +22269,7 @@ def main():
                 runtime_mocks, constructor_params, params, constructor_param_mocks,
                 constructor_param_struct_field_mocks, constructor_param_runtime_mocks,
                 constructor_param_hascode_mocks, flat_source, region, pins,
+                state_store_names,
                 (a.concrete_stage2_source == "certified-region-concrete-fallback"
                  and a.concrete_stage2_witness_check == "CERTIFIED-BASIS-REPLAY"))
             txt, concrete_oracles = add_concrete_normal_exit_oracle(txt, case[1], a.unit)
@@ -21039,6 +22601,15 @@ def main():
         1, capped_ladder_budget, a.memlimit, a.scope)
     rows, summary, refusal, blocker = parse_ladder(out2)
     rows = restore_ladder_row_names(rows, state_store_names)
+    oracle_coordinate_names = [entry.get("name") for entry in query_region
+                               if isinstance(entry, dict) and entry.get("name")]
+    oracle_refutations = r2_refutation_observations(
+        out2, os.path.join(assert_dir, "cov-report.json"), oracle_coordinate_names)
+    oracle_candidate_cache = {}
+    if summary is not None:
+        for candidate_row in rows:
+            key = (str(candidate_row[0]), canonical_oracle_rung_text(candidate_row[1]))
+            oracle_candidate_cache[key] = (candidate_row[2], oracle_refutations.get(key))
     # The ladder run is asked about exactly ONE (unit, enc), so any rollback
     # line in ITS log is about this path -- but the pair is still matched rather
     # than assumed, because a log that ever covers two paths would otherwise
@@ -21096,6 +22667,8 @@ def main():
     # `rows` already carries, so this cannot run before the first pass and
     # never guesses `delta_dir`.
     r2_term_lookup = {}
+    r2_subfamilies = {}
+    _r2 = []
     r2_ladder = r2_ladder_accounting([], requested=bool(a.propose_r2))
     r2_fuzz_prefilter = {
         "enabled": bool(a.fuzz_r2_prefilter),
@@ -21237,12 +22810,72 @@ def main():
                                          term_budget=a.r2_term_budget,
                                          candidate_budget=a.r2_candidate_budget,
                                          log=print)
+            # Boundary executions are a candidate generator, never a proof
+            # source.  Keep the plan linear in the coordinate count, require a
+            # complete authenticated CE for every remaining fuzz parameter,
+            # and reserve the configured ESBMC budget before invoking Forge.
+            _boundary_specs = []
+            _base_ce = claim_concrete_ce(claim, params=params)
+            _boundary_points = boundary_observation_points(region, params, _base_ce, max_points=5)
+            _boundary_observables = []
+            for _spec in _typed_r2:
+                for _entry in _spec.get("vars", []):
+                    _name = _entry.get("name")
+                    if (_name and _entry.get("abs") and _name not in _boundary_observables):
+                        _boundary_observables.append(_name)
+            _boundary_remaining = (put_deadline - time.monotonic() - postprocess_reserve_s -
+                                   float(a.min_r2_esbmc_budget))
+            if (_base_ce is not None and _boundary_points and _boundary_observables
+                    and _boundary_remaining > 0 and not (rollback_here or path_reverts)):
+                _observations, _boundary_evidence = run_forge_boundary_observations(
+                    a.forge_project,
+                    a.workdir,
+                    emitted,
+                    case,
+                    a.contract,
+                    a.unit,
+                    a.enc,
+                    a.depth,
+                    pf,
+                    region,
+                    holes,
+                    pins,
+                    params,
+                    layout,
+                    maps,
+                    _boundary_observables[:4],
+                    _boundary_points,
+                    _base_ce, (cell_name, cell_rule),
+                    json.loads(a.derived_by or "{}"),
+                    min(60, max(1, int(_boundary_remaining))),
+                    foundry_fixture,
+                    constructor_mocks,
+                    runtime_mocks,
+                    establish_spec,
+                    rettypes=rettypes,
+                    unit_payable=(unit_mutability == "payable"),
+                    state_store_names=state_store_names,
+                    flat_source=flat_source,
+                    extcall_length_coordinates=extcall_length_coordinates)
+                _directions = _r2_direction(rows, print)[1]
+                _boundary_specs = boundary_observation_r2_spec(_observations,
+                                                               _directions,
+                                                               refinement_rounds=2)
+                if _boundary_specs:
+                    print("[put]   boundary observations proposed "
+                          f"{len(r2_candidates(_boundary_specs))} R2 candidate(s); "
+                          "all remain unproved until the ESBMC R2 pass")
+            elif _boundary_points and _boundary_observables:
+                print("[put]   boundary observations NOT RUN: no complete "
+                      "authenticated CE or no budget beyond the reserved ESBMC proof")
+            _typed_r2 = list(_boundary_specs) + list(_typed_r2)
             _r2 = schedule_source_r2_specs(_r2, _typed_r2, log=print)
             _r2, _r2_dedup_dropped = dedup_r2_specs_by_normalized_text(_r2,
                                                                        point_value_texts(
                                                                            region, pins),
                                                                        log=print)
             r2_term_lookup = r2_terms_from_specs(_r2)
+            r2_subfamilies = r2_subfamily_lookup(_r2)
             r2_requested = True
             _r2_before_fuzz = json.loads(json.dumps(_r2))
             _r2_filtered = _r2
@@ -21356,12 +22989,25 @@ def main():
                 return p
 
             def _run_r2(spec_path):
+                with open(spec_path) as f:
+                    spec_o = json.load(f)
+                coordinate_names = [
+                    entry.get("name") for entry in spec_o.get("region", [])
+                    if isinstance(entry, dict) and entry.get("name")
+                ]
                 extra = (["--path-cov-assert", spec_path, "--cov-report-json"] + proof_esbmc_args)
                 o, _rc, _w = run_esbmc(a.esbmc, a.sol, a.ast, a.contract, a.unit, extra, assert_dir,
                                        1, esbmc_budget("R2"), a.memlimit, a.scope)
+                report_path = os.path.join(assert_dir, "cov-report.json")
+                refutations = r2_refutation_observations(o, report_path, coordinate_names)
+                oracle_refutations.update(refutations)
                 rows_o, _summary_o, _refusal_o, _blocker_o = parse_ladder(o)
-                with open(spec_path) as f:
-                    spec_o = json.load(f)
+                if _summary_o is not None:
+                    for candidate_row in rows_o:
+                        key = (str(candidate_row[0]),
+                               canonical_oracle_rung_text(candidate_row[1]))
+                        oracle_candidate_cache[key] = (candidate_row[2],
+                                                       refutations.get(key))
                 if should_retry_exact_mapping_r2_with_cvc5(spec_o, rows_o, proof_esbmc_args):
                     print("[put]   R2 exact mapping pass got solver unknown "
                           "under the default solver; retrying this spec once "
@@ -21373,10 +23019,19 @@ def main():
                                               a.memlimit, a.scope)
                     rows_2, _summary_2, _refusal_2, blocker_2 = parse_ladder(o2)
                     if attempt_is_usable(rows_2, blocker_2):
-                        return o2
+                        retry_refutations = r2_refutation_observations(
+                            o2, report_path, coordinate_names)
+                        oracle_refutations.update(retry_refutations)
+                        if _summary_2 is not None:
+                            for candidate_row in rows_2:
+                                key = (str(candidate_row[0]),
+                                       canonical_oracle_rung_text(candidate_row[1]))
+                                oracle_candidate_cache[key] = (
+                                    candidate_row[2], retry_refutations.get(key))
+                        return o2, retry_refutations
                     print("[put]   R2 --cvc5 retry produced no usable ladder; "
                           "keeping the default-solver result")
-                return o
+                return o, refutations
 
             _r2_rows = maybe_run_r2_passes(_r2,
                                            spec,
@@ -21385,7 +23040,8 @@ def main():
                                            parse_ladder,
                                            rollback_here=rollback_here,
                                            revert_here=path_reverts,
-                                           notes=notes)
+                                           notes=notes,
+                                           provenance=r2_subfamilies)
             rows += _r2_rows
             if not (rollback_here or path_reverts):
                 r2_ladder = r2_ladder_accounting(_r2_before_fuzz,
@@ -21393,7 +23049,8 @@ def main():
                                                  _r2_rows,
                                                  r2_fuzz_prefilter,
                                                  requested=True,
-                                                 dedup_dropped=_r2_dedup_dropped)
+                                                 dedup_dropped=_r2_dedup_dropped,
+                                                 family_lookup=r2_subfamilies)
             print("[put]   R2 accounting: "
                   f"{r2_ladder['candidate_count']} candidate(s), "
                   f"{r2_ladder['fuzz_refuted']} fuzz-refuted, "
@@ -21418,6 +23075,85 @@ def main():
               "and delta bounds were not asked for on this run, so their "
               "absence below is a fact about this INVOCATION and says nothing "
               "about whether they hold. Do not read it as a measurement.")
+
+    oracle_parts = []
+    oracle_part_queries = []
+    part_region = {
+        str(entry["name"]): (int(str(entry["lo"]), 0), int(str(entry["hi"]), 0))
+        for entry in query_region
+        if isinstance(entry, dict) and entry.get("name") is not None
+    }
+    part_holes = {
+        name: tuple(region_holes)
+        for name, region_holes in holes.items() if name in part_region
+    }
+    part_witness = claim_oracle_coordinate_values(claim, sorted(part_region))
+    candidate_families = []
+    if part_region and part_witness is not None:
+        for var, text, verdict in rows:
+            key = (str(var), canonical_oracle_rung_text(text))
+            classes = set(oracle_classes_for_rung(text))
+            family = None
+            if "R1" in classes:
+                family = "R1"
+            elif "R2" in classes:
+                family = r2_subfamily_for_rung(key[1], r2_subfamilies.get(key))
+            if family not in ("R1", "R2.1", "R2.3"):
+                continue
+            if verdict in ("HOLDS", "REFUTED") and (key, family) not in candidate_families:
+                candidate_families.append((key, family))
+
+        exact_vars = {}
+        for r2_spec in _r2:
+            for r2_candidate in r2_candidates([r2_spec]):
+                key = (str(r2_candidate["var"]),
+                       canonical_oracle_rung_text(r2_candidate["text"]))
+                exact_vars[key] = r2_spec.get("vars") or []
+        root_assertions = tuple(candidate for candidate, _family in candidate_families
+                                if oracle_candidate_cache.get(candidate, (None, None))[0] ==
+                                "HOLDS")
+        root_part = make_oracle_input_part("part0", part_region, part_holes,
+                                           part_witness, root_assertions)
+        root_cache = {
+            (root_part.part_id, candidate): oracle_candidate_cache.get(
+                candidate, ("UNDECIDED", None))
+            for candidate, _family in candidate_families
+        }
+        part_query_serial = [0]
+
+        def verify_oracle_part(part, candidate):
+            cached = root_cache.get((part.part_id, candidate))
+            if cached is not None:
+                return cached
+            part_query_serial[0] += 1
+            variable = assert_query_var_name(candidate[0], layout, state_store_names)
+            part_spec = oracle_part_assert_spec(
+                spec, part, variable=variable, exact_vars=exact_vars.get(candidate))
+            part_spec_path = os.path.join(
+                assert_dir, f"spec.oracle_part_{part_query_serial[0]}.json")
+            with open(part_spec_path, "w") as stream:
+                json.dump(part_spec, stream)
+            part_output, _part_rc, _part_wall = run_esbmc(
+                a.esbmc, a.sol, a.ast, a.contract, a.unit,
+                ["--path-cov-assert", part_spec_path, "--cov-report-json"] +
+                proof_esbmc_args, assert_dir, 1, esbmc_budget("oracle-part"),
+                a.memlimit, a.scope)
+            part_rows, part_summary, _part_refusal, _part_blocker = parse_ladder(part_output)
+            part_rows = restore_ladder_row_names(part_rows, state_store_names)
+            part_refutations = r2_refutation_observations(
+                part_output, os.path.join(assert_dir, "cov-report.json"),
+                sorted(part.region))
+            verdict = oracle_part_candidate_verdict(
+                part_rows, part_summary, candidate, part_refutations)
+            root_cache[(part.part_id, candidate)] = verdict
+            return verdict
+
+        oracle_parts, oracle_part_queries = refine_oracle_parts(
+            [root_part], candidate_families, verify_oracle_part,
+            sorted(part_region), max_parts=a.oracle_max_parts,
+            max_depth=a.oracle_max_split_depth)
+        print(f"[put]   oracle input parts: {len(oracle_parts)} retained after "
+              f"{len(oracle_part_queries)} candidate query record(s)")
     for v, t, verdict in rows:
         print(f"[put]     {v}: {t}  {verdict}")
 
@@ -21616,6 +23352,7 @@ def main():
                                derived_by=json.loads(a.derived_by or "{}"),
                                rollback_exit=rollback_here,
                                r2_terms=r2_term_lookup,
+                               r2_subfamilies=r2_subfamilies,
                                exit_kind=path_exit_kind,
                                state_types=state_types,
                                lift_unconstrained_calldata=(a.lift_unconstrained_calldata),
@@ -21636,6 +23373,7 @@ def main():
                 runtime_mocks, constructor_params, params, constructor_param_mocks,
                 constructor_param_struct_field_mocks, constructor_param_runtime_mocks,
                 constructor_param_hascode_mocks, flat_source, region, pins,
+                state_store_names,
                 (a.concrete_stage2_source == "certified-region-concrete-fallback"
                  and a.concrete_stage2_witness_check == "CERTIFIED-BASIS-REPLAY"))
             txt, concrete_oracles = add_concrete_normal_exit_oracle(txt, case[1], a.unit)
@@ -22000,6 +23738,9 @@ def main():
                 r2_ladder,
                 "r1_oracle_ladder":
                 r1_oracle_ladder,
+                "oracle_input_parts": [oracle_input_part_record(part)
+                                       for part in oracle_parts],
+                "oracle_input_part_queries": oracle_part_queries,
                 "oracle_dependency_policy":
                 SLOT_DEPENDENCY_POLICY,
                 "oracle_dependency_state":

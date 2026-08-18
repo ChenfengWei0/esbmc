@@ -3,6 +3,7 @@ import importlib.util
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -46,28 +47,55 @@ def main():
     bad = check("forge-relative-suite-path-is-not-relativized-twice",
                 put_all.project_rel_file("/tmp/Project", "test/Probe.t.sol"), "test/Probe.t.sol")
     with tempfile.TemporaryDirectory() as td:
-        put_file = os.path.join(td, "Put.t.sol")
+        os.makedirs(os.path.join(td, "test"))
+        put_file = os.path.join(td, "test", "Put.t.sol")
         basis_file = os.path.join(td, "Basis.t.sol")
         put_source = """\
-contract ProbeTest {
+pragma solidity >=0.8.0;
+import {Test, Vm} from "forge-std/Test.sol";
+contract Probe {
+  uint256 public y;
+  event Seen(uint256 value);
+  function f(uint256 x) public returns (uint256) { y = x + 2; emit Seen(y); return y; }
+}
+contract ProbeTest is Test {
+  Probe c0;
   function setUp() public {
     c0 = new Probe();
   }
   function test_put_Probe_f_path1(uint256 x) public {
     assertTrue(x <= type(uint256).max);
+    c0.f(x);
   }
 }
 """
         basis_source = """\
-contract ProbeTest {
+pragma solidity >=0.8.0;
+import {Test, Vm} from "forge-std/Test.sol";
+contract Probe {
+  uint256 public y;
+  event Seen(uint256 value);
+  function f(uint256 x) public returns (uint256) { y = x + 2; emit Seen(y); return y; }
+}
+contract ProbeTest is Test {
+  Probe c0;
   function setUp() public {
     c0 = new Probe();
   }
   // claim: sol:@C@Probe@F@f#9:path:1
   // witness-fingerprint-sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   function test_cov_0() public {
+    vm.recordLogs();
     uint256 observed = c0.f(7);
     assertEq(observed, 9, "fixed witness return must match");
+    uint256 observedState = uint256(vm.load(address(c0), bytes32(uint256(0))));
+    assertEq(observedState, uint256(9), "fixed witness state");
+    Vm.Log[] memory observedLogs = vm.getRecordedLogs();
+    assertEq(observedLogs.length, 1);
+    assertEq(observedLogs[0].emitter, address(c0));
+    assertEq(observedLogs[0].topics.length, 1);
+    assertEq(observedLogs[0].topics[0], keccak256("Seen(uint256)"));
+    assertEq(observedLogs[0].data, abi.encode(uint256(9)));
   }
 }
 """
@@ -119,33 +147,153 @@ contract ProbeTest {
             "certified_ce_binding":
             source_binding(basis_source),
             "concrete_oracles": [{
+                "class":
+                "R0",
                 "kind":
                 "return-value",
+                "solidity_type":
+                "uint256",
                 "observed":
                 "observed",
                 "expected":
                 "9",
                 "provenance":
                 "stage2-witness",
+                "target_receiver":
+                "c0",
                 "assertion": ('assertEq(observed, 9, '
                               '"fixed witness return must match");'),
+            }, {
+                "class":
+                "concrete-value",
+                "kind":
+                "storage-slot-post-state",
+                "observed":
+                "observedState",
+                "expected":
+                "uint256(9)",
+                "provenance":
+                "stage2-witness",
+                "target_receiver":
+                "c0",
+                "storage_expression":
+                "uint256(vm.load(address(c0), bytes32(uint256(0))))",
+                "assertion":
+                'assertEq(observedState, uint256(9), "fixed witness state");',
+            }, {
+                "class":
+                "concrete-value",
+                "kind":
+                "event-log",
+                "observed":
+                "observedLogs",
+                "expected": {
+                    "event_index": 0,
+                    "log_count": 1,
+                    "emitter": "address(c0)",
+                    "topics": ['keccak256("Seen(uint256)")'],
+                    "data": "abi.encode(uint256(9))",
+                },
+                "provenance":
+                "stage2-witness",
+                "target_receiver":
+                "c0",
+                "assertion": ("assertEq(observedLogs.length, 1);\n"
+                              "assertEq(observedLogs[0].emitter, address(c0));\n"
+                              "assertEq(observedLogs[0].topics.length, 1);\n"
+                              "assertEq(observedLogs[0].topics[0], keccak256(\"Seen(uint256)\"));\n"
+                              "assertEq(observedLogs[0].data, abi.encode(uint256(9)));"),
             }],
         }
         anchor, error = put_all.attach_certified_ce_anchor(put_rec, basis_rec, certified_detail)
         bad += check("certified-ce-anchor-embeds", error, None)
         with open(put_file, encoding="utf-8") as fh:
             anchored_source = fh.read()
-        bad += check("certified-ce-anchor-preserves-fuzz-put", put_source[:-2] in anchored_source,
-                     True)
+        bad += check("certified-ce-anchor-preserves-fuzz-signature",
+                     "function test_put_Probe_f_path1(uint256 x)" in anchored_source, True)
+        bad += check("certified-ce-anchor-keeps-one-target-call",
+                     anchored_source.count("c0.f(x)") + anchored_source.count("c0.f(7)"), 1)
         bad += check(
-            "certified-ce-anchor-keeps-fixed-result-assertion",
-            ('assertEq(observed, 9, "fixed witness return must match")' in anchored_source), True)
+            "certified-ce-anchor-fuses-fixed-result-assertion",
+            ('assertEq(_veriput_fixed_return_0, 9, "fixed witness return")' in anchored_source),
+            True)
+        bad += check("certified-ce-anchor-guards-witness-assertion", "if (x == uint256(7))"
+                     in anchored_source, True)
+        bad += check("certified-ce-anchor-adds-no-test-unit",
+                     len(re.findall(r"\bfunction\s+test_", anchored_source)), 1)
+        with open(os.path.join(td, "foundry.toml"), "w", encoding="utf-8") as stream:
+            stream.write("[profile.default]\ntest = 'test'\nlibs = ['lib']\n")
+        os.makedirs(os.path.join(td, "lib"))
+        os.symlink(put_all.FORGE_STD, os.path.join(td, "lib", "forge-std"))
+        forge = subprocess.run([
+            "forge", "test", "--root", td, "--match-test", "^test_put_Probe_f_path1$",
+            "--fuzz-runs", "32"
+        ],
+                               capture_output=True,
+                               text=True,
+                               timeout=60)
+        if forge.returncode:
+            print(forge.stdout)
+            print(forge.stderr)
+        bad += check("certified-ce-anchor-fused-put-forge-green", forge.returncode, 0)
         anchor_again, error_again = put_all.attach_certified_ce_anchor(
             put_rec, basis_rec, certified_detail)
         with open(put_file, encoding="utf-8") as fh:
             anchored_again = fh.read()
-        bad += check("certified-ce-anchor-is-idempotent",
-                     (error_again, anchor_again, anchored_again), (None, anchor, anchored_source))
+        bad += check("certified-ce-anchor-refuses-untracked-second-fusion",
+                     (error_again, anchor_again, anchored_again),
+                     ("PUT already contains fixed replay assertions", None, anchored_source))
+        bad += check(
+            "certified-ce-anchor-complete-binding",
+            all(
+                anchor.get(field)
+                for field in ("basis_source_sha256", "basis_test_body_sha256",
+                              "basis_setup_body_sha256", "basis_final_function_sha256",
+                              "basis_setup_source_sha256", "fused_function_sha256",
+                              "destination_put_test", "destination_put_function_sha256",
+                              "destination_setup_body_sha256", "destination_source_sha256")), True)
+        with open(put_file, "w", encoding="utf-8") as fh:
+            fh.write(anchored_source.replace("c0 = new Probe();", "c0 = new Probe(1);"))
+        _anchor, error = put_all.attach_certified_ce_anchor(put_rec, basis_rec, certified_detail)
+        bad += check("certified-ce-anchor-refuses-tampered-destination-setup", error,
+                     "PUT and certified basis replay use different setup state")
+        with open(put_file, "w", encoding="utf-8") as fh:
+            fh.write(put_source)
+        brace_basis = basis_source.replace(
+            "uint256 observed = c0.f(7);", 'string memory braces = "} fake {"; // } fake close\n'
+            "    /* { fake open } */\n"
+            "    uint256 observed = c0.f(7);")
+        with open(basis_file, "w", encoding="utf-8") as fh:
+            fh.write(brace_basis)
+        brace_rec = dict(basis_rec, certified_ce_binding=source_binding(brace_basis))
+        brace_anchor, brace_error = put_all.attach_certified_ce_anchor(
+            put_rec, brace_rec, certified_detail)
+        bad += check("certified-ce-anchor-ignores-comment-string-braces",
+                     (brace_error, bool(brace_anchor)), (None, True))
+        with open(put_file, "w", encoding="utf-8") as fh:
+            fh.write(put_source)
+        fake_assert_basis = basis_source.replace(
+            'assertEq(observed, 9, "fixed witness return must match");', 'assertTrue(true);\n'
+            '    string memory fake = '
+            '\'assertEq(observed, 9, "fixed witness return must match");\';')
+        with open(basis_file, "w", encoding="utf-8") as fh:
+            fh.write(fake_assert_basis)
+        fake_assert_rec = dict(basis_rec, certified_ce_binding=source_binding(fake_assert_basis))
+        _anchor, error = put_all.attach_certified_ce_anchor(put_rec, fake_assert_rec,
+                                                            certified_detail)
+        bad += check("certified-ce-anchor-refuses-string-fake-assertion", error,
+                     "certified basis replay metadata assertion is absent")
+        comment_assert_basis = basis_source.replace(
+            'assertEq(observed, 9, "fixed witness return must match");', 'assertTrue(true);\n'
+            '    // assertEq(observed, 9, "fixed witness return must match");')
+        with open(basis_file, "w", encoding="utf-8") as fh:
+            fh.write(comment_assert_basis)
+        comment_assert_rec = dict(basis_rec,
+                                  certified_ce_binding=source_binding(comment_assert_basis))
+        _anchor, error = put_all.attach_certified_ce_anchor(put_rec, comment_assert_rec,
+                                                            certified_detail)
+        bad += check("certified-ce-anchor-refuses-comment-fake-assertion", error,
+                     "certified basis replay metadata assertion is absent")
         fuzz_basis = dict(basis_rec)
         with open(basis_file, "w", encoding="utf-8") as fh:
             fh.write(basis_source.replace("test_cov_0()", "test_cov_0(uint256 x)"))
@@ -160,7 +308,7 @@ contract ProbeTest {
         _anchor, error = put_all.attach_certified_ce_anchor(put_rec, assertion_free_rec,
                                                             certified_detail)
         bad += check("certified-ce-anchor-refuses-assertion-free-basis", error,
-                     "certified basis replay has no executable assertion")
+                     "certified basis replay metadata assertion is absent")
         with open(basis_file, "w", encoding="utf-8") as fh:
             fh.write(basis_source)
         wrong_unit = dict(basis_rec)
@@ -171,11 +319,12 @@ contract ProbeTest {
         with open(basis_file, "w", encoding="utf-8") as fh:
             fh.write(
                 basis_source.replace(
-                    "contract ProbeTest {", "contract ProbeTest {\n"
+                    "contract ProbeTest is Test {", "contract ProbeTest is Test {\n"
                     "  function setUp() public { c0 = new Probe(); }"))
         _anchor, error = put_all.attach_certified_ce_anchor(put_rec, basis_rec, certified_detail)
-        bad += check("certified-ce-anchor-refuses-different-setup", error,
-                     "PUT and certified basis replay use different setup state")
+        bad += check("certified-ce-anchor-refuses-ambiguous-setup", error,
+                     ("PUT/basis setup is not uniquely executable: "
+                      "basis replay test name is ambiguous"))
         wrong_binding = dict(basis_rec)
         wrong_binding["certified_ce_binding"] = dict(basis_rec["certified_ce_binding"],
                                                      ce_sha256="0" * 64)
@@ -209,6 +358,423 @@ contract ProbeTest {
                                                             wrong_return_detail)
         bad += check("certified-ce-anchor-refuses-wrong-return", error,
                      "certified basis replay return differs from the certified CE")
+        revert_source = basis_source.replace(
+            "uint256 observed = c0.f(7);\n"
+            '    assertEq(observed, 9, "fixed witness return must match");',
+            "vm.expectRevert(bytes4(0x12345678));\n    c0.f(7);")
+        revert_detail = {"ce": {"x": "7"}}
+        revert_sha = put_all.certified_ce_sha256(revert_detail["ce"])
+        revert_binding = dict(source_binding(revert_source),
+                              ce_sha256=revert_sha,
+                              rendered_source_ce_sha256=revert_sha)
+        revert_rec = dict(basis_rec,
+                          certified_ce_binding=revert_binding,
+                          concrete_oracles=[{
+                              "class": "R0",
+                              "kind": "revert",
+                              "source": "expectRevert",
+                              "observed": "target call reverts",
+                              "expected": True,
+                              "provenance": "stage2-witness",
+                              "target_receiver": "c0",
+                              "assertion": "vm.expectRevert(bytes4(0x12345678));",
+                          }])
+        with open(put_file, "w", encoding="utf-8") as fh:
+            fh.write(put_source)
+        with open(basis_file, "w", encoding="utf-8") as fh:
+            fh.write(revert_source)
+        anchor, error = put_all.attach_certified_ce_anchor(put_rec, revert_rec, revert_detail)
+        bad += check("certified-ce-anchor-keeps-exact-revert", (error, bool(anchor)), (None, True))
+    with tempfile.TemporaryDirectory() as td:
+        put_file = os.path.join(td, "ProjectedPut.t.sol")
+        basis_file = os.path.join(td, "ProjectedBasis.t.sol")
+        put_source = """\
+contract ProbeTest {
+  function setUp() public { c0 = new Probe(); }
+  function test_put_Probe_f_path1(uint256 x) public { c0.f(x); assertTrue(x < 9); }
+}
+"""
+        basis_source = """\
+contract ProbeTest {
+  function setUp() public { c0 = new Probe(); }
+  // witness-fingerprint-sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  function test_cov_0() public {
+    c0.f(7);
+    assertFalse(ok, "value sent to a non-payable entry must revert");
+  }
+}
+"""
+        with open(put_file, "w", encoding="utf-8") as stream:
+            stream.write(put_source)
+        with open(basis_file, "w", encoding="utf-8") as stream:
+            stream.write(basis_source)
+        detail = {"ce": {"x": "7", "msg.value": "1"}}
+        ce_sha = put_all.certified_ce_sha256(detail["ce"])
+        body = put_all.solidity_function_body(basis_source, "test_cov_0")
+        setup = put_all.solidity_function_body(basis_source, "setUp")
+        body_sha = hashlib.sha256("\n".join(body).encode()).hexdigest()
+        setup_sha = hashlib.sha256("\n".join(setup).encode()).hexdigest()
+        coordinate_binding = {
+            "schema": "veriput-certified-ce-source-binding/v1",
+            "ce_sha256": ce_sha,
+            "coordinates": {
+                "x": {
+                    "kind": "call-argument-literal",
+                    "certified": 7,
+                    "rendered": 7,
+                },
+                "msg.value": {
+                    "kind": "call-environment-literal",
+                    "certified": 1,
+                    "rendered": 1,
+                },
+            },
+        }
+        binding = {
+            "status": "exact",
+            "source_preserved": False,
+            "ce_sha256": ce_sha,
+            "rendered_source_verified": True,
+            "rendered_source_ce_sha256": ce_sha,
+            "path_function": "sol:@C@Probe@F@f#9",
+            "enc": 1,
+            "piece": None,
+            "foundry_testcase_fingerprint_sha256": "a" * 64,
+            "pre_oracle_test_body_sha256": body_sha,
+            "test_body_sha256": body_sha,
+            "setup_body_sha256": setup_sha,
+            "source_projection": coordinate_binding,
+            "source_projection_preserved": {
+                "schema": "veriput-certified-ce-source-projection/v1",
+                "ce_sha256": ce_sha,
+                "coordinate_binding": coordinate_binding,
+                "target_call_body_sha256": body_sha,
+                "final_test_body_sha256": body_sha,
+                "setup_body_sha256": setup_sha,
+            },
+        }
+        put_rec = {
+            "file": put_file,
+            "test": "test_put_Probe_f_path1",
+            "path_function": "sol:@C@Probe@F@f#9",
+            "unit": "f",
+            "enc": 1,
+            "piece": None,
+        }
+        basis_rec = {
+            "file":
+            basis_file,
+            "test":
+            "test_cov_0",
+            "unit":
+            "f",
+            "path_function":
+            "sol:@C@Probe@F@f#9",
+            "enc":
+            1,
+            "piece":
+            None,
+            "certified_ce_binding":
+            binding,
+            "concrete_oracles": [{
+                "class":
+                "R0",
+                "kind":
+                "call-status",
+                "observed":
+                "ok",
+                "expected":
+                False,
+                "provenance":
+                "stage2-witness",
+                "target_receiver":
+                "c0",
+                "assertion":
+                'assertFalse(ok, "value sent to a non-payable entry must revert");',
+            }],
+        }
+        anchor, error = put_all.attach_certified_ce_anchor(put_rec, basis_rec, detail)
+        bad += check("certified-ce-anchor-accepts-audited-source-projection", (error, bool(anchor)),
+                     (None, True))
+        bad_schema = dict(binding["source_projection_preserved"], schema="forged/v1")
+        bad_rec = dict(basis_rec,
+                       certified_ce_binding=dict(binding, source_projection_preserved=bad_schema))
+        _anchor, error = put_all.attach_certified_ce_anchor(put_rec, bad_rec, detail)
+        bad += check("certified-ce-anchor-refuses-unknown-projection-schema", error,
+                     "certified basis replay source projection has an unsupported schema")
+        incomplete = dict(coordinate_binding,
+                          coordinates={"msg.value": coordinate_binding["coordinates"]["msg.value"]})
+        incomplete_projection = dict(binding["source_projection_preserved"],
+                                     coordinate_binding=incomplete)
+        bad_rec = dict(basis_rec,
+                       certified_ce_binding=dict(binding,
+                                                 source_projection=incomplete,
+                                                 source_projection_preserved=incomplete_projection))
+        _anchor, error = put_all.attach_certified_ce_anchor(put_rec, bad_rec, detail)
+        bad += check("certified-ce-anchor-refuses-incomplete-coordinate-projection", error,
+                     "certified basis replay coordinate projection is incomplete")
+        extcall_detail = {
+            "ce": {
+                "callee": "0",
+                "data.length": "0",
+                "msg.value": "0"
+            },
+            "box": [{
+                "name": "callee",
+                "lo": "0",
+                "hi": "20",
+                "holes": []
+            }],
+            "extcall_pins": {
+                "extcall.ok": "1"
+            },
+        }
+        extcall_sha = put_all.certified_ce_sha256(extcall_detail["ce"])
+        flat_source = """\
+contract Proxy {
+  function f(address callee, bytes memory data) public {
+    { (bool ok,) = callee.call(data); require(ok); }
+  }
+}
+"""
+        flat_file = os.path.join(td, "flat.sol")
+        extcall_basis_file = os.path.join(td, "ExtcallBasis.t.sol")
+        with open(flat_file, "w", encoding="utf-8") as stream:
+            stream.write(flat_source)
+        with open(extcall_basis_file, "w", encoding="utf-8") as stream:
+            stream.write('import {Proxy} from "./flat.sol";\n')
+        source_span = put_all._solidity_function_spans(flat_source, "f")[0][0]
+        source_body = flat_source[source_span[5] + 1:source_span[6]]
+        source_sha = hashlib.sha256(source_body.encode()).hexdigest()
+        proof = {
+            "certificate": "strict-low-level-call-fixture/v1",
+            "source_function_sha256": source_sha,
+            "target": "callee",
+            "calldata": "data",
+            "success_var": "ok",
+            "success": 1,
+        }
+        extcall_coordinates = {
+            "callee": {
+                **proof, "kind": "certified-region-member",
+                "certified": 0,
+                "rendered": 9,
+                "lo": 0,
+                "hi": 20
+            },
+            "data.length": {
+                "kind": "empty-dynamic-call-argument",
+                "certified": 0,
+                "rendered": 0
+            },
+            "msg.value": {
+                "kind": "call-environment-literal",
+                "certified": 0,
+                "rendered": 0
+            },
+        }
+        extcall_coordinate_binding = {
+            "schema": "veriput-certified-ce-source-binding/v1",
+            "ce_sha256": extcall_sha,
+            "coordinates": extcall_coordinates,
+        }
+        extcall_binding = {
+            "source_projection": extcall_coordinate_binding,
+            "source_projection_preserved": {
+                "schema": "veriput-certified-ce-source-projection/v1",
+                "ce_sha256": extcall_sha,
+                "coordinate_binding": extcall_coordinate_binding,
+                "target_call_body_sha256": body_sha,
+                "final_test_body_sha256": body_sha,
+                "setup_body_sha256": setup_sha,
+            },
+            "pre_oracle_test_body_sha256": body_sha,
+            "test_body_sha256": body_sha,
+            "setup_body_sha256": setup_sha,
+        }
+        bad += check(
+            "certified-extcall-projection-accepts-region-member",
+            put_all.certified_source_projection_error(extcall_binding,
+                                                      extcall_detail,
+                                                      basis_file=extcall_basis_file,
+                                                      unit="f"), None)
+        wrong_pin_detail = dict(extcall_detail, extcall_pins={"extcall.ok": "0"})
+        bad += check(
+            "certified-extcall-projection-refuses-wrong-pin",
+            put_all.certified_source_projection_error(extcall_binding,
+                                                      wrong_pin_detail,
+                                                      basis_file=extcall_basis_file,
+                                                      unit="f"),
+            "certified extcall projection differs from the Stage2 success pin")
+        out_of_region = dict(extcall_coordinates["callee"], rendered=21)
+        bad_coordinates = dict(extcall_coordinates, callee=out_of_region)
+        bad_coordinate_binding = dict(extcall_coordinate_binding, coordinates=bad_coordinates)
+        bad_projection = dict(extcall_binding["source_projection_preserved"],
+                              coordinate_binding=bad_coordinate_binding)
+        bad_extcall_binding = dict(extcall_binding,
+                                   source_projection=bad_coordinate_binding,
+                                   source_projection_preserved=bad_projection)
+        bad += check(
+            "certified-extcall-projection-refuses-out-of-region-target",
+            put_all.certified_source_projection_error(bad_extcall_binding,
+                                                      extcall_detail,
+                                                      basis_file=extcall_basis_file,
+                                                      unit="f"),
+            "certified basis replay region projection is out of bounds on callee")
+        forged_proof = dict(proof, source_function_sha256="b" * 64)
+        forged_coordinates = {
+            name: ({
+                **record,
+                **forged_proof
+            } if record.get("certificate") else record)
+            for name, record in extcall_coordinates.items()
+        }
+        forged_coordinate_binding = dict(extcall_coordinate_binding, coordinates=forged_coordinates)
+        forged_projection = dict(extcall_binding["source_projection_preserved"],
+                                 coordinate_binding=forged_coordinate_binding)
+        forged_binding = dict(extcall_binding,
+                              source_projection=forged_coordinate_binding,
+                              source_projection_preserved=forged_projection)
+        bad += check(
+            "certified-extcall-projection-refuses-forged-source-hash",
+            put_all.certified_source_projection_error(forged_binding,
+                                                      extcall_detail,
+                                                      basis_file=extcall_basis_file,
+                                                      unit="f"),
+            "certified extcall projection does not match one strict imported source function")
+    with tempfile.TemporaryDirectory() as td:
+        structural_file = os.path.join(td, "Structural.t.sol")
+        structural_source = """\
+contract StructuralTest {
+  function test_put_Structural_gate_path1(
+      address p_msg_sender, uint256 p_msg_value, uint256 x) public {
+    p_msg_sender;
+    x;
+    (bool ok, ) = address(this).call{value: p_msg_value}(hex"");
+    assertFalse(ok, "nonpayable gate must reject value");
+  }
+}
+"""
+        with open(structural_file, "w", encoding="utf-8") as fh:
+            fh.write(structural_source)
+        structural_rec = {
+            "file": structural_file,
+            "test": "test_put_Structural_gate_path1",
+            "unit": "gate",
+            "enc": 1,
+        }
+        structural_detail = {
+            "certification_source": "structural-abi-gate-no-coordinate",
+            "box": [{
+                "name": "msg.value",
+                "lo": "1",
+                "hi": "9",
+                "holes": [],
+            }],
+        }
+        anchor, error = put_all.attach_structural_abi_gate_anchor(structural_rec, structural_detail)
+        with open(structural_file, encoding="utf-8") as fh:
+            anchored = fh.read()
+        bad += check("structural-abi-anchor-embeds-with-distinct-provenance",
+                     (error, anchor.get("binding"), anchor.get("basis_kind")),
+                     (None, "structural-abi-gate/v1", "structural-certificate-not-solver-ce"))
+        bad += check(
+            "structural-abi-anchor-fixes-region-point",
+            ("this.test_put_Structural_gate_path1(address(uint160(1)), 1, 0);" in anchored), True)
+        anchor_again, error_again = put_all.attach_structural_abi_gate_anchor(
+            structural_rec, structural_detail)
+        with open(structural_file, encoding="utf-8") as fh:
+            anchored_again = fh.read()
+        bad += check("structural-abi-anchor-is-idempotent",
+                     (error_again, anchor_again, anchored_again), (None, anchor, anchored))
+        bad += check(
+            "structural-abi-anchor-remains-without-exact-ce",
+            put_all.requires_structural_abi_gate_anchor("structural-abi-gate-no-coordinate",
+                                                        structural_detail), True)
+        exact_detail = dict(structural_detail,
+                            ce={
+                                "msg.sender": "0",
+                                "msg.value": "1",
+                                "state.feed": "7",
+                            })
+        bad += check(
+            "structural-abi-full-ce-uses-exact-basis-anchor",
+            put_all.requires_structural_abi_gate_anchor("structural-abi-gate-no-coordinate",
+                                                        exact_detail), False)
+        bad += check("structural-abi-certificate-recovers-value-gate-stage4-kind",
+                     put_all.certified_detail_stage4_kind(exact_detail), "abi-value-gate")
+        bad += check(
+            "explicit-stage4-kind-is-not-overridden",
+            put_all.certified_detail_stage4_kind({
+                "certification_source": "structural-abi-gate-no-coordinate",
+                "stage4_kind": "getter-value-gate",
+            }), "getter-value-gate")
+        bad += check(
+            "untrusted-certification-source-cannot-enable-value-gate-projection",
+            put_all.certified_detail_stage4_kind({
+                "certification_source":
+                "structural-abi-gate-claimed-by-caller",
+            }), None)
+        bad += check(
+            "ordinary-certified-path-keeps-unspecified-stage4-kind",
+            put_all.certified_detail_stage4_kind({
+                "certification_source": "solver-k-induction",
+            }), None)
+        getter_file = os.path.join(td, "Getter.t.sol")
+        getter_source = """\
+contract GetterTest {
+  function test_put_Getter_value_path0(address p_msg_sender, address key) public {
+    vm.prank(p_msg_sender);
+    c0.value(key);
+  }
+}
+"""
+        with open(getter_file, "w", encoding="utf-8") as fh:
+            fh.write(getter_source)
+        getter_rec = {
+            "file": getter_file,
+            "test": "test_put_Getter_value_path0",
+            "unit": "value",
+            "enc": 0,
+        }
+        getter_detail = {
+            "certification_source": "structural-abi-getter-no-coordinate",
+            "ce": {},
+        }
+        getter_anchor, getter_error = put_all.attach_structural_abi_gate_anchor(
+            getter_rec, getter_detail)
+        with open(getter_file, encoding="utf-8") as fh:
+            anchored_getter = fh.read()
+        bad += check("structural-getter-anchor-embeds-fixed-caller",
+                     (getter_error, getter_anchor.get("binding"),
+                      "this.test_put_Getter_value_path0(address(uint160(1)), address(uint160(2)));"
+                      in anchored_getter), (None, "structural-abi-getter/v1", True))
+        getter_anchor_again, getter_error_again = put_all.attach_structural_abi_gate_anchor(
+            getter_rec, getter_detail)
+        with open(getter_file, encoding="utf-8") as fh:
+            anchored_getter_again = fh.read()
+        bad += check("structural-getter-anchor-is-idempotent",
+                     (getter_error_again, getter_anchor_again, anchored_getter_again),
+                     (None, getter_anchor, anchored_getter))
+        fixed_array_source = """\
+contract FixedArrayGetter {
+  address[] public helpers;
+  constructor() {
+    helpers.push(address(1));
+    helpers.push(address(2));
+  }
+}
+"""
+        bad += check(
+            "structural-array-getter-recovers-constructor-fixed-length",
+            put_all._fixed_public_array_getter_length(fixed_array_source, "FixedArrayGetter",
+                                                      "helpers"), 2)
+        bad += check(
+            "structural-array-getter-refuses-post-constructor-mutation",
+            put_all._fixed_public_array_getter_length(
+                fixed_array_source.replace("\n}",
+                                           "\n  function pop() public { helpers.pop(); }\n}"),
+                "FixedArrayGetter", "helpers"), None)
     witness_record = {
         "pins": {
             "msg.sender": 7
@@ -1407,16 +1973,20 @@ contract Probe {
                      (put_all.apply_strong_put_recipe(plain), plain.auto_unwind,
                       plain.auto_partial_loops, plain.lift_unconstrained_calldata),
                      (None, 0, False, False))
-        cp = subprocess.run([
-            sys.executable,
-            PUT_ALL,
-            "--out-root",
-            "/home/samson/workspace/VeriPUT/Results/put-stage4",
-            "--cert",
-            path,
-        ],
-                            capture_output=True,
-                            text=True)
+        with tempfile.TemporaryDirectory() as veriput_root:
+            env = dict(os.environ)
+            env["VERIPUT_ROOT"] = veriput_root
+            cp = subprocess.run([
+                sys.executable,
+                PUT_ALL,
+                "--out-root",
+                os.path.join(veriput_root, "Results", "put-stage4"),
+                "--cert",
+                path,
+            ],
+                                capture_output=True,
+                                text=True,
+                                env=env)
         bad += check("stage4-refuses-protected-out-root",
                      (cp.returncode != 0 and "--out-root must not be under" in cp.stderr), True)
         return bad

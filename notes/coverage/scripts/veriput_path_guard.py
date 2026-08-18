@@ -7,8 +7,7 @@ import os
 from pathlib import Path
 
 
-VERIPUT_ROOT = Path(os.environ.get(
-    "VERIPUT_ROOT", "/home/samson/workspace/VeriPUT"))
+VERIPUT_ROOT = Path(os.environ.get("VERIPUT_ROOT", Path.cwd()))
 
 
 def is_under(path: Path, root: Path) -> bool:
@@ -29,7 +28,10 @@ def protected_roots(veriput_root: Path = VERIPUT_ROOT) -> list[Path]:
 def allowed_result_roots(veriput_root: Path = VERIPUT_ROOT) -> list[Path]:
     """Result subtrees that are generated tool artifacts, not shared inputs."""
     root = Path(veriput_root)
-    return [root / "Results" / "RQ1" / "VeriPUT"]
+    return [
+        root / "Results" / "RQ1" / "VeriPUT",
+        root / "Results" / "RQ1_KInduction_Fair600",
+    ]
 
 
 def ensure_path_not_protected(label: str, path: str | os.PathLike[str] | None):
