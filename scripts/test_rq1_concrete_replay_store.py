@@ -286,6 +286,54 @@ def test_constructor_revert_replay_needs_no_path_identity() -> int:
         except ReplayPersistenceError as exc:
             bad += check("lacks exact path_function/enc identity" in str(exc),
                          "a verifier-derived replay still needs an exact path identity")
+
+        # The whole deploy-revert shape, as the driver emits it: no path
+        # identity, unit `__deploy__`, and the oracle bound to the CONTRACT
+        # because there is no receiver until the deployment succeeds -- which is
+        # precisely what this test asserts never happens.
+        deploy_test = root / "producer" / "test" / "CtorRevert.t.sol"
+        deploy_test.write_text('pragma solidity >=0.8.0; import {Test} from "forge-std/Test.sol"; '
+                               'import {C} from "../src/flat.sol"; contract CtorRevert is Test { '
+                               'function test_cov_C_constructor_revert() public { '
+                               'vm.expectRevert(); new C(); } }\n')
+        deploy_put_json = root / "producer" / "deploy-put.json"
+        deploy_put_json.write_text(
+            json.dumps({
+                "kind": "concrete",
+                "unit": "__deploy__",
+                "stage4_kind": "constructor-revert-only",
+                "stage2_source": "source_constructor_revert_fallback",
+            }))
+        deploy_oracle = [{
+            "class": "R0",
+            "kind": "revert",
+            "source": "expectRevert",
+            "observed": "the deployment reverts",
+            "expected": True,
+            "provenance": "source-grounded",
+            "target_contract": "C",
+            "assertion": "vm.expectRevert();",
+        }]
+        deploy_row = {
+            "kind": "concrete",
+            "valid_reference_test": True,
+            "forge_status": "Success",
+            "unit": "__deploy__",
+            "test": "test_cov_C_constructor_revert",
+            "file": str(deploy_test),
+            "put_json": str(deploy_put_json),
+            "concrete_oracles": deploy_oracle,
+        }
+        entry = persist_concrete_replay(subject, deploy_row, dry_run=True)
+        bad += check(entry["action"] == "persist",
+                     "the emitted constructor-revert shape persists end to end")
+        try:
+            persist_concrete_replay(subject, {**deploy_row, "concrete_oracles": []},
+                                    dry_run=True)
+            bad += check(False, "an unrecorded oracle is still refused")
+        except ReplayPersistenceError as exc:
+            bad += check("structured witness oracle provenance" in str(exc),
+                         "an unrecorded oracle is still refused")
     return bad
 
 

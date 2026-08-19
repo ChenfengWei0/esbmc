@@ -230,12 +230,28 @@ not wasted work.
   was the only reader that did not -- the two-readers-of-one-fact shape this
   repo keeps paying for.
 
-  FIX: add `source_constructor_revert_fallback` to the source-grounded
-  exemption.  Regression test
-  `test_constructor_revert_replay_needs_no_path_identity` asserts BOTH
-  directions: the constructor-revert row persists without a path identity, and a
-  verifier-derived row still requires an exact one.  Verified by mutation
-  (removing the exemption turns the test red).
+  FIX, and it took TWO gates, which the stratified sample is what caught.  The
+  first is the identity: add `source_constructor_revert_fallback` to the
+  source-grounded exemption.  Re-run on the sample, the same 4 cases were STILL
+  `persistence-error` -- but with a DIFFERENT reason, "concrete replay lacks
+  structured witness oracle provenance", so the first gate had in fact cleared
+  and a second one behind it had never been reached before.
+
+  The deploy-revert row recorded no `concrete_oracles` at all.  The store
+  already knows this shape -- `deterministic_replay_oracles` reads
+  `new <Contract>(...)` under `unit == "__deploy__"` and binds the oracle to
+  `target_contract` rather than a receiver, because there is no receiver until
+  the deployment succeeds, which is exactly what the test asserts never happens.
+  What was missing is the RECORDED claim the store cross-checks the test
+  against.  `emit_no_unit_deploy_fallbacks` now writes it for
+  `constructor-revert-only`.
+
+  Verified end to end against the real published artifact
+  (`peer_soltg__constructors`): the row now persists.  Regression tests assert
+  all four directions -- persists without a path identity, persists in the full
+  emitted deploy-revert shape, still refused when the oracle is unrecorded, and
+  a verifier-derived row still requires an exact identity.  The first was
+  mutation-checked.
 - [x] **342 "PUTs built but never Forge-replayed" were a BOOKKEEPING ARTIFACT**
   -- FIXED, and the earlier reading of this number in this note was wrong.
 

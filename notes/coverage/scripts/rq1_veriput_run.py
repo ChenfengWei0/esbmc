@@ -3311,6 +3311,25 @@ def emit_no_unit_deploy_fallback(subject: PreparedSubject,
         "concrete_reason": (artifact_reason
                             or "target contract has no public/external FunctionDefinition units; "
                             "VeriPUT emitted a concrete no-unit reference test"),
+        # The constructor-revert replay's oracle IS the `vm.expectRevert()`
+        # guarding the deployment, and persistence requires that claim to be
+        # RECORDED so it can be cross-checked against the emitted test rather
+        # than re-derived from it.  Without it the store refused the row --
+        # "concrete replay lacks structured witness oracle provenance" -- and the
+        # case published valid=0 while holding a Forge-green test.  The store
+        # already reads `new <Contract>(...)` under `unit == "__deploy__"` and
+        # binds the oracle to `target_contract`, so this is the same shape it
+        # will check against.
+        "concrete_oracles": ([{
+            "class": "R0",
+            "kind": "revert",
+            "source": "expectRevert",
+            "observed": "the deployment reverts",
+            "expected": True,
+            "provenance": "source-grounded",
+            "target_contract": subject.contract,
+            "assertion": "vm.expectRevert();",
+        }] if stage4_kind == "constructor-revert-only" else []),
         "forge_status":
         status,
         "valid_reference_test":
