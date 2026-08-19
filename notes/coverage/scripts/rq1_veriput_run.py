@@ -1429,11 +1429,7 @@ def _sha256_file(path: Path) -> str | None:
 
 
 def _esbmc_binary_identity(esbmc_arg: str | None) -> dict:
-    raw = str(esbmc_arg or "")
-    path = Path(raw) if raw else DEFAULT_ESBMC
-    if not path.is_absolute():
-        found = shutil.which(str(path))
-        path = Path(found) if found else path
+    path = _resolved_esbmc_binary(esbmc_arg)
     try:
         resolved = path.resolve()
     except OSError:
@@ -2819,44 +2815,155 @@ def _is_nonpayable_abi_entry_job(job: dict) -> bool:
         and mutability in ("nonpayable", "view", "pure"))
 
 
-def _abi_value_gate_cert_row(subject: PreparedSubject, job: dict) -> dict:
+# Bounds one structural value-gate certificate, not the enumeration itself.
+ABI_VALUE_GATE_MAX_CERTIFIED_PATHS = 64
+
+PATH_IDENTITY_RE = re.compile(
+    r"ASSERT path_tr\$\d+ != (\d+) \|\| path_cnt\$\d+ != (\d+) // (\S+):path:\d+")
+
+
+def _resolved_esbmc_binary(esbmc_arg: str | None) -> Path:
+    raw = str(esbmc_arg or "")
+    path = Path(raw) if raw else DEFAULT_ESBMC
+    if not path.is_absolute():
+        found = shutil.which(str(path))
+        path = Path(found) if found else path
+    return path
+
+
+def _enumerate_unit_paths(subject: PreparedSubject,
+                          unit: str,
+                          path_function: str | None,
+                          esbmc_bin: str | None,
+                          memlimit_gib: int,
+                          budget_s: float) -> list[tuple[int, int]]:
+    """Read one unit's exact ``(enc, depth)`` pairs out of the instrumented GOTO.
+
+    ``--goto-functions-only`` stops after GOTO construction, so this costs the
+    Solidity frontend and nothing else -- no solver, no k-induction.  It is the
+    same extraction `rq1_put_kinduction_revalidate.current_path_candidates`
+    already relies on, and it is the only way a caller outside ESBMC can learn
+    which path encodings actually exist for a unit.
+
+    Returning ``[]`` is not an error: every caller must stay correct when the
+    enumeration is unavailable (budget exhausted, frontend refusal, a unit the
+    focus filter does not reach).
+    """
+    budget = int(budget_s)
+    if budget < 1:
+        return []
+    solast = str(subject.solast or "")
+    flat_sol = str(subject.flat_sol or "")
+    if not solast or not flat_sol:
+        return []
+    command = [
+        str(_resolved_esbmc_binary(esbmc_bin)),
+        solast,
+        "--sol",
+        flat_sol,
+        "--contract",
+        str(subject.contract or ""),
+        "--solidity-path-coverage",
+        "--solidity-max-tx",
+        "1",
+        "--memlimit",
+        f"{int(memlimit_gib)}g",
+        "--focus-function",
+        str(unit or ""),
+        "--goto-functions-only",
+    ]
+    try:
+        completed = subprocess.run(command,
+                                   text=True,
+                                   errors="replace",
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT,
+                                   timeout=budget,
+                                   check=False)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    wanted = str(path_function or "")
+    pairs = set()
+    for enc, depth, claim_unit in PATH_IDENTITY_RE.findall(completed.stdout or ""):
+        if wanted and claim_unit != wanted:
+            continue
+        pairs.add((int(enc), int(depth)))
+    return sorted(pairs, key=lambda pair: (pair[1], pair[0]))
+
+
+def _abi_value_gate_cert_row(subject: PreparedSubject,
+                             job: dict,
+                             enumerated_paths: list[tuple[int, int]] | None = None) -> dict:
+    """The structural nonpayable value-gate certificate for a timed-out unit.
+
+    One entry per path the unit actually enumerates.  The gate rejects every
+    ``msg.value > 0`` before the body runs, so the same structural fact holds on
+    every enumerated path -- exactly what `_promote_pin_excluded_value_gate_paths`
+    does for units whose Stage 2 did finish, where it promotes every pin-excluded
+    enc rather than a single one.
+
+    THE IDENTITY IS NOT INVENTIBLE.  Stage 4 guards each claim with
+    `tr != enc || cnt != depth`, and ESBMC refuses the whole ladder when the enc
+    is not one this unit enumerates.  Before this took the enumeration, the row
+    hardcoded ``enc=1, depth=0`` -- the record of a body that takes no decision
+    at all -- which is only ever right for a straight-line unit.  In the
+    2026-08-19 corpus EVERY "not among this unit's N enumerated path(s)" refusal
+    was `enc=1`, 694 of them, each one an ESBMC run that parsed the contract and
+    then exited 1, and each one costing its path the R1/R2 rungs it could have
+    proved.
+
+    ``enumerated_paths`` empty means the enumeration was unavailable, not that
+    the unit has no paths, so the historical single-entry row is kept: it still
+    certifies the straight-line units and refuses loudly on the others.
+    """
     unit = str(job.get("unit") or "")
     gate_subject = _subject_with_unit(subject, unit)
     path_function = str(job.get("path_function") or "")
     reason = ("public/external nonpayable ABI entry rejects nonzero msg.value before "
               "executing the function body")
+    enumerated = list(enumerated_paths or [])
+    # A bounded certificate, and the bound is reported rather than silently
+    # applied.  The 2026-08-19 corpus has units enumerating 51 and 10000 paths;
+    # certifying every one of them writes a journal row nothing can read and
+    # queues ladders the case budget will cut off mid-way regardless.  Shallow
+    # paths come first (`_enumerate_unit_paths` orders by depth), so the kept
+    # prefix is the cheapest to prove.
+    dropped = max(0, len(enumerated) - ABI_VALUE_GATE_MAX_CERTIFIED_PATHS)
+    paths = enumerated[:ABI_VALUE_GATE_MAX_CERTIFIED_PATHS] or [(1, 0)]
+    certified = {}
+    certified_details = {}
+    for enc, depth in paths:
+        key = str(int(enc))
+        certified[key] = "nonpayable ABI gate rejects msg.value > 0"
+        certified_details[key] = {
+            "box": [{
+                "name": "msg.value",
+                "lo": "1",
+                "hi": str((1 << 256) - 1),
+                "holes": [],
+            }],
+            "ce": {},
+            "certification_source": "structural-abi-gate-no-coordinate",
+            "depth": int(depth),
+            "enc": int(enc),
+            "established": [],
+            "extcall_pins": {},
+            "piece": 1,
+            "reason": reason,
+            "retreated": {},
+            "stage4_kind": "abi-value-gate",
+            "verdict": "CERTIFIED",
+        }
     return {
         "benchmark": gate_subject.benchmark_key,
         "bucket": "CERTIFIED",
         "unit": unit,
         "subject": gate_subject.to_record(),
         "path_function": path_function,
-        "certified": {
-            "1": "nonpayable ABI gate rejects msg.value > 0",
-        },
-        "certified_details": {
-            "1": {
-                "box": [{
-                    "name": "msg.value",
-                    "lo": "1",
-                    "hi": str((1 << 256) - 1),
-                    "holes": [],
-                }],
-                "ce": {},
-                "certification_source": "structural-abi-gate-no-coordinate",
-                "depth": 0,
-                "enc": 1,
-                "established": [],
-                "extcall_pins": {},
-                "piece": 1,
-                "reason": reason,
-                "retreated": {},
-                "stage4_kind": "abi-value-gate",
-                "verdict": "CERTIFIED",
-            },
-        },
+        "certified": certified,
+        "certified_details": certified_details,
         "pins": {},
-        "witnessed": 1,
+        "witnessed": len(certified),
         "synthetic_certified": True,
         "synthetic_stage2_kind": "abi-value-gate",
         "tag": "static-abi-value-gate-certified",
@@ -2864,6 +2971,14 @@ def _abi_value_gate_cert_row(subject: PreparedSubject, job: dict) -> dict:
             "tag": "static-abi-value-gate-certified",
             "reason": reason,
             "synthetic_stage2_kind": "abi-value-gate",
+            "path_identity_source": ("goto-enumeration" if enumerated else
+                                     "unenumerated-single-path-assumption"),
+            "enumerated_path_count": len(enumerated),
+            "certified_paths_dropped_over_cap": dropped,
+            "enumerated_paths": [{
+                "enc": int(enc),
+                "depth": int(depth)
+            } for enc, depth in paths],
         },
     }
 
@@ -4829,21 +4944,38 @@ def _stage4_candidate_counts(cert_path: Path, benchmark_key: str, unit: str,
     )
 
 
-def _structural_abi_value_gate_rescue(cert_path: Path, subject: PreparedSubject, job: dict,
-                                      unit: str, path_function: str | None,
-                                      n_stage4_candidates: int | None) -> dict | None:
+ABI_VALUE_GATE_ENUMERATION_BUDGET_S = 60.0
+
+
+def _structural_abi_value_gate_rescue(cert_path: Path,
+                                      subject: PreparedSubject,
+                                      job: dict,
+                                      unit: str,
+                                      path_function: str | None,
+                                      n_stage4_candidates: int | None,
+                                      esbmc_bin: str | None = None,
+                                      memlimit_gib: int = 12,
+                                      remaining_s: float = 0.0) -> dict | None:
     """Certify the nonpayable ABI value gate for a unit whose Stage-2 run ran out of time.
 
     A nonpayable public/external entry reverts for every ``msg.value > 0`` before its
     body runs, so that region is certified structurally and needs no solver evidence.
     Deferring it until after Stage-2 succeeds throws the region away whenever Stage-2
     times out, which abandons the whole subject with no output at all.
+
+    Stage 2 timing out is exactly the case where nothing recorded this unit's path
+    encodings, so they are read straight out of the instrumented GOTO here.  That
+    single frontend-only run replaces one guaranteed-refusal ladder run per path and
+    is what lets those paths carry R1/R2 instead of an exit-only R0.
     """
     if int(n_stage4_candidates or 0) > 0:
         return None
     if not _is_nonpayable_abi_entry_job(job):
         return None
-    row = _abi_value_gate_cert_row(subject, job)
+    enumerated_paths = _enumerate_unit_paths(
+        subject, unit, path_function, esbmc_bin, memlimit_gib,
+        min(ABI_VALUE_GATE_ENUMERATION_BUDGET_S, float(remaining_s)))
+    row = _abi_value_gate_cert_row(subject, job, enumerated_paths)
     _append_jsonl(cert_path, row)
     return {
         "stage": "stage2-timeout-structural-abi-value-gate",
@@ -4852,6 +4984,8 @@ def _structural_abi_value_gate_rescue(cert_path: Path, subject: PreparedSubject,
         "job_id": job.get("job_id"),
         "status": "ok",
         "cert_canonical_jsonl": str(cert_path),
+        "certified_paths": len(row.get("certified") or {}),
+        "path_identity_source": row["driver_diagnostic"]["path_identity_source"],
         "reason": row["driver_diagnostic"]["reason"],
     }
 
@@ -5468,6 +5602,32 @@ def _is_valid_reference_test(row: dict) -> bool:
     return row.get("valid_reference_test") is True
 
 
+def _put_json_physical_records(rec: dict) -> list[dict]:
+    """The records that name a test function actually emitted for ``rec``.
+
+    A record with ``test_units`` was split into one physical `.t.sol` per oracle
+    input part; the parent's own ``test`` name is not written anywhere, so it
+    can only ever be recovered as an artifact that no Forge run can reach.
+    """
+    test_units = rec.get("test_units")
+    if not isinstance(test_units, list) or not test_units:
+        return [rec]
+    physical = []
+    for unit_row in test_units:
+        if not isinstance(unit_row, dict) or not unit_row.get("test"):
+            continue
+        child = dict(rec)
+        child["test_units"] = []
+        for key in ("file", "test", "stats", "materialization", "region", "holes", "derived_by",
+                    "oracle_input_part"):
+            if key in unit_row:
+                child[key] = unit_row[key]
+        physical.append(child)
+    # A split record whose parts named no test is not evidence that the parent
+    # test exists, so it recovers nothing rather than falling back to the parent.
+    return physical
+
+
 def _put_json_artifact_row(rec: dict) -> dict:
     """Recover a raw artifact row from put.json when put-summary rows are absent."""
 
@@ -5658,15 +5818,39 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             continue
         if rec.get("kind") not in ("put", "concrete"):
             continue
-        key = (str(rec.get("file") or ""), str(rec.get("test") or ""))
-        if key in row_keys:
-            continue
-        if str(rec.get("test") or "") in row_tests:
-            continue
-        if not rec.get("file") or not rec.get("test"):
-            continue
-        rows.append(_put_json_artifact_row(rec))
-        row_keys.add(key)
+        # ---- RECOVER THE PHYSICAL TESTS, NOT THE RECORD THAT WAS SPLIT ----
+        #
+        # When a certified path splits into oracle input parts, each part is
+        # emitted as its own `.t.sol` with its own `test_put_*_part_*`, and the
+        # parent record keeps the UNSPLIT `test` name while its `file` already
+        # points at the FIRST part's file.  That pairing names nothing that
+        # exists: `b_report` replaces the parent with its children
+        # (`expand_stage4_test_unit_results`), so no Forge run ever reports a
+        # status under the parent's name.
+        #
+        # Both dedup guards below then miss -- the parent's `(file, test)` key
+        # and its bare `test` are absent from the put-summary rows, which carry
+        # only the children -- and the parent was appended as an extra raw
+        # artifact that could never become valid.  MEASURED on the 2026-08-19
+        # corpus: 342 such rows, every one `kind=put forge_status=None`, 174 of
+        # them sitting beside their own children in the same result row.  They
+        # inflated the raw denominator and read as "PUTs we built and never
+        # replayed", which is a claim about generation and was a fact about
+        # bookkeeping.
+        #
+        # The remaining parents are the case where Stage 4 timed out before
+        # `b_report` wrote any put-summary row.  There the children are exactly
+        # what this recovery exists to find, so recover THEM.
+        for physical in _put_json_physical_records(rec):
+            key = (str(physical.get("file") or ""), str(physical.get("test") or ""))
+            if key in row_keys:
+                continue
+            if str(physical.get("test") or "") in row_tests:
+                continue
+            if not physical.get("file") or not physical.get("test"):
+                continue
+            rows.append(_put_json_artifact_row(physical))
+            row_keys.add(key)
 
     raw_tests = []
     valid_tests = []
@@ -8752,7 +8936,9 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                     consecutive_no_candidate_units = 0
                     continue
                 gate_stage = _structural_abi_value_gate_rescue(
-                    cert_path, subject, job, unit, path_function, n_stage4_candidates)
+                    cert_path, subject, job, unit, path_function, n_stage4_candidates,
+                    getattr(args, "esbmc", "") or None, args.memlimit_gib,
+                    _remaining(deadline))
                 if gate_stage is not None:
                     stages.append(gate_stage)
                     (n_certified, n_cleared_fallback, n_timeout_fallback,
@@ -8849,8 +9035,13 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 })
                 consecutive_no_candidate_units = 0
                 continue
+            # The hard-timeout branch is AT the deadline, so `_remaining` is
+            # normally <= 0 and the enumeration is skipped rather than borrowing
+            # from the strict finalization reserve.  The row then falls back to
+            # the single-path assumption, which is recorded as such.
             gate_stage = _structural_abi_value_gate_rescue(
-                cert_path, subject, job, unit, path_function, n_stage4_candidates)
+                cert_path, subject, job, unit, path_function, n_stage4_candidates,
+                getattr(args, "esbmc", "") or None, args.memlimit_gib, _remaining(deadline))
             if gate_stage is not None:
                 stages.append(gate_stage)
                 (n_certified, n_cleared_fallback, n_timeout_fallback,

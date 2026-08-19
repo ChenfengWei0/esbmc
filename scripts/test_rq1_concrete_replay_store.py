@@ -249,8 +249,49 @@ def test_structural_anchor_basis_is_strictly_authenticated() -> int:
     return bad
 
 
+def test_constructor_revert_replay_needs_no_path_identity() -> int:
+    """A source-grounded constructor revert has no certified path to name."""
+
+    bad = 0
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        subject, concrete = fixture(root)
+        put_json = Path(concrete["put_json"])
+        put_json.write_text(
+            json.dumps({
+                "kind": "concrete",
+                "unit": "f",
+                "stage2_source": "source_constructor_revert_fallback",
+                "stage4_kind": "constructor-revert-only",
+            }))
+        revert_row = {
+            key: value
+            for key, value in concrete.items() if key not in {"enc", "path_function"}
+        }
+        entry = persist_concrete_replay(subject, revert_row, dry_run=True)
+        bad += check(entry["action"] == "persist",
+                     "a constructor-revert replay persists without a path identity")
+        bad += check(entry["origin"].get("path_function") in (None, ""),
+                     "the persisted origin carries no invented path identity")
+
+        put_json.write_text(
+            json.dumps({
+                "kind": "concrete",
+                "unit": "f",
+                "stage2_source": "certified-region-concrete-fallback",
+            }))
+        try:
+            persist_concrete_replay(subject, revert_row, dry_run=True)
+            bad += check(False, "a verifier-derived replay still needs an exact path identity")
+        except ReplayPersistenceError as exc:
+            bad += check("lacks exact path_function/enc identity" in str(exc),
+                         "a verifier-derived replay still needs an exact path identity")
+    return bad
+
+
 def main() -> int:
     bad = test_structural_anchor_basis_is_strictly_authenticated()
+    bad += test_constructor_revert_replay_needs_no_path_identity()
     covered_entry = {
         "origin": {
             "path_function": "sol:@C@C@F@f#new",

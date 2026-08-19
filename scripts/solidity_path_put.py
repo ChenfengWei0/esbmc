@@ -8404,6 +8404,132 @@ def _constructor_param_bound_literal(typ, value):
     return None
 
 
+CONSTRUCTOR_GUARD_MAX_LITERAL = (1 << 128) - 1
+
+
+# Solidity time units, so `MINIMUM_DELAY = 2 days` resolves like `= 172800`.
+SOLIDITY_TIME_UNITS = {
+    "seconds": 1,
+    "minutes": 60,
+    "hours": 3600,
+    "days": 86400,
+    "weeks": 604800,
+}
+
+
+def _source_named_uint_constants(chunk):
+    """Contract-level `constant` scalars whose value is a literal."""
+    constants = {}
+    for name, value, unit in re.findall(
+            r"\b(?:u?int(?:[0-9]+)?)\s+(?:public\s+|private\s+|internal\s+)?"
+            r"constant\s+([A-Za-z_$][\w$]*)\s*=\s*([0-9][0-9_]*)\s*"
+            r"(seconds|minutes|hours|days|weeks)?\s*;", chunk or ""):
+        try:
+            constants[name] = int(value.replace("_", "")) * SOLIDITY_TIME_UNITS.get(unit, 1)
+        except ValueError:
+            continue
+    return constants
+
+
+def _constructor_guard_lower_bounds(body, params, constants):
+    """The smallest value each scalar constructor parameter must take.
+
+    Only the guard shapes that appear verbatim in the corpus, and only where the
+    other side is a literal or a contract constant that is a literal:
+
+        require(P > 0)  require(P != 0)  require(P >= K)  require(P > K)
+        if (P == 0) revert ...           if (P < K) revert ...
+        if (P <= Q) revert ...           (Q another parameter, already bounded)
+
+    Anything else -- a state read, an arithmetic expression, an address or
+    signature check -- yields no bound, so the parameter keeps its type default.
+    A guard this cannot read is a guard this must not pretend to satisfy.
+    """
+    names = {name: idx for idx, (name, _typ) in enumerate(params) if name}
+    if not names:
+        return {}
+
+    def value_of(token):
+        token = token.strip()
+        if re.fullmatch(r"[0-9][0-9_]*", token):
+            return int(token.replace("_", ""))
+        return constants.get(token)
+
+    bounds = {}
+
+    def raise_to(name, value):
+        if name not in names or value is None:
+            return
+        if value < 0 or value > CONSTRUCTOR_GUARD_MAX_LITERAL:
+            return
+        bounds[name] = max(bounds.get(name, 0), value)
+
+    ident = r"([A-Za-z_$][\w$]*)"
+    operand = r"([A-Za-z_$][\w$]*|[0-9][0-9_]*)"
+    for name in re.findall(r"require\s*\(\s*" + ident + r"\s*(?:>\s*0|!=\s*0)\s*[,)]", body):
+        raise_to(name, 1)
+    for name in re.findall(r"if\s*\(\s*" + ident + r"\s*==\s*0\s*\)\s*(?:revert|\{)", body):
+        raise_to(name, 1)
+    for name, rhs in re.findall(r"require\s*\(\s*" + ident + r"\s*>=\s*" + operand + r"\s*[,)]",
+                                body):
+        raise_to(name, value_of(rhs))
+    for name, rhs in re.findall(r"require\s*\(\s*" + ident + r"\s*>\s*" + operand + r"\s*[,)]",
+                                body):
+        value = value_of(rhs)
+        raise_to(name, None if value is None else value + 1)
+    for name, rhs in re.findall(
+            r"if\s*\(\s*" + ident + r"\s*<\s*" + operand + r"\s*\)\s*(?:revert|\{)", body):
+        raise_to(name, value_of(rhs))
+    # `if (a <= b) revert` between two parameters: lift `a` one past `b`'s own
+    # bound.  Resolved after the literal rules so `b` is already known.
+    for lhs, rhs in re.findall(
+            r"if\s*\(\s*" + ident + r"\s*<=\s*" + ident + r"\s*\)\s*(?:revert|\{)", body):
+        if lhs in names and rhs in names:
+            raise_to(lhs, bounds.get(rhs, 0) + 1)
+    return bounds
+
+
+def constructor_guard_param_overrides(source, contract, constructor_params):
+    """Constructor arguments that satisfy the constructor's own guards.
+
+    The synthetic preamble defaults every scalar constructor parameter to its
+    type default, which is 0 -- and a constructor that rejects 0 then reverts in
+    `setUp()`, so every test in the project is RED before the certified call is
+    ever made.  MEASURED on the 2026-08-19 corpus: 102 of 168 Forge failures are
+    a reverting `setUp()`, and the named ones are exactly this
+    (`BurnableERC20: supply cannot be zero`, `MaxCommitmentAgeTooLow()`,
+    `E_ZeroConversionPrice()`, `Delay must exceed minimum delay`).
+
+    This changes the DEPLOYMENT fixture only.  The certified region constrains
+    the call, not the constructor, and the region's own constructor overrides
+    take precedence over anything derived here.
+    """
+    chunk = _source_contract_chunk(source or "", contract)
+    if not chunk:
+        return {}, []
+    body = _mask_solidity_comments_and_strings(_constructor_body_text(chunk))
+    if not body:
+        return {}, []
+    params = [(name, typ) for name, typ in (constructor_params or []) if name and typ]
+    if not params:
+        return {}, []
+    constants = _source_named_uint_constants(_mask_solidity_comments_and_strings(chunk))
+    bounds = _constructor_guard_lower_bounds(body, params, constants)
+    overrides = {}
+    notes = []
+    for idx, (pname, ptype) in enumerate(params):
+        if pname not in bounds:
+            continue
+        norm = re.sub(r"\s+", " ", str(ptype).strip())
+        if not re.fullmatch(r"uint(?:[0-9]+)?", norm):
+            continue
+        cast = "uint256" if norm == "uint" else norm
+        overrides[idx] = f"{cast}({bounds[pname]})"
+        notes.append(f"constructor parameter `{pname}` deployed at {bounds[pname]} because the "
+                     f"constructor's own guard rejects the type default")
+    return overrides, notes
+
+
 def constructor_state_region_param_overrides(source, contract, constructor_params, region):
     """Constructor arguments that can establish a certified state bound.
 
@@ -11481,9 +11607,15 @@ def synthesize_minimal_emitted_case(out_dir,
         call_args.append(expr)
 
     constructor_params = list(constructor_params or [])
+    # The region's own overrides win: they establish a certified entry state,
+    # while the guard overrides only keep `setUp()` from reverting.
+    guard_overrides, guard_notes = constructor_guard_param_overrides(
+        flat_source or "", contract, constructor_params)
     ctor_overrides, ctor_override_notes = \
         constructor_state_region_param_overrides(
             flat_source or "", contract, constructor_params, region or {})
+    ctor_overrides = {**guard_overrides, **ctor_overrides}
+    notes.extend(guard_notes)
     notes.extend(ctor_override_notes)
     ctor_args = []
     for idx, item in enumerate(constructor_params):

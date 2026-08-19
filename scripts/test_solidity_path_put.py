@@ -58,6 +58,7 @@ import tempfile
 
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
+import solidity_path_put  # noqa: E402
 from solidity_path_put import (
     ConcreteFallback,
     EmittedFile,  # noqa: E402
@@ -26382,6 +26383,51 @@ def test_certified_basis_projects_unsettable_state_constants():
     return bad
 
 
+def test_constructor_guard_overrides_deploy_past_the_constructors_own_require():
+    """A `setUp()` that reverts makes every test in its project RED."""
+    source = """
+contract Tok {
+  uint public constant MINIMUM_DELAY = 2 days;
+  uint256 supply; uint256 delay; uint256 maxAge; uint256 price; address owner;
+  constructor (string memory name_, uint256 initialBalance_, uint delay_,
+               uint256 _minAge, uint256 _maxAge, uint256 _price, address who_) {
+    require(initialBalance_ > 0, "Tok: supply cannot be zero");
+    require(delay_ >= MINIMUM_DELAY, "Tok: delay too small");
+    if (_maxAge <= _minAge) revert MaxTooLow();
+    if (_price == 0) revert ZeroPrice();
+    supply = initialBalance_; delay = delay_; maxAge = _maxAge;
+    price = _price; owner = who_;
+  }
+}
+"""
+    params = [("name_", "string memory"), ("initialBalance_", "uint256"), ("delay_", "uint"),
+              ("_minAge", "uint256"), ("_maxAge", "uint256"), ("_price", "uint256"),
+              ("who_", "address")]
+    overrides, notes = solidity_path_put.constructor_guard_param_overrides(source, "Tok", params)
+    bad = 0
+    bad += check(overrides.get(1) == "uint256(1)", "`> 0` lifts the parameter off the type default")
+    bad += check(overrides.get(2) == "uint256(172800)",
+                 "a named constant in Solidity time units resolves to its seconds value")
+    bad += check(overrides.get(4) == "uint256(1)",
+                 "`if (a <= b) revert` lifts `a` one past `b`")
+    bad += check(overrides.get(5) == "uint256(1)", "`if (p == 0) revert` lifts the parameter")
+    bad += check(3 not in overrides and 0 not in overrides and 6 not in overrides,
+                 "unguarded, non-numeric and reference parameters keep their type default")
+    bad += check(len(notes) == len(overrides), "every override says why it was applied")
+
+    unguarded = solidity_path_put.constructor_guard_param_overrides(
+        "contract Tok { uint256 s; constructor (uint256 a) { s = a; } }", "Tok",
+        [("a", "uint256")])
+    bad += check(unguarded == ({}, []), "a constructor with no guard overrides nothing")
+
+    opaque = solidity_path_put.constructor_guard_param_overrides(
+        "contract Tok { uint256 s; constructor (uint256 a) "
+        "{ require(a > s, \"nope\"); s = a; } }", "Tok", [("a", "uint256")])
+    bad += check(opaque == ({}, []),
+                 "a bound this cannot read is left alone rather than guessed at")
+    return bad
+
+
 def main():
     bad = 0
     # ---- THE REGISTRY BELOW IS HAND-MAINTAINED, SO IT IS CHECKED ----------
@@ -26398,7 +26444,8 @@ def main():
     registered = set()
     declared = {k for k, v in list(globals().items()) if k.startswith("test_") and callable(v)}
     ran = 0
-    for t in (test_dropped_rungs_are_not_reported_as_no_rung_holding,
+    for t in (test_constructor_guard_overrides_deploy_past_the_constructors_own_require,
+              test_dropped_rungs_are_not_reported_as_no_rung_holding,
               test_the_ANTICHAIN_keeps_the_STRICT_rung_and_drops_what_it_entails,
               test_the_ANTICHAIN_may_not_let_a_GUARDED_rung_dominate_an_UNGUARDED_one,
               test_the_ANTICHAIN_never_uses_a_REFUTED_rung_to_drop_a_HOLDING_one,

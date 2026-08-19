@@ -2068,6 +2068,12 @@ def persist_concrete_replay(subject_dir: Path,
     source_grounded_stage2 = identity.get("stage2_source") in {
         "source-grounded-manual-concrete-replay",
         "source_grounded_callable_recovery",
+        # A constructor-revert replay is grounded in an explicit
+        # assert/require/revert of the exact target source, not in a certified
+        # path of a callable unit, so it has no (path_function, enc) to carry.
+        # Demanding one withheld already-green artifacts and reported the whole
+        # case as a persistence error.
+        "source_constructor_revert_fallback",
     }
     if not source_grounded_stage2 and (not identity.get("path_function")
                                        or identity.get("enc") is None):

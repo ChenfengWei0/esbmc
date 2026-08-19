@@ -205,22 +205,144 @@ be repaired and re-derived WITHOUT redoing path enumeration or certification.
 Only a Stage-2 change forces a full recampaign.  Finish the corpus first; it is
 not wasted work.
 
-- [ ] **`persistence-error` discards Forge-green valid artifacts** (5 cases:
-  `peer_soltg__constructor_state_variable_init`, `..._chain_al`, `..._diamond`,
-  `peer_soltg__constructors`, `compound-finance__comet__MainnetBulkerWithWstETHSupp`).
-  The dropped rows report `forge_status=Success` AND
-  `valid_reference_test=true`, and are then quarantined with "N concrete
-  replay(s) could not be persisted" / "the default concrete constructor call
-  reverted and the exact target source ...".  A green, valid test must not be
-  lost by the publication step.
-- [ ] **A proved PUT fails its Forge replay** (7 cases with raw>0 and valid=0;
-  worst is `peer_ccsolbmc__BurnableERC20` with raw=22, ALL `forge Failure`).
-  The PUT clears `assert`, `corpus`, `fuzz` and `width` gates and fails only
-  `green`.  This contradicts the paper's claim that Test Construction preserves
-  the verifier proof mechanically, so it must be root-caused, not filtered.
-  Note the Forge replay log is written under the AST cache workdir and is NOT
-  published into the case directory -- publish it, or the evidence is gone the
-  moment the cache is cleared (it was, by the host reboot).
+- [x] **`persistence-error` discards Forge-green valid artifacts** -- FIXED
+  (5 cases: `peer_soltg__constructor_state_variable_init`, `..._chain_al`,
+  `..._diamond`, `peer_soltg__constructors`,
+  `compound-finance__comet__MainnetBulkerWithWstETHSupp`).
+
+  ROOT CAUSE.  The dropped rows are `constructor-revert-only` replays, whose
+  oracle is an explicit `assert`/`require`/`revert` in the exact target source
+  rather than a certified path of a callable unit -- so they have no
+  `path_function`/`enc` and CANNOT have one.  `persist_concrete_replay` demanded
+  that identity from every non-source-grounded row
+  (`rq1_concrete_replay_store.py`), and its source-grounded exemption set listed
+  only `source-grounded-manual-concrete-replay` and
+  `source_grounded_callable_recovery`.  So persistence refused,
+  `publishable_validity_keys` came back empty, `quarantine_unpersisted_validity`
+  withheld every row, and the case published `valid=0` with
+  `status=persistence-error` -- while the artifact on disk was
+  `forge_status=Success` and `valid_reference_test=true`.
+
+  Two other readers of the same fact already handled this stage2_source
+  correctly and independently: `rq3_raw_authenticity_audit.py` classifies
+  `source_constructor_revert_fallback and not path_function` as authentic, and
+  `rq1_missing_put_recovery.py` maps it to `constructor-fallback`.  Persistence
+  was the only reader that did not -- the two-readers-of-one-fact shape this
+  repo keeps paying for.
+
+  FIX: add `source_constructor_revert_fallback` to the source-grounded
+  exemption.  Regression test
+  `test_constructor_revert_replay_needs_no_path_identity` asserts BOTH
+  directions: the constructor-revert row persists without a path identity, and a
+  verifier-derived row still requires an exact one.  Verified by mutation
+  (removing the exemption turns the test red).
+- [x] **342 "PUTs built but never Forge-replayed" were a BOOKKEEPING ARTIFACT**
+  -- FIXED, and the earlier reading of this number in this note was wrong.
+
+  Every one is `kind=put forge_status=None`.  They are the PARENT record of a
+  certified path that split into oracle input parts.  Each part is emitted as
+  its own `.t.sol` with its own `test_put_*_part_*`; the parent keeps the
+  UNSPLIT `test` name while its `file` already points at the FIRST part's file,
+  so the pair names nothing that exists.  `b_report` replaces the parent with
+  its children (`expand_stage4_test_unit_results`), so no Forge run ever reports
+  under the parent name -- and the driver's put.json recovery loop, whose dedup
+  guards both key on the parent's own name, appended it as an EXTRA raw
+  artifact.  174 of the 342 sit in the same result row as their own children.
+
+  The arithmetic closes on the affected subjects: `acfix_fixlink_DepositLog`
+  raw=43 valid=36 with 7 phantoms; `peer_solar__DateTime` 23/18 with 5;
+  `peer_soltg__constructor_5` 16/12 with 4.
+
+  So these were never lost tests: `raw` was inflated.  Corrected, the corpus
+  reads raw 4031 (not 4373) against valid 3668 -- **91.0% of raw artifacts
+  become valid**, not 83.9%.  The remaining 168 parents are the Stage-4-timeout
+  case where `b_report` wrote no put-summary row at all; there the children are
+  exactly what the recovery exists to find.
+
+  FIX: `_put_json_physical_records()` -- recover one row per emitted test unit,
+  never the superseded parent, and recover nothing when a split's parts name no
+  test.  Regression test
+  `test_split_records_recover_their_parts_not_the_parent`; 124 runner tests pass.
+
+- [~] **A proved PUT fails its Forge replay** -- ROOT-CAUSED and the dominant
+  half FIXED.  154 rows across 45 subjects (worst: `peer_ccsolbmc__BurnableERC20`
+  raw=22 ALL red, `peer_ccsolbmc__ClockBoxContract` 16, `ERC-3643__TREXFactory`
+  15).  The Forge log is written under the AST cache workdir and NOT published,
+  and the cache was wiped by the host reboot -- so this was re-measured by
+  running `forge test --json` directly on the 114 PUBLISHED projects.
+
+  | where it fails | count |
+  |---|---:|
+  | `setUp()` -- the deployment reverts | **102** |
+  | test body | 66 |
+
+  `setUp()` reasons: 51 bare `EvmError: Revert`, 23 `BurnableERC20: supply
+  cannot be zero`, 16 `Only owner can perform this operation`,
+  5 `MaxCommitmentAgeTooLow()`, 4 `E_ZeroConversionPrice()`,
+  3 `MarketUpdateTimelock::constructor: Delay must exceed minimum delay.`
+
+  ROOT CAUSE for the named ones: `synthesize_minimal_emitted_case` defaults
+  every scalar constructor parameter to its TYPE default, which is 0, and a
+  constructor that rejects 0 reverts in `setUp()` -- so every test in that
+  project is red before the certified call is ever made.  This is a DEPLOYMENT
+  FIXTURE defect, not an oracle defect: the certified region constrains the
+  call, not the constructor.
+
+  FIX: `constructor_guard_param_overrides()` reads the constructor's own guards
+  and deploys past them -- `require(P > 0)` / `require(P != 0)` /
+  `if (P == 0) revert` -> 1, `require(P >= K)` / `if (P < K) revert` -> K,
+  `require(P > K)` -> K+1, `if (a <= b) revert` -> b+1 -- resolving K through
+  contract `constant`s including Solidity time units (`2 days` -> 172800).  A
+  bound it cannot read (a state variable, an expression) yields NO override, so
+  it never guesses.  The certified region's own constructor overrides still take
+  precedence.  Verified against the four real failing sources:
+  BurnableERC20 `initialBalance_`->1, ETHRegistrarController
+  `_maxCommitmentAge`->1, PegStabilityModule `_conversionPrice`->1,
+  MarketUpdateTimelock `delay_`->172800.  Test
+  `test_constructor_guard_overrides_deploy_past_the_constructors_own_require`;
+  506 solidity_path_put tests pass.
+
+  **PILOT MEASURED** (`pilot-ctorfix2`, the 4 worst peer182 subjects, same 600s
+  budget).  `peer_ccsolbmc__BurnableERC20` -- the worst case in the whole corpus
+  -- goes from raw=22 valid=0 to raw=19 **valid=19** (16 PUT + 3 concrete):
+
+  | | before | after |
+  |---|---:|---:|
+  | valid units | 4 | **24** |
+  | valid PUTs | 4 | 21 |
+  | no-valid cases | 3/4 | 1/4 |
+
+  The one still red is `peer_ccsolbmc__ClockBoxContract`, whose `setUp()` fails
+  on `Only owner can perform this operation` -- a deployer-identity problem that
+  needs a `vm.prank`, not a constructor argument.
+
+  STILL OPEN, the 66 body failures: 23 `EvmError: Revert`, 15 `fixed witness
+  state: N != 0` (the emitter's own entry-state self-check refusing, which is
+  correct behaviour and a separate entry-state gap), 10 `next call did not
+  revert as expected` (R0), 5 R2 relation/direction oracles false on chain,
+  5 panics, 1 `vm.assume` rejected too many inputs.  The R2 ones are the only
+  class that would contradict the mechanical-preservation claim and they must be
+  root-caused individually, not filtered.  `Only owner ...` (16) needs a
+  `vm.prank` deployer, not a constructor argument.
+
+- [x] **The standalone tool package had silently drifted** -- FIXED with a sync
+  script.  `Tools/VeriPUT/` is a COPY, and the campaign runs Stage 4 through it
+  (`--stage4-driver .../Tools/VeriPUT/put_all.py`).  The constructor fix above
+  landed in the ESBMC tree, passed 506 tests there, and then changed NOTHING in
+  its first pilot -- the package still held the older `solidity_path_put.py`.  A
+  drifted copy does not fail; it quietly measures the previous version, and the
+  pilot result was nearly reported as "the fix does not work".  Re-run against
+  the synced package, the same pilot went 4 valid -> 24.
+
+  `Tools/VeriPUT/sync_from_esbmc.sh` now copies the 13 tracked files from
+  `$ESBMC_REPO` (no absolute paths), regenerates `SOURCE.json` including the
+  dirty flag, and reports what changed.  Run it before EVERY campaign, and
+  before reading any pilot as evidence about a Stage-4 change.
+
+- [ ] **Publish the Forge replay log into the case directory.**  It is written
+  only under the AST cache workdir today, so the evidence disappears the moment
+  the cache is cleared -- which is why the class above had to be re-measured
+  from scratch.
 - [ ] **`no-output` on library-shaped targets** (`safe-fndn__safe-smart-account__MultiSend`,
   `MultiSendCallOnly`, `compound-finance__comet__CometFactoryWithExtendedAss`).
   Decide whether these are legitimately unschedulable like the two `no-units`
@@ -281,12 +403,66 @@ not wasted work.
   still falls back to 0.  Regression test:
   `test_value_gate_promotion_carries_the_enumeration_depth`.  121 runner tests
   pass.  Expected to unlock the 804.
-- [ ] **The 626 `enc`-mismatch rows are the harder half.**  They come from
-  `_abi_value_gate_cert_row`, the last-resort static certificate, which fires
-  precisely when Stage 2 produced no output at all -- so there is no enumeration
-  to read `enc` from at synthesis time.  Either fetch the enumeration before
-  synthesising, or accept that this class can only ever carry R0 and stop
-  counting it as headroom.
+- [x] **The `enc`-mismatch rows are the harder half** -- FIXED by fetching the
+  enumeration.  They come from `_abi_value_gate_cert_row`, the last-resort
+  static certificate, which fires precisely when Stage 2 produced no output at
+  all -- so there was no enumeration to read `enc` from at synthesis time and
+  the row hardcoded `enc=1, depth=0`, the record of a body that takes no
+  decision.  Since `tr` starts at 1 and accumulates `tr = tr*2 + guard`, that is
+  only ever right for a STRAIGHT-LINE unit; every branching unit refuses.
+
+  MEASURED, not inferred.  Over the finished 509-case corpus every single
+  `not among this unit's N enumerated path(s)` refusal is `enc=1` -- 694 of
+  them, `paths=2` through `paths=10000`, with no other enc appearing at all.
+  And 1036 rescue certificates were written whose unit has NO enumeration
+  recorded anywhere in Python: Stage 2 timed out before writing a journal, which
+  is the very condition that triggers the rescue.
+
+  FIX: read the identities out of the instrumented GOTO.  `--goto-functions-only`
+  stops after GOTO construction -- no solver, no k-induction -- and prints
+  `ASSERT path_tr$N != <enc> || path_cnt$N != <depth> // <path_function>:path:K`
+  for every enumerated path.  This is the same extraction
+  `rq1_put_kinduction_revalidate.current_path_candidates` already depends on.
+  New `_enumerate_unit_paths()` runs it and `_abi_value_gate_cert_row` now
+  certifies the gate on EVERY enumerated path -- which is what
+  `_promote_pin_excluded_value_gate_paths` already does for units whose Stage 2
+  did finish, so the two value-gate routes finally agree.
+
+  Verified against real ESBMC output on `bugfix124/pop_018_PrivatePool`
+  `setFeeRate`, one of the refusing units: the enumeration returns
+  `[(2,1), (6,2), (14,3), (15,3)]` in **3.7s**, and `enc=1` is indeed not among
+  them.  ESBMC's own banner for that run reads `4 path(s) total`, matching the
+  `paths=4` in the refusal it used to print.
+
+  Fail-safe and bounded, both reported rather than silent: an empty enumeration
+  (budget gone, frontend refusal, unit not reached by the focus filter) keeps
+  the historical single-entry row and records
+  `path_identity_source=unenumerated-single-path-assumption`; a unit wider than
+  `ABI_VALUE_GATE_MAX_CERTIFIED_PATHS=64` keeps the shallowest 64 and records
+  `certified_paths_dropped_over_cap`.  The hard-timeout call site is AT the
+  deadline, so its enumeration is skipped rather than borrowing from the strict
+  finalization reserve.
+
+  Regression tests `test_value_gate_certificate_anchors_to_every_enumerated_path`
+  and `test_unit_path_enumeration_reads_the_instrumented_goto`; 123 runner tests
+  pass, and the new ones were mutation-checked (forcing the enumeration empty
+  turns five assertions red).
+
+  **PILOT MEASURED** (`pilot-encfix`, 6 bugfix124 subjects that logged the
+  refusal, same 600s budget, same host):
+
+  | | before | after |
+  |---|---:|---:|
+  | R1/R2 share of PUT | 32.1% | **49.4%** |
+  | R1/R2 PUTs | 27 | 40 |
+  | PUT rows | 84 | 81 |
+  | cases with R1/R2 | 5/6 | 5/6 |
+  | raw / valid units | 85 / 77 | 81 / 75 |
+
+  The PUT count moves DOWN slightly and that is the expected trade, not noise: a
+  rescued unit now offers up to 64 certified paths where it offered one, so
+  Stage 4 spends more of the fixed case budget per unit.  PUT share of valid
+  units stays 98.7%.  Report both levels.
 
   **Revised expectation.**  The earlier estimate in this note (35.3% -> ~50%,
   ceiling 71.9%) was built on the wrong model, namely that the gap was a

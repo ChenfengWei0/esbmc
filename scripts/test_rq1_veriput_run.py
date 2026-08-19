@@ -3725,6 +3725,135 @@ def test_stage2_timeout_rescue_skips_units_that_already_have_candidates():
     return bad
 
 
+def test_split_records_recover_their_parts_not_the_parent():
+    """A record split into oracle input parts names no test of its own."""
+    parent = {
+        "kind": "put",
+        "test": "test_put_C_f_path6p1",
+        "file": "/w/test/CCovTest_C_f_put6p1_p1_part_part0_r.t.sol",
+        "unit": "f",
+        "enc": 6,
+        "test_units": [
+            {
+                "test": "test_put_C_f_path6p1_part_part0_r",
+                "file": "/w/test/CCovTest_C_f_put6p1_p1_part_part0_r.t.sol",
+            },
+            {
+                "test": "test_put_C_f_path6p1_part_part0_w",
+                "file": "/w/test/CCovTest_C_f_put6p1_p1_part_part0_w.t.sol",
+            },
+        ],
+    }
+    bad = 0
+    physical = rq1_veriput_run._put_json_physical_records(parent)
+    bad += check([row["test"] for row in physical] == [
+        "test_put_C_f_path6p1_part_part0_r", "test_put_C_f_path6p1_part_part0_w"
+    ], "a split record recovers one row per emitted part")
+    bad += check(
+        all(row.get("test_units") == [] and row["enc"] == 6 for row in physical),
+        "each part keeps the certified identity and stops claiming further parts")
+    bad += check(
+        physical[1]["file"].endswith("part0_w.t.sol"),
+        "each part carries its own physical test file")
+
+    unsplit = {"kind": "put", "test": "test_put_C_f_path2p1", "file": "/w/test/x.t.sol"}
+    bad += check(
+        rq1_veriput_run._put_json_physical_records(unsplit) == [unsplit],
+        "an unsplit record is recovered exactly as itself")
+    bad += check(
+        rq1_veriput_run._put_json_physical_records({
+            **parent, "test_units": [{
+                "file": "/w/test/nameless.t.sol"
+            }]
+        }) == [], "a split whose parts name no test recovers nothing, not the parent")
+    return bad
+
+
+def test_value_gate_certificate_anchors_to_every_enumerated_path():
+    """A hardcoded enc makes ESBMC refuse the whole ladder, so use the real ones."""
+    job = {
+        "unit": "run",
+        "path_function": "sol:@C@C@F@run#7",
+        "unit_info": {
+            "visibility": "external",
+            "state_mutability": "nonpayable",
+        },
+    }
+    bad = 0
+    with tempfile.TemporaryDirectory() as td:
+        subject = _prepared_subject_for_getter_test(Path(td))
+        row = rq1_veriput_run._abi_value_gate_cert_row(subject, job, [(2, 1), (3, 1), (6, 2)])
+        bad += check(
+            sorted(row["certified"]) == ["2", "3", "6"],
+            "the gate is certified on every path the unit enumerates")
+        bad += check(
+            [(d["enc"], d["depth"]) for _e, d in sorted(row["certified_details"].items())] ==
+            [(2, 1), (3, 1), (6, 2)],
+            "each entry carries the enumeration's own enc and depth")
+        bad += check(row["witnessed"] == 3, "the witnessed count follows the certified entries")
+        bad += check(
+            row["driver_diagnostic"]["path_identity_source"] == "goto-enumeration",
+            "an enumerated certificate records where its identities came from")
+
+        unenumerated = rq1_veriput_run._abi_value_gate_cert_row(subject, job, [])
+        bad += check(
+            list(unenumerated["certified"]) == ["1"]
+            and unenumerated["certified_details"]["1"]["depth"] == 0,
+            "an unavailable enumeration keeps the single straight-line entry")
+        bad += check(
+            unenumerated["driver_diagnostic"]["path_identity_source"] ==
+            "unenumerated-single-path-assumption",
+            "the fallback identity is recorded as an assumption, not as evidence")
+
+        wide = [(enc, 1) for enc in range(2, 2 + 200)]
+        capped = rq1_veriput_run._abi_value_gate_cert_row(subject, job, wide)
+        limit = rq1_veriput_run.ABI_VALUE_GATE_MAX_CERTIFIED_PATHS
+        bad += check(
+            len(capped["certified"]) == limit,
+            "a very wide unit is bounded rather than certified path by path")
+        bad += check(
+            capped["driver_diagnostic"]["enumerated_path_count"] == len(wide)
+            and capped["driver_diagnostic"]["certified_paths_dropped_over_cap"] == len(wide) -
+            limit, "the bound reports what it dropped instead of truncating silently")
+    return bad
+
+
+def test_unit_path_enumeration_reads_the_instrumented_goto():
+    """The (enc, depth) pairs are only knowable from the GOTO, so parse them there."""
+    bad = 0
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subject = _prepared_subject_for_getter_test(root)
+        stub = root / "esbmc-stub"
+        stub.write_text("#!/bin/sh\n"
+                        "printf '%s\\n' \"$@\" > \"$0.argv\"\n"
+                        "echo 'ASSERT path_tr$1 != 6 || path_cnt$1 != 2"
+                        " // sol:@C@C@F@run#7:path:3'\n"
+                        "echo 'ASSERT path_tr$1 != 2 || path_cnt$1 != 1"
+                        " // sol:@C@C@F@run#7:path:1'\n"
+                        "echo 'ASSERT path_tr$1 != 9 || path_cnt$1 != 3"
+                        " // sol:@C@C@F@other#9:path:2'\n")
+        stub.chmod(0o755)
+        pairs = rq1_veriput_run._enumerate_unit_paths(subject, "run", "sol:@C@C@F@run#7",
+                                                      str(stub), 4, 30.0)
+        bad += check(pairs == [(2, 1), (6, 2)],
+                     "the unit's own path identities are parsed and ordered by depth")
+        argv = (root / "esbmc-stub.argv").read_text().split("\n")
+        bad += check("--goto-functions-only" in argv,
+                     "the enumeration stops after GOTO construction, so it runs no solver")
+        bad += check("--focus-function" in argv and "run" in argv,
+                     "the enumeration is focused on the unit being certified")
+        bad += check(
+            rq1_veriput_run._enumerate_unit_paths(subject, "run", "sol:@C@C@F@run#7", str(stub), 4,
+                                                  0.0) == [],
+            "an exhausted budget enumerates nothing instead of overrunning the case")
+        bad += check(
+            rq1_veriput_run._enumerate_unit_paths(subject, "run", "sol:@C@C@F@run#7",
+                                                  str(root / "absent"), 4, 30.0) == [],
+            "an unusable binary enumerates nothing instead of raising")
+    return bad
+
+
 def test_abi_value_gate_cert_row_requires_nonpayable_entry():
     with tempfile.TemporaryDirectory() as td:
         subject = _prepared_subject_for_getter_test(Path(td))
@@ -7244,6 +7373,9 @@ def main():
         test_move_tree_falls_back_to_copy_across_filesystems,
         test_stage2_timeout_rescue_certifies_the_structural_abi_value_gate,
         test_stage2_timeout_rescue_skips_units_that_already_have_candidates,
+        test_split_records_recover_their_parts_not_the_parent,
+        test_value_gate_certificate_anchors_to_every_enumerated_path,
+        test_unit_path_enumeration_reads_the_instrumented_goto,
         test_abi_value_gate_cert_row_requires_nonpayable_entry,
         test_value_gate_promotion_carries_the_enumeration_depth,
         test_value_gate_promotion_certifies_only_the_pin_excluded_path,
