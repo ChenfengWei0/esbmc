@@ -327,6 +327,16 @@ not wasted work.
   negative ones (uncalled authority, unguarded callee); 507 solidity_path_put
   tests pass.
 
+- [ ] **RQ1 reporting is not yet wired to the campaign corpus.**  `results_all.py
+  --rq 1` prints `--` for every VeriPUT coverage cell and skips the headline
+  tables entirely.  Two separate causes, both to fix AFTER the single rerun:
+  the coverage summaries for `veriput/{bugfix124,peer182,real203}` are missing or
+  stale (the report says so in a GATE line rather than printing a number, which
+  is the right behaviour), and the headline tables read a hardcoded
+  `Results/RQ1/VeriPUT/campaign-timing/canonical-case-wall.json` that
+  `--full-root` does not redirect.  The baselines (SolTG, CC-SolBMC, SolAR,
+  SynTest) already report, so only the VeriPUT rows are missing.
+
 - [ ] **PAPER-CRITICAL: an R2 rung is emitted over a WIDER region than the one
   it was proved on.**  Root-caused on
   `bugfix124/acfix_026_CVE_2019_15080` `transferOwnership` path 7, which is one
