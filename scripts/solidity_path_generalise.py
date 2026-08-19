@@ -3872,6 +3872,37 @@ def state_coord_type_ranges(ast_path, contract, coords, state_store_names=None):
     return out
 
 
+def state_coord_source_name(coord):
+    """The SOURCE state variable a coordinate names, or None if it names none.
+
+    A coordinate is a path into one declared variable, and only the head of that
+    path is a name the AST dependency closure knows. `state.deposits[0]`,
+    `state.deposits[msg.sender]`, `state.guesses$11[msg.sender].block` and
+    `state.feeBps$7` all name `deposits`, `deposits`, `guesses` and `feeBps`.
+
+    Splitting on `$` ALONE was the bug this exists to keep fixed: it left the
+    subscript attached, so `deposits[0]` was compared against a closure holding
+    `deposits`, missed, and the coordinate was reported as a field outside the
+    target's closure. That is the opposite of true for every mapping the unit
+    actually reads, and the consequence was not a wrong region but a MISSING
+    WITNESS: the counterexample harvest reports mapping entries under their
+    CONCRETE key, that harvested coordinate was dropped here, and the slot
+    proposer's symbolic `state.m[k]` then reached level 0 with nothing to probe
+    and descended to the ladder carrying its full type range.
+    """
+    text = str(coord)
+    if not text.startswith("state."):
+        return None
+    head = text[len("state."):]
+    for sep in ("[", "."):
+        head = head.split(sep, 1)[0]
+    # Only a TRAILING `$<digits>` is ESBMC's lowering suffix. Splitting on a
+    # bare `$` would also cut a legitimate Solidity identifier -- `$` is a
+    # valid character in one -- so this mirrors `_pin_source_name` rather than
+    # inventing a second, looser rule for the same name.
+    return re.sub(r"\$\d+$", "", head)
+
+
 def filter_unreferenced_state_coords(coords, dependencies):
     """Drop state coordinates outside a complete source dependency closure."""
     if dependencies is None:
@@ -3879,10 +3910,10 @@ def filter_unreferenced_state_coords(coords, dependencies):
     live = {str(name) for name in dependencies}
     kept, dropped = [], []
     for coord in coords or []:
-        if not str(coord).startswith("state."):
+        source_name = state_coord_source_name(coord)
+        if source_name is None:
             kept.append(coord)
             continue
-        source_name = str(coord)[len("state."):].split("$", 1)[0]
         if source_name in live:
             kept.append(coord)
         else:
@@ -4177,18 +4208,28 @@ def unsettable_coords(coords, mutability):
     """
     out = {}
     for c in coords:
-        if not c.startswith("state."):
+        source_name = state_coord_source_name(c)
+        if source_name is None:
             continue
-        mu = mutability.get(c[6:])
+        # Keyed by the SOURCE name, not by the raw suffix: `state.deposits[0]`
+        # would otherwise be looked up as `deposits[0]` and never match a
+        # mutability table holding `deposits`. Mappings are never constant, so
+        # this site was not the one that hurt -- but the same naive slice was,
+        # one function away, and one spelling of the rule is the point.
+        mu = mutability.get(source_name)
         if mu in ("immutable", "constant"):
             out[c] = mu
     return out
 
 
 def _pin_source_name(name):
+    # `state.guesses[msg.sender].block` used to split on the FIRST dot, which
+    # lands inside the mapping key and yields `guesses[msg`. Delegating keeps
+    # one rule for "which declared variable does this coordinate name".
+    resolved = state_coord_source_name(name)
+    if resolved is not None:
+        return resolved
     text = str(name or "")
-    if text.startswith("state."):
-        text = text[len("state."):]
     text = text.split(".", 1)[0]
     return re.sub(r"\$\d+$", "", text)
 

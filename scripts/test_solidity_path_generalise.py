@@ -80,6 +80,9 @@ from solidity_path_generalise import (
     unit_mapping_slot_accesses,
     unit_state_dependencies,
     propose_slot_coords,
+    state_coord_source_name,
+    _pin_source_name,
+    filter_unreferenced_state_coords,
     add_esbmc_mapping_aliases,
     prefer_esbmc_mapping_aliases,
     state_coord_type_ranges,
@@ -5535,6 +5538,53 @@ with tempfile.TemporaryDirectory() as _import_dir:
         _legacy_mismatched_import_refused = True
     check("legacy-stage1-report-with-another-tx-bound-is-refused",
           _legacy_mismatched_import_refused, True)
+
+# ---- state coordinates are matched to the closure by their SOURCE NAME ----
+#
+# `filter_unreferenced_state_coords` split the coordinate on `$` only, which
+# left the subscript attached: `deposits[0]` was looked up in a closure holding
+# `deposits`, missed, and the coordinate was dropped as a field outside the
+# target. Every mapping entry the unit reads went out that way. The damage was
+# not a wrong region -- it was the LOST WITNESS VALUE, because the harvest
+# reports mapping entries under a concrete key and the slot proposer's symbolic
+# `state.m[k]` then had nothing to anchor on at level 0.
+check("state-coord-source-name-strips-a-concrete-subscript",
+      state_coord_source_name("state.deposits[0]"), "deposits")
+check("state-coord-source-name-strips-a-symbolic-subscript",
+      state_coord_source_name("state.deposits[msg.sender]"), "deposits")
+check("state-coord-source-name-strips-lowering-suffix-and-subscript",
+      state_coord_source_name("state.discountBps$23[msg.sender]"), "discountBps")
+check("state-coord-source-name-strips-a-struct-member-tail",
+      state_coord_source_name("state.guesses$11[msg.sender].block"), "guesses")
+check("state-coord-source-name-keeps-a-plain-scalar",
+      state_coord_source_name("state.feeBps"), "feeBps")
+check("state-coord-source-name-declines-a-non-state-coordinate",
+      state_coord_source_name("msg.sender"), None)
+# Only a TRAILING `$<digits>` is a lowering suffix; `$` is legal in a Solidity
+# identifier, so a bare split on it would rename a real variable.
+check("state-coord-source-name-strips-only-a-trailing-lowering-suffix",
+      state_coord_source_name("state.feeBps$7"), "feeBps")
+check("state-coord-source-name-keeps-a-dollar-inside-an-identifier",
+      state_coord_source_name("state.my$var"), "my$var")
+check("pin-source-name-does-not-split-inside-a-mapping-key",
+      _pin_source_name("state.guesses$11[msg.sender].block"), "guesses")
+check("pin-source-name-resolves-a-mapping-entry",
+      _pin_source_name("state.deposits[msg.sender]"), "deposits")
+
+_fusc_kept, _fusc_dropped = filter_unreferenced_state_coords(
+    ["amount", "msg.sender", "state.deposits[0]", "state.deposits[msg.sender]",
+     "state.discountBps$23[msg.sender]", "state.feeBps", "state.owner"],
+    ["deposits", "discountBps", "feeBps", "feeReceiver", "maxFee"])
+check("mapping-entries-inside-the-closure-are-kept",
+      _fusc_kept,
+      ["amount", "msg.sender", "state.deposits[0]", "state.deposits[msg.sender]",
+       "state.discountBps$23[msg.sender]", "state.feeBps"])
+check("a-state-field-outside-the-closure-is-still-dropped",
+      _fusc_dropped, ["state.owner"])
+check("a-null-closure-drops-nothing",
+      filter_unreferenced_state_coords(["state.deposits[0]"], None),
+      (["state.deposits[0]"], []))
+
 
 if FAILURES:
     print("FAILED:")
