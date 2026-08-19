@@ -4748,6 +4748,27 @@ def expand_stage4_test_unit_results(results, record_paths=None):
     return expanded, expanded_paths
 
 
+def _write_forge_replay_log(project, stdout, stderr, timed_out, wall_s, forge_timeout):
+    """Record one project's Forge verdict inside the project that was replayed.
+
+    Best effort by design: failing to write a log must never fail a run that
+    otherwise produced valid tests.
+    """
+    try:
+        with open(os.path.join(project, "forge-replay.log"), "w") as stream:
+            stream.write("# VeriPUT final gate: `forge test --json`\n")
+            stream.write("# timed_out=%s wall_s=%.3f timeout_s=%s\n"
+                         % (bool(timed_out), wall_s, forge_timeout))
+            stream.write("# ---- stdout ----\n")
+            stream.write(stdout or "")
+            stream.write("\n# ---- stderr ----\n")
+            stream.write(stderr or "")
+            stream.write("\n")
+    except OSError as exc:
+        print(f"  [forge] could not publish the replay log for "
+              f"{os.path.basename(project)}: {exc}")
+
+
 def b_report(results, forge_timeout, esbmc=ESBMC, record_paths=None):
     record_paths = record_paths or {}
     results, record_paths = expand_stage4_test_unit_results(results, record_paths)
@@ -4805,6 +4826,15 @@ def b_report(results, forge_timeout, esbmc=ESBMC, record_paths=None):
         replay_timing["wall_s"] += wall_s
         final_gate_wall_s += wall_s
         forge_outputs[proj] = stdout
+        # ---- PUBLISH THE REPLAY EVIDENCE NEXT TO THE ARTIFACTS ----
+        #
+        # This output was collected into `forge_outputs` and never written
+        # anywhere, so the only record of WHY a row was red lived in the driver's
+        # stdout under the AST cache workdir -- which a host reboot cleared,
+        # after which 154 red rows had to be re-measured by re-running forge on
+        # the published projects by hand.  The project directory IS published
+        # with the case, so the verdict travels with the tests it is about.
+        _write_forge_replay_log(proj, stdout, stderr, timed_out, wall_s, forge_timeout)
         if timed_out:
             print(f"  [forge] {os.path.basename(proj)}: timed out after "
                   f"{forge_timeout}s; every row in this project is UNKNOWN")

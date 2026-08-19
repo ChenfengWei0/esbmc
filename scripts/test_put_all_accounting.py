@@ -43,9 +43,29 @@ class _GetterSubject:
         self.unit = ""
 
 
+def check_forge_replay_log_is_published():
+    """The verdict must travel with the tests it is about, not with the cache."""
+    bad = 0
+    with tempfile.TemporaryDirectory() as project:
+        put_all._write_forge_replay_log(project, '{"suite": {}}', "some stderr", False, 1.25, 180)
+        published = os.path.join(project, "forge-replay.log")
+        bad += check("forge-replay-log-published", os.path.isfile(published), True)
+        with open(published) as stream:
+            text = stream.read()
+        bad += check("forge-replay-log-keeps-stdout", '{"suite": {}}' in text, True)
+        bad += check("forge-replay-log-keeps-stderr", "some stderr" in text, True)
+        bad += check("forge-replay-log-records-the-timeout-state",
+                     "timed_out=False" in text and "timeout_s=180" in text, True)
+    # An unwritable destination must not fail a run that produced valid tests.
+    put_all._write_forge_replay_log(os.path.join(os.sep, "no", "such", "dir"), "x", "y", True, 0.0,
+                                    1)
+    return bad
+
+
 def main():
     bad = check("forge-relative-suite-path-is-not-relativized-twice",
                 put_all.project_rel_file("/tmp/Project", "test/Probe.t.sol"), "test/Probe.t.sol")
+    bad += check_forge_replay_log_is_published()
     parent_rec = {
         "kind":
         "put",
