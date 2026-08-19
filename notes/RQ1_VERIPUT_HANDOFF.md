@@ -1895,3 +1895,159 @@ Regression gate after these changes:
 python3 scripts/test_solidity_path_put.py  PASS 505/505
 python3 -m py_compile scripts/solidity_path_put.py notes/coverage/scripts/put_all.py  PASS
 ```
+
+---
+
+# 2026-08-20 02:15 — state at hand-off, and the plan in flight
+
+## The standing requirement
+
+Full pipeline over all 509 targets within 12 hours (deadline ~14:00 on
+2026-08-20), `no_selection_strategy` on w2, the other three arms derived.
+Success is judged on three things only, all relative to v1:
+
+1. as few `no-valid` cases as possible, and any that remain must be the
+   contract's fault, not ours (a `no-valid` caused by picking the wrong target
+   contract is OUR fault);
+2. the PUT : concrete-replay conversion rate;
+3. the R1/R2 share — a low share reads as "the method cannot synthesise".
+
+Plus a hard requirement: the motivation example's two mutants must be killed.
+And `no_selection_strategy` MUST come out worse than Full; if it does not, an
+optimisation is leaking into the ablation arm.
+
+## Order of work, and why this order
+
+Motivation first, campaign second. The motivation example is the only open item
+that can still force a CODE change, and a code change invalidates a finished
+campaign. Freeze the code on a green kill matrix, then run the campaign once.
+
+## What is already established (measured, not argued)
+
+- `withdraw` enumerates 14 path targets at `--focus-function`, 15 at
+  `--scope deposit,withdraw --max-tx 2`.
+- At `--focus-function` only 2 targets are feasible and BOTH revert, so line 30
+  — the line both mutants change — never executes. That is why the emitted PUT
+  passes on base, M1 and M2 alike. It is a COVERAGE result, not an oracle-
+  strength result.
+- At `--scope deposit,withdraw --max-tx 2`: F=7, of which **3 are normal-exit**.
+  Witnesses include `amount=1, deposits[0]=1` and `amount=49134` against a large
+  balance. Line 30 executes on those.
+- A hand-written ideal PUT confirms the kill is reachable with **R0 alone**:
+  base passes 2000 fuzz runs on all three shapes; M1 and M2 both die with
+  `panic: arithmetic underflow or overflow`. No stronger oracle is needed.
+  (`R0` no-discount, `R0` with-discount, and an `R2.3` net relation all kill.)
+- Stage 4 already has the normal-exit path: `normal_exit_asserted`
+  (`scripts/solidity_path_put.py:15469`) plus the retention rule at `:20486`
+  demanding exactly one `normal-exit / expected=True` completion oracle.
+
+So enumeration works, Stage 4 works, and the oracle suffices. **Certification of
+a normal-exit path is the only unproven link.**
+
+## In flight right now
+
+Three certification arms on `motivation_FeeVault.withdraw`, 2100s each,
+`--strong-recipe`, 10 GiB, running concurrently:
+
+| arm | `--scope` | `--max-tx` | out |
+|---|---|---|---|
+| A | `deposit,withdraw` | 2 | `cert_A.jsonl` |
+| B | `deposit,setDiscount,withdraw` | 3 | `cert_B.jsonl` |
+| C | `whole` | 2 | `cert_C.jsonl` |
+
+Scratch root: `/tmp/claude-1000/-home-samson-workspace-VeriPUT/a79873f0-.../scratchpad/feevault`.
+Drivers staged next to it: `mot_stage4_kill.sh <arm> <scope> <max-tx>` and
+`mot_killmatrix.sh <arm>`.
+
+A prior attempt at `--scope deposit,withdraw --max-tx 2` with 1800s and eight
+coordinates (I had added `--slot-coord` and `--no-auto-pin-value` by hand)
+CERTIFIED NOTHING — it spent the whole budget in the probe ladder and never
+issued a single `--path-cov-certify` query. The three arms above drop those two
+hand-added switches, which takes the coordinate count from 8 to 6.
+
+## The Stage-2 coordinate bug: found, fixed, then REVERTED
+
+`filter_unreferenced_state_coords` matched a coordinate to the AST dependency
+closure by splitting on `$` alone, leaving any subscript attached. So
+`state.deposits[msg.sender]` was looked up as `deposits[msg.sender]`, missed a
+closure holding `deposits`, and was dropped as "outside the target closure" —
+while `state.discountBps$23[msg.sender]` split to `discountBps` and was KEPT.
+Whether a mapping-entry coordinate survives depends on whether ESBMC happened to
+give it a lowering suffix. That is an accident, and it is real.
+
+Correcting it (commit `ec64fab815`) was REVERTED in `c239b2c43b` because it buys
+nothing and costs conversion:
+
+- `P28_MapMin` (`notes/coverage/poc/P28_MapMin.sol`, one mapping, 4 paths): **no
+  change at all**. The coordinate the filter drops is re-added by the
+  counterexample harvest immediately afterwards — certified 2/4 either way,
+  level-0 0.7s and refine ~10.6s either way.
+- 35-subject stratified sample (`sample-v5` vs `sample-v6`, identical config):
+  raw→valid **81.4% → 76.6%**, valid→PUT **91.3% → 85.0%**.
+  `ETHRegistrarController` and `PoolPauseHelper` went from `certify ok` to
+  `certify oom` at 12 GiB, and the first then fell to `zero-yield-getter-
+  fallback` on all 7 remaining units — **a `no-valid` case manufactured by
+  widening the coordinate set**, which is exactly requirement 1 above.
+
+`state_coord_source_name` was kept: `_pin_source_name` split on the first dot
+and cut inside `guesses[msg.sender].block`; the helper fixes that for free. The
+filter's accident is now PINNED BY TESTS so it cannot be silently "fixed" again
+without re-reading the measurement.
+
+**Current code therefore equals the `sample-v5` configuration**, which is the
+best measured baseline and the one the campaign should run on.
+
+## What `sample-v6` also revealed, independent of the bug
+
+PUT totals are dominated by `structural-abi-gate-no-coordinate` rows — the
+Stage-2-timeout rescue that emits one ABI value-gate certificate per enumerated
+path (cap 64). On `pop_042_VaultAdapter` a single unit's `certify timeout`
+produced **33** of them; when that unit certified cleanly instead, the same
+subject produced **3**, with the 9 real `cleared-concrete-fallback` rows
+unchanged. Over 25 shared subjects: `esbmc-certify` 113 → 122,
+`structural-abi-gate-no-coordinate` 175 → 138.
+
+These rows assert only that a `nonpayable` entry rejects value — a property of
+the compiler, not of the contract, with `ORACLE: none emitted -- NOT ONE RUNG
+HOLDS` in the test itself. They emit nothing under `no_cer_reg`.
+
+## Campaign, when the code is frozen
+
+Local Full: `VeriPUT/run_full_campaign.sh` (TAG currently
+`campaign-full-20260819`; set a fresh tag). 509 targets, 600s, `--jobs 8
+--mem-fraction 3.0 --memlimit-gib 12`. It was started once at 02:06 and killed
+at 02:09 to put motivation first — no usable output, remove the tree before
+rerunning.
+
+w2 (`invmut-w2`, 16 CPU / 21 GiB / 936 GiB on `/`; **`/mnt/c` has 9.6 GiB — never
+write there**) is READY:
+
+- `~/veriput_esbmc/repo/build-release-static/src/esbmc/esbmc` md5
+  `ee97b4fd541f0a70f529f8c89fbcb842`, **identical to local**;
+- `notes/coverage/scripts/`, the three `scripts/solidity_*.py`, and
+  `~/VeriPUT/Tools/VeriPUT/` all rsynced from this tree;
+- `~/VeriPUT/{bugfix124,peer182,real203}_subjects.txt` = 124/182/203 = 509;
+- `~/VeriPUT/w2_all509.sh` staged: sharded (20/shard), deletes the AST cache
+  after every shard, **hard-fails on a refused shard**, `--jobs 5
+  --memlimit-gib 10 --mem-fraction 6.0`, `--rq3-ablation no-selection-strategy
+  --no-selection-strategy`;
+- `forge` at `~/.foundry/bin`, `solc` at `~/bin`. Both must be on PATH — the
+  script exports them.
+
+w2 has NOT been smoke-tested end to end yet. Do that on one subject before
+launching all 509.
+
+Then derive `no_cer_reg`, `no_region_refinement`, `no_test_oracle_refinement`
+from the audited Full with `rq3_derive_from_full.py`.
+
+## Still open, not addressed today
+
+- The R2 rung/region provenance gap: a rung proved on one input part is adopted
+  with another part's bounds (`acfix_026_CVE_2019_15080 transferOwnership`
+  path 7, `owner: post > pre` HOLDS 4× / REFUTED 3×). Fix belongs in rung
+  adoption.
+- 66 body-level Forge failures unlocated; `green=False` was 19 in sample-v5.
+- `fuzz_params` recorded as 0 for the FeeVault PUT despite two `bound()`
+  parameters.
+- `results_all.py --rq 1` still prints `--` for VeriPUT coverage because of a
+  hardcoded `Results/RQ1/VeriPUT/campaign-timing/canonical-case-wall.json`.
