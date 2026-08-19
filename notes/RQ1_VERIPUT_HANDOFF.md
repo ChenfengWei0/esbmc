@@ -246,47 +246,62 @@ not wasted work.
   (`peer_ccsolbmc__KOALA`, `LILY`, `Galaxium`, `DogeRocket`, ...) that do have
   observable state.  This is a Stage-3 gap and therefore re-derivable.
 
-  **Measured headroom (3087 PUTs).**  R1/R2 is 1090 = 35.3% today.  The gap is
-  1878 value-gate PUTs carrying `exit` rungs only.  What decides whether one of
-  them can gain an oracle is whether its contract has readable state, because a
-  `state` rung is read with `vm.load` at the slot solc reports and so does not
-  depend on which unit was called:
+  **ROOT CAUSE FOUND -- this is not a missing feature, it is a defect this
+  driver introduced.**  The ladder is not "failing to propose" oracles for these
+  paths; ESBMC REFUSES the whole ladder before proposing anything:
 
-  | judgement | count | share of gap |
-  |---|---:|---:|
-  | contract has readable state (a `state` rung appears somewhere for it) | 1131 | 60.2% |
-  | same unit produced a non-exit observable elsewhere | 376 | 20.0% |
-  | this gate path is the ONLY PUT for its unit | 1120 | 59.6% |
+      ladder_refusal: "the spec says path enc=2 has depth=0, the enumeration
+      says 1.  The antecedent is `tr != enc || cnt != depth`, so a wrong depth
+      is TRUE on every execution: every candidate would hold vacuously"
 
-  The 20.0% row is a misleading lower bound: 59.6% of the gap PUTs are the only
-  PUT their unit has, so "same unit elsewhere" has no sample to draw on.  The
-  60.2% row is the honest denominator.
+  Stage 4 guards every claim with `tr != enc || cnt != depth`
+  (`src/goto-programs/goto_coverage.cpp:10160`).  The ABI value-gate promotion
+  synthesised its certificate with `"depth": 0` hardcoded in
+  `_abi_value_gate_structural_detail`, so for any path of non-zero depth the
+  guard is true on every execution and the refusal is CORRECT.  The native
+  Stage-2 producer writes the real depth for the same class of path in the same
+  journal, which is exactly why 837 value-gate ladders ran and 804 did not.
 
-  | assumption | R1/R2 share of PUT |
-  |---|---:|
-  | today | 35.3% |
-  | 25% of ceiling reached | 44.4% |
-  | 50% of ceiling reached | **53.6%** |
-  | 75% of ceiling reached | 62.8% |
-  | physical ceiling: every state-bearing contract gets `post == pre` | **71.9%** |
+  | value-gate ladder outcome | count | nature |
+  |---|---:|---|
+  | ladder ran | 837 | fine |
+  | REFUSED: `depth=0` vs enumeration | **804** | this defect |
+  | REFUSED: `path enc=1 is not among this unit's N enumerated path(s)` | **626** | same defect, `enc` also hardcoded |
+  | REFUSED: no candidate formable (mapping / dynamic array lowered to a contract-scope global) | 333 | real limitation |
+  | REFUSED: other | 45 | assorted |
 
-  Planning number: **~50%**, i.e. roughly +15 points.  Not the ceiling, because
-  `constant`/`immutable` variables have no slot, the ladder has a candidate
-  budget, and slicing drops some state.  Not the lower bound either, because on
-  a value-gate path the call reverts before the body runs, so `post == pre` is
-  trivially true and k-induction will not fail on it -- the question is whether
-  the candidate is ever PROPOSED, not whether it can be proved.  The mechanism
-  already works: 509 value-gate PUTs carry R1/R2 today and emit exactly
-  `assertEq(_post_<var>, _pre_<var>, "<var>: post == pre")`.
+  So 1430 of 2643 value-gate PUT rows lost their oracles to synthetic `(enc,
+  depth)` bookkeeping, not to anything about the paths themselves.
 
-- [ ] **Pilot before committing to the R1/R2 repair.**  Do not estimate twice:
-  pick 5-10 state-bearing subjects (`peer_ccsolbmc__KOALA`, `LILY`, `Galaxium`,
-  `DogeRocket`, ...), re-run ONLY Stage 3/4 from their retained journals with
-  `put_all.py --cert <subject>/cert/certify-results.jsonl`, and measure the real
-  conversion rate on them.  Extrapolate to the 1131.  Minutes of compute, and it
-  settles the ~50% planning number with evidence.  Run it AFTER the Full
-  campaign finishes -- running it concurrently would contend for CPU and
-  distort the 600-second budget of the cases still in flight.
+- [x] **Carry the enumeration's depth into the promoted certificate.**  The real
+  depth was already present in `not_certified_details[enc]["depth"]` (observed
+  values 2 and 3), and the promotion was discarding that dictionary wholesale.
+  It is now read before the drop and passed to
+  `_abi_value_gate_structural_detail(enc, depth)`; a path with no recorded depth
+  still falls back to 0.  Regression test:
+  `test_value_gate_promotion_carries_the_enumeration_depth`.  121 runner tests
+  pass.  Expected to unlock the 804.
+- [ ] **The 626 `enc`-mismatch rows are the harder half.**  They come from
+  `_abi_value_gate_cert_row`, the last-resort static certificate, which fires
+  precisely when Stage 2 produced no output at all -- so there is no enumeration
+  to read `enc` from at synthesis time.  Either fetch the enumeration before
+  synthesising, or accept that this class can only ever carry R0 and stop
+  counting it as headroom.
+
+  **Revised expectation.**  The earlier estimate in this note (35.3% -> ~50%,
+  ceiling 71.9%) was built on the wrong model, namely that the gap was a
+  proposal gap across 1131 state-bearing contracts.  The mechanism is now known
+  and narrower but far more certain: 804 rows should regain a ladder from the
+  depth fix alone.  Do not re-estimate -- measure.
+
+- [~] **Pilot the depth fix.**  Running on w1 under a deliberately relaxed
+  3000-second budget.  That budget is a MECHANISM CHECK, not a campaign
+  setting: w1 is roughly 30x slower than the local host -- subjects that take
+  13-20s locally hit `budget-exhausted raw=0` at 553s of the 600s budget there
+  -- so its numbers must never be reported as campaign results.  The question
+  the pilot answers is binary: does the ladder now run for a path that
+  previously logged the depth refusal?  Re-measure the real conversion rate on
+  the local host once the Full campaign finishes.
 
 ### Stage-2 non-certification budget (bugfix124 sample, preliminary)
 

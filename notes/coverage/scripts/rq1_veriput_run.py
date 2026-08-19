@@ -4695,7 +4695,7 @@ ABI_VALUE_GATE_REASON = ("public/external nonpayable ABI entry rejects nonzero m
                          "before executing the function body")
 
 
-def _abi_value_gate_structural_detail(enc: int) -> dict:
+def _abi_value_gate_structural_detail(enc: int, depth: int | None = None) -> dict:
     """The structural certificate for one pin-excluded nonpayable value-gate path.
 
     A public/external nonpayable entry point is rejected by the compiler-inserted
@@ -4723,7 +4723,15 @@ def _abi_value_gate_structural_detail(enc: int) -> dict:
         # row was reached is recorded in driver_diagnostic, not here.
         "certification_source": "structural-abi-gate-no-coordinate",
         "promoted_from": "stage2-msg-value-pin-exclusion",
-        "depth": 0,
+        # The enumeration's own depth for this path, NOT a constant.  Stage 4
+        # guards each claim with `tr != enc || cnt != depth`; a wrong depth is
+        # true on every execution, so every candidate would hold vacuously and
+        # ESBMC refuses the whole assertion ladder for the path.  That refusal
+        # is correct, and it costs the path its R1/R2 oracles -- measured at 804
+        # value-gate PUTs in the 2026-08-19 corpus, every one of them reduced to
+        # an exit-only R0 test.  Stage 2 already recorded the real depth in the
+        # not-certified detail this promotion consumes.
+        "depth": (0 if depth is None else int(depth)),
         "enc": int(enc),
         "established": [],
         "extcall_pins": {},
@@ -4782,8 +4790,10 @@ def _promote_pin_excluded_value_gate_paths(cert_path: Path,
                 enc_int = int(enc)
             except (TypeError, ValueError):
                 continue
+            prior = (row.get("not_certified_details") or {}).get(enc)
+            enc_depth = prior.get("depth") if isinstance(prior, dict) else None
             certified[enc] = "nonpayable ABI gate rejects msg.value > 0"
-            details[enc] = _abi_value_gate_structural_detail(enc_int)
+            details[enc] = _abi_value_gate_structural_detail(enc_int, enc_depth)
             not_certified.pop(enc, None)
             for bucket in ("not_certified_details", "not_certified_ce_fallbacks",
                            "certified_region_concrete_fallbacks"):

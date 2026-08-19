@@ -7043,6 +7043,36 @@ def _value_gate_cert_row(unit="f", extra_not_certified=None):
     return row
 
 
+def test_value_gate_promotion_carries_the_enumeration_depth():
+    """A promoted path must keep Stage 2's depth, not a hardcoded 0.
+
+    Stage 4 guards each claim with `tr != enc || cnt != depth`.  A wrong depth
+    is true on every execution, so ESBMC refuses the whole assertion ladder and
+    the path keeps only its R0 exit rung.
+    """
+    bad = 0
+    with tempfile.TemporaryDirectory() as td:
+        cert = Path(td) / "certify-results.jsonl"
+        row = _value_gate_cert_row()
+        row["not_certified_details"] = {"2": {"enc": 2, "depth": 3, "reason": "pin"}}
+        cert.write_text(json.dumps(row) + "\n")
+        rq1_veriput_run._promote_pin_excluded_value_gate_paths(
+            cert, "bugfix124__subj", "f", "sol:@C@C@F@f#1")
+        detail = json.loads(cert.read_text().splitlines()[0])["certified_details"]["2"]
+        bad += check(detail["depth"] == 3,
+                     f"promoted detail keeps the enumeration depth: {detail['depth']}")
+        bad += check(detail["enc"] == 2, f"promoted detail keeps its enc: {detail['enc']}")
+    with tempfile.TemporaryDirectory() as td:
+        cert = Path(td) / "certify-results.jsonl"
+        cert.write_text(json.dumps(_value_gate_cert_row()) + "\n")
+        rq1_veriput_run._promote_pin_excluded_value_gate_paths(
+            cert, "bugfix124__subj", "f", "sol:@C@C@F@f#1")
+        detail = json.loads(cert.read_text().splitlines()[0])["certified_details"]["2"]
+        bad += check(detail["depth"] == 0,
+                     "a path with no recorded depth still promotes with depth 0")
+    return bad
+
+
 def test_value_gate_promotion_certifies_only_the_pin_excluded_path():
   with tempfile.TemporaryDirectory() as _td:
       cert = Path(_td) / "certify-results.jsonl"
@@ -7215,6 +7245,7 @@ def main():
         test_stage2_timeout_rescue_certifies_the_structural_abi_value_gate,
         test_stage2_timeout_rescue_skips_units_that_already_have_candidates,
         test_abi_value_gate_cert_row_requires_nonpayable_entry,
+        test_value_gate_promotion_carries_the_enumeration_depth,
         test_value_gate_promotion_certifies_only_the_pin_excluded_path,
         test_value_gate_promotion_drops_the_duplicate_concrete_fallback,
         test_value_gate_promotion_ignores_other_non_certification_reasons,
