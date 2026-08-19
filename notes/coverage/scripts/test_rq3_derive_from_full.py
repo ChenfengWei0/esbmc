@@ -295,5 +295,75 @@ class RQ3DerivationTest(unittest.TestCase):
                                             False)
 
 
+class StrictValidRowEnvelopeTest(unittest.TestCase):
+    """The runner nests test rows under "row"; older roots keep them flat."""
+
+    def _root_with(self, payload: dict) -> Path:
+        root = Path(self._tmp.name)
+        subject = root / "bench/subjects/subj"
+        subject.mkdir(parents=True)
+        (subject / "result.json").write_text(json.dumps(payload))
+        return root
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_reads_rows_nested_under_row(self):
+        root = self._root_with({
+            "schema": "veriput-result/v1",
+            "row": {"valid_tests": [{"valid_reference_test": True, "test": "t_nested"}]},
+        })
+        rows = rq3_derive_from_full._strict_valid_rows(root)
+        self.assertEqual([row["test"] for _dir, row in rows], ["t_nested"])
+
+    def test_reads_rows_at_the_top_level(self):
+        root = self._root_with(
+            {"valid_tests": [{"valid_reference_test": True, "test": "t_flat"}]})
+        rows = rq3_derive_from_full._strict_valid_rows(root)
+        self.assertEqual([row["test"] for _dir, row in rows], ["t_flat"])
+
+    def test_skips_rows_that_are_not_strict_valid(self):
+        root = self._root_with({
+            "row": {"valid_tests": [
+                {"valid_reference_test": False, "test": "t_invalid"},
+                {"valid_reference_test": True, "test": "t_valid"},
+            ]},
+        })
+        rows = rq3_derive_from_full._strict_valid_rows(root)
+        self.assertEqual([row["test"] for _dir, row in rows], ["t_valid"])
+
+
+class StructuralCertificateTest(unittest.TestCase):
+    """A structural ABI-gate PUT has no CE to replay, so no-cer-reg drops it."""
+
+    def test_certification_source_marks_a_structural_row(self):
+        self.assertTrue(rq3_derive_from_full._is_structural_certificate(
+            {"certification_source": "structural-abi-gate-no-coordinate"}, {}))
+
+    def test_stage4_kind_marks_a_structural_row(self):
+        self.assertTrue(rq3_derive_from_full._is_structural_certificate(
+            {}, {"stage4_kind": "abi-value-gate"}))
+
+    def test_a_solver_certified_region_is_not_structural(self):
+        self.assertFalse(rq3_derive_from_full._is_structural_certificate(
+            {"certification_source": "esbmc-certify", "stage4_kind": "certified-region"}, {}))
+
+
+class IdentityIncludesOracleInputPartTest(unittest.TestCase):
+    """Split parts each retain a basis, so the part must be in the identity."""
+
+    def test_two_parts_of_one_path_do_not_collide(self):
+        base = {"path_function": "sol:@C@C@F@f#1", "unit": "f", "enc": 6, "piece": "1"}
+        first = rq3_derive_from_full._identity({**base, "oracle_input_part": "part0.r"})
+        second = rq3_derive_from_full._identity({**base, "oracle_input_part": "part0.w"})
+        self.assertNotEqual(first, second)
+
+    def test_an_unsplit_row_keeps_an_empty_part(self):
+        identity = rq3_derive_from_full._identity(
+            {"path_function": "sol:@C@C@F@f#1", "unit": "f", "enc": 6, "piece": "1"})
+        self.assertEqual(identity[-1], "")
+
+
 if __name__ == "__main__":
     unittest.main()

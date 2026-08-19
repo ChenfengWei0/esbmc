@@ -46,13 +46,60 @@ class _GetterSubject:
 def main():
     bad = check("forge-relative-suite-path-is-not-relativized-twice",
                 put_all.project_rel_file("/tmp/Project", "test/Probe.t.sol"), "test/Probe.t.sol")
+    parent_rec = {
+        "kind":
+        "put",
+        "file":
+        "test/Parted.t.sol",
+        "test":
+        "test_put_C_f_path1",
+        "stats": {
+            "fuzz_params": 1,
+            "asserts": 1,
+        },
+        "test_units": [{
+            "test": "test_put_C_f_path1_part_a",
+            "stats": {
+                "fuzz_params": 1,
+                "asserts": 2,
+            },
+            "oracle_input_part": {
+                "part_id": "a",
+            },
+        }, {
+            "test": "test_put_C_f_path1_part_b",
+            "stats": {
+                "fuzz_params": 1,
+                "asserts": 1,
+            },
+            "requires_fixed_replay_fusion": True,
+            "fixed_replay_fusion_error": "part representative replay missing",
+            "oracle_input_part": {
+                "part_id": "b",
+            },
+        }],
+    }
+    expanded, expanded_paths = put_all.expand_stage4_test_unit_results(
+        [("bench", "f", 1, None, 0, parent_rec, "/tmp/Project", {"x": [0, 9]}, True, "C")],
+        {id(parent_rec): "/tmp/put.json"})
+    bad += check("stage4-test-units-expand-to-physical-rows",
+                 [row[5]["test"] for row in expanded],
+                 ["test_put_C_f_path1_part_a", "test_put_C_f_path1_part_b"])
+    bad += check("stage4-expanded-rows-keep-shared-put-json",
+                 [expanded_paths.get(id(row[5])) for row in expanded],
+                 ["/tmp/put.json", "/tmp/put.json"])
+    bad += check("stage4-expanded-row-stats-are-per-test-unit",
+                 [row[5]["stats"]["asserts"] for row in expanded], [2, 1])
+    bad += check("stage4-expanded-row-keeps-fixed-fusion-gate",
+                 put_all.missing_fixed_replay_fusion_reason(expanded[1][5]),
+                 "part representative replay missing")
     with tempfile.TemporaryDirectory() as td:
         os.makedirs(os.path.join(td, "test"))
         put_file = os.path.join(td, "test", "Put.t.sol")
         basis_file = os.path.join(td, "Basis.t.sol")
         put_source = """\
 pragma solidity >=0.8.0;
-import {Test, Vm} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 contract Probe {
   uint256 public y;
   event Seen(uint256 value);
@@ -67,6 +114,9 @@ contract ProbeTest is Test {
     assertTrue(x <= type(uint256).max);
     c0.f(x);
   }
+}
+contract UnrelatedProbeTest is Test {
+  function setUp() public {}
 }
 """
         basis_source = """\
@@ -98,6 +148,9 @@ contract ProbeTest is Test {
     assertEq(observedLogs[0].data, abi.encode(uint256(9)));
   }
 }
+contract UnrelatedProbeTest is Test {
+  function setUp() public {}
+}
 """
         with open(put_file, "w", encoding="utf-8") as fh:
             fh.write(put_source)
@@ -106,15 +159,16 @@ contract ProbeTest is Test {
         certified_detail = {"ce": {"x": "7", "return": "9"}}
         path_function = "sol:@C@Probe@F@f#9"
 
-        def source_binding(source):
+        def source_binding(source, ce=None):
+            ce = ce or certified_detail["ce"]
             body = put_all.solidity_function_body(source, "test_cov_0")
             setup = put_all.solidity_function_body(source, "setUp")
             return {
                 "status": "exact",
                 "source_preserved": True,
-                "ce_sha256": put_all.certified_ce_sha256(certified_detail["ce"]),
+                "ce_sha256": put_all.certified_ce_sha256(ce),
                 "rendered_source_verified": True,
-                "rendered_source_ce_sha256": put_all.certified_ce_sha256(certified_detail["ce"]),
+                "rendered_source_ce_sha256": put_all.certified_ce_sha256(ce),
                 "path_function": path_function,
                 "enc": 1,
                 "piece": None,
@@ -324,7 +378,7 @@ contract ProbeTest is Test {
         _anchor, error = put_all.attach_certified_ce_anchor(put_rec, basis_rec, certified_detail)
         bad += check("certified-ce-anchor-refuses-ambiguous-setup", error,
                      ("PUT/basis setup is not uniquely executable: "
-                      "basis replay test name is ambiguous"))
+                      "setUp is ambiguous in the selected test contract"))
         wrong_binding = dict(basis_rec)
         wrong_binding["certified_ce_binding"] = dict(basis_rec["certified_ce_binding"],
                                                      ce_sha256="0" * 64)
@@ -357,7 +411,33 @@ contract ProbeTest is Test {
         _anchor, error = put_all.attach_certified_ce_anchor(put_rec, wrong_return_rec,
                                                             wrong_return_detail)
         bad += check("certified-ce-anchor-refuses-wrong-return", error,
-                     "certified basis replay return differs from the certified CE")
+	                     "certified basis replay return differs from the certified CE")
+        with open(put_file, "w", encoding="utf-8") as fh:
+            fh.write(put_source)
+        representative_ce = {"x": "8", "return": "10"}
+        representative_source = basis_source.replace("c0.f(7)", "c0.f(8)").replace(
+            "observed, 9", "observed, 10").replace("uint256(9)", "uint256(10)").replace(
+                "abi.encode(uint256(9))", "abi.encode(uint256(10))")
+        with open(basis_file, "w", encoding="utf-8") as fh:
+            fh.write(representative_source)
+        representative_rec = dict(
+            basis_rec,
+            certified_ce_binding=source_binding(representative_source, representative_ce),
+            concrete_oracles=[{
+                **basis_rec["concrete_oracles"][0], "expected": "10",
+                "assertion": ('assertEq(observed, 10, '
+                              '"fixed witness return must match");')
+            }])
+        anchor, error = put_all.attach_certified_ce_anchor(
+            put_rec, representative_rec, certified_detail, representative_ce=representative_ce)
+        with open(put_file, encoding="utf-8") as fh:
+            representative_anchored = fh.read()
+        bad += check("certified-ce-anchor-accepts-explicit-representative-ce", error, None)
+        bad += check("certified-ce-anchor-uses-representative-condition",
+                     "if (x == uint256(8))" in representative_anchored, True)
+        bad += check("certified-ce-anchor-uses-representative-return",
+                     'assertEq(_veriput_fixed_return_0, 10, "fixed witness return")'
+                     in representative_anchored, True)
         revert_source = basis_source.replace(
             "uint256 observed = c0.f(7);\n"
             '    assertEq(observed, 9, "fixed witness return must match");',
@@ -390,13 +470,17 @@ contract ProbeTest is Test {
         basis_file = os.path.join(td, "ProjectedBasis.t.sol")
         put_source = """\
 contract ProbeTest {
-  function setUp() public { c0 = new Probe(); }
+  function setUp() public {
+    c0 = new Probe();
+  }
   function test_put_Probe_f_path1(uint256 x) public { c0.f(x); assertTrue(x < 9); }
 }
 """
         basis_source = """\
 contract ProbeTest {
-  function setUp() public { c0 = new Probe(); }
+  function setUp() public {
+    c0 = new Probe();
+  }
   // witness-fingerprint-sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
   function test_cov_0() public {
     c0.f(7);
@@ -642,6 +726,65 @@ contract Proxy {
                                                       basis_file=extcall_basis_file,
                                                       unit="f"),
             "certified extcall projection does not match one strict imported source function")
+        mixed_detail = {
+            "ce": {
+                "x": "7",
+                "msg.value": "0",
+                "msg.data": "0",
+                "block.gaslimit": "0",
+                "block.difficulty": "0",
+            }
+        }
+        mixed_sha = put_all.certified_ce_sha256(mixed_detail["ce"])
+        mixed_coordinate_binding = {
+            "schema": "veriput-certified-ce-source-binding/v1",
+            "ce_sha256": mixed_sha,
+            "coordinates": {
+                "x": {
+                    "kind": "call-argument-literal",
+                    "certified": 7,
+                    "rendered": 7,
+                },
+                "msg.value": {
+                    "kind": "call-environment-literal",
+                    "certified": 0,
+                    "rendered": 0,
+                },
+                "msg.data": {
+                    "kind": "calldata-determined",
+                    "certificate": "selected-target-call-calldata/v1",
+                    "certified": 0,
+                },
+                "block.gaslimit": {
+                    "kind": "unobserved-auxiliary-environment",
+                    "certificate": "unobserved-auxiliary-environment/v1",
+                    "certified": 0,
+                },
+                "block.difficulty": {
+                    "kind": "prevrandao-establishes-difficulty",
+                    "certificate": "foundry-prevrandao-establishes-difficulty/v1",
+                    "certified": 0,
+                    "value": 0,
+                },
+            },
+        }
+        mixed_binding = {
+            "source_projection": mixed_coordinate_binding,
+            "source_projection_preserved": {
+                "schema": "veriput-certified-ce-source-projection/v1",
+                "ce_sha256": mixed_sha,
+                "coordinate_binding": mixed_coordinate_binding,
+                "target_call_body_sha256": body_sha,
+                "final_test_body_sha256": body_sha,
+                "setup_body_sha256": setup_sha,
+            },
+            "pre_oracle_test_body_sha256": body_sha,
+            "test_body_sha256": body_sha,
+            "setup_body_sha256": setup_sha,
+        }
+        bad += check(
+            "certified-source-projection-accepts-mixed-audited-coordinate-kinds",
+            put_all.certified_source_projection_error(mixed_binding, mixed_detail), None)
     with tempfile.TemporaryDirectory() as td:
         structural_file = os.path.join(td, "Structural.t.sol")
         structural_source = """\
@@ -679,14 +822,24 @@ contract StructuralTest {
                      (error, anchor.get("binding"), anchor.get("basis_kind")),
                      (None, "structural-abi-gate/v1", "structural-certificate-not-solver-ce"))
         bad += check(
-            "structural-abi-anchor-fixes-region-point",
-            ("this.test_put_Structural_gate_path1(address(uint160(1)), 1, 0);" in anchored), True)
+            "structural-abi-anchor-stays-inside-put",
+            ("VERIPUT_FIXED_REPLAY_ASSERTIONS" in anchored
+             and "function test_structural_anchor_" not in anchored), True)
+        bad += check("structural-abi-anchor-records-fixed-arguments",
+                     anchor.get("fixed_arguments"),
+                     ["address(uint160(1))", "1", "0"])
         anchor_again, error_again = put_all.attach_structural_abi_gate_anchor(
             structural_rec, structural_detail)
         with open(structural_file, encoding="utf-8") as fh:
             anchored_again = fh.read()
         bad += check("structural-abi-anchor-is-idempotent",
                      (error_again, anchor_again, anchored_again), (None, anchor, anchored))
+        routed_anchor, routed_error = put_all.attach_required_fixed_replay_anchor(
+            structural_rec, {}, structural_detail)
+        bad += check(
+            "structural-abi-required-anchor-does-not-need-a-basis-file",
+            (routed_error, routed_anchor.get("binding") if routed_anchor else None),
+            (None, "structural-abi-gate/v1"))
         bad += check(
             "structural-abi-anchor-remains-without-exact-ce",
             put_all.requires_structural_abi_gate_anchor("structural-abi-gate-no-coordinate",
@@ -698,9 +851,9 @@ contract StructuralTest {
                                 "state.feed": "7",
                             })
         bad += check(
-            "structural-abi-full-ce-uses-exact-basis-anchor",
+            "structural-abi-full-ce-stays-inside-put",
             put_all.requires_structural_abi_gate_anchor("structural-abi-gate-no-coordinate",
-                                                        exact_detail), False)
+                                                        exact_detail), True)
         bad += check("structural-abi-certificate-recovers-value-gate-stage4-kind",
                      put_all.certified_detail_stage4_kind(exact_detail), "abi-value-gate")
         bad += check(
@@ -747,8 +900,9 @@ contract GetterTest {
             anchored_getter = fh.read()
         bad += check("structural-getter-anchor-embeds-fixed-caller",
                      (getter_error, getter_anchor.get("binding"),
-                      "this.test_put_Getter_value_path0(address(uint160(1)), address(uint160(2)));"
-                      in anchored_getter), (None, "structural-abi-getter/v1", True))
+                      "VERIPUT_FIXED_REPLAY_ASSERTIONS" in anchored_getter,
+                      "function test_structural_anchor_" in anchored_getter),
+                     (None, "structural-abi-getter/v1", True, False))
         getter_anchor_again, getter_error_again = put_all.attach_structural_abi_gate_anchor(
             getter_rec, getter_detail)
         with open(getter_file, encoding="utf-8") as fh:
@@ -1713,6 +1867,9 @@ contract FixedArrayGetter {
                                                                      "test_put_C_target_path3()": {
                                                                          "status": "Success"
                                                                      },
+                                                                     "test_put_C_target_path5()": {
+                                                                         "status": "Success"
+                                                                     },
                                                                  }
                                                              }
                                                          }), "", False, 0.01)
@@ -1805,10 +1962,30 @@ contract T {
                 }, "/tmp/forge-project", {
                     "x": [0, 2]
                 }, True, "C"),
+                ("bench", "target", 5, None, 0, {
+                    "test": "test_put_C_target_path5",
+                    "file": "/tmp/part.t.sol",
+                    "requires_fixed_replay_fusion": True,
+                    "fixed_replay_fusion_error": "part representative replay missing",
+                    "binary": {
+                        "binaryMtime": 123
+                    },
+                    "stats": {
+                        "fuzz_params": 1,
+                        "asserts": 1,
+                        "guarded_asserts": 0,
+                        "oracle_classes": ["R1"],
+                        "rendered_width": {
+                            "x": 2
+                        },
+                    },
+                }, "/tmp/forge-project", {
+                    "x": [0, 2]
+                }, True, "C"),
             ], 10)
             tmpdir.cleanup()
             bad += check("stage4-b-summary-counts-b",
-                         (summary["b"], summary["certified_region_rows"]), (1, 4))
+                         (summary["b"], summary["certified_region_rows"]), (1, 5))
             bad += check("stage4-b-summary-forge-seen",
                          (summary["forge_seen"]["put"]["Success"],
                           summary["forge_seen"]["concrete"]["Success"]), (1, 0))
@@ -1828,7 +2005,7 @@ contract T {
                 "concrete": 0
             })
             bad += check("stage4-source-counts", summary["stage2_source_counts"],
-                         {"certified_region": 4})
+                         {"certified_region": 5})
             bad += check("stage4-storage-layout-counts", summary["storage_layout_counts"], {
                 "available": 1,
                 "unavailable": 2,
@@ -1854,6 +2031,10 @@ contract T {
                               "green": None,
                               "corpus": None
                           }))
+            bad += check("stage4-fixed-replay-required-put-refused",
+                         (summary["rows"][4]["refused"], summary["rows"][4]["valid_reference_test"],
+                          summary["rows"][4]["refusal_reason"]),
+                         (True, False, "part representative replay missing"))
             bad += check(
                 "stage4-certified-region-build-refusal-retries",
                 put_all.certified_region_concrete_fallback_reason("certified-region", 2, {

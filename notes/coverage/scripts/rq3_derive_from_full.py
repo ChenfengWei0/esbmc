@@ -43,10 +43,18 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _identity(row: dict) -> tuple[str, str, str, str]:
+def _identity(row: dict) -> tuple[str, str, str, str, str]:
+    """Identify one emitted test unit, including its oracle input part.
+
+    A certified path that splits into oracle input parts emits one physical PUT
+    and retains one concrete basis per final part, so the part has to be part of
+    the key.  Rows that never split carry no part and keep the empty string,
+    which matches every pre-split manifest.
+    """
     return (str(row.get("path_function") or ""), str(row.get("unit") or ""),
             str(row.get("enc") if row.get("enc") is not None else ""),
-            str(row.get("piece") if row.get("piece") is not None else ""))
+            str(row.get("piece") if row.get("piece") is not None else ""),
+            str(row.get("oracle_input_part") or ""))
 
 
 def _project(test_file: Path) -> Path:
@@ -83,7 +91,12 @@ def strip_oracle_refinement(source: str) -> tuple[str, int]:
 def _strict_valid_rows(full_root: Path) -> list[tuple[Path, dict]]:
     rows = []
     for result_path in sorted(full_root.rglob("result.json")):
-        result = _read_json(result_path)
+        envelope = _read_json(result_path)
+        # The runner writes {"schema": ..., "row": {...}} and keeps the test
+        # rows inside "row"; older flat result.json files carry them at the top
+        # level.  Accept both, exactly as rq3_compare_smoke.py does, otherwise
+        # every current Full root looks empty and the derivation refuses.
+        result = envelope.get("row") if isinstance(envelope.get("row"), dict) else envelope
         for row in result.get("valid_tests") or []:
             if isinstance(row, dict) and row.get("valid_reference_test") is True:
                 rows.append((result_path.parent, dict(row)))
@@ -210,6 +223,31 @@ def _write_entry(out_root: Path, index: int, case: str, source_file: Path,
     return row
 
 
+STRUCTURAL_CERTIFICATION_SOURCES = (
+    "structural-abi-gate-no-coordinate",
+    "structural-abi-getter-no-coordinate",
+)
+STRUCTURAL_STAGE4_KINDS = ("abi-value-gate", "getter-value-gate")
+
+
+def _is_structural_certificate(row: dict, record: dict) -> bool:
+    """True when this PUT rests on a structural certificate, not a solver CE.
+
+    The compiler's nonpayable ABI gate rejects every nonzero `msg.value` before
+    the body runs, so that region is certified from the declared mutability
+    rather than from a counterexample.  There is no witness to replay, which is
+    why these rows never retain a concrete basis.
+    """
+    for source in (row.get("certification_source"), (record or {}).get("certification_source")):
+        if source in STRUCTURAL_CERTIFICATION_SOURCES:
+            return True
+    for kind in (row.get("stage4_kind"), (record or {}).get("stage4_kind"),
+                 row.get("certified_detail_stage4_kind")):
+        if kind in STRUCTURAL_STAGE4_KINDS:
+            return True
+    return False
+
+
 def derive(full_root: Path, out_root: Path, mode: str, timeout: int,
            run_forge: bool) -> dict:
     rows = _strict_valid_rows(full_root)
@@ -217,6 +255,7 @@ def derive(full_root: Path, out_root: Path, mode: str, timeout: int,
         raise DerivationError(f"{full_root}: no strict-valid Full rows")
     staging = Path(tempfile.mkdtemp(prefix=out_root.name + ".", dir=out_root.parent))
     emitted = []
+    dropped_structural: list[str] = []
     try:
         for subject_dir, row in rows:
             case = str(row.get("case") or subject_dir.name)
@@ -226,6 +265,15 @@ def derive(full_root: Path, out_root: Path, mode: str, timeout: int,
             origin = {"kind": row.get("kind"), "identity": list(_identity(row)),
                       "source_file": str(selected_file), "source_sha256": _sha256(selected_file)}
             if mode == "no-cer-reg" and row.get("kind") == "put":
+                if _is_structural_certificate(row, record):
+                    # A structural ABI-gate PUT has no solver counterexample and
+                    # therefore no retained concrete basis: its certificate IS
+                    # the region.  Strip the certified region and nothing is
+                    # left to replay, so this arm legitimately emits no test for
+                    # that path.  Dropping it is the ablation's result, not a
+                    # missing artifact, and it is counted so the loss is visible.
+                    dropped_structural.append(str(row.get("test") or ""))
+                    continue
                 basis = _basis_entries(subject_dir).get(_identity(row))
                 if basis is None:
                     raise DerivationError(
@@ -271,6 +319,8 @@ def derive(full_root: Path, out_root: Path, mode: str, timeout: int,
             "forge_success": sum(row["forge"]["status"] == "Success" for row in emitted),
             "fuzz_runs": 10000,
             "fuzz_seed": SEED,
+            "dropped_structural_certificate_puts": sorted(dropped_structural),
+            "dropped_structural_certificate_put_count": len(dropped_structural),
         }
         (staging / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
         if out_root.exists():
@@ -301,7 +351,8 @@ def main() -> int:
         print(f"REFUSED: {exc}")
         return 2
     print(json.dumps({key: manifest[key] for key in
-                      ("mode", "test_units", "forge_success", "fuzz_runs", "fuzz_seed")},
+                      ("mode", "test_units", "forge_success", "fuzz_runs", "fuzz_seed",
+                       "dropped_structural_certificate_put_count")},
                      sort_keys=True))
     return 0
 

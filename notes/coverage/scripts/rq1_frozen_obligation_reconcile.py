@@ -50,6 +50,9 @@ def _row_view(row: dict) -> dict:
         "file_exists": path.is_file(),
         "test": test,
         "recorded_kind": row.get("kind"),
+        "stage2_source": row.get("stage2_source"),
+        "stage4_kind": row.get("stage4_kind"),
+        "concrete_reason": row.get("concrete_reason") or row.get("reason"),
         "test_put_prefix": test.startswith("test_put_"),
         "physical_kind": _physical_test_kind(row),
     }
@@ -64,6 +67,41 @@ def _classify(rows: list[dict]) -> str:
     if rows:
         return "UNRESOLVED_ROWS_NO_PHYSICAL"
     return "UNRESOLVED_NO_STRICT_ROW"
+
+
+def _concrete_only_cause(rows: list[dict]) -> str:
+    """Return the recorded pipeline cause for one concrete-only obligation.
+
+    This is intentionally an artifact/provenance classification, not a claim
+    about whether the Solidity function could ever have a PUT.  It describes
+    why the retained run wrote only a zero-parameter replay.
+    """
+    sources = {str(row.get("stage2_source") or "") for row in rows}
+    sources.discard("")
+    if "no-coordinate-concrete-fallback" in sources:
+        return "NO_GENERALIZABLE_COORDINATE"
+    if "cleared_not_certified_fallback" in sources:
+        return "WITNESS_NOT_CERTIFIED"
+    if "timeout_concrete_fallback" in sources:
+        return "STAGE2_TIMEOUT_WITNESS"
+    if "certified-region-concrete-fallback" in sources:
+        return "CERTIFIED_REGION_CONCRETE_FALLBACK"
+    if sources == {"certified-region"}:
+        return "CERTIFIED_REGION_NOT_PARAMETERIZED"
+    if sources == {"certified_region"}:
+        return "LEGACY_CERTIFIED_REGION_NOT_PARAMETERIZED"
+    if "source-grounded-manual-concrete-replay" in sources:
+        return "SOURCE_GROUNDED_CONCRETE_REPLAY"
+    if "source_grounded_callable_recovery" in sources:
+        return "SOURCE_GROUNDED_CALLABLE_RECOVERY"
+    if "source_constructor_revert_fallback" in sources:
+        return "CONSTRUCTOR_REVERT_ONLY"
+
+    reasons = "\n".join(
+        str(row.get("concrete_reason") or row.get("reason") or "") for row in rows)
+    if "NOT PARAMETERIZED" in reasons:
+        return "NO_RENDERABLE_FREE_COORDINATE_LEGACY"
+    return "MISSING_STAGE_PROVENANCE"
 
 
 def reconcile(results_root: Path, ledger_path: Path) -> dict:
@@ -86,12 +124,18 @@ def reconcile(results_root: Path, ledger_path: Path) -> dict:
                 nonfrozen_rows += 1
 
     categories: dict[str, list[dict]] = defaultdict(list)
+    concrete_only_causes: dict[str, list[dict]] = defaultdict(list)
     row_counts = Counter()
+    prefix_identity_count = 0
     for identity in sorted(frozen):
         rows = rows_by_identity.get(identity, [])
         category = _classify(rows)
         views = [_row_view(row) for row in rows]
-        categories[category].append({"identity": list(identity), "rows": views})
+        prefix_identity_count += int(any(view["test_put_prefix"] for view in views))
+        entry = {"identity": list(identity), "rows": views}
+        categories[category].append(entry)
+        if category == "CONCRETE_ONLY":
+            concrete_only_causes[_concrete_only_cause(rows)].append(entry)
         for view in views:
             row_counts["frozen_strict_rows"] += 1
             row_counts["frozen_test_put_prefix_rows"] += int(view["test_put_prefix"])
@@ -132,9 +176,16 @@ def reconcile(results_root: Path, ledger_path: Path) -> dict:
             "PARTITION_TOTAL": sum(category_counts.values()),
             "all_current_strict_rows": all_strict_rows,
             "nonfrozen_strict_rows": nonfrozen_rows,
+            "frozen_test_put_prefix_identities": prefix_identity_count,
             **dict(row_counts),
         },
+        "concrete_only_cause_counts": {
+            cause: len(entries) for cause, entries in sorted(concrete_only_causes.items())
+        },
         "identities": {name: categories[name] for name in category_counts},
+        "concrete_only_causes": {
+            cause: entries for cause, entries in sorted(concrete_only_causes.items())
+        },
     }
 
 

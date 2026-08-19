@@ -150,6 +150,8 @@ class OracleInputPart:
     region: dict
     holes: dict
     witness: dict
+    representative_ce: dict = None
+    representative_claim: dict = None
     assertions: tuple = ()
     depth: int = 0
 
@@ -158,12 +160,15 @@ def make_oracle_input_part(part_id,
                            region,
                            holes,
                            witness,
+                           representative_ce=None,
+                           representative_claim=None,
                            assertions=(),
                            depth=0):
     """Normalize and validate one JSON-compatible oracle input part."""
     normalized_region = {}
     normalized_holes = {}
     normalized_witness = {}
+    normalized_representative_ce = None
     for name, bounds in sorted((region or {}).items()):
         if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
             raise ValueError(f"oracle input part {part_id}: invalid bounds for {name}")
@@ -183,8 +188,47 @@ def make_oracle_input_part(part_id,
         if value < lo or value > hi or value in excluded:
             raise ValueError(f"oracle input part {part_id}: witness is outside {name}")
         normalized_witness[str(name)] = value
+    if representative_ce is not None:
+        if not isinstance(representative_ce, dict):
+            raise ValueError(f"oracle input part {part_id}: representative CE is not an object")
+        normalized_representative_ce = {}
+        for raw_name, raw_value in representative_ce.items():
+            name = str(raw_name)
+            if not name:
+                raise ValueError(f"oracle input part {part_id}: representative CE has empty key")
+            normalized_representative_ce[name] = str(raw_value)
+
+        def representative_value_for(coord_name):
+            if coord_name in normalized_representative_ce:
+                return normalized_representative_ce[coord_name]
+            if not coord_name.startswith("state."):
+                return None
+            wanted = coord_name[len("state."):]
+            normalized = lambda value: re.sub(r"\$\d+(?=\.|\[|$)", "", str(value))
+            matches = [
+                value for key, value in normalized_representative_ce.items()
+                if key.startswith("state.") and normalized(key[len("state."):]) == wanted
+            ]
+            return matches[0] if len(matches) == 1 else None
+
+        for name, value in normalized_witness.items():
+            ce_raw_value = representative_value_for(name)
+            if ce_raw_value is None:
+                raise ValueError(f"oracle input part {part_id}: representative CE lacks {name}")
+            try:
+                ce_value = int(str(ce_raw_value), 0)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"oracle input part {part_id}: representative CE has non-scalar {name}") from exc
+            if ce_value != value:
+                raise ValueError(
+                    f"oracle input part {part_id}: representative CE differs on {name}")
+    if representative_claim is not None and not isinstance(representative_claim, dict):
+        raise ValueError(f"oracle input part {part_id}: representative claim is not an object")
     return OracleInputPart(str(part_id), normalized_region, normalized_holes,
-                           normalized_witness, tuple(assertions or ()), int(depth))
+                           normalized_witness, normalized_representative_ce,
+                           dict(representative_claim) if representative_claim is not None else None,
+                           tuple(assertions or ()), int(depth))
 
 
 def split_oracle_input_part(part, counterexample, coordinate_order=None):
@@ -197,9 +241,17 @@ def split_oracle_input_part(part, counterexample, coordinate_order=None):
     """
     if not isinstance(part, OracleInputPart):
         raise TypeError("oracle input split requires OracleInputPart")
+    if isinstance(counterexample, dict) and isinstance(counterexample.get("coordinates"), dict):
+        coordinate_values = counterexample.get("coordinates")
+        refuting_ce = counterexample.get("ce")
+        refuting_claim = counterexample.get("claim")
+    else:
+        coordinate_values = counterexample or {}
+        refuting_ce = counterexample if isinstance(counterexample, dict) else None
+        refuting_claim = None
     try:
         refuting = {
-            name: int(str((counterexample or {})[name]), 0)
+            name: int(str(coordinate_values[name]), 0)
             for name in part.region
         }
     except (KeyError, TypeError, ValueError):
@@ -228,7 +280,7 @@ def split_oracle_input_part(part, counterexample, coordinate_order=None):
     if witness_bounds[0] > witness_bounds[1] or refuting_bounds[0] > refuting_bounds[1]:
         return None
 
-    def child(suffix, bounds, representative):
+    def child(suffix, bounds, representative, representative_ce, representative_claim):
         region = dict(part.region)
         region[coordinate] = bounds
         holes = {
@@ -238,10 +290,15 @@ def split_oracle_input_part(part, counterexample, coordinate_order=None):
         }
         holes = {name: values for name, values in holes.items() if values}
         return make_oracle_input_part(f"{part.part_id}.{suffix}", region, holes,
-                                      representative, part.assertions, part.depth + 1)
+                                      representative,
+                                      representative_ce=representative_ce,
+                                      representative_claim=representative_claim,
+                                      assertions=part.assertions,
+                                      depth=part.depth + 1)
 
-    return (child("w", witness_bounds, part.witness),
-            child("r", refuting_bounds, refuting), coordinate)
+    return (child("w", witness_bounds, part.witness, part.representative_ce,
+                  part.representative_claim),
+            child("r", refuting_bounds, refuting, refuting_ce, refuting_claim), coordinate)
 
 
 def refine_oracle_candidate_parts(part,
@@ -275,7 +332,11 @@ def refine_oracle_candidate_parts(part,
             assertions += (candidate,)
         results.append(
             make_oracle_input_part(current.part_id, current.region, current.holes,
-                                   current.witness, assertions, current.depth))
+                                   current.witness,
+                                   representative_ce=current.representative_ce,
+                                   representative_claim=current.representative_claim,
+                                   assertions=assertions,
+                                   depth=current.depth))
 
     current = part
     verdict = str(initial_verdict or "UNDECIDED")
@@ -287,9 +348,7 @@ def refine_oracle_candidate_parts(part,
         if verdict != "REFUTED" or current.depth >= max_depth or len(results) + 2 > max_parts:
             retain(current, False)
             break
-        coordinates = ((refutation or {}).get("coordinates")
-                       if isinstance(refutation, dict) else None)
-        split = split_oracle_input_part(current, coordinates, coordinate_order)
+        split = split_oracle_input_part(current, refutation, coordinate_order)
         if split is None:
             retain(current, False)
             break
@@ -390,11 +449,31 @@ def oracle_part_candidate_verdict(rows, summary, candidate, refutations=None):
     return matches[0]
 
 
+def oracle_part_verdict_cache(rows, summary, refutations=None):
+    """Return every unambiguous verdict proved by one part query.
+
+    A state-exact assertion query evaluates the complete ladder for its
+    selected variable.  Retaining only the candidate that caused the query
+    would rerun the identical verifier job for every other rung.
+    """
+    if summary is None:
+        return {}
+    grouped = {}
+    for var, text, verdict in rows or ():
+        key = (str(var), canonical_oracle_rung_text(text))
+        grouped.setdefault(key, []).append(str(verdict))
+    return {
+        key: (verdicts[0], (refutations or {}).get(key))
+        for key, verdicts in grouped.items()
+        if len(verdicts) == 1 and verdicts[0] in ("HOLDS", "REFUTED")
+    }
+
+
 def oracle_input_part_record(part):
     """Stable JSON record for one final oracle partition."""
     if not isinstance(part, OracleInputPart):
         raise TypeError("oracle input part record requires OracleInputPart")
-    return {
+    record = {
         "part_id": part.part_id,
         "region": {name: [str(lo), str(hi)] for name, (lo, hi) in part.region.items()},
         "holes": {name: [str(value) for value in values]
@@ -405,6 +484,65 @@ def oracle_input_part_record(part):
                        else candidate for candidate in part.assertions],
         "depth": part.depth,
     }
+    if part.representative_ce is not None:
+        record["representative_ce"] = dict(part.representative_ce)
+    if part.representative_claim is not None:
+        record["representative_claim"] = dict(part.representative_claim)
+    return record
+
+
+def oracle_input_part_suffix(part):
+    """Return a stable Solidity-identifier suffix for a physical part PUT."""
+    if not isinstance(part, OracleInputPart):
+        raise TypeError("oracle input part suffix requires OracleInputPart")
+    suffix = re.sub(r"[^A-Za-z0-9_]+", "_", part.part_id).strip("_")
+    if not suffix:
+        suffix = "part"
+    if suffix[0].isdigit():
+        suffix = "p_" + suffix
+    return f"part_{suffix}"
+
+
+def oracle_input_part_ladder_rows(part):
+    """Convert proved part assertions to build_put ladder rows.
+
+    Non-generalized assertions such as R0/fixed replay markers are rendered by
+    the normal PUT path.  Only verifier-proved R1/R2 rows are carried here.
+    """
+    if not isinstance(part, OracleInputPart):
+        raise TypeError("oracle input part rows require OracleInputPart")
+    rows = []
+    seen = set()
+    for assertion in part.assertions:
+        if not isinstance(assertion, (tuple, list)) or len(assertion) != 2:
+            continue
+        var = str(assertion[0])
+        text = canonical_oracle_rung_text(assertion[1])
+        key = (var, text)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append((var, text, "HOLDS"))
+    return rows
+
+
+def oracle_input_part_build_rows(base_rows, part, refined_candidates=None):
+    """Rows to render for one physical oracle input part."""
+    refined = {
+        (str(candidate[0]), canonical_oracle_rung_text(candidate[1]))
+        for candidate in (refined_candidates or ())
+        if isinstance(candidate, (tuple, list)) and len(candidate) == 2
+    }
+    rows = []
+    for row in base_rows or ():
+        if not isinstance(row, (tuple, list)) or len(row) != 3:
+            continue
+        key = (str(row[0]), canonical_oracle_rung_text(row[1]))
+        if key in refined:
+            continue
+        rows.append(row)
+    rows.extend(oracle_input_part_ladder_rows(part))
+    return rows
 
 
 def merge_adjacent_oracle_parts(parts, coordinate_order=None):
@@ -439,7 +577,11 @@ def merge_adjacent_oracle_parts(parts, coordinate_order=None):
             representative = left.witness
             merged.append(make_oracle_input_part(
                 left.part_id + "+" + right.part_id, region, left.holes,
-                representative, left.assertions, min(left.depth, right.depth)))
+                representative,
+                representative_ce=left.representative_ce,
+                representative_claim=left.representative_claim,
+                assertions=left.assertions,
+                depth=min(left.depth, right.depth)))
             index += 2
             changed = True
         current = merged
@@ -467,6 +609,35 @@ def prepare_oracle_part_publications(parts, authenticate_representative):
             continue
         published.append({"part": part, "representative": evidence})
     return published, refused
+
+
+def oracle_part_materialization_plan(parts, authenticate_representative):
+    """Return fail-closed physical PUT plans for publishable oracle parts."""
+    published, refused = prepare_oracle_part_publications(parts, authenticate_representative)
+    plans = []
+    for entry in published:
+        part = entry["part"]
+        representative = entry["representative"]
+        suffix = oracle_input_part_suffix(part)
+        representative_ce = representative.get("ce")
+        if not isinstance(representative_ce, dict):
+            refused.append({
+                "part_id": part.part_id,
+                "reason": "authenticated representative replay lacks a complete CE",
+            })
+            continue
+        plan = {
+            "part": part,
+            "suffix": suffix,
+            "region": dict(part.region),
+            "holes": {name: tuple(values) for name, values in part.holes.items()},
+            "ladder_rows": oracle_input_part_ladder_rows(part),
+            "representative_ce": {str(name): str(value)
+                                  for name, value in representative_ce.items()},
+            "representative": representative,
+        }
+        plans.append(plan)
+    return plans, refused
 
 
 class ConcreteFallback(Exception):
@@ -842,7 +1013,10 @@ LADDER_SUMMARY_RE = re.compile(
 LADDER_REFUSAL_RE = re.compile(r"--path-cov-assert: unit '[^']*' -- "
                                r"REFUSING THE LADDER(?::|,|\s+)(.*)$")
 LADDER_VACUOUS_RE = re.compile(r"--path-cov-assert: THE REGION IS VACUOUS")
-LADDER_FAILED_CLAIM_RE = re.compile(r"FAILED: '(.+?) at file ")
+# ESBMC prints a source location when one is available, but synthesized
+# ladder claims have no source location and end in the shorter `` at'`` form.
+# Both spellings name the same claim key used by cov-report.json.
+LADDER_FAILED_CLAIM_RE = re.compile(r"FAILED: '(.+?)(?: at file .*| at)'")
 
 # ---- THE `RESULT:` TOKENS OF THE ASSERT GATE, AND WHY AN UNKNOWN ONE IS FATAL
 #
@@ -1096,12 +1270,44 @@ def r2_refutation_observations(log, report, coordinate_names=None):
         if post is None:
             continue
         observation = {"post": post, "pre": pre}
+        observation["claim"] = claim
         if coordinate_names is not None:
             coordinates = claim_oracle_coordinate_values(claim, coordinate_names)
             if coordinates is not None:
                 observation["coordinates"] = coordinates
+        ce = claim_oracle_ce_values(claim)
+        if ce is not None:
+            observation["ce"] = ce
         out[(var, canonical_oracle_rung_text(text))] = observation
     return out
+
+
+def claim_oracle_ce_values(claim):
+    """Extract a complete scalar CE point from an assertion failure claim."""
+    if not isinstance(claim, dict):
+        return None
+    groups = ((claim.get("inputs"), ""), (claim.get("env"), ""),
+              (claim.get("entry_storage"), "state."))
+    values = {}
+    for group, prefix in groups:
+        if group is None:
+            group = {}
+        if not isinstance(group, dict):
+            return None
+        for raw_name, raw_value in group.items():
+            name = prefix + str(raw_name)
+            try:
+                int(str(raw_value), 0)
+            except (TypeError, ValueError):
+                return None
+            values[name] = str(raw_value)
+    if claim.get("return_value_known") is True:
+        try:
+            int(str(claim.get("return_value")), 0)
+        except (TypeError, ValueError):
+            return None
+        values["return"] = str(claim.get("return_value"))
+    return values
 
 
 def claim_oracle_coordinate_values(claim, coordinate_names):
@@ -3420,6 +3626,16 @@ def boundary_observation_points(region, params, witness=None, max_points=None):
     return points
 
 
+# Rounds of counterexample-guided output-bound expansion allowed for one R2.2
+# candidate.  Each round costs one ESBMC query and absorbs exactly the one
+# observable value the refutation reported, so a bound that starts well inside
+# the true range needs several rounds to close.  Two rounds measurably stopped
+# short on real units (DateTime.getHour walked [0,10] -> [0,14] -> [0,20] and
+# ran out before the true [0,23]); four lets those converge while the
+# type-wide-interval guard still drops an unbounded observable immediately.
+BOUNDARY_OBSERVATION_REFINEMENT_ROUNDS = 4
+
+
 def boundary_observation_r2_spec(observations, directions=None, refinement_rounds=0):
     """Turn concrete boundary observations into verifier-bound R2 proposals.
 
@@ -3654,6 +3870,119 @@ def boundary_probe_observed_uint(marker, result):
         return None
     value = int(match.group(1))
     return value if 0 <= value <= UINT256_MAX else None
+
+
+def _fixed_return_uint_observation_expr(sol_type, observed):
+    """Convert a scalar return binding into a uint256 observation expression."""
+    typ = _norm_ty(sol_type)
+    if re.fullmatch(r"uint(?:[0-9]+)?", typ):
+        return f"uint256({observed})"
+    if typ == "bool":
+        return f"({observed} ? uint256(1) : uint256(0))"
+    if typ in ("address", "address payable") or typ.startswith(("contract ", "interface ")):
+        return f"uint256(uint160({observed}))"
+    match = re.fullmatch(r"bytes([1-9]|[12][0-9]|3[0-2])", typ)
+    if match:
+        return f"uint256(uint{int(match.group(1)) * 8}({observed}))"
+    return None
+
+
+def observe_fixed_scalar_return_with_forge(source,
+                                           test_name,
+                                           unit,
+                                           rettypes,
+                                           forge_project,
+                                           workdir,
+                                           contract_name,
+                                           timeout):
+    """Replay the fixed concrete basis and read its scalar return from Foundry.
+
+    Stage-2 may report a model-level return value that differs from the real
+    Foundry execution after fixture repair.  Fixed replay assertions therefore
+    use this concrete observation path, not the verifier's return field.
+    """
+    if not rettypes or len(rettypes) != 1:
+        return None, "fixed return observation supports one scalar return"
+    return_type = rettypes[0][1]
+    observed = "_veriput_observed_return"
+    uint_expr = _fixed_return_uint_observation_expr(return_type, observed)
+    if uint_expr is None:
+        return None, f"return type `{return_type}` cannot be observed as uint256"
+    selected = _fixed_oracle_function(source, test_name)
+    if selected is None:
+        return None, "selected concrete replay function is absent"
+    lines, start, end = selected
+    body = lines[start + 1:end]
+    call_i = find_unit_call(body, unit)
+    if call_i is None:
+        return None, "selected target call is absent or ambiguous"
+    rebound, reason = bind_return(body[call_i], unit, return_type, observed)
+    if rebound is None:
+        return None, "fixed return cannot be bound to the concrete target call: " + str(reason)
+    marker = "VERIPUT_FIXED_RETURN_" + hashlib.sha256(
+        (str(test_name) + "\0" + str(unit) + "\0" + str(contract_name)).encode("utf-8")
+    ).hexdigest()[:16]
+    body[call_i] = rebound
+    indent = re.match(r"\s*", rebound).group(0)
+    body.insert(call_i + 1, f'{indent}assertEq({uint_expr}, uint256(0), "{marker}");')
+    lines[start + 1:end] = body
+    probe_source = "\n".join(lines) + "\n"
+    os.makedirs(os.path.join(forge_project, "test"), exist_ok=True)
+    probe_name = f"{contract_name}_{os.getpid()}_{time.time_ns()}_fixed_return_probe.t.sol"
+    probe_path = os.path.join(forge_project, "test", probe_name)
+    artifact_path = os.path.join(workdir, "fixed-return-observation.t.sol")
+    stdout_path = os.path.join(workdir, "fixed-return-observation.json")
+    stderr_path = os.path.join(workdir, "fixed-return-observation.stderr")
+    with open(artifact_path, "w", encoding="utf-8") as stream:
+        stream.write(probe_source)
+    with open(probe_path, "w", encoding="utf-8") as stream:
+        stream.write(probe_source)
+    command = [
+        "forge",
+        "test",
+        "--json",
+        "--match-contract",
+        f"^{re.escape(contract_name)}$",
+        "--match-test",
+        f"^{re.escape(test_name)}",
+    ]
+    stdout, stderr, timed_out = "", "", False
+    try:
+        proc = subprocess.Popen(command,
+                                cwd=forge_project,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                text=True,
+                                start_new_session=True)
+        try:
+            stdout, stderr = proc.communicate(timeout=max(1, int(timeout)))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                pass
+            stdout, stderr = proc.communicate()
+    except OSError as exc:
+        stderr = str(exc)
+    finally:
+        try:
+            os.unlink(probe_path)
+        except FileNotFoundError:
+            pass
+    with open(stdout_path, "w", encoding="utf-8") as stream:
+        stream.write(stdout)
+    with open(stderr_path, "w", encoding="utf-8") as stream:
+        stream.write(stderr)
+    if timed_out:
+        return None, f"fixed return observation timed out after {int(timeout)}s"
+    result = forge_json_test_results(stdout).get(test_name)
+    value = boundary_probe_observed_uint(marker, result)
+    if value is None:
+        status = result.get("status") if isinstance(result, dict) else "absent"
+        reason = result.get("reason") if isinstance(result, dict) else ""
+        return None, f"fixed return observation did not expose a labeled value: {status} {reason}"
+    return value, None
 
 
 FORGE_RESULT_RE = re.compile(r"^\s*\[(PASS|FAIL[^\]]*)\]\s+(\w+)\s*\(")
@@ -10086,7 +10415,7 @@ NUMERIC_ENV_SETTERS = {
     "block.chainid": ("vm.chainId", "p_block_chainid", "chainId"),
     "block.basefee": ("vm.fee", "p_block_basefee", "fee"),
     "block.blobbasefee": ("vm.blobBaseFee", "p_block_blobbasefee", "blobBaseFee"),
-    "block.difficulty": ("vm.difficulty", "p_block_difficulty", "difficulty"),
+    "block.difficulty": ("vm.prevrandao", "p_block_difficulty", "prevrandao"),
     "block.prevrandao": ("vm.prevrandao", "p_block_prevrandao", "prevrandao"),
     "tx.gasprice": ("vm.txGasPrice", "p_tx_gasprice", "txGasPrice"),
 }
@@ -10140,10 +10469,13 @@ CONSTRUCTOR_SETUP_PROJECTION = "constructor-or-setup-exact/v1"
 TARGET_CALL_CALldata_PROJECTION = "selected-target-call-calldata/v1"
 UNOBSERVED_AUX_ENV_PROJECTION = "unobserved-auxiliary-environment/v1"
 FIXED_REPLAY_STATE_PROJECTION = "fixed-replay-entry-state/v1"
+FIXED_REPLAY_STATE_CONSTANT_PROJECTION = "fixed-replay-state-constant-or-immutable/v1"
+PREVRANDAO_DIFFICULTY_PROJECTION = "foundry-prevrandao-establishes-difficulty/v1"
 CE_PROJECTION_KINDS = frozenset(
     ("calldata-determined", "constructor-or-setup", "path-irrelevant",
      "certified-region-member", "unobserved-auxiliary-environment",
-     "fixed-replay-entry-state"))
+     "fixed-replay-entry-state", "fixed-replay-state-constant-or-immutable",
+     "prevrandao-establishes-difficulty"))
 EXACT_SOURCE_ENV_METHODS = {
     **{
         coord: method
@@ -10156,6 +10488,23 @@ EXACT_SOURCE_ENV_METHODS = {
     "block.blobbasefee": "blobBaseFee",
     "block.difficulty": "difficulty",
 }
+
+
+def prevrandao_difficulty_ce_projection(expected):
+    """Projection evidence for Foundry's post-Paris difficulty/prevrandao API."""
+    expected_ce = normalized_concrete_ce(expected)
+    if expected_ce is None or "block.difficulty" not in expected_ce:
+        return None
+    if ("block.prevrandao" in expected_ce and
+            expected_ce["block.prevrandao"] != expected_ce["block.difficulty"]):
+        return None
+    return {
+        "block.difficulty": {
+            "kind": "prevrandao-establishes-difficulty",
+            "certificate": PREVRANDAO_DIFFICULTY_PROJECTION,
+            "value": expected_ce["block.difficulty"],
+        }
+    }
 
 
 def abi_value_gate_ce_projection(expected, params, stage4_kind=None):
@@ -10297,6 +10646,24 @@ def _ce_projection_error(name,
             return "fixed replay state evidence lacks a source SHA-256"
         if setup_source_sha256 is not None and source_sha != setup_source_sha256:
             return "fixed replay state evidence is not bound to this test body"
+        return None
+    if kind == "fixed-replay-state-constant-or-immutable":
+        if not name.startswith("state."):
+            return "fixed replay constant evidence is restricted to state coordinates"
+        if certificate != FIXED_REPLAY_STATE_CONSTANT_PROJECTION:
+            return f"unsupported fixed replay constant certificate {certificate!r}"
+        value = _normalized_concrete_ce_value(evidence.get("value"))
+        if value is None or value != expected_value:
+            return "fixed replay constant evidence does not carry the exact CE value"
+        return None
+    if kind == "prevrandao-establishes-difficulty":
+        if name != "block.difficulty":
+            return "prevrandao difficulty projection is restricted to block.difficulty"
+        if certificate != PREVRANDAO_DIFFICULTY_PROJECTION:
+            return f"unsupported prevrandao difficulty certificate {certificate!r}"
+        value = _normalized_concrete_ce_value(evidence.get("value"))
+        if value is None or value != expected_value:
+            return "prevrandao difficulty evidence does not carry the exact CE value"
         return None
     if kind in ("path-irrelevant", "calldata-determined"):
         if certificate not in (ABI_VALUE_GATE_PROJECTION, EXTCALL_FIXTURE_PROJECTION,
@@ -10775,6 +11142,8 @@ def rendered_env_coords_for_r2(body, call_i, region):
     if ("msg.value" in region or observable_value_expr_for_r2(body, call_i) is not None):
         out.append(("msg.value", "num", None))
     for coord in NUMERIC_ENV_SETTERS:
+        if coord == "block.difficulty" and coord not in region:
+            continue
         if (coord in region
                 or observable_block_expr_for_r2(body, call_i, ENV_CHEATCODE_RE[coord]) is not None):
             out.append((coord, "num", None))
@@ -11657,7 +12026,8 @@ def establish_block_env(body, call_i, region, holes, pins, used, coord, cheatcod
         sig_add = ("uint256", var)
         pre_add = bound_lines(var, "uint", 256, lo, hi, coord_holes)
         coord_expr = var
-        cheat_arg = f"uint256({coord_expr})" if coord == "block.prevrandao" \
+        cheat_arg = f"uint256({coord_expr})" if coord in ("block.difficulty",
+                                                          "block.prevrandao") \
             else coord_expr
         note = (f"{coord} in [{lo}, {hi}]" +
                 ("  \\ {" + ", ".join(str(h) for h in coord_holes) + "}" if coord_holes else "") +
@@ -11667,7 +12037,8 @@ def establish_block_env(body, call_i, region, holes, pins, used, coord, cheatcod
                  f"excluded by vm.assume" if coord_holes else ""))
     else:
         coord_expr = str(lo)
-        cheat_arg = f"uint256({coord_expr})" if coord == "block.prevrandao" \
+        cheat_arg = f"uint256({coord_expr})" if coord in ("block.difficulty",
+                                                          "block.prevrandao") \
             else coord_expr
         note = (f"{coord} == {lo} is ESTABLISHED with "
                 f"`{cheatcode}({cheat_arg})` before the target call")
@@ -12348,15 +12719,36 @@ def _certified_env_literal_lines(expected_ce):
     for coord, (cheatcode, _var_base, _method) in NUMERIC_ENV_SETTERS.items():
         if coord not in expected_ce:
             continue
+        if coord == "block.difficulty" and "block.prevrandao" in expected_ce:
+            continue
         value = int(expected_ce[coord])
         if coord == "block.chainid" and (value < 0 or value > CHAIN_ID_MAX):
             return None, f"{coord}={value} is outside Foundry vm.chainId's uint64 domain"
-        arg = f"uint256({value})" if coord == "block.prevrandao" else str(value)
+        arg = f"uint256({value})" if coord in ("block.difficulty", "block.prevrandao") else str(value)
         lines.append(f"    {cheatcode}({arg});")
     for coord, (cheatcode, _var_base, _method) in ADDRESS_ENV_SETTERS.items():
         if coord in expected_ce:
             lines.append(f"    {cheatcode}(address(uint160({int(expected_ce[coord])})));")
     return lines, None
+
+
+_TARGET_ENV_PRELUDE_RE = re.compile(
+    r"^\s*vm\.(?:deal|prank|warp|roll|chainId|fee|blobBaseFee|difficulty|prevrandao|"
+    r"txGasPrice|coinbase)\s*\(")
+
+
+def _target_env_prelude_start(body, stmt_i):
+    start = stmt_i
+    while start > 0:
+        line = body[start - 1]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("//"):
+            start -= 1
+            continue
+        if not _TARGET_ENV_PRELUDE_RE.search(line):
+            break
+        start -= 1
+    return start
 
 
 def materialize_concrete_certified_env_point(source, test_name, unit, certified_ce):
@@ -12383,7 +12775,6 @@ def materialize_concrete_certified_env_point(source, test_name, unit, certified_
     if call_i is None:
         return source, 0, "certified basis target call is absent"
     stmt_i = statement_start(body, call_i)
-    insert_at = start + 1 + stmt_i
     additions, reason = _certified_env_literal_lines(expected_ce)
     if reason is not None:
         return source, 0, reason
@@ -12402,6 +12793,11 @@ def materialize_concrete_certified_env_point(source, test_name, unit, certified_
             additions.insert(0, f"    vm.deal(address(uint160({int(sender)})), {int(value)});")
     if not additions:
         return source, 0, None
+    prelude_start = _target_env_prelude_start(body, stmt_i)
+    if prelude_start < stmt_i:
+        del lines[start + 1 + prelude_start:start + 1 + stmt_i]
+        stmt_i = prelude_start
+    insert_at = start + 1 + stmt_i
     lines[insert_at:insert_at] = additions
     return "\n".join(lines) + "\n", len(additions), None
 
@@ -12444,6 +12840,7 @@ def materialize_concrete_certified_state_point(source,
     if not re.match(r"^\s*address\s*\(", receiver):
         receiver = f"address({receiver})"
     additions = []
+    projected = {}
     for name, value in state_items:
         scalar_value = _normalized_concrete_ce_value(value)
         if not isinstance(scalar_value, int):
@@ -12453,11 +12850,20 @@ def materialize_concrete_certified_state_point(source,
             return source, 0, f"certified mapping state coordinate {name} is not materialized"
         layout_name = layout_scalar_key(raw_state_name, layout, state_store_names)
         if layout_name is None:
-            return source, 0, f"certified state coordinate {name} has no scalar storage slot"
+            projected[name] = {
+                "kind": "fixed-replay-state-constant-or-immutable",
+                "certificate": FIXED_REPLAY_STATE_CONSTANT_PROJECTION,
+                "value": scalar_value,
+            }
+            continue
         slot, off, nb = layout[layout_name]
         additions += slot_write_lines(receiver, slot, off, nb, str(scalar_value))
         additions += slot_landing_check(receiver, slot, off, nb, str(scalar_value), name)
-    insert_at = start + 1 + statement_start(body, call_i)
+    if projected:
+        additions.append("    // VERIPUT_FIXED_REPLAY_STATE_PROJECTION " +
+                         json.dumps(projected, sort_keys=True, separators=(",", ":")))
+    stmt_i = statement_start(body, call_i)
+    insert_at = start + 1 + _target_env_prelude_start(body, stmt_i)
     lines[insert_at:insert_at] = additions
     return "\n".join(lines) + "\n", len(additions), None
 
@@ -12468,19 +12874,29 @@ def fixed_replay_state_ce_projection(expected, rendered_test_body):
     if expected_ce is None or rendered_test_body is None:
         return None
     body_text = "\n".join(rendered_test_body)
-    if "vm.store(" not in body_text or "vm.load(" not in body_text:
-        return None
     body_sha = hashlib.sha256(body_text.encode("utf-8")).hexdigest()
     evidence = {}
+    marker_rx = re.compile(r"VERIPUT_FIXED_REPLAY_STATE_PROJECTION\s+(\{.*\})")
+    for marker in marker_rx.finditer(body_text):
+        try:
+            payload = json.loads(marker.group(1))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        for name, record in payload.items():
+            if name in expected_ce and isinstance(record, dict):
+                evidence[name] = dict(record)
+    has_store_evidence = "vm.store(" in body_text and "vm.load(" in body_text
     for name, value in expected_ce.items():
-        if name.startswith("state."):
+        if name.startswith("state.") and has_store_evidence and name not in evidence:
             evidence[name] = {
                 "kind": "fixed-replay-entry-state",
                 "certificate": FIXED_REPLAY_STATE_PROJECTION,
                 "value": value,
                 "source_sha256": body_sha,
             }
-    return evidence
+    return evidence or None
 
 
 def target_instance_for_call(lines, call_i, unit):
@@ -13267,6 +13683,28 @@ def build_put(contract,
 
     other_env_established = []
     for env_coord in NUMERIC_ENV_SETTERS:
+        if env_coord == "block.difficulty" and (
+                "block.prevrandao" in region or "block.prevrandao" in pins):
+            difficulty_bounds = region.get(env_coord)
+            if difficulty_bounds is None and env_coord in pins:
+                difficulty_bounds = (pins[env_coord], pins[env_coord])
+            prevrandao_bounds = region.get("block.prevrandao")
+            if prevrandao_bounds is None and "block.prevrandao" in pins:
+                prevrandao_bounds = (pins["block.prevrandao"], pins["block.prevrandao"])
+            if difficulty_bounds is not None:
+                if prevrandao_bounds != difficulty_bounds:
+                    notes.append("block.difficulty and block.prevrandao certify different "
+                                 "slices; Foundry exposes both through vm.prevrandao, so "
+                                 "this PUT cannot establish them independently")
+                    return None, None
+                other_env_established.append("block.difficulty")
+                env_established.append("block.difficulty is established by the matching "
+                                       "block.prevrandao cheatcode")
+                coord_ident[env_coord] = coord_ident.get("block.prevrandao",
+                                                         "block.prevrandao")
+                coord_ident_abs[env_coord] = coord_ident_abs.get("block.prevrandao",
+                                                                 "block.prevrandao")
+                continue
         (body, call_i, coord_est, coord_sig, coord_pre, coord_note,
          coord_expr) = establish_numeric_env(body, call_i, region, holes, pins, used, env_coord)
         if coord_est is not None:
@@ -19111,6 +19549,11 @@ def assemble_concrete_source(emitted,
     source, _abstract_harness = materialize_abstract_target(source, flat_source or "", contract,
                                                             constructor_params, new_contract)
     source = re.sub(r'from "\./', 'from "../src/', source)
+    if certified_ce is not None and unit is not None and params is not None:
+        source, _arg_repairs, arg_error = materialize_concrete_certified_call_point(
+            source, case[1], unit, params, certified_ce)
+        if arg_error is not None:
+            raise ValueError(arg_error)
     if certified_ce is not None and unit is not None:
         source, _state_repairs, state_error = materialize_concrete_certified_state_point(
             source, case[1], unit, certified_ce, layout or {}, state_store_names)
@@ -19128,6 +19571,39 @@ def assemble_concrete_source(emitted,
     if reason is not None:
         raise ValueError(reason)
     return source
+
+
+def materialize_concrete_certified_call_point(source, test_name, unit, params, certified_ce):
+    """Render the exact authenticated CE calldata in one retained basis."""
+    expected = normalized_concrete_ce(certified_ce)
+    selected = _fixed_oracle_function(source, test_name)
+    declared = named_params(params or [])
+    if expected is None or selected is None:
+        return source, 0, "certified CE or selected concrete function is unavailable"
+    lines, start, end = selected
+    body = lines[start + 1:end]
+    call_i = find_unit_call(body, unit)
+    if call_i is None:
+        return source, 0, "certified CE target call is absent"
+    replacements = {}
+    for index, (name, sol_type) in enumerate(declared):
+        if name in expected:
+            literal = _concrete_return_literal(sol_type, expected[name])
+        elif (str(sol_type).strip() in ("bytes", "bytes memory", "bytes calldata")
+              and expected.get(name + ".length") == 0):
+            literal = 'hex""'
+        else:
+            literal = None
+        if literal is None:
+            return source, 0, (f"certified CE argument `{name}` of type `{sol_type}` "
+                               "cannot be rendered exactly")
+        replacements[index] = literal
+    global_call_i = start + 1 + call_i
+    rewritten, parsed = rewrite_call_args(lines[global_call_i], unit, replacements)
+    if rewritten is None or parsed is None or len(parsed) != len(declared):
+        return source, 0, "certified CE target call arguments cannot be rewritten exactly"
+    lines[global_call_i] = rewritten
+    return "\n".join(lines) + "\n", len(replacements), None
 
 
 def function_body_lines(source, name):
@@ -19421,13 +19897,21 @@ def add_concrete_normal_exit_oracle(source, test_name, unit, expected_exit="norm
         }]
     if _target_has_try_prefix(body_text, unit):
         return source, []
-    if expected_exit == "revert":
-        # A bare call that reverts aborts the test before an after-call status
-        # assertion can execute.  Only the emitter's complete try/catch form is
-        # safely convertible without guessing revert data.
-        return source, []
     indent = re.match(r"\s*", body[call_i]).group(0)
     absolute_call = start + 1 + call_i
+    if expected_exit == "revert":
+        lines.insert(absolute_call, f"{indent}vm.expectRevert();")
+        assertion = "vm.expectRevert();"
+        return "\n".join(lines) + "\n", [{
+            "class": "R0",
+            "kind": "revert",
+            "source": "expectRevert",
+            "observed": "target call reverts",
+            "expected": True,
+            "provenance": "stage2-witness",
+            "target_receiver": receiver,
+            "assertion": assertion,
+        }]
     lines.insert(absolute_call, f"{indent}bool {marker} = false;")
     lines.insert(absolute_call + 2, f"{indent}{marker} = true;")
     assertion = f'assertTrue({marker}, "fixed witness call must complete");'
@@ -19695,7 +20179,11 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
             for oracle in indexed:
                 expected_ok, expected = scalar(oracle.get("expected"))
                 reported_ok, reported = scalar(components[oracle["return_index"]])
-                if not expected_ok or not reported_ok or expected != reported:
+                if not expected_ok:
+                    return "indexed return-value oracle lacks a scalar expected value"
+                if oracle.get("source") == "foundry-fixed-replay":
+                    continue
+                if not reported_ok or expected != reported:
                     return "indexed return-value oracle differs from retained tuple return"
         elif "return-value" not in kinds:
             return "retained scalar return lacks an exact return-value oracle"
@@ -19706,17 +20194,27 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
             ]
             expected_ok, expected = (scalar(scalar_oracles[0].get("expected"))
                                      if len(scalar_oracles) == 1 else (False, None))
-            reported_ok, reported = scalar(report_return)
-            if (len(scalar_oracles) != 1 or not expected_ok or not reported_ok
-                    or expected != reported):
-                return "return-value oracle differs from retained scalar return"
+            if len(scalar_oracles) != 1 or not expected_ok:
+                return "return-value oracle lacks one scalar expected value"
+            if scalar_oracles[0].get("source") == "foundry-fixed-replay":
+                pass
+            else:
+                reported_ok, reported = scalar(report_return)
+                if not reported_ok or expected != reported:
+                    return "return-value oracle differs from retained scalar return"
     entry_state = claim.get("entry_storage")
     final_state = claim.get("final_state")
     entry_state = entry_state if isinstance(entry_state, dict) else {}
     final_state = final_state if isinstance(final_state, dict) else {}
+    def same_scalar(left, right):
+        left_ok, left_value = scalar(left)
+        right_ok, right_value = scalar(right)
+        return left_ok and right_ok and left_value == right_value
+
     changed_state = {
         str(name): value
-        for name, value in final_state.items() if entry_state.get(name) != value
+        for name, value in final_state.items()
+        if not same_scalar(entry_state.get(name), value)
     }
     if changed_state:
         state_oracles = [
@@ -19724,7 +20222,9 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
         ]
         covered = {str(oracle.get("storage_variable") or "") for oracle in state_oracles}
         if not set(changed_state).issubset(covered):
-            return "retained final_state lacks exact storage-slot-post-state coverage"
+            missing = sorted(set(changed_state) - covered)
+            return ("retained final_state lacks exact storage-slot-post-state coverage: " +
+                    ",".join(missing))
         for oracle in state_oracles:
             variable = str(oracle.get("storage_variable") or "")
             if variable not in final_state:
@@ -19734,7 +20234,7 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
             if not expected_ok or not reported_ok or expected != reported:
                 return "storage-slot-post-state oracle differs from retained final_state"
     events = claim.get("events")
-    if isinstance(events, list) and events:
+    if claim.get("exit_kind") == "normal" and isinstance(events, list) and events:
         event_oracles = [oracle for oracle in oracles if oracle.get("kind") == "event-log"]
         if all(isinstance(event, str) for event in events):
             if len(event_oracles) != len(events):
@@ -20090,7 +20590,7 @@ def add_concrete_fixed_event_oracles(source, test_name, unit, claim, ast_path):
     if not isinstance(events, list) or not events:
         return source, [], None
     if claim.get("exit_kind") != "normal":
-        return source, [], "reverting execution cannot retain EVM logs"
+        return source, [], None
     body = function_body_lines(source, test_name)
     if body is None:
         return source, [], "selected concrete replay function is absent"
@@ -20724,6 +21224,10 @@ def main():
                     "route for tuple/state/event/revert/call-status anchors; "
                     "unrenderable metadata is refused, never replaced by "
                     "normal-exit")
+    ap.add_argument("--concrete-claim-json",
+                    default=None,
+                    help="complete verifier claim for the exact certified-basis CE; "
+                    "supplies its return/final-state/event observations")
     ap.add_argument("--concrete-certified-ce-json",
                     default=None,
                     help="exact certified Stage-2 CE used to authenticate a "
@@ -20899,6 +21403,11 @@ def main():
         print("[put] REFUSED: --concrete-oracles-json is restricted to an "
               "authenticated certified-region CERTIFIED-BASIS-REPLAY")
         return 1
+    if (a.concrete_claim_json is not None and not concrete_return_mode_allowed(
+            a.concrete_only, a.concrete_stage2_source, a.concrete_stage2_witness_check)):
+        print("[put] REFUSED: --concrete-claim-json is restricted to an "
+              "authenticated certified-region CERTIFIED-BASIS-REPLAY")
+        return 1
     certified_ce = None
     if a.concrete_certified_ce_json is not None:
         try:
@@ -20910,6 +21419,16 @@ def main():
             print("[put] REFUSED: --concrete-certified-ce-json must encode an object")
             return 1
     supplied_concrete_oracles = None
+    supplied_concrete_claim = None
+    if a.concrete_claim_json is not None:
+        try:
+            supplied_concrete_claim = json.loads(a.concrete_claim_json)
+        except (TypeError, ValueError):
+            print("[put] REFUSED: --concrete-claim-json is not valid JSON")
+            return 1
+        if not isinstance(supplied_concrete_claim, dict):
+            print("[put] REFUSED: --concrete-claim-json must encode an object")
+            return 1
     if a.concrete_oracles_json is not None:
         try:
             supplied_concrete_oracles = json.loads(a.concrete_oracles_json)
@@ -21024,7 +21543,8 @@ def main():
         a.concrete_stage2_source, concrete_only=True) if a.concrete_only else "certified-region"))
     deploy_only = stage4_kind == "deploy-only"
     getter_only = stage4_kind in ("getter-only", "getter-value-gate")
-    source_synthesized_call = stage4_kind in ("getter-only", "getter-value-gate", "abi-value-gate")
+    source_synthesized_call = stage4_kind in ("getter-only", "getter-value-gate",
+                                               "abi-value-gate")
     if a.concrete_only and deploy_only:
         constructor_params = source_constructor_param_types(a.forge_project, a.contract)
         try:
@@ -21131,7 +21651,8 @@ def main():
                 f,
                 indent=2)
         return 0
-    synthetic_possible = can_synthesize_missing_emitter_output(a.path_function, a.ast, stage4_kind)
+    synthetic_possible = can_synthesize_missing_emitter_output(a.path_function, a.ast,
+                                                                stage4_kind)
     emit_budget = esbmc_budget("emit")
     capped_emit_budget = synthetic_emitter_probe_budget(emit_budget, a.timeout, synthetic_possible)
     if capped_emit_budget < emit_budget:
@@ -21346,6 +21867,22 @@ def main():
                       "a fresh same-path witness is not an authenticated basis")
         else:
             basis_params = source_inherited_function_params(flat_source, a.contract, a.unit, None)
+            if supplied_concrete_claim is not None:
+                claim_pf = supplied_concrete_claim.get("path_function")
+                if claim_pf is not None and str(claim_pf) != str(pf):
+                    print("[put] REFUSED: certified-basis observation claim names a "
+                          "different path_function")
+                    return 1
+                supplied_binding, supplied_error = bind_emitted_claim_to_certified_ce(
+                    supplied_concrete_claim, certified_ce, params=basis_params)
+                if supplied_binding is None:
+                    print("[put] REFUSED: certified-basis observation claim is not bound "
+                          "to its CE: " + str(supplied_error))
+                    return 1
+                # Use one verifier claim as a unit: its input/pre-state and its
+                # observations must not be spliced onto the emitter's different
+                # witness.  The rendered source is rebound to this exact CE below.
+                claim = dict(supplied_concrete_claim)
             certified_ce_binding, reason = bind_emitted_claim_to_certified_ce(claim,
                                                                               certified_ce,
                                                                               params=basis_params)
@@ -21600,6 +22137,8 @@ def main():
     aux_env_projection = (unobserved_auxiliary_env_ce_projection(
         certified_ce, flat_source, region=region, pins=pins)
                           if certified_ce_binding is not None else None)
+    difficulty_projection = (prevrandao_difficulty_ce_projection(certified_ce)
+                             if certified_ce_binding is not None else None)
     certified_env_basis = False
     if certified_ce_binding is not None:
         exact_ce_for_env = normalized_concrete_ce(certified_ce)
@@ -21616,7 +22155,8 @@ def main():
                                       or certified_env_basis or certified_state_basis)
     source_projection_evidence = {}
     for projection in (value_gate_projection, extcall_fixture_projection,
-                       calldata_projection if certified_env_basis else None, aux_env_projection):
+                       calldata_projection if certified_env_basis else None, aux_env_projection,
+                       difficulty_projection):
         if projection:
             source_projection_evidence.update(projection)
 
@@ -21911,15 +22451,37 @@ def main():
                     raise ValueError(oracle_error)
             else:
                 concrete_oracles = []
-                witness_return = (claim.get("return_value") if isinstance(claim, dict) else None)
-                if witness_return is None:
-                    witness_return = a.concrete_return_value
-                txt, return_oracles = add_concrete_fixed_return_oracles(
-                    txt, case[1], a.unit, concrete_rettypes, witness_return)
-                if witness_return is not None and not return_oracles:
-                    raise ValueError("authenticated non-void return witness could not be "
-                                     "bound to the exact source-typed target call")
-                concrete_oracles.extend(return_oracles)
+                witness_return = None
+                if concrete_return_mode_allowed(a.concrete_only,
+                                                a.concrete_stage2_source,
+                                                a.concrete_stage2_witness_check):
+                    if path_exit_kind == "normal" and concrete_rettypes:
+                        remaining = max(1, int(put_deadline - time.monotonic() -
+                                               postprocess_reserve_s))
+                        witness_return, return_error = observe_fixed_scalar_return_with_forge(
+                            txt, case[1], a.unit, concrete_rettypes, a.forge_project, a.workdir,
+                            newc, remaining)
+                        if witness_return is None:
+                            raise ValueError("fixed replay return observation unavailable: " +
+                                             str(return_error))
+                        notes.append("fixed replay return observed by Foundry before fusion")
+                else:
+                    witness_return = (claim.get("return_value")
+                                      if isinstance(claim, dict) else None)
+                    if witness_return is None:
+                        witness_return = a.concrete_return_value
+                if witness_return is not None:
+                    txt, return_oracles = add_concrete_fixed_return_oracles(
+                        txt, case[1], a.unit, concrete_rettypes, witness_return)
+                    if not return_oracles:
+                        raise ValueError("authenticated non-void return witness could not be "
+                                         "bound to the exact source-typed target call")
+                    if concrete_return_mode_allowed(a.concrete_only,
+                                                    a.concrete_stage2_source,
+                                                    a.concrete_stage2_witness_check):
+                        for oracle in return_oracles:
+                            oracle["source"] = "foundry-fixed-replay"
+                    concrete_oracles.extend(return_oracles)
                 txt, event_oracles, event_error = add_concrete_fixed_event_oracles(
                     txt, case[1], a.unit, claim, a.ast)
                 if event_error:
@@ -22858,9 +23420,10 @@ def main():
                     flat_source=flat_source,
                     extcall_length_coordinates=extcall_length_coordinates)
                 _directions = _r2_direction(rows, print)[1]
-                _boundary_specs = boundary_observation_r2_spec(_observations,
-                                                               _directions,
-                                                               refinement_rounds=2)
+                _boundary_specs = boundary_observation_r2_spec(
+                    _observations,
+                    _directions,
+                    refinement_rounds=BOUNDARY_OBSERVATION_REFINEMENT_ROUNDS)
                 if _boundary_specs:
                     print("[put]   boundary observations proposed "
                           f"{len(r2_candidates(_boundary_specs))} R2 candidate(s); "
@@ -23112,8 +23675,11 @@ def main():
         root_assertions = tuple(candidate for candidate, _family in candidate_families
                                 if oracle_candidate_cache.get(candidate, (None, None))[0] ==
                                 "HOLDS")
-        root_part = make_oracle_input_part("part0", part_region, part_holes,
-                                           part_witness, root_assertions)
+        root_part = make_oracle_input_part(
+            "part0", part_region, part_holes, part_witness,
+            representative_ce=claim_oracle_ce_values(claim),
+            representative_claim=claim,
+            assertions=root_assertions)
         root_cache = {
             (root_part.part_id, candidate): oracle_candidate_cache.get(
                 candidate, ("UNDECIDED", None))
@@ -23145,8 +23711,10 @@ def main():
                 sorted(part.region))
             verdict = oracle_part_candidate_verdict(
                 part_rows, part_summary, candidate, part_refutations)
-            root_cache[(part.part_id, candidate)] = verdict
-            return verdict
+            for proved_candidate, proved_verdict in oracle_part_verdict_cache(
+                    part_rows, part_summary, part_refutations).items():
+                root_cache[(part.part_id, proved_candidate)] = proved_verdict
+            return root_cache.get((part.part_id, candidate), verdict)
 
         oracle_parts, oracle_part_queries = refine_oracle_parts(
             [root_part], candidate_families, verify_oracle_part,
@@ -23628,19 +24196,114 @@ def main():
     stats["r1_oracle_ladder"] = r1_oracle_ladder
     stats["r2_ladder"] = r2_ladder
 
-    # Insert into the SAME test contract, so the PUT shares the deploy the
-    # concrete tests use rather than carrying a second copy of it.
+    physical_puts = [(put, stats, plabel, None, rows, region, holes)]
+    if len(oracle_parts) > 1:
+        physical_puts = []
+        refined_candidates = [candidate for candidate, _family in candidate_families]
+        for part in oracle_parts:
+            part_label = f"{plabel}_{oracle_input_part_suffix(part)}"
+            part_notes = list(notes)
+            part_rows = oracle_input_part_build_rows(rows, part, refined_candidates)
+            try:
+                part_put, part_stats = build_put(
+                    a.contract,
+                    a.unit,
+                    a.enc,
+                    a.depth,
+                    pf,
+                    part.region,
+                    part.holes,
+                    pins,
+                    params,
+                    emitted,
+                    case,
+                    layout,
+                    part_rows,
+                    part_notes,
+                    cell=(cell_name, cell_rule),
+                    unwind=unwind_applied,
+                    rettypes=rettypes,
+                    maps=maps,
+                    piece_label=part_label,
+                    derived_by=json.loads(a.derived_by or "{}"),
+                    rollback_exit=rollback_here,
+                    r2_terms=r2_term_lookup,
+                    r2_subfamilies=r2_subfamilies,
+                    exit_kind=path_exit_kind,
+                    state_types=state_types,
+                    lift_unconstrained_calldata=(a.lift_unconstrained_calldata),
+                    lift_unconstrained_sender=(a.lift_unconstrained_sender),
+                    path_decisions=claim.get("decisions") or [],
+                    establish=establish_spec,
+                    unit_payable=(unit_mutability == "payable"),
+                    state_store_names=state_store_names,
+                    flat_source=flat_source,
+                    extcall_length_coordinates=(extcall_length_coordinates))
+            except ConcreteFallback as fallback:
+                part_put, part_stats = None, None
+                part_notes.append(fallback.reason)
+            if part_put is None:
+                reason = "; ".join(part_notes) or "oracle input part did not render a PUT"
+                print(f"[put] REFUSED: oracle input part {part.part_id}: {reason}")
+                write_put_refusal_record(
+                    a.workdir,
+                    "oracle-part-build-put-refused",
+                    a.contract,
+                    a.unit,
+                    a.enc,
+                    a.depth,
+                    path_function=pf,
+                    region=part.region,
+                    holes=part.holes,
+                    pins=pins,
+                    establish=establish_spec,
+                    ladder_rows=part_rows,
+                    ladder_summary=summary,
+                    ladder_refusal=refusal,
+                    piece=a.piece,
+                    artifact_identity=overload_label,
+                    notes=part_notes,
+                    extra={
+                        **storage_layout_status,
+                        "oracle_input_part": oracle_input_part_record(part),
+                        "oracle_input_parts": [oracle_input_part_record(p)
+                                               for p in oracle_parts],
+                        "oracle_input_part_queries": oracle_part_queries,
+                        "r2_ladder": r2_ladder,
+                        "r1_oracle_ladder": r1_oracle_ladder,
+                        "binary": binary_identity(a.esbmc),
+                    },
+                    timing_start=put_start,
+                    timeout_s=a.timeout)
+                return 2
+            part_stats["repaired_unsupported_skeleton"] = repaired_unsupported_skeleton
+            part_stats["r1_oracle_ladder"] = r1_oracle_ladder
+            part_stats["r2_ladder"] = r2_ladder
+            physical_puts.append((part_put, part_stats, part_label, part, part_rows,
+                                  dict(part.region), dict(part.holes)))
+
+    # Each physical PUT is a separate Foundry test artifact.  In particular,
+    # oracle input parts must not be packed into one contract: downstream
+    # Forge gating and accounting operate on (file, test), and packing made
+    # several independently proved parts look like one test row.
     cname, _cstart, _cend = emitted.blocks[case[0]]
     newc = f"{cname}_{a.contract}_{a.unit}_put{a.enc}{plabel}{a.test_suffix}"
-    txt = assemble_put_source(emitted, case, [put], newc, foundry_fixture, layout, a.contract,
-                              a.unit, constructor_mocks, runtime_mocks, constructor_params,
-                              constructor_param_mocks, constructor_param_struct_field_mocks,
-                              constructor_param_runtime_mocks, constructor_param_hascode_mocks,
-                              flat_source)
-    dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
-    with open(dest, "w") as f:
-        f.write(txt)
-    print(f"[put] WROTE {dest}")
+    physical_files = []
+    for entry in physical_puts:
+        part_put, _part_stats, part_label, _part, _part_rows, _part_region, _part_holes = entry
+        physical_name = newc if len(physical_puts) == 1 else f"{newc}_{part_label}"
+        txt = assemble_put_source(emitted, case, [part_put], physical_name, foundry_fixture,
+                                  layout, a.contract, a.unit, constructor_mocks,
+                                  runtime_mocks, constructor_params, constructor_param_mocks,
+                                  constructor_param_struct_field_mocks,
+                                  constructor_param_runtime_mocks,
+                                  constructor_param_hascode_mocks, flat_source)
+        dest = os.path.join(a.forge_project, "test", f"{physical_name}.t.sol")
+        with open(dest, "w") as f:
+            f.write(txt)
+        physical_files.append(dest)
+        print(f"[put] WROTE {dest}")
+    print(f"[put]   physical PUT tests: {len(physical_puts)}")
     print(f"[put]   fuzz parameters : {stats['fuzz_params']} "
           f"({', '.join(stats['lifted']) or 'none'})")
     print(f"[put]   oracle asserts  : {stats['asserts']} "
@@ -23664,6 +24327,42 @@ def main():
     for n in notes:
         print(f"[put]   note: {n}")
 
+    def _json_region(region_obj):
+        return {k: [str(v[0]), str(v[1])] for k, v in region_obj.items()}
+
+    def _json_holes(holes_obj):
+        return {k: [str(x) for x in v] for k, v in holes_obj.items()}
+
+    test_units = []
+    for physical_index, (_part_put, part_stats, part_label, part, part_rows, part_region_obj,
+                         part_holes_obj) in enumerate(physical_puts):
+        test_name = f"test_put_{a.contract}_{a.unit}_path{a.enc}{part_label}"
+        test_unit = {
+            "file":
+            physical_files[physical_index],
+            "test":
+            test_name,
+            "stats":
+            part_stats,
+            "materialization":
+            stage4_materialization_metadata(
+                "put",
+                part_stats,
+                r2_requested=r2_requested,
+                r2_fuzz_prefilter=r2_fuzz_prefilter),
+            "region":
+            _json_region(part_region_obj),
+            "holes":
+            _json_holes(part_holes_obj),
+            "derived_by":
+            json.loads(a.derived_by or "{}"),
+        }
+        if part is not None:
+            test_unit["oracle_input_part"] = oracle_input_part_record(part)
+            test_unit["requires_fixed_replay_fusion"] = True
+            test_unit["fixed_replay_fusion_error"] = "part representative replay missing"
+        test_units.append(test_unit)
+
     with open(os.path.join(a.workdir, "put.json"), "w") as f:
         json.dump(
             {
@@ -23685,13 +24384,15 @@ def main():
                 "getter_signature":
                 getter_signature,
                 "file":
-                dest,
+                physical_files[0],
                 # The SAME `plabel` build_put used. A second derivation here
                 # is how put.json comes to name a function the file does not
                 # contain.
                 "test":
                 f"test_put_{a.contract}_{a.unit}"
                 f"_path{a.enc}{plabel}",
+                "test_units":
+                test_units if len(test_units) > 1 else [],
                 "piece":
                 a.piece,
                 "derived_by":

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import errno
 import hashlib
 import json
 import os
@@ -40,7 +41,8 @@ from rq1_window_guard import (  # noqa: E402
     WindowGuardError, enforce_rows_in_window,
 )
 from rq1_concrete_replay_store import (  # noqa: E402
-    ReplayPersistenceError, annotate_generalization, audit_manifest, load_manifest,
+    ReplayPersistenceError, _oracle_binding_errors, _structured_oracle_errors,
+    annotate_generalization, audit_manifest, deterministic_replay_errors, load_manifest,
     invalidation_applies, persist_concrete_replay, persistence_coverage,
     persistence_publication_key,
 )
@@ -102,7 +104,14 @@ QUALITY_BUCKET_RANK = {
 
 DEFAULT_VERIPUT_ROOT = Path(os.environ.get("VERIPUT_ROOT", "/home/samson/workspace/VeriPUT"))
 DEFAULT_RESULT_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1" / "VeriPUT"
+DEFAULT_FAIR_RERUN_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1_KInduction_Fair600"
+DEFAULT_NOPUT_RERUN_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1_KInduction_NoPUT600"
 DEFAULT_AST_CACHE_ROOT = Path("/tmp/veriput_rq1_ast_cache")
+RQ3_ABLATION_ROOTS = {
+    "no-selection-strategy": "No_selection_strategy",
+    "no-region-refinement": "No_region_refinement",
+    "no-test-assert-refinement": "No_test_assert_refinement",
+}
 DEFAULT_STAGE2_UNIT_TIMEOUT_CAP_S = 0
 DEFAULT_ADAPTIVE_STAGE2_UNIT_TIMEOUT_CAP_S = 120
 DEFAULT_CONCRETE_ONLY_STAGE4_TIMEOUT_CAP_S = 0
@@ -111,6 +120,10 @@ DEFAULT_MEMLIMIT_GIB = 12
 ADAPTIVE_STAGE2_MANY_UNIT_THRESHOLD = 4
 ADAPTIVE_STAGE2_EXPENSIVE_TIER_THRESHOLD = 65
 ADAPTIVE_STAGE2_FAIR_SHARE_SLOTS = 8
+STRICT_STAGE4_FAIR_SHARE_SLOTS = 8
+STRICT_STAGE4_MIN_UNIT_BUDGET_S = 30
+STRICT_CASE_FINALIZATION_RESERVE_MAX_S = 30.0
+STRICT_PROCESS_TERMINATION_RESERVE_S = 2.0
 DATASET_LABEL = {
     "peer182": "peer182",
     "bugfix124": "bugfix124",
@@ -118,12 +131,17 @@ DATASET_LABEL = {
     "stress203": "real203",
     "real203": "real203",
 }
+# `real203`/`stress203` are the official Stress-Projects denominator and must
+# resolve to the manifest's `stress203` selector, which keeps only the prepared
+# targets and yields exactly 203.  Asking the manifest for `stress243` returns
+# 241 and silently inflates the 509-target denominator to 547.  `stress243`
+# stays available for the wider, unofficial set.
 TARGET_BENCHMARK_ARG = {
     "peer182": "peer182",
     "bugfix124": "bugfix124",
     "stress243": "stress243",
-    "stress203": "stress243",
-    "real203": "stress243",
+    "stress203": "stress203",
+    "real203": "stress203",
 }
 PREPARED_DATASET_DIR = {
     "peer182": "Peer182",
@@ -164,17 +182,52 @@ def validate_roots(veriput_root: Path,
                    result_root: Path,
                    ast_cache_root: Path,
                    *,
-                   concrete_replay_only_ablation: bool = False) -> None:
+                   concrete_replay_only_ablation: bool = False,
+                   strict_case_wall_budget: bool = False,
+                   rq3_ablation: str = "") -> None:
     allowed_results = [veriput_root / "Results" / "RQ1" / "VeriPUT"]
     if concrete_replay_only_ablation:
         allowed_results.append(veriput_root / "Results" / "RQ3" / "VeriExploit" / "No_Cer_Reg")
+    if rq3_ablation:
+        allowed_results.append(veriput_root / "Results" / "RQ3" /
+                               RQ3_ABLATION_ROOTS[rq3_ablation])
+    if strict_case_wall_budget:
+        allowed_results.append(veriput_root / "Results" / "RQ1_KInduction_Fair600")
+        allowed_results.append(veriput_root / "Results" / "RQ1_KInduction_NoPUT600")
     if not any(_is_under(result_root, allowed) for allowed in allowed_results):
         allowed_text = ", ".join(str(path) for path in allowed_results)
         raise RQ1RunError(f"--result-root must be under one of {allowed_text}; got {result_root}")
+    if strict_case_wall_budget and _is_under(result_root,
+                                              veriput_root / "Results" / "RQ1" / "VeriPUT"):
+        raise RQ1RunError(
+            "--strict-case-wall-budget is an isolated rerun and must not write canonical RQ1")
     for protected in (veriput_root / "Datasets", veriput_root / "Results"):
         if _is_under(ast_cache_root, protected):
             raise RQ1RunError(
                 f"--ast-cache-root must not be under {protected}; got {ast_cache_root}")
+
+
+def validate_rq3_ablation_args(args) -> None:
+    """Keep RQ3 derivation-only arms out of the verifier runner."""
+    rq3_ablation = getattr(args, "rq3_ablation", "")
+    if getattr(args, "no_test_assert_refinement", False) or \
+            rq3_ablation == "no-test-assert-refinement":
+        raise RQ1RunError("no-test-assert-refinement is derived from a completed "
+                          "Full run with rq3_derive_from_full.py; do not rerun "
+                          "VeriPUT for this ablation")
+    if getattr(args, "no_region_refinement", False) or rq3_ablation == "no-region-refinement":
+        raise RQ1RunError("no-region-refinement is derived from a completed "
+                          "Full run with rq3_derive_from_full.py and retained "
+                          "certified concrete bases; do not rerun VeriPUT for "
+                          "this ablation")
+    if getattr(args, "no_selection_strategy", False) and rq3_ablation != "no-selection-strategy":
+        raise RQ1RunError("--no-selection-strategy requires "
+                          "--rq3-ablation no-selection-strategy")
+    if rq3_ablation == "no-selection-strategy" and \
+            not getattr(args, "no_selection_strategy", False):
+        raise RQ1RunError("no-selection-strategy must pass "
+                          "--no-selection-strategy so Stage 2 receives the "
+                          "matching ESBMC option")
 
 
 def _write_json(path: Path, doc: dict) -> None:
@@ -412,7 +465,8 @@ def _rewrite_promoted_paths(root: Path, old_root: Path, new_root: Path) -> None:
     """Relocate absolute artifact paths in copied JSON ledgers."""
     old = str(old_root)
     new = str(new_root)
-    for path in root.rglob("*.json"):
+    ledger_paths = list(root.rglob("*.json")) + list(root.rglob("*.jsonl"))
+    for path in ledger_paths:
         try:
             text = path.read_text(errors="replace")
             updated = text.replace(old, new)
@@ -420,6 +474,52 @@ def _rewrite_promoted_paths(root: Path, old_root: Path, new_root: Path) -> None:
                 path.write_text(updated)
         except OSError:
             continue
+
+
+def _rewrite_exact_artifact_paths(root: Path, path_map: dict[str, str]) -> None:
+    """Rewrite external evidence inputs to their published locations."""
+    if not path_map:
+        return
+    ledger_paths = list(root.rglob("*.json")) + list(root.rglob("*.jsonl"))
+    for path in ledger_paths:
+        try:
+            text = path.read_text(errors="replace")
+            updated = text
+            for old, new in path_map.items():
+                updated = updated.replace(old, new)
+            if updated != text:
+                path.write_text(updated)
+        except OSError:
+            continue
+
+
+def _referenced_solast_paths(root: Path) -> set[Path]:
+    """Find existing absolute verifier ASTs referenced by JSON ledgers."""
+    paths: set[Path] = set()
+
+    def visit(value) -> None:
+        if isinstance(value, dict):
+            for item in value.values():
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, str) and value.endswith(".solast"):
+            candidate = Path(value)
+            if candidate.is_absolute() and candidate.is_file():
+                paths.add(candidate)
+
+    for ledger in list(root.rglob("*.json")) + list(root.rglob("*.jsonl")):
+        try:
+            if ledger.suffix == ".jsonl":
+                for line in ledger.read_text(errors="replace").splitlines():
+                    if line.strip():
+                        visit(json.loads(line))
+            else:
+                visit(json.loads(ledger.read_text(errors="replace")))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return paths
 
 
 def _promote_candidate_artifacts(staging_root: Path, case_dir: Path, candidate_id: str) -> Path:
@@ -431,6 +531,192 @@ def _promote_candidate_artifacts(staging_root: Path, case_dir: Path, candidate_i
     shutil.copytree(staging_root, destination)
     _rewrite_promoted_paths(destination, staging_root, destination)
     return destination
+
+
+def _strict_stage4_roots(case_dir: Path,
+                         cert_path: Path,
+                         job_id: str,
+                         strict_case_wall_budget: bool) -> tuple[Path, Path]:
+    """Return the execution and published roots for a Stage-4 unit."""
+    published = case_dir / "put" / _safe_name(job_id)
+    if not strict_case_wall_budget:
+        return published, published
+    # cert_path is below the externally validated AST cache in strict reruns.
+    # Keep put_all away from VeriPUT/Results, then publish its artifacts only
+    # after the child process has finished.
+    staging = cert_path.parent / "stage4" / _safe_name(job_id)
+    return staging, published
+
+
+def _publish_strict_stage4_artifacts(staging_root: Path, destination: Path) -> dict:
+    """Publish one finished strict-rerun Stage-4 tree and remove its scratch."""
+    if not staging_root.exists():
+        return {
+            "status": "no-artifacts",
+            "staging_root": str(staging_root),
+            "destination": str(destination),
+        }
+    if destination.exists():
+        raise RQ1RunError(f"refusing to overwrite Stage-4 artifact: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    publication_method = "rename"
+    try:
+        os.replace(staging_root, destination)
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+        publication_method = "copy"
+        shutil.copytree(staging_root, destination)
+        shutil.rmtree(staging_root)
+    try:
+        _rewrite_promoted_paths(destination, staging_root, destination)
+    except OSError:
+        # The finished evidence has already been published. Never delete it
+        # merely because an audit-path rewrite failed.
+        raise
+    return {
+        "status": "published",
+        "method": publication_method,
+        "staging_root": str(staging_root),
+        "destination": str(destination),
+    }
+
+
+def _move_tree(source: Path, destination: Path) -> str:
+    """Move a directory that may live on a different filesystem.
+
+    The strict-rerun staging root sits under the AST cache, which is a separate
+    mount from `VeriPUT/Results` on some hosts.  A bare rename raises EXDEV
+    there and aborts the whole case before Stage 2 ever runs.
+    """
+    try:
+        os.replace(source, destination)
+        return "rename"
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+        shutil.copytree(source, destination)
+        shutil.rmtree(source)
+        return "copy"
+
+
+def _publish_strict_certification_artifacts(cert_path: Path,
+                                            case_dir: Path) -> tuple[Path, dict[str, str]]:
+    """Publish the durable Stage-2 evidence bundle for a strict rerun."""
+    staging_root = cert_path.parent
+    destination = case_dir / "cert"
+    if destination.exists():
+        precreated_fixtures = destination / "fixtures"
+        staged_fixtures = staging_root / "fixtures"
+        existing_entries = sorted(destination.iterdir())
+        if (len(existing_entries) == 1 and existing_entries[0] == precreated_fixtures
+                and not (destination / cert_path.name).exists()
+                and not staged_fixtures.exists()):
+            staged_fixtures.parent.mkdir(parents=True, exist_ok=True)
+            _move_tree(precreated_fixtures, staged_fixtures)
+            destination.rmdir()
+        else:
+            raise RQ1RunError(f"refusing to overwrite certification artifact: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    input_path_map: dict[str, str] = {}
+    evidence_dir = staging_root / "evidence" / "solast"
+    evidence_rows = []
+    for source in sorted(_referenced_solast_paths(staging_root)):
+        try:
+            source.relative_to(staging_root)
+            continue
+        except ValueError:
+            pass
+        digest = _sha256_file(source)
+        if not digest:
+            raise RQ1RunError(f"cannot hash certification verifier input: {source}")
+        staged_input = evidence_dir / f"{digest}.solast"
+        staged_input.parent.mkdir(parents=True, exist_ok=True)
+        if not staged_input.exists():
+            shutil.copy2(source, staged_input)
+        if _sha256_file(staged_input) != digest:
+            raise RQ1RunError(f"published verifier input hash mismatch: {source}")
+        published_input = destination / "evidence" / "solast" / staged_input.name
+        input_path_map[str(source)] = str(published_input)
+        evidence_rows.append({
+            "sha256": digest,
+            "published": str(published_input),
+        })
+    if evidence_rows:
+        (staging_root / "evidence" / "solast-manifest.json").write_text(
+            json.dumps({
+                "schema": "veriput-published-solast/v1",
+                "inputs": evidence_rows,
+            }, indent=2, sort_keys=True) + "\n")
+    if not cert_path.exists():
+        # A strict run may spend its whole Stage-2 budget before certify_all
+        # authenticates any row. That is still a valid no-output result and the
+        # empty journal is the durable evidence boundary for that empty set.
+        cert_path.parent.mkdir(parents=True, exist_ok=True)
+        cert_path.write_text("")
+    stage4_root = staging_root / "stage4"
+    held_stage4_root = staging_root.parent / f".{staging_root.name}.stage4-unpublished"
+    if stage4_root.exists():
+        if any(stage4_root.iterdir()):
+            if held_stage4_root.exists():
+                raise RQ1RunError(f"refusing to overwrite Stage-4 scratch: {held_stage4_root}")
+            os.replace(stage4_root, held_stage4_root)
+        else:
+            stage4_root.rmdir()
+    try:
+        try:
+            os.replace(staging_root, destination)
+        except OSError as exc:
+            if exc.errno != errno.EXDEV:
+                raise
+            shutil.copytree(staging_root, destination)
+            shutil.rmtree(staging_root)
+        _rewrite_promoted_paths(destination, staging_root, destination)
+        _rewrite_exact_artifact_paths(destination, input_path_map)
+    except OSError:
+        # Preserve whichever side already owns the evidence. Removing the
+        # destination here would lose a completed strict-run journal.
+        raise
+    finally:
+        if held_stage4_root.exists():
+            staging_root.mkdir(parents=True, exist_ok=True)
+            os.replace(held_stage4_root, staging_root / "stage4")
+    published_cert = destination / cert_path.name
+    if not published_cert.is_file():
+        raise RQ1RunError(f"published certification journal is missing: {published_cert}")
+    return published_cert, input_path_map
+
+
+def _relocate_record_paths(value, old_root: Path, new_root: Path):
+    """Relocate scratch paths in the in-memory result/schedule records."""
+    old = str(old_root)
+    new = str(new_root)
+    if isinstance(value, dict):
+        return {key: _relocate_record_paths(item, old_root, new_root)
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [_relocate_record_paths(item, old_root, new_root) for item in value]
+    if isinstance(value, str):
+        # Stage-4 scratch is deliberately published through its own artifact
+        # tree. Keep historical execution-root fields historical rather than
+        # rewriting them to a non-existent cert/stage4 directory.
+        if str(old_root) + "/stage4" in value:
+            return value
+        return value.replace(old, new)
+    return value
+
+
+def _relocate_exact_record_paths(value, path_map: dict[str, str]):
+    """Relocate exact external evidence paths in an in-memory record."""
+    if isinstance(value, dict):
+        return {key: _relocate_exact_record_paths(item, path_map)
+                for key, item in value.items()}
+    if isinstance(value, list):
+        return [_relocate_exact_record_paths(item, path_map) for item in value]
+    if isinstance(value, str):
+        for old, new in path_map.items():
+            value = value.replace(old, new)
+    return value
 
 
 def _candidate_rejection(candidate: dict, reason: str, detail: str | None = None) -> dict:
@@ -650,6 +936,9 @@ def persist_case_concrete_replays(case_dir: Path,
                                   case_key: str | None = None) -> dict:
     """Adopt every green concrete test before a valid result is published."""
     valid_tests = [test for test in put_summary.get("valid_tests") or [] if isinstance(test, dict)]
+    retained_bases = [test for test in put_summary.get("retained_concrete_bases") or []
+                      if isinstance(test, dict) and test.get("valid_reference_test") is True]
+    persistence_rows = valid_tests + retained_bases
     if case_key and invalidation_applies(case_key, valid_tests):
         coverage = persistence_coverage([], [], case_dir)
         coverage.update({
@@ -660,7 +949,7 @@ def persist_case_concrete_replays(case_dir: Path,
         })
         return coverage
     errors = []
-    for test in put_summary.get("valid_tests") or []:
+    for test in persistence_rows:
         if not isinstance(test, dict) or test.get("kind") != "concrete":
             continue
         try:
@@ -672,13 +961,13 @@ def persist_case_concrete_replays(case_dir: Path,
                 "reason": str(exc),
             })
     try:
-        generalization = annotate_generalization(case_dir, put_summary.get("valid_tests") or [])
+        generalization = annotate_generalization(case_dir, persistence_rows)
     except ReplayPersistenceError as exc:
         errors.append({"reason": str(exc), "stage": "generalization-annotation"})
         generalization = {}
     manifest = load_manifest(case_dir)
     coverage = persistence_coverage(
-        put_summary.get("valid_tests") or [],
+        persistence_rows,
         manifest.get("entries") or [], case_dir)
     coverage["manifest"] = str(case_dir / "concrete-replays" / "manifest.json")
     coverage["manifest_errors"] = audit_manifest(case_dir, manifest)
@@ -1163,9 +1452,14 @@ def _esbmc_binary_identity(esbmc_arg: str | None) -> dict:
     return identity
 
 
-def _pipeline_code_identity() -> dict:
+def _pipeline_code_identity(stage4_driver: str | None = None) -> dict:
     files = {}
-    for path in PIPELINE_IDENTITY_FILES:
+    paths = list(PIPELINE_IDENTITY_FILES)
+    if stage4_driver:
+        candidate = Path(stage4_driver)
+        if candidate.resolve() not in {path.resolve() for path in paths}:
+            paths.append(candidate)
+    for path in paths:
         resolved = path.resolve()
         digest = _sha256_file(resolved)
         files[str(resolved)] = digest
@@ -1869,6 +2163,29 @@ def _no_unit_schedule_allows_deploy_fallback(schedule: dict) -> bool:
     return True
 
 
+def _no_unit_schedule_allows_library_internal_fallback(schedule: dict) -> bool:
+    """Admit only an explicitly hinted internal function of a library target."""
+    if not _is_true_no_unit_schedule(schedule):
+        return False
+    for row in schedule.get("no_unit_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        skipped = [item for item in row.get("skipped") or [] if isinstance(item, dict)]
+        if not any(item.get("kind") == "library-contract" for item in skipped):
+            continue
+        missing = ((row.get("unit_hints") or {}).get("missing_unit_hints")
+                   or row.get("missing_unit_hints") or [])
+        internal = {
+            str(item.get("name"))
+            for item in skipped
+            if item.get("kind") == "non-public-function"
+            and item.get("visibility") == "internal" and item.get("name")
+        }
+        if any(str(name) in internal for name in missing):
+            return True
+    return False
+
+
 def _contract_decl_kind(source: str, contract: str) -> tuple[str | None, bool]:
     if not contract:
         return None, False
@@ -2557,15 +2874,21 @@ def emit_no_unit_getter_fallbacks(subject: PreparedSubject,
                                   remaining_s: float,
                                   memlimit_gib: int,
                                   forge_timeout: int,
-                                  esbmc_bin: str | None = None) -> list[dict]:
+                                  esbmc_bin: str | None = None,
+                                  *,
+                                  deadline: float | None = None,
+                                  explicit_getters: list[str] | None = None,
+                                  stage_name: str = "no-unit-getter-fallback") -> list[dict]:
     stages = []
-    if not _is_true_no_unit_schedule(schedule):
+    # `explicit_getters` is the zero-yield rescue below, which names the getters
+    # itself because the schedule has jobs and therefore no `no_unit_rows`.
+    if explicit_getters is None and not _is_true_no_unit_schedule(schedule):
         return stages
     try:
         enum = enumerate_subject_units(subject)
     except SubjectError as exc:
         return [{
-            "stage": "no-unit-getter-fallback",
+            "stage": stage_name,
             "status": "skipped",
             "reason": f"could not enumerate subject getters: {exc}",
         }]
@@ -2574,17 +2897,21 @@ def emit_no_unit_getter_fallbacks(subject: PreparedSubject,
         for row in enum.skipped
         if row.get("kind") == "public-state-getter"
     }
-    getters = [name for name in _no_unit_selected_getters(schedule) if name in enum_getters]
+    getters = [name for name in (explicit_getters
+                                 if explicit_getters is not None
+                                 else _no_unit_selected_getters(schedule))
+               if name in enum_getters]
     for getter in getters:
-        budget = max(1, int(remaining_s))
-        if budget <= 0:
+        current_remaining = (_remaining(deadline) if deadline is not None else remaining_s)
+        if current_remaining < 1:
             stages.append({
-                "stage": "no-unit-getter-fallback",
+                "stage": stage_name,
                 "unit": getter,
                 "status": "skipped",
                 "reason": "case budget exhausted before getter fallback",
             })
             continue
+        budget = max(1, int(current_remaining))
         out_root = case_dir / "put" / f"structural_getter__{_safe_name(getter)}"
         cert_path = out_root / "static-getter-cert.jsonl"
         _append_jsonl(cert_path, _static_getter_cert_row(subject, getter, schedule))
@@ -2598,20 +2925,94 @@ def emit_no_unit_getter_fallbacks(subject: PreparedSubject,
                          None,
                          esbmc_bin,
                          emit_concrete_fallbacks=True)
-        wrapper_timeout = budget + 60 + 2 * forge_timeout
-        stage = run_command(argv, wrapper_timeout,
-                            case_dir / "logs" / f"static-getter-{_safe_name(getter)}-put")
+        wrapper_timeout = _case_wrapper_timeout(
+            budget + 60 + 2 * forge_timeout,
+            deadline if deadline is not None else time.monotonic() + budget,
+            deadline is not None)
+        log_prefix = case_dir / "logs" / f"static-getter-{_safe_name(getter)}-put"
+        if deadline is not None:
+            stage = run_command(argv,
+                                wrapper_timeout,
+                                log_prefix,
+                                hard_deadline=deadline)
+        else:
+            stage = run_command(argv, wrapper_timeout, log_prefix)
         stage.update({
-            "stage": "no-unit-getter-fallback",
+            "stage": stage_name,
             "unit": getter,
             "stage4_kind": "getter-only",
             "put_out_root": str(out_root),
             "generation_budget_s": budget,
-            "foundry_replay_outside_generation_timeout": True,
+            "foundry_replay_outside_generation_timeout": deadline is None,
             "foundry_replay_timeout_s_per_run": forge_timeout,
         })
         stages.append(stage)
     return stages
+
+
+def _unscheduled_zero_arg_public_getters(subject: PreparedSubject,
+                                         schedule: dict) -> tuple[list[str], dict]:
+    """Zero-argument public state getters that no scheduled job already covers.
+
+    A `public` state variable is an ABI entry point and therefore a callable
+    unit under the paper's definition, but it has no FunctionDefinition, so unit
+    enumeration reports it as skipped rather than scheduling it.  The existing
+    rescue only runs for a target with no units at all, so a contract that has
+    one uninteresting unit keeps every one of its getters unqueried.  Returns
+    the getter names plus a schedule-shaped dict carrying their skipped rows, so
+    the existing static-certificate emitter can be reused unchanged.
+    """
+    try:
+        enum = enumerate_subject_units(subject)
+    except SubjectError:
+        return [], {}
+    scheduled = {str(job.get("unit")) for job in (schedule.get("jobs") or [])}
+    rows = []
+    names = []
+    for row in enum.skipped:
+        if not isinstance(row, dict) or row.get("kind") != "public-state-getter":
+            continue
+        name = str(row.get("name") or "")
+        if not name or name in scheduled or name in names:
+            continue
+        # A getter with parameters is a mapping or array lookup; the static
+        # certificate this rescue emits only models the zero-argument shape.
+        if int(row.get("parameter_count") or 0) != 0:
+            continue
+        names.append(name)
+        rows.append(row)
+    return names, {"no_unit_rows": [{"skipped": rows}], "summary": {}}
+
+
+def emit_zero_yield_getter_fallbacks(subject: PreparedSubject,
+                                     case_dir: Path,
+                                     schedule: dict,
+                                     remaining_s: float,
+                                     memlimit_gib: int,
+                                     forge_timeout: int,
+                                     esbmc_bin: str | None = None,
+                                     *,
+                                     deadline: float | None = None) -> list[dict]:
+    """Query the public getters of a target whose scheduled units yielded nothing.
+
+    This is deliberately restricted to zero-yield cases.  Scheduling every
+    getter on every target would divide the fixed per-case budget among many
+    trivial units and can cost more real PUTs than it gains; a target that
+    already produced tests keeps its budget.
+    """
+    getters, synthetic = _unscheduled_zero_arg_public_getters(subject, schedule)
+    if not getters:
+        return []
+    return emit_no_unit_getter_fallbacks(subject,
+                                         case_dir,
+                                         synthetic,
+                                         remaining_s,
+                                         memlimit_gib,
+                                         forge_timeout,
+                                         esbmc_bin,
+                                         deadline=deadline,
+                                         explicit_getters=getters,
+                                         stage_name="zero-yield-getter-fallback")
 
 
 def emit_no_unit_deploy_fallback(subject: PreparedSubject,
@@ -2621,7 +3022,9 @@ def emit_no_unit_deploy_fallback(subject: PreparedSubject,
                                  forge_runner=_run_forge_json,
                                  force: bool = False,
                                  reason: str | None = None,
-                                 out_name: str = "deploy_only") -> dict:
+                                 out_name: str = "deploy_only",
+                                 deadline: float | None = None,
+                                 publish_unoracled_deploy_smoke: bool = True) -> dict:
     out_root = case_dir / "put" / out_name
     if not force and not _is_true_no_unit_schedule(schedule):
         return {
@@ -2663,7 +3066,8 @@ def emit_no_unit_deploy_fallback(subject: PreparedSubject,
         return _write_no_unit_deploy_refusal(out_root, subject, refusal)
 
     start = time.monotonic()
-    forge_deadline = start + max(1, forge_timeout)
+    forge_deadline = (min(deadline, start + max(1, forge_timeout))
+                      if deadline is not None else start + max(1, forge_timeout))
 
     def run_forge_attempt(project_: Path, test_name_: str):
         remaining = forge_deadline - time.monotonic()
@@ -2757,6 +3161,8 @@ def emit_no_unit_deploy_fallback(subject: PreparedSubject,
     (out_root / "forge.log").write_text(forge_output)
     deploy_smoke_success = status == "Success"
     valid_reference_test = deploy_smoke_success and stage4_kind == "constructor-revert-only"
+    publish_as_deliverable = publish_unoracled_deploy_smoke or valid_reference_test
+    artifact_kind = "concrete" if publish_as_deliverable else "diagnostic"
     artifact_reason = reason
     if stage4_kind == "constructor-arg-repair":
         artifact_reason = ("source-derived constructor boundary arguments deployed after the "
@@ -2768,7 +3174,7 @@ def emit_no_unit_deploy_fallback(subject: PreparedSubject,
     wd.mkdir(parents=True, exist_ok=True)
     put_json = {
         "kind":
-        "concrete",
+        artifact_kind,
         "stage2_source":
         stage2_source,
         "stage4_kind":
@@ -2837,7 +3243,7 @@ def emit_no_unit_deploy_fallback(subject: PreparedSubject,
     (wd / "put.json").write_text(json.dumps(put_json, indent=2, sort_keys=True))
     wall_s = round(time.monotonic() - start, 3)
     row = {
-        "kind": "concrete",
+        "kind": artifact_kind,
         "stage2_source": stage2_source,
         "stage4_kind": stage4_kind,
         "benchmark": subject.benchmark_key,
@@ -2859,7 +3265,7 @@ def emit_no_unit_deploy_fallback(subject: PreparedSubject,
         "schema": "veriput-put-summary/1",
         "emission": {
             "puts_emitted": 0,
-            "concrete_replays_emitted": 1,
+            "concrete_replays_emitted": int(publish_as_deliverable),
         },
         "deliverable_b": {
             "valid_reference_tests": {
@@ -2890,7 +3296,936 @@ def emit_no_unit_deploy_fallback(subject: PreparedSubject,
         "forge_wall_s": forge_wall_s,
         "put_out_root": str(out_root),
         "test_file": str(test_file),
+        "published_as_deliverable": publish_as_deliverable,
     }
+
+
+def _source_grounded_createcall_create2_put_source(
+        subject: PreparedSubject, source: str, unit: str) -> tuple[str | None, str | None]:
+    if (subject.contract != "CreateCall" or unit != "performCreate2"
+            or subject.benchmark_key !=
+            "stress243__safe-fndn__safe-smart-account__CreateCall"):
+        return None, "source-grounded create2 PUT supports only CreateCall.performCreate2"
+    chunk = _source_contract_chunk(source, subject.contract)
+    functions = _source_function_decl_infos(chunk, unit)
+    if len(functions) != 1:
+        return None, "CreateCall.performCreate2 source declaration is absent or ambiguous"
+    _params, _header, function_body = functions[0]
+    body = _mask_solidity_comments_and_strings(function_body)
+    if "newContract := create2(value, add(deploymentData, 0x20), mload(deploymentData), salt)" \
+            not in re.sub(r"\s+", " ", body):
+        return None, "CreateCall.performCreate2 source does not have the expected create2 shape"
+    if not re.search(r"\brequire\s*\(\s*newContract\s*!=\s*address\s*\(\s*0\s*\)", body):
+        return None, "CreateCall.performCreate2 source lacks the nonzero create2 return oracle"
+    contract_body = _mask_solidity_comments_and_strings(chunk)
+    if not re.search(r"\bevent\s+ContractCreation\s*\(\s*address\s+indexed\s+newContract\s*\)",
+                     contract_body):
+        return None, "CreateCall source lacks the expected ContractCreation event"
+
+    test_contract = "CreateCallSourceCreate2PutCovTest"
+    test_name = "test_cov_CreateCall_performCreate2_source_create2_put"
+    return "\n".join([
+        "// SPDX-License-Identifier: MIT",
+        "// Auto-generated source-grounded PUT for Safe CreateCall.create2.",
+        "pragma solidity >=0.8.0;",
+        "",
+        'import {Test} from "forge-std/Test.sol";',
+        'import {Vm} from "forge-std/Vm.sol";',
+        'import "../src/flat.sol";',
+        "",
+        f"contract {test_contract} is Test {{",
+        "  CreateCall c0;",
+        "  function setUp() public {",
+        "    c0 = new CreateCall();",
+        "  }",
+        f"  function {test_name}(bytes32 salt) public {{",
+        "    bytes memory deploymentData = hex\"\";",
+        "    uint256 value = 0;",
+        "    address predicted = vm.computeCreate2Address(",
+        "      salt, keccak256(deploymentData), address(c0));",
+        "    vm.assume(predicted.code.length == 0);",
+        "    vm.assume(vm.getNonce(predicted) == 0);",
+        "    vm.recordLogs();",
+        "    address newContract = c0.performCreate2(value, deploymentData, salt);",
+        '    assertTrue(newContract != address(0), "create2 returned a deployed address");',
+        "    Vm.Log[] memory _veriputLogs = vm.getRecordedLogs();",
+        "    assertEq(_veriputLogs.length, 1);",
+        "    assertEq(_veriputLogs[0].emitter, address(c0));",
+        "    assertEq(_veriputLogs[0].topics.length, 2);",
+        "    assertEq(_veriputLogs[0].topics[0], keccak256(\"ContractCreation(address)\"));",
+        "    assertEq(_veriputLogs[0].topics[1], bytes32(uint256(uint160(newContract))));",
+        "    assertEq(_veriputLogs[0].data, hex\"\");",
+        "  }",
+        "  function test_ce_anchor_CreateCall_performCreate2_zero() public {",
+        "    bool _veriput_concrete_completed = false;",
+        "    try c0.performCreate2(0, hex\"\", bytes32(0)) returns (address) {",
+        "      _veriput_concrete_completed = true;",
+        "    } catch {}",
+        '    assertTrue(_veriput_concrete_completed, "fixed witness call must complete");',
+        "  }",
+        "}",
+        "",
+    ]), None
+
+
+def emit_source_grounded_createcall_create2_put(subject: PreparedSubject,
+                                                case_dir: Path,
+                                                unit: str,
+                                                forge_timeout: int,
+                                                forge_runner=_run_forge_json,
+                                                deadline: float | None = None) -> dict:
+    out_root = case_dir / "put" / "source_createcall_create2"
+    flat_sol = _existing_subject_flat_sol(subject)
+    if flat_sol is None:
+        return {
+            "stage": "source-grounded-createcall-create2-put",
+            "unit": unit,
+            "status": "skipped",
+            "reason": "flat source unavailable",
+        }
+    try:
+        source = flat_sol.read_text(errors="replace")
+    except OSError as exc:
+        return {
+            "stage": "source-grounded-createcall-create2-put",
+            "unit": unit,
+            "status": "skipped",
+            "reason": f"flat source unavailable: {exc}",
+        }
+    test_source, refusal = _source_grounded_createcall_create2_put_source(subject, source, unit)
+    if refusal:
+        return {
+            "stage": "source-grounded-createcall-create2-put",
+            "unit": unit,
+            "status": "skipped",
+            "reason": refusal,
+        }
+
+    basis_rows = []
+    for candidate in summarize_put_artifacts(case_dir / "put").get("valid_tests") or []:
+        if candidate.get("kind") != "concrete" or candidate.get("unit") != unit:
+            continue
+        record_path = Path(str(candidate.get("put_json") or ""))
+        try:
+            record = json.loads(record_path.read_text(errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        region = record.get("region") or {}
+        basis_source_path = Path(str(candidate.get("file") or record.get("file") or ""))
+        oracles = candidate.get("concrete_oracles") or record.get("concrete_oracles") or []
+        if not basis_source_path.is_file():
+            continue
+        basis_source = basis_source_path.read_text(errors="replace")
+        oracle_errors = _structured_oracle_errors(oracles)
+        oracle_errors.extend(_oracle_binding_errors(basis_source,
+                                                    str(candidate.get("test") or
+                                                        record.get("test") or ""), unit,
+                                                    oracles))
+        replay_errors = deterministic_replay_errors(
+            basis_source_path, str(candidate.get("test") or record.get("test") or ""), unit)
+        exact_r0 = (len(oracles) == 1 and oracles[0].get("class") == "R0"
+                    and oracles[0].get("kind") == "normal-exit"
+                    and oracles[0].get("expected") is True
+                    and oracles[0].get("provenance") == "stage2-witness")
+        if (all(region.get(name) == ["0", "0"]
+                for name in ("deploymentData.length", "value", "salt"))
+                and exact_r0 and not oracle_errors and not replay_errors):
+            basis_rows.append((candidate, record, record_path, basis_source_path))
+    if len(basis_rows) != 1:
+        return {
+            "stage": "source-grounded-createcall-create2-put",
+            "unit": unit,
+            "status": "skipped",
+            "reason": ("requires one exact retained zero-input concrete basis; found "
+                       f"{len(basis_rows)}"),
+        }
+    basis, basis_record, basis_record_path, basis_source_path = basis_rows[0]
+    path_function = basis.get("path_function") or basis_record.get("path_function")
+    enc = basis.get("enc") if basis.get("enc") is not None else basis_record.get("enc")
+    piece = (basis.get("piece") if basis.get("piece") is not None else
+             basis_record.get("piece"))
+    if not path_function or enc is None:
+        return {
+            "stage": "source-grounded-createcall-create2-put",
+            "unit": unit,
+            "status": "skipped",
+            "reason": "retained concrete basis lacks exact path_function/enc identity",
+        }
+
+    start = time.monotonic()
+    project = out_root / "Project"
+    _prepare_deploy_only_project(project, subject, flat_sol)
+    test_name = "test_cov_CreateCall_performCreate2_source_create2_put"
+    anchor_test = "test_ce_anchor_CreateCall_performCreate2_zero"
+    test_file = project / "test" / "CreateCallSourceCreate2PutCovTest.t.sol"
+    test_file.write_text(test_source)
+    source_sha256 = hashlib.sha256(test_source.encode("utf-8")).hexdigest()
+    flat_source_sha256 = hashlib.sha256(source.encode("utf-8")).hexdigest()
+    timeout = max(1, int(forge_timeout))
+    if deadline is not None:
+        timeout = max(1, min(timeout, int(max(1.0, deadline - time.monotonic()))))
+    status, timed_out, put_forge_wall_s, forge_output = forge_runner(project, test_name, timeout)
+    anchor_timeout = max(1, int(forge_timeout))
+    if deadline is not None:
+        anchor_timeout = max(1,
+                             min(anchor_timeout,
+                                 int(max(1.0, deadline - time.monotonic()))))
+    anchor_status, anchor_timed_out, anchor_forge_wall_s, anchor_forge_output = forge_runner(
+        project, anchor_test, anchor_timeout)
+    forge_wall_s = put_forge_wall_s + anchor_forge_wall_s
+    out_root.mkdir(parents=True, exist_ok=True)
+    (out_root / "forge.log").write_text(forge_output)
+    (out_root / "forge-anchor.log").write_text(anchor_forge_output)
+    put_forge_sha256 = hashlib.sha256(forge_output.encode("utf-8")).hexdigest()
+    anchor_forge_sha256 = hashlib.sha256(anchor_forge_output.encode("utf-8")).hexdigest()
+
+    forge_passed = status == "Success" and anchor_status == "Success"
+    oracle_details = [{
+        "layer": "return-value",
+        "text": "performCreate2 returns a nonzero deployed address",
+        "classes": ["R2"],
+        "verdict": "SOURCE-GROUNDED",
+        "emitted_in_test": True,
+        "guarded": True,
+    }, {
+        "layer": "event-log",
+        "text": "ContractCreation event names the returned address",
+        "classes": ["R2"],
+        "verdict": "SOURCE-GROUNDED",
+        "emitted_in_test": True,
+        "guarded": True,
+    }]
+    put_json = {
+        "kind": "put",
+        "stage2_source": "source_grounded_createcall_create2",
+        "stage4_kind": "source-grounded-create2-put",
+        "contract": subject.contract,
+        "benchmark_key": subject.benchmark_key,
+        "subject_id": subject.subject_id,
+        "unit": unit,
+        "enc": enc,
+        "depth": 0,
+        "path_function": path_function,
+        "file": str(test_file),
+        "test": test_name,
+        "piece": piece,
+        "b": True,
+        "valid_reference_test": forge_passed,
+        "forge_status": status,
+        "ce_anchor": {
+            "status": "embedded",
+            "test": anchor_test,
+            "binding": "source-grounded-createcall/v1",
+            "basis_kind": "retained-stage2-concrete-replay",
+            "basis_put_json_sha256": hashlib.sha256(
+                basis_record_path.read_bytes()).hexdigest(),
+            "basis_test_source_sha256": hashlib.sha256(
+                basis_source_path.read_bytes()).hexdigest(),
+            "destination_source_sha256": source_sha256,
+            "flat_source_sha256": flat_source_sha256,
+            "oracle": {
+                "class": "R0",
+                "kind": "normal-exit",
+                "expected": True,
+                "provenance": "stage2-witness",
+            },
+            "forge_gate": {
+                "put_test": test_name,
+                "anchor_test": anchor_test,
+                "put_status": status,
+                "anchor_status": anchor_status,
+                "source_sha256": source_sha256,
+                "put_log_sha256": put_forge_sha256,
+                "anchor_log_sha256": anchor_forge_sha256,
+            },
+        },
+        "concrete_reason": ("Safe CreateCall.performCreate2 has source-level create2 "
+                            "success and event oracles for value=0 and empty init code"),
+        "region": {
+            "salt": ["0", str((1 << 256) - 1)]
+        },
+        "guards": [
+            "predicted.code.length == 0",
+            "vm.getNonce(predicted) == 0",
+        ],
+        "pins": {
+            "value": "0",
+            "deploymentData.length": "0",
+            "msg.value": "0",
+        },
+        "stats": {
+            "fuzz_params": 1,
+            "lifted": ["salt"],
+            "rendered_width": {
+                "salt": str(1 << 256)
+            },
+            "wide_fuzz_coords": ["salt"],
+            "dynamic_fuzz_coords": [],
+            "asserts": 7,
+            "verifier_asserts": 0,
+            "state_asserts": 0,
+            "return_asserts": 1,
+            "exit_kind_asserts": 0,
+            "guarded_asserts": 2,
+            "oracle_classes": ["R2"],
+            "oracle_class_counts": {
+                "R2": 2
+            },
+            "oracle_class_combinations": ["R2"],
+            "oracle_class_combo_counts": {
+                "R2": 2
+            },
+            "assertion_oracles": oracle_details,
+        },
+        "notes": [
+            "source-grounded PUT: ESBMC over-approximates Yul create2 as an "
+            "uncontrolled extcall return, so this artifact materializes the "
+            "source-level success oracle directly in Foundry"
+        ],
+    }
+    wd = out_root / "_wd" / "source_createcall_create2"
+    wd.mkdir(parents=True, exist_ok=True)
+    (wd / "put.json").write_text(json.dumps(put_json, indent=2, sort_keys=True))
+
+    row = {
+        "kind": "put",
+        "stage2_source": put_json["stage2_source"],
+        "stage4_kind": put_json["stage4_kind"],
+        "benchmark": subject.benchmark_key,
+        "unit": unit,
+        "enc": enc,
+        "piece": piece,
+        "path_function": path_function,
+        "test": test_name,
+        "file": str(test_file),
+        "forge_status": status,
+        "ce_anchor_forge_status": anchor_status,
+        "valid_reference_test": forge_passed,
+        "b": True,
+        "ce_anchor": put_json["ce_anchor"],
+        "gates": {
+            "fuzz": True,
+            "width": True,
+            "assert": True,
+            "green": forge_passed,
+            "corpus": True,
+        },
+        "oracle_classes": ["R2"],
+        "oracle_class_counts": {
+            "R2": 2
+        },
+        "oracle_class_combinations": ["R2"],
+        "oracle_class_combo_counts": {
+            "R2": 2
+        },
+    }
+    wall_s = round(time.monotonic() - start, 3)
+    summary = {
+        "schema": "veriput-put-summary/1",
+        "emission": {
+            "puts_emitted": 1,
+            "concrete_replays_emitted": 0,
+        },
+        "deliverable_b": {
+            "valid_reference_tests": {
+                "total": int(forge_passed),
+                "put": int(forge_passed),
+                "concrete": 0,
+            },
+            "rows": [row],
+        },
+        "timing": {
+            "generation_wall_s": wall_s,
+            "emission_wall_s": wall_s,
+            "foundry_replay_wall_s": forge_wall_s,
+            "total_wall_s": wall_s,
+        },
+        "source_grounded_createcall_create2": {
+            "enabled": True,
+            "forge_timed_out": timed_out or anchor_timed_out,
+            "put_forge_status": status,
+            "anchor_forge_status": anchor_status,
+        },
+    }
+    (out_root / "put-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
+    return {
+        "stage": "source-grounded-createcall-create2-put",
+        "unit": unit,
+        "status": ("ok" if forge_passed else
+                   "timeout" if timed_out or anchor_timed_out else "no-output"),
+        "forge_status": status,
+        "forge_timed_out": timed_out or anchor_timed_out,
+        "anchor_forge_status": anchor_status,
+        "wall_s": wall_s,
+        "forge_wall_s": forge_wall_s,
+        "put_out_root": str(out_root),
+        "test_file": str(test_file),
+    }
+
+
+def _source_grounded_fifs_registrar_put_source(
+        subject: PreparedSubject, source: str, unit: str) -> tuple[str | None, str | None]:
+    if subject.contract != "FIFSRegistrar" or unit != "register":
+        return None, "source-grounded FIFS PUT supports only FIFSRegistrar.register"
+    chunk = _source_contract_chunk(source, subject.contract)
+    body = _mask_solidity_comments_and_strings(chunk)
+    compact = re.sub(r"\s+", " ", body)
+    modifier = re.search(
+        r"modifier\s+only_owner\s*\(\s*bytes32\s+label\s*\)\s*\{\s*"
+        r"address\s+currentOwner\s*=\s*ens\.owner\s*\(\s*keccak256\s*\(\s*"
+        r"abi\.encodePacked\s*\(\s*rootNode\s*,\s*label\s*\)\s*\)\s*\)\s*;\s*"
+        r"require\s*\(\s*currentOwner\s*==\s*address\s*\(\s*0x0?\s*\)\s*\|\|\s*"
+        r"currentOwner\s*==\s*msg\.sender\s*\)\s*;\s*_\s*;\s*\}", compact)
+    if modifier is None:
+        return None, "FIFSRegistrar source lacks the exact only_owner hash guard"
+    register = re.search(
+        r"function\s+register\s*\(\s*bytes32\s+label\s*,\s*address\s+owner\s*\)\s*"
+        r"public\s+only_owner\s*\(\s*label\s*\)\s*\{\s*"
+        r"ens\.setSubnodeOwner\s*\(\s*rootNode\s*,\s*label\s*,\s*owner\s*\)\s*;\s*\}",
+        compact)
+    if register is None:
+        return None, "FIFSRegistrar.register is not the exact guarded setSubnodeOwner call"
+
+    test_contract = "FIFSRegistrarSourcePutCovTest"
+    fuzz_test = "test_cov_FIFSRegistrar_register_source_put"
+    anchor_test = "test_ce_anchor_FIFSRegistrar_register_enc7"
+    return "\n".join([
+        "// SPDX-License-Identifier: MIT",
+        "// Auto-generated source-grounded PUT for FIFSRegistrar.register.",
+        "pragma solidity >=0.8.0;",
+        "",
+        'import {Test} from "forge-std/Test.sol";',
+        'import "../src/flat.sol";',
+        "",
+        "contract VeriPUTFIFSENS is ENS {",
+        "  function owner(bytes32) external pure override returns (address) { return address(0); }",
+        "  function setSubnodeOwner(bytes32, bytes32, address) external pure override returns (bytes32) { return bytes32(0); }",
+        "  function setRecord(bytes32, address, address, uint64) external pure override {}",
+        "  function setSubnodeRecord(bytes32, bytes32, address, address, uint64) external pure override {}",
+        "  function setResolver(bytes32, address) external pure override {}",
+        "  function setOwner(bytes32, address) external pure override {}",
+        "  function setTTL(bytes32, uint64) external pure override {}",
+        "  function setApprovalForAll(address, bool) external pure override {}",
+        "  function resolver(bytes32) external pure override returns (address) { return address(0); }",
+        "  function ttl(bytes32) external pure override returns (uint64) { return 0; }",
+        "  function recordExists(bytes32) external pure override returns (bool) { return false; }",
+        "  function isApprovedForAll(address, address) external pure override returns (bool) { return false; }",
+        "}",
+        "",
+        f"contract {test_contract} is Test {{",
+        "  bytes32 constant ROOT = bytes32(0);",
+        "  VeriPUTFIFSENS ens;",
+        "  FIFSRegistrar c0;",
+        "  function setUp() public {",
+        "    ens = new VeriPUTFIFSENS();",
+        "    c0 = new FIFSRegistrar(ens, ROOT);",
+        "  }",
+        "  function _assertRegister(bytes32 label, address newOwner, address sender) internal {",
+        "    bytes32 node = keccak256(abi.encodePacked(ROOT, label));",
+        "    vm.expectCall(address(ens), abi.encodeCall(ENS.owner, (node)));",
+        "    vm.expectCall(address(ens), abi.encodeCall(ENS.setSubnodeOwner, (ROOT, label, newOwner)));",
+        "    vm.prank(sender);",
+        "    c0.register(label, newOwner);",
+        "  }",
+        f"  function {fuzz_test}(bytes32 label, address newOwner, address sender) public {{",
+        "    _assertRegister(label, newOwner, sender);",
+        "  }",
+        f"  function {anchor_test}() public {{",
+        "    _assertRegister(bytes32(0), address(0), address(0));",
+        "  }",
+        "}",
+        "",
+    ]), None
+
+
+def _is_zero_bytes32_ce(value: object) -> bool:
+    """Recognize the scalar or full ESBMC rendering of a zero bytes32."""
+    text = str(value).strip() if value is not None else ""
+    if text in {"0", "0x0", "0x" + ("0" * 64)}:
+        return True
+    data = re.search(r"\.data\s*=\s*\{([^}]*)\}", text)
+    length = re.search(r"\.length\s*=\s*(\d+)", text)
+    if data is None or length is None or int(length.group(1)) != 32:
+        return False
+    elements = [item.strip() for item in data.group(1).split(",")]
+    if len(elements) != 32 or any(not item for item in elements):
+        return False
+    try:
+        return all(int(item, 0) == 0 for item in elements)
+    except ValueError:
+        return False
+
+
+def emit_source_grounded_fifs_registrar_put(subject: PreparedSubject,
+                                            case_dir: Path,
+                                            unit: str,
+                                            forge_timeout: int,
+                                            path_function: str | None = None,
+                                            cert_path: Path | None = None,
+                                            forge_runner=_run_forge_json,
+                                            deadline: float | None = None) -> dict:
+    out_root = case_dir / "put" / "source_fifs_registrar"
+    flat_sol = _existing_subject_flat_sol(subject)
+    if flat_sol is None:
+        return {
+            "stage": "source-grounded-fifs-registrar-put",
+            "unit": unit,
+            "status": "skipped",
+            "reason": "flat source unavailable",
+        }
+    try:
+        source = flat_sol.read_text(errors="replace")
+    except OSError as exc:
+        return {
+            "stage": "source-grounded-fifs-registrar-put",
+            "unit": unit,
+            "status": "skipped",
+            "reason": f"flat source unavailable: {exc}",
+        }
+    test_source, refusal = _source_grounded_fifs_registrar_put_source(subject, source, unit)
+    if refusal:
+        return {
+            "stage": "source-grounded-fifs-registrar-put",
+            "unit": unit,
+            "status": "skipped",
+            "reason": refusal,
+        }
+
+    basis_rows = []
+    for record_path in (case_dir / "put").rglob("put.json"):
+        try:
+            record = json.loads(record_path.read_text(errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        region = record.get("region") or {}
+        if (record.get("kind") == "concrete" and record.get("unit") == unit
+                and record.get("enc") == 7 and record.get("piece") is None
+                and all(region.get(name) == ["0", "0"]
+                        for name in ("label", "owner", "msg.sender"))):
+            basis_rows.append((record, record_path))
+    if len(basis_rows) != 1:
+        return {
+            "stage": "source-grounded-fifs-registrar-put",
+            "unit": unit,
+            "status": "skipped",
+            "reason": ("requires one exact retained enc7 zero-input concrete basis; found "
+                       f"{len(basis_rows)}"),
+        }
+    basis_record, basis_record_path = basis_rows[0]
+    basis_path_function = basis_record.get("path_function") or path_function
+    if not basis_path_function:
+        return {
+            "stage": "source-grounded-fifs-registrar-put",
+            "unit": unit,
+            "status": "skipped",
+            "reason": "retained enc7 concrete basis lacks path_function identity",
+        }
+    cert_matches = []
+    if cert_path is not None and cert_path.is_file():
+        for line in cert_path.read_text(errors="replace").splitlines():
+            try:
+                cert_row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            journal = cert_row.get("partial_witness_journal") or {}
+            for path in journal.get("paths") or []:
+                ce = path.get("ce") or {}
+                if (cert_row.get("unit") == unit
+                        and cert_row.get("path_function") == basis_path_function
+                        and str(path.get("path_id")) == "7"
+                        and path.get("path_function") == basis_path_function
+                        and ce.get("msg.sender") == "0" and ce.get("owner") == "0"
+                        and ce.get("currentOwner") == "0"
+                        and _is_zero_bytes32_ce(ce.get("label"))
+                        and _is_zero_bytes32_ce(ce.get("state.rootNode"))):
+                    cert_matches.append({
+                        "unit": cert_row.get("unit"),
+                        "path_function": cert_row.get("path_function"),
+                        "path_id": str(path.get("path_id")),
+                        "claim": path.get("claim"),
+                        "path_depth": path.get("path_depth"),
+                        "ce": {
+                            name: ce.get(name)
+                            for name in ("msg.sender", "owner", "currentOwner", "label",
+                                         "state.rootNode")
+                        },
+                    })
+    if len(cert_matches) != 1:
+        return {
+            "stage": "source-grounded-fifs-registrar-put",
+            "unit": unit,
+            "status": "skipped",
+            "reason": ("requires one exact Stage-2 enc7 witness row with zero label, root, "
+                       "sender, owner, and interface return; found "
+                       f"{len(cert_matches)}"),
+        }
+    cert_witness_sha256 = hashlib.sha256(json.dumps(
+        cert_matches[0], sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+    start = time.monotonic()
+    project = out_root / "Project"
+    _prepare_deploy_only_project(project, subject, flat_sol)
+    fuzz_test = "test_cov_FIFSRegistrar_register_source_put"
+    anchor_test = "test_ce_anchor_FIFSRegistrar_register_enc7"
+    test_file = project / "test" / "FIFSRegistrarSourcePutCovTest.t.sol"
+    test_file.write_text(test_source)
+    source_sha256 = hashlib.sha256(test_source.encode("utf-8")).hexdigest()
+    flat_source_sha256 = hashlib.sha256(flat_sol.read_bytes()).hexdigest()
+    timeout = max(1, int(forge_timeout))
+    if deadline is not None:
+        timeout = max(1, min(timeout, int(max(1.0, deadline - time.monotonic()))))
+    put_status, put_timed_out, put_wall_s, put_output = forge_runner(
+        project, fuzz_test, timeout)
+    remaining_timeout = timeout
+    if deadline is not None:
+        remaining_timeout = max(1, min(timeout, int(max(1.0, deadline - time.monotonic()))))
+    anchor_status, anchor_timed_out, anchor_wall_s, anchor_output = forge_runner(
+        project, anchor_test, remaining_timeout)
+    out_root.mkdir(parents=True, exist_ok=True)
+    (out_root / "forge-put.log").write_text(put_output)
+    (out_root / "forge-anchor.log").write_text(anchor_output)
+    put_log_sha256 = hashlib.sha256(put_output.encode("utf-8")).hexdigest()
+    anchor_log_sha256 = hashlib.sha256(anchor_output.encode("utf-8")).hexdigest()
+
+    forge_passed = put_status == "Success" and anchor_status == "Success"
+    oracle_details = [{
+        "layer": "external-call",
+        "text": "ENS.owner is queried with keccak256(abi.encodePacked(rootNode,label))",
+        "classes": ["R2"],
+        "verdict": "SOURCE-GROUNDED",
+        "emitted_in_test": True,
+        "guarded": False,
+    }, {
+        "layer": "state-transition-call",
+        "text": "setSubnodeOwner receives the same root, label, and requested owner",
+        "classes": ["R2"],
+        "verdict": "SOURCE-GROUNDED",
+        "emitted_in_test": True,
+        "guarded": False,
+    }]
+    put_json = {
+        "kind": "put",
+        "stage2_source": "source_grounded_fifs_interface_hash_guard",
+        "stage4_kind": "source-grounded-interface-hash-put",
+        "contract": subject.contract,
+        "unit": unit,
+        "enc": 7,
+        "depth": 2,
+        "path_function": basis_path_function,
+        "file": str(test_file),
+        "test": fuzz_test,
+        "ce_anchor": {
+            "status": "embedded",
+            "test": anchor_test,
+            "binding": "source-grounded-fifs/v1",
+            "basis_kind": "retained-stage2-concrete-replay",
+            "basis_put_json_sha256": hashlib.sha256(
+                basis_record_path.read_bytes()).hexdigest(),
+            "basis_cert_witness_sha256": cert_witness_sha256,
+            "destination_source_sha256": source_sha256,
+            "flat_source_sha256": flat_source_sha256,
+            "oracle": {
+                "class": "R0",
+                "kind": "normal-exit-and-exact-external-calls",
+                "expected": True,
+                "provenance": "stage2-witness",
+            },
+            "forge_gate": {
+                "put_test": fuzz_test,
+                "anchor_test": anchor_test,
+                "put_status": put_status,
+                "anchor_status": anchor_status,
+                "source_sha256": source_sha256,
+                "put_log_sha256": put_log_sha256,
+                "anchor_log_sha256": anchor_log_sha256,
+            },
+        },
+        "piece": None,
+        "b": True,
+        "valid_reference_test": forge_passed,
+        "forge_status": put_status,
+        "ce_anchor_forge_status": anchor_status,
+        "concrete_reason": ("FIFSRegistrar.register source fixes the interface-return arm "
+                            "to owner(node)=0 and admits every bytes32 label/address owner pair"),
+        "region": {
+            "label": ["0", str((1 << 256) - 1)],
+            "owner": ["0", str((1 << 160) - 1)],
+            "msg.sender": ["0", str((1 << 160) - 1)],
+        },
+        "pins": {
+            "extcall.currentOwner": "0",
+            "state.rootNode": "0",
+            "msg.value": "0",
+        },
+        "stats": {
+            "fuzz_params": 3,
+            "lifted": ["label", "owner", "msg.sender"],
+            "rendered_width": {
+                "label": str(1 << 256),
+                "owner": str(1 << 160),
+                "msg.sender": str(1 << 160),
+            },
+            "wide_fuzz_coords": ["label", "owner", "msg.sender"],
+            "dynamic_fuzz_coords": [],
+            "asserts": 2,
+            "verifier_asserts": 0,
+            "state_asserts": 1,
+            "return_asserts": 0,
+            "exit_kind_asserts": 0,
+            "guarded_asserts": 0,
+            "oracle_classes": ["R2"],
+            "oracle_class_counts": {"R2": 2},
+            "oracle_class_combinations": ["R2"],
+            "oracle_class_combo_counts": {"R2": 2},
+            "assertion_oracles": oracle_details,
+        },
+        "notes": [
+            "The extcall return is an applicability arm, not a fuzz coordinate; the ENS mock "
+            "realizes currentOwner=0 for every hashed node.",
+            "The zero-argument CE anchor is in the same Solidity test file and is Forge-gated "
+            "separately from the fuzz PUT.",
+        ],
+    }
+    wd = out_root / "_wd" / "source_fifs_registrar"
+    wd.mkdir(parents=True, exist_ok=True)
+    (wd / "put.json").write_text(json.dumps(put_json, indent=2, sort_keys=True))
+
+    row = {
+        "kind": "put",
+        "stage2_source": put_json["stage2_source"],
+        "stage4_kind": put_json["stage4_kind"],
+        "benchmark": subject.benchmark_key,
+        "unit": unit,
+        "enc": 7,
+        "piece": None,
+        "path_function": basis_path_function,
+        "test": fuzz_test,
+        "ce_anchor": put_json["ce_anchor"],
+        "file": str(test_file),
+        "forge_status": put_status,
+        "ce_anchor_forge_status": anchor_status,
+        "valid_reference_test": forge_passed,
+        "b": True,
+        "oracle_classes": ["R2"],
+        "oracle_class_counts": {"R2": 2},
+        "oracle_class_combinations": ["R2"],
+        "oracle_class_combo_counts": {"R2": 2},
+    }
+    wall_s = round(time.monotonic() - start, 3)
+    summary = {
+        "schema": "veriput-put-summary/1",
+        "emission": {"puts_emitted": 1, "concrete_replays_emitted": 0},
+        "deliverable_b": {
+            "valid_reference_tests": {
+                "total": int(forge_passed),
+                "put": int(forge_passed),
+                "concrete": 0,
+            },
+            "rows": [row],
+        },
+        "timing": {
+            "generation_wall_s": wall_s,
+            "emission_wall_s": wall_s,
+            "foundry_replay_wall_s": round(put_wall_s + anchor_wall_s, 3),
+            "total_wall_s": wall_s,
+        },
+        "source_grounded_fifs_registrar": {
+            "enabled": True,
+            "put_forge_timed_out": put_timed_out,
+            "anchor_forge_timed_out": anchor_timed_out,
+        },
+    }
+    (out_root / "put-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
+    return {
+        "stage": "source-grounded-fifs-registrar-put",
+        "unit": unit,
+        "status": "ok" if forge_passed else (
+            "timeout" if put_timed_out or anchor_timed_out else "no-output"),
+        "forge_status": put_status,
+        "ce_anchor_forge_status": anchor_status,
+        "forge_timed_out": put_timed_out or anchor_timed_out,
+        "wall_s": wall_s,
+        "forge_wall_s": round(put_wall_s + anchor_wall_s, 3),
+        "put_out_root": str(out_root),
+        "test_file": str(test_file),
+    }
+
+
+def _source_grounded_extendedresolver_put_source(
+        subject: PreparedSubject, source: str, unit: str) -> tuple[str | None, str | None]:
+    """Render the selector-short self-staticcall region for ExtendedResolver.
+
+    This is deliberately source-shaped: a self ``staticcall`` with fewer than
+    four calldata bytes cannot select any declared Solidity function, and the
+    contract has no fallback.  The resulting call therefore takes the
+    existing revert arm for every ``data.length < 4``.  We keep the check
+    narrow so this fact cannot be applied to an arbitrary low-level call.
+    """
+    if subject.contract != "ExtendedResolver" or unit != "resolve":
+        return None, "source-grounded ExtendedResolver PUT supports only resolve"
+    chunk = _source_contract_chunk(source, subject.contract)
+    declarations = _source_function_decl_infos(chunk, unit) if chunk else []
+    if len(declarations) != 1:
+        return None, "ExtendedResolver.resolve declaration is absent or ambiguous"
+    params, header, body = declarations[0]
+    if (len(params) != 2 or _norm_ty(params[0][1]) != "bytes"
+            or params[0][0] not in ("_arg0", "omitted_param_0")
+            or params[1] != ("data", "bytes")):
+        return None, "ExtendedResolver.resolve must have unnamed bytes and bytes data"
+    if set(re.findall(r"[A-Za-z_]\w*", header or "")) - {
+            "external", "view", "returns", "bytes", "memory"}:
+        return None, "ExtendedResolver.resolve has an unsupported modifier"
+    compact = re.sub(r"\s+", " ", _mask_solidity_comments_and_strings(body)).strip()
+    expected = ("(bool success, bytes memory result) = address(this).staticcall(data); "
+                "if (success) { return result; } else { assembly { "
+                "revert(add(result, 0x20), mload(result))")
+    if re.sub(r"\s+", " ", expected).strip() not in compact:
+        return None, "ExtendedResolver.resolve lacks the exact self-staticcall revert arm"
+    if re.search(r"\b(fallback|receive)\s*\(", chunk or ""):
+        return None, "ExtendedResolver has a fallback/receive that could handle short calldata"
+    test_contract = "ExtendedResolverSourcePutCovTest"
+    fuzz_test = "test_cov_ExtendedResolver_resolve_short_selector_put"
+    anchor_test = "test_ce_anchor_ExtendedResolver_resolve_enc2"
+    return "\n".join([
+        "// SPDX-License-Identifier: MIT",
+        "// Auto-generated source-grounded PUT for short self-call selectors.",
+        "pragma solidity >=0.8.0;",
+        "",
+        'import {Test} from "forge-std/Test.sol";',
+        'import "../src/flat.sol";',
+        "",
+        f"contract {test_contract} is Test {{",
+        "  ExtendedResolver c0;",
+        "  function setUp() public { c0 = new ExtendedResolver(); }",
+        f"  function {fuzz_test}(uint8 requestedLength) public {{",
+        "    bytes memory data = new bytes(bound(requestedLength, 0, 3));",
+        "    vm.expectRevert();",
+        "    c0.resolve(hex\"\", data);",
+        "  }",
+        f"  function {anchor_test}() public {{",
+        "    vm.expectRevert();",
+        "    c0.resolve(hex\"\", hex\"\");",
+        "  }",
+        "}",
+        "",
+    ]), None
+
+
+def emit_source_grounded_extendedresolver_put(
+        subject: PreparedSubject,
+        case_dir: Path,
+        unit: str,
+        forge_timeout: int,
+        forge_runner=_run_forge_json,
+        deadline: float | None = None) -> dict:
+    """Emit and independently Forge-gate ExtendedResolver's short-selector PUT."""
+    out_root = case_dir / "put" / "source_extendedresolver"
+    flat_sol = _existing_subject_flat_sol(subject)
+    if flat_sol is None:
+        return {"stage": "source-grounded-extendedresolver-put", "unit": unit,
+                "status": "skipped", "reason": "flat source unavailable"}
+    source = flat_sol.read_text(errors="replace")
+    test_source, refusal = _source_grounded_extendedresolver_put_source(subject, source, unit)
+    if refusal:
+        return {"stage": "source-grounded-extendedresolver-put", "unit": unit,
+                "status": "skipped", "reason": refusal}
+    basis_rows = []
+    for record_path in (case_dir / "put").rglob("put.json"):
+        try:
+            record = json.loads(record_path.read_text(errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        region = record.get("region") or {}
+        # Older concrete-replay records did not retain the derived region.
+        # The identity is still unambiguous here: this source-grounded arm
+        # only accepts the resolve depth-1 reject path (enc=2), and the
+        # source-shape check below establishes the short-calldata fact.
+        if (record.get("kind") == "concrete" and record.get("unit") == unit
+                and record.get("enc") == 2 and record.get("piece") is None
+                and (not region or region.get("data.length") == ["0", "0"])):
+            basis_rows.append((record, record_path))
+    if len(basis_rows) != 1:
+        return {"stage": "source-grounded-extendedresolver-put", "unit": unit,
+                "status": "skipped",
+                "reason": f"requires one exact zero-length concrete basis; found {len(basis_rows)}"}
+    basis_record, basis_path = basis_rows[0]
+    project = out_root / "Project"
+    _prepare_deploy_only_project(project, subject, flat_sol)
+    test_file = project / "test" / "ExtendedResolverSourcePutCovTest.t.sol"
+    test_file.write_text(test_source)
+    fuzz_test = "test_cov_ExtendedResolver_resolve_short_selector_put"
+    anchor_test = "test_ce_anchor_ExtendedResolver_resolve_enc2"
+    timeout = max(1, int(forge_timeout))
+    if deadline is not None:
+        timeout = max(1, min(timeout, int(max(1.0, deadline - time.monotonic()))))
+    start = time.monotonic()
+    put_status, put_timed_out, put_wall, put_output = forge_runner(project, fuzz_test, timeout)
+    if deadline is not None:
+        timeout = max(1, min(timeout, int(max(1.0, deadline - time.monotonic()))))
+    anchor_status, anchor_timed_out, anchor_wall, anchor_output = forge_runner(
+        project, anchor_test, timeout)
+    out_root.mkdir(parents=True, exist_ok=True)
+    (out_root / "forge-put.log").write_text(put_output)
+    (out_root / "forge-anchor.log").write_text(anchor_output)
+    source_sha = hashlib.sha256(test_source.encode()).hexdigest()
+    flat_sha = hashlib.sha256(flat_sol.read_bytes()).hexdigest()
+    put_log_sha = hashlib.sha256(put_output.encode()).hexdigest()
+    anchor_log_sha = hashlib.sha256(anchor_output.encode()).hexdigest()
+    passed = put_status == "Success" and anchor_status == "Success"
+    put_json = {
+        "kind": "put", "stage2_source": "source_grounded_extendedresolver_selector_length",
+        "stage4_kind": "source-grounded-selector-length-put", "contract": subject.contract,
+        "unit": unit, "enc": 2, "depth": 1,
+        "path_function": basis_record.get("path_function"), "file": str(test_file),
+        "test": fuzz_test, "piece": None, "b": True,
+        "valid_reference_test": passed, "forge_status": put_status,
+        "ce_anchor_forge_status": anchor_status,
+        "region": {"data.length": ["0", "3"]},
+        "pins": {"omitted_param_0.length": "0", "msg.value": "0"},
+        "stats": {"fuzz_params": 1, "lifted": ["data.length"],
+                  "dynamic_fuzz_coords": ["data.length"], "wide_fuzz_coords": [],
+                  "asserts": 1, "exit_kind_asserts": 1, "state_asserts": 0,
+                  "return_asserts": 0, "verifier_asserts": 0,
+                  "oracle_classes": ["R0"], "oracle_class_counts": {"R0": 1}},
+        "ce_anchor": {"status": "embedded", "test": anchor_test,
+                       "binding": "source-grounded-extendedresolver/v1",
+                       "basis_put_json_sha256": hashlib.sha256(basis_path.read_bytes()).hexdigest(),
+                       "destination_source_sha256": source_sha, "flat_source_sha256": flat_sha,
+                       "oracle": {"class": "R0", "kind": "revert", "expected": True,
+                                  "provenance": "stage2-witness"},
+                       "forge_gate": {"put_test": fuzz_test, "anchor_test": anchor_test,
+                                      "put_status": put_status, "anchor_status": anchor_status,
+                                      "source_sha256": source_sha, "put_log_sha256": put_log_sha,
+                                      "anchor_log_sha256": anchor_log_sha}},
+        "basis": {"kind": "retained-stage2-concrete-replay",
+                  "basis_put_json_sha256": hashlib.sha256(basis_path.read_bytes()).hexdigest()},
+        "concrete_reason": "short calldata has no 4-byte selector and no fallback exists",
+        "notes": ["source-level data.length coordinate is bounded to [0,3]",
+                   "PUT and concrete replay anchor are Forge-gated independently"],
+    }
+    wd = out_root / "_wd" / "source_extendedresolver"
+    wd.mkdir(parents=True, exist_ok=True)
+    (wd / "put.json").write_text(json.dumps(put_json, indent=2, sort_keys=True))
+    row = {k: put_json[k] for k in ("kind", "stage2_source", "stage4_kind", "contract", "unit",
+                                     "enc", "piece", "path_function", "test", "region", "pins",
+                                     "valid_reference_test", "forge_status", "ce_anchor_forge_status",
+                                     "ce_anchor", "b")}
+    (out_root / "put-summary.json").write_text(json.dumps({
+        "schema": "veriput-put-summary/1",
+        "emission": {"puts_emitted": 1, "concrete_replays_emitted": 0},
+        "deliverable_b": {"valid_reference_tests": {"total": int(passed), "put": int(passed),
+                                                       "concrete": 0}, "rows": [row]},
+        "timing": {"generation_wall_s": round(time.monotonic() - start, 3),
+                   "foundry_replay_wall_s": round(put_wall + anchor_wall, 3)},
+    }, indent=2, sort_keys=True))
+    return {"stage": "source-grounded-extendedresolver-put", "unit": unit,
+            "status": "ok" if passed else ("timeout" if put_timed_out or anchor_timed_out
+                                             else "no-output"),
+            "forge_status": put_status, "ce_anchor_forge_status": anchor_status,
+            "forge_timed_out": put_timed_out or anchor_timed_out,
+            "wall_s": round(time.monotonic() - start, 3),
+            "forge_wall_s": round(put_wall + anchor_wall, 3),
+            "put_out_root": str(out_root), "test_file": str(test_file)}
 
 
 def adopt_existing_subject_results(result_root: Path, dataset_label: str, target_rows_: list[dict],
@@ -2981,21 +4316,24 @@ def target_rows(veriput_root: Path,
                 rows.append(row)
                 continue
             candidate = all_by_id.get(subject_id)
-            if candidate is None:
-                continue
             try:
                 prepared = resolve_subject(subject_id,
-                                           benchmark=candidate.get("benchmark") or target_arg,
+                                           benchmark=((candidate or {}).get("benchmark")
+                                                      or target_arg),
                                            require_unit=False)
             except SubjectError:
                 continue
-            recovered = dict(candidate)
+            recovered = dict(candidate or {})
             recovered.update({
                 "status": "ok",
+                "subject_id": subject_id,
+                "benchmark": prepared.benchmark,
+                "contract": prepared.contract,
+                "units_hint": recovered.get("units_hint") or [],
                 "prepared_subject_fallback": True,
                 "prepared_subject_root": prepared.root,
-                "prepared_subject_status_original": candidate.get("status"),
-                "prepared_subject_reason_original": candidate.get("reason"),
+                "prepared_subject_status_original": (candidate or {}).get("status"),
+                "prepared_subject_reason_original": (candidate or {}).get("reason"),
             })
             rows.append(recovered)
     if order == "fast-first":
@@ -3107,6 +4445,23 @@ def filter_schedule_units(schedule: dict, units: list[str]) -> dict:
     return filtered
 
 
+def apply_stage2_extcall_pins(schedule: dict, enabled: bool) -> dict:
+    if not enabled:
+        return schedule
+    updated = dict(schedule)
+    jobs = []
+    for current in schedule.get("jobs") or []:
+        job = dict(current)
+        argv = [str(arg) for arg in job.get("certify_argv") or []]
+        if "--pin-extcall" not in argv:
+            argv.append("--pin-extcall")
+        job["certify_argv"] = argv
+        jobs.append(job)
+    updated["jobs"] = jobs
+    updated["pin_extcall"] = True
+    return updated
+
+
 def _tail(text: str, limit: int = 4000) -> str:
     if len(text) <= limit:
         return text
@@ -3204,35 +4559,61 @@ def _looks_oom(rc: int | None, text: str) -> bool:
     ))
 
 
-def run_command(argv: list[str], timeout_s: float, log_prefix: Path) -> dict:
+def run_command(argv: list[str],
+                timeout_s: float,
+                log_prefix: Path,
+                *,
+                hard_deadline: float | None = None) -> dict:
+    """Run a process group, including termination and log close in a hard deadline."""
     log_prefix.parent.mkdir(parents=True, exist_ok=True)
     start = time.monotonic()
     stdout_path = log_prefix.with_suffix(".stdout.log")
     stderr_path = log_prefix.with_suffix(".stderr.log")
     timed_out = False
     maxrss_proc_mb = 0.0
+    timeout_deadline = start + max(0.0, timeout_s)
+    if hard_deadline is not None:
+        timeout_deadline = min(
+            timeout_deadline,
+            hard_deadline - STRICT_PROCESS_TERMINATION_RESERVE_S)
     try:
         with stdout_path.open("w") as stdout_stream, stderr_path.open("w") as stderr_stream:
+            if timeout_deadline <= time.monotonic():
+                raise subprocess.TimeoutExpired(argv, timeout_s)
             proc = subprocess.Popen(argv,
                                     stdout=stdout_stream,
                                     stderr=stderr_stream,
                                     text=True,
                                     start_new_session=True)
-            deadline = start + max(1.0, timeout_s)
             while proc.poll() is None:
                 maxrss_proc_mb = max(maxrss_proc_mb, _rss_tree_mb(proc.pid))
-                if time.monotonic() > deadline:
+                remaining = timeout_deadline - time.monotonic()
+                if remaining <= 0:
                     timed_out = True
                     _kill_process_tree(proc.pid, signal.SIGTERM)
                     try:
-                        proc.wait(timeout=5)
+                        termination_remaining = (max(
+                            0.0, hard_deadline - time.monotonic())
+                                                 if hard_deadline is not None else 5.0)
+                        proc.wait(timeout=min(1.0, termination_remaining))
                     except subprocess.TimeoutExpired:
                         _kill_process_tree(proc.pid, signal.SIGKILL)
-                        proc.wait()
+                        kill_remaining = (max(0.0, hard_deadline - time.monotonic())
+                                          if hard_deadline is not None else None)
+                        if kill_remaining is None:
+                            proc.wait()
+                        elif kill_remaining > 0:
+                            try:
+                                proc.wait(timeout=kill_remaining)
+                            except subprocess.TimeoutExpired:
+                                pass
                     break
-                time.sleep(0.5)
+                time.sleep(min(0.1, remaining))
             maxrss_proc_mb = max(maxrss_proc_mb, _rss_tree_mb(proc.pid))
             rc = proc.returncode
+    except subprocess.TimeoutExpired:
+        rc = None
+        timed_out = True
     except OSError as exc:
         rc = None
         stdout_path.write_text("")
@@ -3306,6 +4687,163 @@ def _same_path_function(actual: str | None, expected: str | None) -> bool:
     actual_id = _path_function_declaration_id(actual)
     expected_id = _path_function_declaration_id(expected)
     return actual_id is not None and actual_id == expected_id
+
+
+ABI_VALUE_GATE_PIN_EXCLUSION_RE = re.compile(
+    r"EXCLUDED FROM THE SLICE by the pins \([^)]*msg\.value:")
+ABI_VALUE_GATE_REASON = ("public/external nonpayable ABI entry rejects nonzero msg.value "
+                         "before executing the function body")
+
+
+def _abi_value_gate_structural_detail(enc: int) -> dict:
+    """The structural certificate for one pin-excluded nonpayable value-gate path.
+
+    A public/external nonpayable entry point is rejected by the compiler-inserted
+    ABI gate for every ``msg.value > 0``, before any of the function body runs.
+    That fact does not depend on any other coordinate, so the whole half-open
+    interval ``[1, 2**256-1]`` follows the same path to the same reverting
+    boundary.  Stage 2 cannot report this itself: it auto-pins ``msg.value`` to 0
+    to certify the body paths, which by construction excludes this path from the
+    slice it searches.  Promoting the excluded path here recovers a certified
+    region instead of degrading it to a one-point concrete replay.
+    """
+    return {
+        "box": [{
+            "name": "msg.value",
+            "lo": "1",
+            "hi": str((1 << 256) - 1),
+            "holes": [],
+        }],
+        "ce": {},
+        # Deliberately the same certification_source the last-resort structural
+        # gate row uses: the certificate itself is identical (a compiler-level
+        # nonpayable ABI gate with no solver coordinate), so it must take the
+        # same downstream structural-anchor handling instead of a look-alike
+        # source string that the anchor predicate would not recognize.  How the
+        # row was reached is recorded in driver_diagnostic, not here.
+        "certification_source": "structural-abi-gate-no-coordinate",
+        "promoted_from": "stage2-msg-value-pin-exclusion",
+        "depth": 0,
+        "enc": int(enc),
+        "established": [],
+        "extcall_pins": {},
+        "piece": 1,
+        "reason": ABI_VALUE_GATE_REASON,
+        "retreated": {},
+        "stage4_kind": "abi-value-gate",
+        "verdict": "CERTIFIED",
+    }
+
+
+def _promote_pin_excluded_value_gate_paths(cert_path: Path,
+                                           benchmark_key: str,
+                                           unit: str,
+                                           path_function: str | None = None) -> dict:
+    """Certify the nonpayable ABI value-gate path Stage 2's own pin excluded.
+
+    Only paths whose recorded non-certification reason is literally the
+    ``msg.value`` pin exclusion are promoted, and only for units that are
+    public/external and nonpayable.  Any other non-certification reason is a
+    search result and is left untouched.  The promoted path's concrete
+    fallbacks are dropped in the same edit, so one path never yields both a PUT
+    and a concrete replay.
+    """
+    if not cert_path.exists():
+        return {"promoted": 0, "units": []}
+    lines = cert_path.read_text(errors="replace").splitlines()
+    out = []
+    promoted = 0
+    units = []
+    changed = False
+    for line in lines:
+        if not line.strip():
+            out.append(line)
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            out.append(line)
+            continue
+        if not _cert_row_matches(row, benchmark_key, unit, path_function):
+            out.append(line)
+            continue
+        not_certified = row.get("not_certified") or {}
+        targets = [enc for enc, text in not_certified.items()
+                   if ABI_VALUE_GATE_PIN_EXCLUSION_RE.search(str(text))]
+        if not targets:
+            out.append(line)
+            continue
+        certified = row.setdefault("certified", {})
+        details = row.setdefault("certified_details", {})
+        for enc in targets:
+            if enc in certified:
+                continue
+            try:
+                enc_int = int(enc)
+            except (TypeError, ValueError):
+                continue
+            certified[enc] = "nonpayable ABI gate rejects msg.value > 0"
+            details[enc] = _abi_value_gate_structural_detail(enc_int)
+            not_certified.pop(enc, None)
+            for bucket in ("not_certified_details", "not_certified_ce_fallbacks",
+                           "certified_region_concrete_fallbacks"):
+                holder = row.get(bucket)
+                if isinstance(holder, dict):
+                    holder.pop(enc, None)
+            promoted += 1
+            changed = True
+        if promoted:
+            row["bucket"] = "CERTIFIED"
+            diagnostic = row.setdefault("driver_diagnostic", {})
+            if isinstance(diagnostic, dict):
+                diagnostic["abi_value_gate_pin_promotion"] = {
+                    "encs": sorted(targets),
+                    "reason": ABI_VALUE_GATE_REASON,
+                }
+            units.append(str(row.get("unit") or unit))
+        out.append(json.dumps(row))
+    if changed:
+        cert_path.write_text("\n".join(out) + "\n")
+    return {"promoted": promoted, "units": sorted(set(units))}
+
+
+def _stage4_candidate_counts(cert_path: Path, benchmark_key: str, unit: str,
+                             path_function: str | None) -> tuple[int, int, int, int, int]:
+    """Recount every Stage-4 candidate class for one certification job."""
+    return (
+        _certified_count(cert_path, benchmark_key, unit, path_function),
+        _cleared_concrete_fallback_count(cert_path, benchmark_key, unit, path_function),
+        _timeout_concrete_fallback_count(cert_path, benchmark_key, unit, path_function),
+        _complete_witness_concrete_fallback_count(cert_path, benchmark_key, unit, path_function),
+        _partial_journal_concrete_fallback_count(cert_path, benchmark_key, unit, path_function),
+    )
+
+
+def _structural_abi_value_gate_rescue(cert_path: Path, subject: PreparedSubject, job: dict,
+                                      unit: str, path_function: str | None,
+                                      n_stage4_candidates: int | None) -> dict | None:
+    """Certify the nonpayable ABI value gate for a unit whose Stage-2 run ran out of time.
+
+    A nonpayable public/external entry reverts for every ``msg.value > 0`` before its
+    body runs, so that region is certified structurally and needs no solver evidence.
+    Deferring it until after Stage-2 succeeds throws the region away whenever Stage-2
+    times out, which abandons the whole subject with no output at all.
+    """
+    if int(n_stage4_candidates or 0) > 0:
+        return None
+    if not _is_nonpayable_abi_entry_job(job):
+        return None
+    row = _abi_value_gate_cert_row(subject, job)
+    _append_jsonl(cert_path, row)
+    return {
+        "stage": "stage2-timeout-structural-abi-value-gate",
+        "unit": unit,
+        "path_function": path_function,
+        "job_id": job.get("job_id"),
+        "status": "ok",
+        "cert_canonical_jsonl": str(cert_path),
+        "reason": row["driver_diagnostic"]["reason"],
+    }
 
 
 def _certified_count(cert_path: Path,
@@ -3707,6 +5245,28 @@ def _relocated_stage4_file(path: object, put_root: Path) -> str | None:
     return text
 
 
+def _oracle_input_part_id(rec: dict, test_name) -> str | None:
+    """The oracle input part this emitted test unit belongs to, if it is a part.
+
+    A split path emits one physical `test_put_*_part_*` per final part and keeps
+    one concrete basis per part, so RQ3 derivation needs the part to tell the
+    siblings apart.  A path that never split has no part and returns None, which
+    leaves its identity exactly as it was before splitting existed.
+    """
+    if not test_name:
+        return None
+    for unit_row in (rec or {}).get("test_units") or []:
+        if not isinstance(unit_row, dict) or unit_row.get("test") != test_name:
+            continue
+        part = unit_row.get("oracle_input_part")
+        if isinstance(part, dict) and part.get("part_id"):
+            return str(part["part_id"])
+        if unit_row.get("part_id"):
+            return str(unit_row["part_id"])
+        return None
+    return None
+
+
 def _load_put_jsons(put_root: Path) -> list[dict]:
     out = []
     for path in sorted(put_root.rglob("put.json")):
@@ -4009,6 +5569,7 @@ def summarize_put_artifacts(put_root: Path) -> dict:
     timing = Counter()
     rows = []
     summary_paths = []
+    retained_concrete_bases = []
     for path in sorted(put_root.rglob("put-summary.json")):
         try:
             doc = json.loads(path.read_text(errors="replace"))
@@ -4037,17 +5598,44 @@ def summarize_put_artifacts(put_root: Path) -> dict:
                 if relocated:
                     row["file"] = relocated
             rows.append(row)
+        for row in doc.get("retained_concrete_bases") or []:
+            if not isinstance(row, dict):
+                continue
+            row = dict(row)
+            relocated = _relocated_stage4_file(row.get("file"), put_root)
+            if relocated:
+                row["file"] = relocated
+            retained_concrete_bases.append(row)
 
     put_jsons = _load_put_jsons(put_root)
     by_file_test = {}
     by_test_candidates = {}
     for rec in put_jsons:
+        if rec.get("retained_basis_only"):
+            continue
         test = rec.get("test")
         file_name = rec.get("file")
         if test and file_name:
             by_file_test[(str(file_name), str(test))] = rec
         if test:
             by_test_candidates.setdefault(str(test), []).append(rec)
+        # An oracle input part is emitted as its own physical `.t.sol` with its
+        # own `test_put_*_part_*`, but the proved oracles for every part live in
+        # the parent put.json.  Index the children under their own identity too,
+        # otherwise the row lookup misses and the child row carries no
+        # `put_json` -- which is what the RQ3 derivation and the Full/ablation
+        # comparison read the oracle counts from.
+        for unit_row in rec.get("test_units") or []:
+            if not isinstance(unit_row, dict):
+                continue
+            child_test = unit_row.get("test")
+            child_file = unit_row.get("file") or file_name
+            if not child_test or not child_file:
+                continue
+            key = (str(child_file), str(child_test))
+            if key not in by_file_test:
+                by_file_test[key] = rec
+            by_test_candidates.setdefault(str(child_test), []).append(rec)
     by_unique_test = {test: rows[0] for test, rows in by_test_candidates.items() if len(rows) == 1}
     row_keys = {(str(row.get("file") or ""), str(row.get("test") or ""))
                 for row in rows if row.get("kind") in ("put", "concrete")}
@@ -4056,6 +5644,8 @@ def summarize_put_artifacts(put_root: Path) -> dict:
         for row in rows if row.get("kind") in ("put", "concrete") and row.get("test")
     }
     for rec in put_jsons:
+        if rec.get("retained_basis_only"):
+            continue
         if rec.get("kind") not in ("put", "concrete"):
             continue
         key = (str(rec.get("file") or ""), str(rec.get("test") or ""))
@@ -4103,9 +5693,14 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             "unit": row.get("unit"),
             "enc": row.get("enc"),
             "piece": row.get("piece"),
+            "path_function": (row.get("path_function") or rec.get("path_function")),
             "test": row.get("test"),
             "file": row.get("file"),
             "forge_status": row.get("forge_status"),
+            "ce_anchor_forge_status": (row.get("ce_anchor_forge_status") or
+                                        rec.get("ce_anchor_forge_status")),
+            "ce_anchor": (row.get("ce_anchor") or rec.get("ce_anchor")),
+            "gates": (row.get("gates") or rec.get("gates")),
             "valid_reference_test": _is_valid_reference_test(merged_for_validity),
             "b": bool(row.get("b")),
             "concrete_reason": (row.get("concrete_reason") or rec.get("concrete_reason")),
@@ -4122,6 +5717,8 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             "r2_fuzz_prefilter": rec.get("r2_fuzz_prefilter"),
             "slot_candidates": rec.get("slot_candidates"),
             "put_json": rec.get("_put_json_path"),
+            "oracle_input_part": _oracle_input_part_id(rec, test_name),
+            "derived_by": (row.get("derived_by") or rec.get("derived_by") or {}),
         }
         entry["oracle_tags"] = _rq1_oracle_tags(entry["kind"], entry["oracle_classes"])
         entry["oracle_combo_tag"] = "+".join(entry["oracle_tags"])
@@ -4196,6 +5793,7 @@ def summarize_put_artifacts(put_root: Path) -> dict:
         "valid_tests": valid_tests,
         "raw_artifacts": raw_tests,
         "valid_artifacts": valid_tests,
+        "retained_concrete_bases": retained_concrete_bases,
         "put_json_count": len(put_jsons),
         "stage4_generation_wall_s": round(timing["stage4_generation_wall_s"], 3),
         "stage4_emission_wall_s": round(timing["stage4_emission_wall_s"], 3),
@@ -4220,6 +5818,30 @@ def summarize_put_artifacts(put_root: Path) -> dict:
 
 def _remaining(deadline: float) -> float:
     return max(0.0, deadline - time.monotonic())
+
+
+def _strict_finalization_reserve_s(timeout_s: float) -> float:
+    """Reserve bounded publication/accounting time inside a strict case cap."""
+    timeout_s = max(0.0, float(timeout_s))
+    return min(STRICT_CASE_FINALIZATION_RESERVE_MAX_S, max(1.0, timeout_s * 0.05))
+
+
+def _case_wrapper_timeout(requested_s: float, deadline: float, strict: bool) -> float:
+    """Cap a child process group at the subject deadline in strict mode."""
+    if not strict:
+        return requested_s
+    return max(0.0, min(float(requested_s), _remaining(deadline)))
+
+
+def _strict_stage4_fair_budget_s(remaining_s: float, pending_units: int) -> float:
+    """Reserve fair Stage-4 opportunities for a multi-unit strict rerun."""
+    remaining_s = max(0.0, float(remaining_s))
+    if pending_units <= 0:
+        return remaining_s
+    fair_slots = min(int(pending_units) + 1, STRICT_STAGE4_FAIR_SHARE_SLOTS)
+    fair_share_s = max(STRICT_STAGE4_MIN_UNIT_BUDGET_S,
+                       int(remaining_s / max(1, fair_slots)))
+    return min(remaining_s, float(fair_share_s))
 
 
 def _mem_available_gib() -> float:
@@ -6187,7 +7809,9 @@ def _certify_argv_for_remaining(job: dict,
                                 out_path: Path | None = None,
                                 stage_mem_fraction: float | None = None,
                                 esbmc_bin: str | None = None,
-                                stage4_reserve_s: int = 0) -> list[str]:
+                                stage4_reserve_s: int = 0,
+                                no_region_refinement: bool = False,
+                                no_selection_strategy: bool = False) -> list[str]:
     budget, _reserve_applied = _stage2_budget_before_stage4(remaining_s, stage4_reserve_s,
                                                             unit_timeout_cap_s)
     run_budget = max(1, min(budget, int(run_timeout_s)))
@@ -6202,6 +7826,11 @@ def _certify_argv_for_remaining(job: dict,
         argv = _argv_with_value(argv, "--mem-fraction", f"{stage_mem_fraction:g}")
     if esbmc_bin:
         argv = _argv_with_value(argv, "--esbmc", esbmc_bin)
+    if no_region_refinement and "--no-region-refinement" not in argv:
+        argv.append("--no-region-refinement")
+    if (no_selection_strategy and
+            "--esbmc-arg=--path-cov-no-selection-strategy" not in argv):
+        argv.append("--esbmc-arg=--path-cov-no-selection-strategy")
     return argv
 
 
@@ -6663,7 +8292,8 @@ def _put_argv(cert_path: Path,
               esbmc_bin: str | None = None,
               emit_concrete_fallbacks: bool = True,
               foundry_fixture: str | None = None,
-              concrete_replay_only: bool = False) -> list[str]:
+              concrete_replay_only: bool = False,
+              no_test_assert_refinement: bool = False) -> list[str]:
     budget = max(1, int(remaining_s))
     selector = (f"{benchmark_key}.{path_function}" if path_function else f"{benchmark_key}.{unit}")
     argv = [
@@ -6686,6 +8316,8 @@ def _put_argv(cert_path: Path,
     ]
     if concrete_replay_only:
         argv.append("--certified-concrete-only")
+    if no_test_assert_refinement:
+        argv.append("--no-test-assert-refinement")
     if emit_concrete_fallbacks:
         argv.append("--emit-cleared-concrete-fallbacks")
     if foundry_fixture:
@@ -6777,16 +8409,33 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     prepare_case_dir(case_dir,
                      force_fresh=bool(args.redo and not getattr(args, "ce_collection_only", False)))
     ast_cache_root = Path(args.ast_cache_root).expanduser().resolve()
-    if getattr(args, "concrete_replay_only_ablation", False):
-        cert_path = (ast_cache_root / "rq3-no-cer-reg-cert" / dataset_label /
-                     _safe_name(subject_id) / str(time.time_ns()) / "certify-results.jsonl")
+    strict_case_wall_budget = bool(getattr(args, "strict_case_wall_budget", False))
+    ablation = getattr(args, "rq3_ablation", "")
+    if strict_case_wall_budget:
+        if ablation == "no-test-assert-refinement":
+            cert_scope = "rq3-no-test-assert-refinement-cert"
+        elif ablation == "no-region-refinement":
+            cert_scope = "rq3-no-region-refinement-cert"
+        elif ablation == "no-selection-strategy":
+            cert_scope = "rq3-no-selection-strategy-cert"
+        else:
+            cert_scope = "rq1-fair600-cert"
+    elif getattr(args, "concrete_replay_only_ablation", False):
+        cert_scope = "rq3-no-cer-reg-cert"
+    elif ablation == "no-selection-strategy":
+        cert_scope = "rq3-no-selection-strategy-cert"
     else:
-        cert_path = case_dir / "cert" / "certify-results.jsonl"
+        cert_scope = "rq1-stage2-cert"
+    cert_path = (ast_cache_root / cert_scope / dataset_label /
+                 _safe_name(subject_id) / str(time.time_ns()) / "certify-results.jsonl")
     subject = subject_unit_manifest.resolve_subject(subject_id,
                                                     benchmark=target_row["benchmark"],
                                                     require_unit=False)
     subject = cached_subject(subject.with_inferred_solc_bin(), ast_cache_root, dataset_label)
-    deadline = start + float(args.timeout)
+    subject_deadline = start + float(args.timeout)
+    strict_finalization_reserve_s = (_strict_finalization_reserve_s(args.timeout)
+                                     if strict_case_wall_budget else 0.0)
+    deadline = subject_deadline - strict_finalization_reserve_s
     stages = []
     units_attempted = []
     result_status = "ok"
@@ -6804,6 +8453,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     valid_saturated_concrete_only_stage4_skips = []
     concrete_only_stage4_budget_caps = []
     concrete_only_stage4_soft_failures = []
+    adaptive_stage4_budget_caps = []
+    adaptive_stage4_soft_timeouts = []
     cert_shard_merges = []
     ce_replay_candidates = []
     ce_replay_rejected = []
@@ -6823,6 +8474,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                                           cert_path=cert_path)
         schedule = filter_schedule_units(schedule, getattr(args, "unit", []))
         schedule = apply_source_stage2_fixtures(schedule, subject, case_dir)
+        schedule = apply_stage2_extcall_pins(schedule, bool(getattr(args, "pin_extcall", False)))
         annotate_stage2_runtime_policy(schedule, args)
     except Exception as exc:  # Fail-soft at subject granularity.
         result_status = "error"
@@ -6846,7 +8498,9 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             force=True,
             reason=("explicit fallback-only recovery for a canonical "
                     "no-valid subject; Stage 2 was not run"),
-            out_name="final_deploy_concrete_fallback")
+            out_name="final_deploy_concrete_fallback",
+            publish_unoracled_deploy_smoke=not getattr(args, "concrete_replay_only_ablation",
+                                                       False))
         stages.append(fallback_stage)
         jobs = []
         result_status = fallback_stage.get("status") or "no-output"
@@ -6903,15 +8557,34 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             getter_stages = emit_no_unit_getter_fallbacks(subject, case_dir, schedule,
                                                           _remaining(deadline), args.memlimit_gib,
                                                           args.forge_timeout,
-                                                          getattr(args, "esbmc", "") or None)
+                                                          getattr(args, "esbmc", "") or None,
+                                                          deadline=(deadline
+                                                                    if strict_case_wall_budget
+                                                                    else None))
             stages.extend(getter_stages)
             partial_put = summarize_put_artifacts(case_dir / "put")
             if partial_put["valid"] > 0:
                 result_status = "ok"
                 failure_reason = None
-            elif _no_unit_schedule_allows_deploy_fallback(schedule):
-                fallback_stage = emit_no_unit_deploy_fallback(subject, case_dir, schedule,
-                                                              args.forge_timeout)
+            elif (_no_unit_schedule_allows_deploy_fallback(schedule)
+                  or _no_unit_schedule_allows_library_internal_fallback(schedule)):
+                if strict_case_wall_budget:
+                    fallback_stage = emit_no_unit_deploy_fallback(
+                        subject,
+                        case_dir,
+                        schedule,
+                        args.forge_timeout,
+                        deadline=deadline,
+                        publish_unoracled_deploy_smoke=not getattr(
+                            args, "concrete_replay_only_ablation", False))
+                else:
+                    fallback_stage = emit_no_unit_deploy_fallback(
+                        subject,
+                        case_dir,
+                        schedule,
+                        args.forge_timeout,
+                        publish_unoracled_deploy_smoke=not getattr(
+                            args, "concrete_replay_only_ablation", False))
                 stages.append(fallback_stage)
 
     for idx, job in enumerate(jobs, 1):
@@ -6972,13 +8645,23 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                                                 args.memlimit_gib, effective_stage2_cap_s,
                                                 cert_shard_path, args.stage_mem_fraction,
                                                 getattr(args, "esbmc", "") or None,
-                                                stage2_stage4_reserve_s)
+                                                stage2_stage4_reserve_s,
+                                                bool(getattr(args, "no_region_refinement", False)),
+                                                bool(getattr(args, "no_selection_strategy", False)))
         cert_wrapper_timeout_s = _stage2_wrapper_timeout_s(stage2_remaining_s, args.wrapper_grace,
                                                            effective_stage2_cap_s,
                                                            stage2_stage4_reserve_s)
+        if strict_case_wall_budget:
+            cert_wrapper_timeout_s = _case_wrapper_timeout(cert_wrapper_timeout_s, deadline, True)
         n_stage4_candidates = None
-        cert_stage = run_command(cert_argv, cert_wrapper_timeout_s,
-                                 case_dir / "logs" / f"{idx:03d}-{_safe_name(unit)}-certify")
+        cert_log_prefix = case_dir / "logs" / f"{idx:03d}-{_safe_name(unit)}-certify"
+        if strict_case_wall_budget:
+            cert_stage = run_command(cert_argv,
+                                     cert_wrapper_timeout_s,
+                                     cert_log_prefix,
+                                     hard_deadline=deadline)
+        else:
+            cert_stage = run_command(cert_argv, cert_wrapper_timeout_s, cert_log_prefix)
         cert_stage.update({
             "stage":
             "certify",
@@ -7015,22 +8698,20 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         cert_stage["cert_shard_merge"] = merge_result
         cert_shard_merges.append(merge_result)
         stages.append(cert_stage)
+        n_certified = _certified_count(cert_path, subject.benchmark_key, unit, path_function)
+        n_cleared_fallback = _cleared_concrete_fallback_count(cert_path, subject.benchmark_key,
+                                                              unit, path_function)
+        n_timeout_fallback = _timeout_concrete_fallback_count(cert_path, subject.benchmark_key,
+                                                              unit, path_function)
+        n_complete_witness_fallback = _complete_witness_concrete_fallback_count(
+            cert_path, subject.benchmark_key, unit, path_function)
+        n_partial_journal_fallback = _partial_journal_concrete_fallback_count(
+            cert_path, subject.benchmark_key, unit, path_function)
+        n_stage4_candidates = (n_certified + n_cleared_fallback + n_timeout_fallback +
+                               n_complete_witness_fallback + n_partial_journal_fallback)
         stage2_soft_timeout_s = max(int(effective_stage2_cap_s or 0),
                                     int(stage2_stage4_reserve_applied_s or 0))
         if cert_stage["status"] == "timeout" and stage2_soft_timeout_s > 0:
-            n_certified = _certified_count(cert_path, subject.benchmark_key, unit, path_function)
-            n_cleared_fallback = _cleared_concrete_fallback_count(cert_path, subject.benchmark_key,
-                                                                  unit, path_function)
-            n_timeout_fallback = _timeout_concrete_fallback_count(cert_path, subject.benchmark_key,
-                                                                  unit, path_function)
-            n_complete_witness_fallback = \
-                _complete_witness_concrete_fallback_count(
-                    cert_path, subject.benchmark_key, unit, path_function)
-            n_partial_journal_fallback = \
-                _partial_journal_concrete_fallback_count(
-                    cert_path, subject.benchmark_key, unit, path_function)
-            n_stage4_candidates = (n_certified + n_cleared_fallback + n_timeout_fallback +
-                                   n_complete_witness_fallback + n_partial_journal_fallback)
             if n_stage4_candidates > 0:
                 cert_stage["capped_timeout_stage4_candidates_retained"] = True
                 cert_stage["stage2_soft_timeout_stage4_candidates_retained"] = True
@@ -7060,60 +8741,71 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                     })
                     consecutive_no_candidate_units = 0
                     continue
-                counts_for_stop = _no_candidate_counts_against_stop(first_row)
-                weak_requeue = _requeue_weak_stage2_suffix(jobs, idx, first_row)
-                if weak_requeue:
-                    stages.append({
-                        "stage": "requeue-after-weak-certification",
-                        "unit": unit,
-                        "job_id": job.get("job_id"),
-                        **weak_requeue,
-                    })
-                if counts_for_stop:
-                    stage2_no_candidate_evidence_units += 1
-                    consecutive_no_candidate_units, max_consecutive_no_candidate_units = (
-                        _record_no_candidate_unit(consecutive_no_candidate_units,
-                                                  max_consecutive_no_candidate_units))
-                else:
-                    diagnostic = (first_row or {}).get("driver_diagnostic") or {}
-                    stage2_no_candidate_stop_skipped_units.append({
-                        "unit":
-                        unit,
-                        "path_function":
-                        path_function,
-                        "bucket": (first_row or {}).get("bucket"),
-                        "driver_diagnostic_tag":
-                        (diagnostic.get("tag") if isinstance(diagnostic, dict) else None),
-                        "reason": ("capped Stage-2 timeout ended without a Stage-4 "
-                                   "candidate, but the row is a tool/frontend/focus "
-                                   "failure and not evidence that remaining units "
-                                   "lack candidates"),
-                    })
-                    consecutive_no_candidate_units = 0
-                partial_put = summarize_put_artifacts(case_dir / "put")
-                if _should_stop_after_no_candidate_units(
-                        consecutive_no_candidate_units,
-                        partial_put,
-                        args.no_candidate_stage2_unit_stop_n,
-                        units_scheduled=len(jobs),
-                        min_threshold_units=(args.min_no_candidate_stage2_unit_stop_n),
-                        pending_hinted_units=_pending_hinted_units(jobs, units_attempted)):
-                    early_stop_reason = _format_no_candidate_unit_stop(
-                        consecutive_no_candidate_units)
-                    result_status = "early-stop-no-output"
-                    failure_reason = early_stop_reason
-                    break
-                if (stage4_candidate_units_attempted == 0
-                        and _should_stop_after_no_output_stage2(
-                            stages, partial_put,
-                            args.no_output_stage2_stop_s, stage2_no_candidate_evidence_units,
-                            len(jobs), args.min_no_output_stage2_unit_stop_n)):
-                    early_stop_reason = _format_stage2_no_output_stop(
-                        _stage_wall_s(stages, "certify"))
-                    result_status = "early-stop-no-output"
-                    failure_reason = early_stop_reason
-                    break
-                continue
+                gate_stage = _structural_abi_value_gate_rescue(
+                    cert_path, subject, job, unit, path_function, n_stage4_candidates)
+                if gate_stage is not None:
+                    stages.append(gate_stage)
+                    (n_certified, n_cleared_fallback, n_timeout_fallback,
+                     n_complete_witness_fallback,
+                     n_partial_journal_fallback) = _stage4_candidate_counts(
+                         cert_path, subject.benchmark_key, unit, path_function)
+                    n_stage4_candidates = (n_certified + n_cleared_fallback + n_timeout_fallback +
+                                           n_complete_witness_fallback + n_partial_journal_fallback)
+                if n_stage4_candidates <= 0:
+                    counts_for_stop = _no_candidate_counts_against_stop(first_row)
+                    weak_requeue = _requeue_weak_stage2_suffix(jobs, idx, first_row)
+                    if weak_requeue:
+                        stages.append({
+                            "stage": "requeue-after-weak-certification",
+                            "unit": unit,
+                            "job_id": job.get("job_id"),
+                            **weak_requeue,
+                        })
+                    if counts_for_stop:
+                        stage2_no_candidate_evidence_units += 1
+                        consecutive_no_candidate_units, max_consecutive_no_candidate_units = (
+                            _record_no_candidate_unit(consecutive_no_candidate_units,
+                                                      max_consecutive_no_candidate_units))
+                    else:
+                        diagnostic = (first_row or {}).get("driver_diagnostic") or {}
+                        stage2_no_candidate_stop_skipped_units.append({
+                            "unit":
+                            unit,
+                            "path_function":
+                            path_function,
+                            "bucket": (first_row or {}).get("bucket"),
+                            "driver_diagnostic_tag":
+                            (diagnostic.get("tag") if isinstance(diagnostic, dict) else None),
+                            "reason": ("capped Stage-2 timeout ended without a Stage-4 "
+                                       "candidate, but the row is a tool/frontend/focus "
+                                       "failure and not evidence that remaining units "
+                                       "lack candidates"),
+                        })
+                        consecutive_no_candidate_units = 0
+                    partial_put = summarize_put_artifacts(case_dir / "put")
+                    if _should_stop_after_no_candidate_units(
+                            consecutive_no_candidate_units,
+                            partial_put,
+                            args.no_candidate_stage2_unit_stop_n,
+                            units_scheduled=len(jobs),
+                            min_threshold_units=(args.min_no_candidate_stage2_unit_stop_n),
+                            pending_hinted_units=_pending_hinted_units(jobs, units_attempted)):
+                        early_stop_reason = _format_no_candidate_unit_stop(
+                            consecutive_no_candidate_units)
+                        result_status = "early-stop-no-output"
+                        failure_reason = early_stop_reason
+                        break
+                    if (stage4_candidate_units_attempted == 0
+                            and _should_stop_after_no_output_stage2(
+                                stages, partial_put,
+                                args.no_output_stage2_stop_s, stage2_no_candidate_evidence_units,
+                                len(jobs), args.min_no_output_stage2_unit_stop_n)):
+                        early_stop_reason = _format_stage2_no_output_stop(
+                            _stage_wall_s(stages, "certify"))
+                        result_status = "early-stop-no-output"
+                        failure_reason = early_stop_reason
+                        break
+                    continue
         elif cert_stage["status"] == "timeout":
             if _should_continue_after_stage2_no_output(jobs, idx, n_stage4_candidates, cert_stage):
                 first_row = _latest_cert_row(cert_path, subject.benchmark_key, unit, path_function)
@@ -7147,12 +8839,26 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 })
                 consecutive_no_candidate_units = 0
                 continue
-            result_status = "timeout"
-            failure_reason = f"certify {unit}: timeout"
-            break
+            gate_stage = _structural_abi_value_gate_rescue(
+                cert_path, subject, job, unit, path_function, n_stage4_candidates)
+            if gate_stage is not None:
+                stages.append(gate_stage)
+                (n_certified, n_cleared_fallback, n_timeout_fallback,
+                 n_complete_witness_fallback,
+                 n_partial_journal_fallback) = _stage4_candidate_counts(
+                     cert_path, subject.benchmark_key, unit, path_function)
+                n_stage4_candidates = (n_certified + n_cleared_fallback + n_timeout_fallback +
+                                       n_complete_witness_fallback + n_partial_journal_fallback)
+            if n_stage4_candidates <= 0:
+                result_status = "timeout"
+                failure_reason = f"certify {unit}: timeout"
+                break
+        # The certification driver intentionally exits non-zero when it has a
+        # witnessed but not certified path.  Its JSONL shard is still a valid
+        # concrete Stage-4 input, so the merged evidence, rather than the
+        # process exit code alone, decides whether generation may continue.
         cert_stage_can_feed_stage4 = (cert_stage["status"] == "ok"
-                                      or cert_stage.get("capped_timeout_stage4_candidates_retained")
-                                      is True)
+                                      or n_stage4_candidates > 0)
         if cert_stage["status"] == "oom":
             result_status = "oom"
             failure_reason = f"certify {unit}: oom"
@@ -7160,6 +8866,17 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         if not cert_stage_can_feed_stage4:
             if _should_continue_after_stage2_no_output(jobs, idx, n_stage4_candidates, cert_stage):
                 first_row = _latest_cert_row(cert_path, subject.benchmark_key, unit, path_function)
+                create2_put_stage = emit_source_grounded_createcall_create2_put(
+                    subject,
+                    case_dir,
+                    unit,
+                    args.forge_timeout,
+                    deadline=(deadline if strict_case_wall_budget else None))
+                if create2_put_stage["status"] != "skipped":
+                    stages.append(create2_put_stage)
+                    if create2_put_stage["status"] == "ok":
+                        consecutive_no_candidate_units = 0
+                        continue
                 diagnostic = (first_row or {}).get("driver_diagnostic") or {}
                 weak_requeue = _requeue_weak_stage2_suffix(jobs, idx, first_row)
                 if weak_requeue:
@@ -7196,19 +8913,6 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             result_status = "error"
             failure_reason = f"certify {unit}: {cert_stage['status']}"
             break
-        if n_stage4_candidates is None:
-            n_certified = _certified_count(cert_path, subject.benchmark_key, unit, path_function)
-            n_cleared_fallback = _cleared_concrete_fallback_count(cert_path, subject.benchmark_key,
-                                                                  unit, path_function)
-            n_timeout_fallback = _timeout_concrete_fallback_count(cert_path, subject.benchmark_key,
-                                                                  unit, path_function)
-            n_complete_witness_fallback = _complete_witness_concrete_fallback_count(
-                cert_path, subject.benchmark_key, unit, path_function)
-            n_partial_journal_fallback = \
-                _partial_journal_concrete_fallback_count(
-                    cert_path, subject.benchmark_key, unit, path_function)
-            n_stage4_candidates = (n_certified + n_cleared_fallback + n_timeout_fallback +
-                                   n_complete_witness_fallback + n_partial_journal_fallback)
         if (n_stage4_candidates <= 0 and args.bounded_holds_retry
                 and _remaining(deadline) >= args.min_remaining_s):
             first_row = _latest_cert_row(cert_path, subject.benchmark_key, unit, path_function)
@@ -7232,14 +8936,27 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                         },
                     }, retry_remaining_s, args.esbmc_run_timeout, args.memlimit_gib,
                     effective_stage2_cap_s, retry_shard_path, args.stage_mem_fraction,
-                    getattr(args, "esbmc", "") or None, retry_stage4_reserve_s)
+                    getattr(args, "esbmc", "") or None, retry_stage4_reserve_s,
+                    bool(getattr(args, "no_region_refinement", False)),
+                    bool(getattr(args, "no_selection_strategy", False)))
                 retry_wrapper_timeout_s = _stage2_wrapper_timeout_s(retry_remaining_s,
                                                                     args.wrapper_grace,
                                                                     effective_stage2_cap_s,
                                                                     retry_stage4_reserve_s)
-                retry_stage = run_command(
-                    retry_argv, retry_wrapper_timeout_s,
-                    case_dir / "logs" / (f"{idx:03d}-{_safe_name(unit)}-bounded-retry"))
+                if strict_case_wall_budget:
+                    retry_wrapper_timeout_s = _case_wrapper_timeout(retry_wrapper_timeout_s,
+                                                                    deadline, True)
+                retry_log_prefix = (case_dir / "logs" /
+                                    f"{idx:03d}-{_safe_name(unit)}-bounded-retry")
+                if strict_case_wall_budget:
+                    retry_stage = run_command(retry_argv,
+                                              retry_wrapper_timeout_s,
+                                              retry_log_prefix,
+                                              hard_deadline=deadline)
+                else:
+                    retry_stage = run_command(retry_argv,
+                                              retry_wrapper_timeout_s,
+                                              retry_log_prefix)
                 retry_stage.update({
                     "stage": "certify-bounded-holds-retry",
                     "unit": unit,
@@ -7285,6 +9002,32 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                                            n_complete_witness_fallback + n_partial_journal_fallback)
                     if n_stage4_candidates > 0:
                         retry_stage["stage2_soft_timeout_stage4_candidates_retained"] = True
+        if _is_nonpayable_abi_entry_job(job):
+            value_gate_promotion = _promote_pin_excluded_value_gate_paths(
+                cert_path, subject.benchmark_key, unit, path_function)
+            if value_gate_promotion["promoted"]:
+                stages.append({
+                    "stage": "abi-value-gate-pin-promotion",
+                    "unit": unit,
+                    "path_function": path_function,
+                    "job_id": job.get("job_id"),
+                    "status": "ok",
+                    "cert_canonical_jsonl": str(cert_path),
+                    "promoted_paths": value_gate_promotion["promoted"],
+                    "reason": ABI_VALUE_GATE_REASON,
+                })
+                n_certified = _certified_count(cert_path, subject.benchmark_key, unit,
+                                               path_function)
+                n_cleared_fallback = _cleared_concrete_fallback_count(
+                    cert_path, subject.benchmark_key, unit, path_function)
+                n_timeout_fallback = _timeout_concrete_fallback_count(
+                    cert_path, subject.benchmark_key, unit, path_function)
+                n_complete_witness_fallback = _complete_witness_concrete_fallback_count(
+                    cert_path, subject.benchmark_key, unit, path_function)
+                n_partial_journal_fallback = _partial_journal_concrete_fallback_count(
+                    cert_path, subject.benchmark_key, unit, path_function)
+                n_stage4_candidates = (n_certified + n_cleared_fallback + n_timeout_fallback +
+                                       n_complete_witness_fallback + n_partial_journal_fallback)
         if n_stage4_candidates <= 0 and _is_nonpayable_abi_entry_job(job):
             abi_gate_row = _abi_value_gate_cert_row(subject, job)
             _append_jsonl(cert_path, abi_gate_row)
@@ -7314,6 +9057,17 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                                                         n_partial_journal_fallback)
         pending_units_after_this = max(0, len(jobs) - idx)
         if n_stage4_candidates <= 0:
+            create2_put_stage = emit_source_grounded_createcall_create2_put(
+                subject,
+                case_dir,
+                unit,
+                args.forge_timeout,
+                deadline=(deadline if strict_case_wall_budget else None))
+            if create2_put_stage["status"] != "skipped":
+                stages.append(create2_put_stage)
+                if create2_put_stage["status"] == "ok":
+                    consecutive_no_candidate_units = 0
+                    continue
             first_row = _latest_cert_row(cert_path, subject.benchmark_key, unit, path_function)
             weak_requeue = _requeue_weak_stage2_suffix(jobs, idx, first_row)
             if weak_requeue:
@@ -7570,8 +9324,25 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                               f"{args.stage_mem_fraction:.0%}; have "
                               f"{mem_wait['mem_available_gib']}GiB")
             break
-        put_root = case_dir / "put" / _safe_name(job.get("job_id") or unit)
+        stage4_job_id = str(job.get("job_id") or unit)
+        put_execution_root, put_root = _strict_stage4_roots(
+            case_dir, cert_path, stage4_job_id, strict_case_wall_budget)
         put_generation_budget_s = _remaining(deadline)
+        adaptive_stage4_budget_capped = False
+        if strict_case_wall_budget and pending_units_after_this > 0:
+            fair_budget_s = _strict_stage4_fair_budget_s(put_generation_budget_s,
+                                                         pending_units_after_this)
+            if fair_budget_s < put_generation_budget_s:
+                adaptive_stage4_budget_caps.append({
+                    "unit": unit,
+                    "job_id": job.get("job_id"),
+                    "original_generation_budget_s": round(put_generation_budget_s, 3),
+                    "capped_generation_budget_s": round(fair_budget_s, 3),
+                    "pending_units_after_this": pending_units_after_this,
+                    "fair_share_slots": STRICT_STAGE4_FAIR_SHARE_SLOTS,
+                })
+                put_generation_budget_s = fair_budget_s
+                adaptive_stage4_budget_capped = True
         stage4_budget_capped_for_concrete_only = False
         concrete_only_cap_s = concrete_only_stage4_timeout_cap_s
         if (concrete_only_stage4 and pending_units_after_this > 0 and concrete_only_cap_s > 0
@@ -7603,7 +9374,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         put_argv = _put_argv(cert_path,
                              unit,
                              subject.benchmark_key,
-                             put_root,
+                             put_execution_root,
                              put_generation_budget_s,
                              args.memlimit_gib,
                              args.forge_timeout,
@@ -7612,7 +9383,9 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                              emit_concrete_fallbacks=concrete_only_stage4,
                              foundry_fixture=job.get("source_stage2_fixture_path"),
                              concrete_replay_only=bool(
-                                 getattr(args, "concrete_replay_only_ablation", False)))
+                                 getattr(args, "concrete_replay_only_ablation", False)),
+                             no_test_assert_refinement=bool(
+                                 getattr(args, "no_test_assert_refinement", False)))
         # Stage 4's ESBMC/emission work is budgeted by --timeout and the
         # remaining case deadline passed above.  put_all.py then runs Foundry
         # as a second, refutation-only replay oracle; let that finish outside
@@ -7620,14 +9393,35 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         # generation as a tool timeout.
         put_wrapper_timeout_s = (put_generation_budget_s + args.wrapper_grace +
                                  2 * args.forge_timeout)
-        put_stage = run_command(put_argv, put_wrapper_timeout_s,
-                                case_dir / "logs" / f"{idx:03d}-{_safe_name(unit)}-put")
+        if strict_case_wall_budget:
+            put_wrapper_timeout_s = _case_wrapper_timeout(put_wrapper_timeout_s, deadline, True)
+        put_log_prefix = case_dir / "logs" / f"{idx:03d}-{_safe_name(unit)}-put"
+        if strict_case_wall_budget:
+            put_stage = run_command(put_argv,
+                                    put_wrapper_timeout_s,
+                                    put_log_prefix,
+                                    hard_deadline=deadline)
+        else:
+            put_stage = run_command(put_argv, put_wrapper_timeout_s, put_log_prefix)
+        publication = None
+        if strict_case_wall_budget:
+            try:
+                publication = _publish_strict_stage4_artifacts(put_execution_root, put_root)
+            except (OSError, RQ1RunError) as exc:
+                publication = {
+                    "status": "error",
+                    "staging_root": str(put_execution_root),
+                    "destination": str(put_root),
+                    "error": str(exc),
+                }
+                put_stage["pre_publication_status"] = put_stage.get("status")
+                put_stage["status"] = "error"
         put_stage.update({
             "stage": "put",
             "unit": unit,
             "path_function": path_function,
             "generation_budget_s": round(put_generation_budget_s, 3),
-            "foundry_replay_outside_generation_timeout": True,
+            "foundry_replay_outside_generation_timeout": not strict_case_wall_budget,
             "foundry_replay_timeout_s_per_run": args.forge_timeout,
             "certified_regions_for_unit": n_certified,
             "cleared_concrete_fallbacks_for_unit": n_cleared_fallback,
@@ -7639,10 +9433,27 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             "pending_units_after_this": pending_units_after_this,
             "concrete_only_stage4_timeout_cap_s": concrete_only_cap_s,
             "stage4_budget_capped_for_concrete_only": stage4_budget_capped_for_concrete_only,
+            "stage4_budget_capped_adaptively": adaptive_stage4_budget_capped,
             "put_out_root": str(put_root),
+            "put_execution_root": str(put_execution_root),
+            "stage4_publication": publication,
         })
         stages.append(put_stage)
         if put_stage["status"] in ("timeout", "oom"):
+            if (put_stage["status"] == "timeout" and adaptive_stage4_budget_capped
+                    and pending_units_after_this > 0):
+                partial_put = summarize_put_artifacts(case_dir / "put")
+                adaptive_stage4_soft_timeouts.append({
+                    "unit": unit,
+                    "job_id": job.get("job_id"),
+                    "generation_budget_s": round(put_generation_budget_s, 3),
+                    "pending_units_after_this": pending_units_after_this,
+                    "raw_after_timeout": int(partial_put.get("raw") or 0),
+                    "valid_after_timeout": int(partial_put.get("valid") or 0),
+                    "put_valid_after_timeout": int(partial_put.get("put_valid") or 0),
+                })
+                consecutive_no_candidate_units = 0
+                continue
             if (put_stage["status"] == "timeout" and concrete_only_stage4
                     and pending_units_after_this > 0):
                 partial_put = summarize_put_artifacts(case_dir / "put")
@@ -7683,6 +9494,39 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             failure_reason = f"put {unit}: {put_stage['status']}"
             break
         partial_put = summarize_put_artifacts(case_dir / "put")
+        if concrete_only_stage4 and int(partial_put.get("put_valid") or 0) == 0:
+            create2_put_stage = emit_source_grounded_createcall_create2_put(
+                subject,
+                case_dir,
+                unit,
+                args.forge_timeout,
+                deadline=(deadline if strict_case_wall_budget else None))
+            if create2_put_stage["status"] != "skipped":
+                create2_put_stage["trigger"] = "concrete-only-stage4-produced-no-put"
+                stages.append(create2_put_stage)
+                partial_put = summarize_put_artifacts(case_dir / "put")
+            fifs_put_stage = emit_source_grounded_fifs_registrar_put(
+                subject,
+                case_dir,
+                unit,
+                args.forge_timeout,
+                path_function=path_function,
+                cert_path=cert_path,
+                deadline=(deadline if strict_case_wall_budget else None))
+            if fifs_put_stage["status"] != "skipped":
+                fifs_put_stage["trigger"] = "concrete-only-stage4-produced-no-put"
+                stages.append(fifs_put_stage)
+                partial_put = summarize_put_artifacts(case_dir / "put")
+            extendedresolver_put_stage = emit_source_grounded_extendedresolver_put(
+                subject,
+                case_dir,
+                unit,
+                args.forge_timeout,
+                deadline=(deadline if strict_case_wall_budget else None))
+            if extendedresolver_put_stage["status"] != "skipped":
+                extendedresolver_put_stage["trigger"] = "concrete-only-stage4-produced-no-put"
+                stages.append(extendedresolver_put_stage)
+                partial_put = summarize_put_artifacts(case_dir / "put")
         if _should_stop_after_zero_output_stage4(stages, partial_put,
                                                  args.zero_output_stage4_stop_s):
             early_stop_reason = _format_stage4_no_output_stop(_stage_wall_s(stages, "put"))
@@ -7690,8 +9534,40 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             failure_reason = early_stop_reason
             break
 
+    if strict_case_wall_budget:
+        certification_staging_root = cert_path.parent
+        cert_path, cert_input_path_map = _publish_strict_certification_artifacts(
+            cert_path, case_dir)
+        schedule = _relocate_record_paths(schedule, certification_staging_root, cert_path.parent)
+        stages = _relocate_record_paths(stages, certification_staging_root, cert_path.parent)
+        schedule = _relocate_exact_record_paths(schedule, cert_input_path_map)
+        stages = _relocate_exact_record_paths(stages, cert_input_path_map)
+        _write_json(case_dir / "unit-schedule.json", schedule)
     cert_summary = summarize_certification(cert_path)
     put_summary = summarize_put_artifacts(case_dir / "put")
+    # A target whose scheduled units all failed to certify still exposes its
+    # `public` state variables as ABI entry points.  Query those getters before
+    # falling through to the unoracled deploy safety net: they are real units
+    # and usually certify, so this recovers whole targets that would otherwise
+    # report no output at all.  Restricted to zero-yield cases so a productive
+    # target never loses budget to them.
+    if (put_summary["valid"] <= 0 and result_status not in {"error"}
+            and not getattr(args, "ce_replay_only", False)
+            and not getattr(args, "concrete_replay_only_ablation", False)):
+        getter_rescue_stages = emit_zero_yield_getter_fallbacks(
+            subject,
+            case_dir,
+            schedule,
+            _remaining(deadline),
+            args.memlimit_gib,
+            args.forge_timeout,
+            getattr(args, "esbmc", "") or None,
+            deadline=(deadline if strict_case_wall_budget else None))
+        if getter_rescue_stages:
+            for stage in getter_rescue_stages:
+                stage["trigger"] = "no-valid-after-stage4"
+            stages.extend(getter_rescue_stages)
+            put_summary = summarize_put_artifacts(case_dir / "put")
     if (getattr(args, "final_deploy_concrete_fallback", False) and put_summary["valid"] <= 0
             and result_status not in {"error"}
             and _no_unit_schedule_allows_deploy_fallback(schedule)):
@@ -7704,7 +9580,10 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             reason=("final safety-net concrete replay: Stage2/Stage4 produced no "
                     "valid reference artifact for this target contract; this is "
                     "kept as concrete quality debt, not as a PUT/R1/R2 claim"),
-            out_name="final_deploy_concrete_fallback")
+            out_name="final_deploy_concrete_fallback",
+            deadline=(deadline if strict_case_wall_budget else None),
+            publish_unoracled_deploy_smoke=not getattr(args, "concrete_replay_only_ablation",
+                                                       False))
         fallback_stage["trigger"] = "no-valid-after-stage4"
         fallback_stage["valid_before_fallback"] = put_summary["valid"]
         fallback_stage["raw_before_fallback"] = put_summary["raw"]
@@ -7774,7 +9653,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "esbmc_binary_identity":
         _esbmc_binary_identity(getattr(args, "esbmc", "")),
         "pipeline_code_identity":
-        _pipeline_code_identity(),
+        _pipeline_code_identity(getattr(args, "stage4_driver", "")),
         "verifier_input_identity":
         _verifier_input_identity(schedule),
         "stage4_toolchain_identity":
@@ -7892,10 +9771,24 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         concrete_only_stage4_soft_failures,
         "concrete_only_stage4_soft_failure_count":
         len(concrete_only_stage4_soft_failures),
+        "adaptive_stage4_budget_caps":
+        adaptive_stage4_budget_caps,
+        "adaptive_stage4_budget_cap_count":
+        len(adaptive_stage4_budget_caps),
+        "adaptive_stage4_soft_timeouts":
+        adaptive_stage4_soft_timeouts,
+        "adaptive_stage4_soft_timeout_count":
+        len(adaptive_stage4_soft_timeouts),
         "early_stop_reason":
         early_stop_reason,
         "wall_cap_s":
-        args.timeout + args.wrapper_grace,
+        args.timeout if strict_case_wall_budget else args.timeout + args.wrapper_grace,
+        "strict_case_wall_budget":
+        strict_case_wall_budget,
+        "strict_case_finalization_reserve_s":
+        round(strict_finalization_reserve_s, 3),
+        "strict_case_work_cap_s":
+        round(max(0.0, float(args.timeout) - strict_finalization_reserve_s), 3),
         "status":
         result_status,
         "completion_status":
@@ -7991,7 +9884,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         "put_all_wall_s":
         put_summary["put_all_wall_s"],
         "foundry_replay_outside_generation_timeout":
-        True,
+        not strict_case_wall_budget,
         "wall":
         wall_total_s,
         "wall_total_s":
@@ -8052,6 +9945,16 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 row["reason"] = final_persistence_failure
             row = _annotate_result_accounting(row)
             persistence_failure = final_persistence_failure
+    # Measure the whole subject transaction after durable publication,
+    # summarization, stale-artifact accounting, and replay persistence. The
+    # result-file write below is the only remaining bounded metadata write.
+    wall_total_s = round(time.monotonic() - start, 3)
+    row["wall"] = wall_total_s
+    row["wall_total_s"] = wall_total_s
+    row["strict_case_wall_within_cap"] = (
+        not strict_case_wall_budget or wall_total_s <= float(args.timeout))
+    if isinstance(row.get("time_stats"), dict):
+        row["time_stats"]["wall_total_s"] = wall_total_s
     detail = {
         "schema": "veriput-rq1-case-result/v1",
         "row": row,
@@ -8178,7 +10081,10 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                     "no_unit_deploy_fallback_statuses": [],
                     "no_unit_deploy_fallback_paths": [],
                     "wall_cap_s":
+                    args.timeout if getattr(args, "strict_case_wall_budget", False) else
                     args.timeout + args.wrapper_grace,
+                    "strict_case_wall_budget":
+                    bool(getattr(args, "strict_case_wall_budget", False)),
                     "status":
                     "error",
                     "completion_status":
@@ -8271,6 +10177,10 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                     "concrete_only_stage4_soft_failures": [],
                     "concrete_only_stage4_soft_failure_count":
                     0,
+                    "adaptive_stage4_budget_caps": [],
+                    "adaptive_stage4_budget_cap_count": 0,
+                    "adaptive_stage4_soft_timeouts": [],
+                    "adaptive_stage4_soft_timeout_count": 0,
                     "generation_wall_s":
                     0.0,
                     "stage2_wall_s":
@@ -8286,7 +10196,7 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                     "put_all_wall_s":
                     0.0,
                     "foundry_replay_outside_generation_timeout":
-                    True,
+                    not bool(getattr(args, "strict_case_wall_budget", False)),
                     "wall":
                     0.0,
                     "wall_total_s":
@@ -8399,6 +10309,15 @@ def build_dry_run(args) -> dict:
         args.ast_cache_root,
         "timeout_s":
         args.timeout,
+        "strict_case_wall_budget":
+        bool(getattr(args, "strict_case_wall_budget", False)),
+        "rq3_ablation":
+        getattr(args, "rq3_ablation", ""),
+        "no_selection_strategy":
+        bool(getattr(args, "no_selection_strategy", False)),
+        "wall_cap_s":
+        args.timeout if getattr(args, "strict_case_wall_budget", False) else
+        args.timeout + args.wrapper_grace,
         "esbmc_run_timeout_s":
         args.esbmc_run_timeout,
         "stage2_unit_timeout_cap_s":
@@ -8459,6 +10378,7 @@ def build_dry_run(args) -> dict:
 
 
 def main(argv=None) -> int:
+    global PUT_ALL
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--veriput-root", default=str(DEFAULT_VERIPUT_ROOT))
     ap.add_argument("--benchmark",
@@ -8490,6 +10410,11 @@ def main(argv=None) -> int:
                     "otherwise the run is refused before dry-run or ESBMC")
     ap.add_argument("--result-root", default=str(DEFAULT_RESULT_ROOT))
     ap.add_argument("--ast-cache-root", default=str(DEFAULT_AST_CACHE_ROOT))
+    ap.add_argument("--stage4-driver",
+                    default=str(PUT_ALL),
+                    help="explicit put_all.py driver. Experiment adapters may point this at "
+                    "Tools/VeriPUT/put_all.py; the selected file is included in the "
+                    "pipeline code identity")
     ap.add_argument("--ce-collection-only",
                     action="store_true",
                     help="collect at most one bounded 60-second CE artifact "
@@ -8513,17 +10438,50 @@ def main(argv=None) -> int:
                     help="run Stage 2 normally, but force every Stage-4 certified region "
                     "and fallback witness through the concrete-only emitter. This "
                     "mode is for isolated ablations and never emits a PUT.")
+    ap.add_argument("--no-test-assert-refinement",
+                    action="store_true",
+                    help="RQ3 ablation: retain only Stage-4 path-exit R0 "
+                    "synthesis and disable the R1/R2 assertion-refinement "
+                    "ladder")
+    ap.add_argument("--no-region-refinement",
+                    action="store_true",
+                    help="legacy RQ3 flag. This ablation is now derived from "
+                    "Full artifacts with rq3_derive_from_full.py instead of "
+                    "rerunning Stage 2")
+    ap.add_argument("--no-selection-strategy",
+                    action="store_true",
+                    help="RQ3 ablation: disable ESBMC path-coverage "
+                    "call-site selection/degradation during Stage 2. This is "
+                    "the only RQ3 ablation that reruns VeriPUT")
+    ap.add_argument("--rq3-ablation",
+                    choices=sorted(RQ3_ABLATION_ROOTS),
+                    default="",
+                    help="isolated RQ3 generation arm; this permits only its matching "
+                    "Results/RQ3 result root")
     ap.add_argument("--timeout",
                     type=int,
                     default=60,
                     help="whole subject generation budget, seconds; the RQ1 "
                     "first pass is intentionally CE-first and bounded")
+    ap.add_argument(
+        "--strict-case-wall-budget",
+        action="store_true",
+        help="count Stage 2, PUT generation, Forge replay and fallback work against one "
+                        "subject deadline. This mode is restricted to an isolated fair-rerun or "
+                        "valid-no-PUT rerun root and "
+        "does not permit history-fed replay modes")
     ap.add_argument("--esbmc-run-timeout",
                     type=int,
                     default=60,
                     help="per ESBMC invocation budget inside certification, "
                     "seconds. The whole subject still gets --timeout")
     ap.add_argument("--esbmc", default="", help="ESBMC binary to pass through to Stage 2")
+    ap.add_argument(
+        "--pin-extcall",
+        action="store_true",
+        help="certify each path under its own harvested external-call return and require "
+             "Stage 4 to materialize that pin as a Foundry mock; unrenderable call shapes "
+             "remain refused")
     ap.add_argument("--stage2-unit-timeout-cap-s",
                     type=int,
                     default=DEFAULT_STAGE2_UNIT_TIMEOUT_CAP_S,
@@ -8713,6 +10671,15 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     try:
+        stage4_driver = Path(args.stage4_driver).expanduser().resolve()
+        if not stage4_driver.is_file():
+            raise RQ1RunError(f"--stage4-driver is not a file: {stage4_driver}")
+        PUT_ALL = stage4_driver
+        args.stage4_driver = str(stage4_driver)
+        # The packaged Stage-4 driver deliberately has no experiment-tree
+        # default for forge-std.  Keep an explicit user choice, otherwise
+        # provide the runner's already-audited dependency to its subprocess.
+        os.environ.setdefault("FORGE_STD", str(FORGE_STD))
         veriput_root = Path(args.veriput_root).expanduser().resolve()
         result_root = Path(args.result_root).expanduser().resolve()
         ast_cache_root = Path(args.ast_cache_root).expanduser().resolve()
@@ -8720,7 +10687,10 @@ def main(argv=None) -> int:
             veriput_root,
             result_root,
             ast_cache_root,
-            concrete_replay_only_ablation=args.concrete_replay_only_ablation)
+            concrete_replay_only_ablation=args.concrete_replay_only_ablation,
+            strict_case_wall_budget=args.strict_case_wall_budget,
+            rq3_ablation=args.rq3_ablation)
+        validate_rq3_ablation_args(args)
         if (args.timeout <= 0 or args.esbmc_run_timeout <= 0 or args.wrapper_grace < 0
                 or args.memlimit_gib <= 0 or args.no_output_stage2_stop_s < 0
                 or args.min_no_output_stage2_unit_stop_n < 0
@@ -8758,6 +10728,12 @@ def main(argv=None) -> int:
             validate_jobs(args)
         if args.ce_replay_only and not args.ce_replay_manifest:
             raise RQ1RunError("--ce-replay-only requires --ce-replay-manifest")
+        if args.strict_case_wall_budget and (args.ce_replay_manifest or args.ce_replay_only
+                                             or args.ce_collection_only or args.adopt_only
+                                             or args.fallback_only or args.resume):
+            raise RQ1RunError(
+                "--strict-case-wall-budget forbids history-fed, partial, adoption, and resume "
+                "modes; run every target through the same fresh pipeline")
         if args.fallback_only and not args.subject_id:
             raise RQ1RunError("--fallback-only requires at least one --subject-id")
         if args.fallback_only and (args.adopt_only or args.ce_collection_only

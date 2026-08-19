@@ -98,22 +98,74 @@ another note.
 
 ### Current short list
 
-- [ ] Find one small official RQ1 R2.2 live smoke candidate and run it to
-  completion.  Acceptance: `boundary-observations.json` exists; the first
-  observed bound is refuted; the next R2.2 query expands the output bound from
-  the verifier CE on the unchanged input part; ESBMC reports `HOLDS`; the final
-  `.t.sol` is Forge-green with 10,000 runs and seed `0x56657269505554`.
-- [ ] Produce matched Full/no-selection/no-region/no-test-oracle/no-cer-reg
-  smoke roots and run `rq3_compare_smoke.py`.  Acceptance: no ablation has more
-  PUT or R1/R2 PUT units than Full; no-cer-reg has zero PUTs; no-selection
-  records `--path-cov-no-selection-strategy` in the run evidence.
-- [ ] Run a 20--30 target Full sample with the upgraded generator.  Acceptance:
-  all final PUT files contain exactly one `test_put_*`, fixed replay assertions
-  are inside that function, retained concrete bases are present where required,
-  and fixed-seed Forge validation is separate from the 600s generation budget.
-- [ ] After the Full sample passes, start the 509-target Full campaign under
-  `Results/RQ1_KInduction_Fair600/<tag>`, not directly under
-  `Results/RQ1/VeriPUT`.
+- [x] Find one small official RQ1 R2.2 live smoke candidate and run it to
+  completion.  **Closed on `peer_solar__DateTime.getWeekday`**, whose return
+  `uint8((timestamp / DAY_IN_SECONDS + 4) % 7)` is non-monotone in its single
+  certified coordinate, so the sampled endpoints cannot see the true range.
+  Root: `Results/RQ1_KInduction_Fair600/smoke-r22-weekday-final`.
+  Evidence: `boundary-observations.json` present; initial observed bound
+  `return in [2, 4]` REFUTED; four counterexample-guided expansions on the
+  unchanged input part, `[2,4] -> [2,5] -> [1,5] -> [1,6] -> [0,6]`; final
+  `return in [0, 6]` reported `HOLDS` by ESBMC; the emitted
+  `test_put_DateTime_getWeekday_path3p1_part_part0_r` carries
+  `assertGe(...,0)` / `assertLe(...,6)` and passes 10,000 runs at seed
+  `0x56657269505554`.
+  **Budget note.** R2.2 absorbs exactly the one observable value each
+  refutation reports, so the bound walks linearly and the previous hardcoded
+  two rounds stopped short on real units (`DateTime.getHour` reached only
+  `[0,20]` of a true `[0,23]`).  `BOUNDARY_OBSERVATION_REFINEMENT_ROUNDS` is now
+  4 in `scripts/solidity_path_put.py`.  The expansion rule itself is unchanged
+  and still `min`/`max` against the counterexample value.  A wide-range
+  observable can still exhaust the budget; that is a measurement limit of R2.2,
+  not a defect.
+- [x] Produce matched Full/no-selection/no-region/no-test-oracle/no-cer-reg
+  smoke roots and run `rq3_compare_smoke.py`.  **Passes**, `failures: []`.
+  Roots: Full `Results/RQ1_KInduction_Fair600/smoke-rq3-full`, no-selection
+  `Results/RQ3/No_selection_strategy/smoke-rq3-noselect`, and the three derived
+  arms under `Results/RQ3/_smoke_derived/`.  Report:
+  `smoke-comparison.json`.
+
+  | arm | valid | PUT | concrete | PUT w/ R1R2 | R2.3 | wall_s |
+  |---|---:|---:|---:|---:|---:|---:|
+  | full | 42 | 42 | 0 | 22 | 48 | 330.9 |
+  | no-selection | 42 | 42 | 0 | 22 | 48 | 330.7 |
+  | no-region | 42 | 42 | 0 | - | - | - |
+  | no-test-oracle | 42 | 42 | 0 | 0 | 0 | - |
+  | no-cer-reg | 22 | 0 | 22 | 0 | 0 | - |
+
+  Caveat: this subject pair does not discriminate no-selection, which matched
+  Full exactly.  The degradation witnesses remain the `Thicc.transferFrom` and
+  `AddressArrayUtilsContract.intersect` pairs recorded below; re-confirm one of
+  them under the current driver before reporting RQ3.
+
+- [x] Run a 20--30 target Full sample with the upgraded generator.  **30
+  targets, 10 per benchmark, `--order dataset`.**  Roots
+  `sample-full-bugfix124-w2-vgfix`, `sample-full-peer182-w1`,
+  `sample-full-real203-w1`.
+
+  | sample | valid | PUT | concrete | PUT rate | PUT w/ R1R2 |
+  |---|---:|---:|---:|---:|---:|
+  | bugfix124 | 111 | 97 | 14 | 87.4% | 43 |
+  | peer182 | 150 | 141 | 9 | 94.0% | 58 |
+  | real203 | 105 | 88 | 17 | 83.8% | 45 |
+  | **total** | **366** | **326** | **40** | **89.1%** | **146** |
+
+  Composition by `stage4_kind`: 246 `abi-value-gate`, 80 `certified-region`,
+  33 `cleared-concrete-fallback`, 7 `certified-region-concrete-fallback`.
+  Excluding the structural value-gate rows the PUT rate is 80/120 = 66.7%.
+  **Decision taken: value-gate PUTs are retained and counted in the headline
+  number.**  They are real reachable paths, they were already inside the
+  denominator as concrete replays before the promotion (bugfix124 valid stayed
+  at 111 across the change), and `stage4_kind` is recorded per row so the
+  paper can split the two populations at any time.
+  Open item deferred by decision: the paper's §Decision Points excludes
+  compiler-inserted checks from path identity, and the nonpayable ABI gate is
+  compiler-inserted.  The wording needs one sentence to cover it.
+
+- [ ] 509-target Full campaign, started 2026-08-19 under
+  `Results/RQ1_KInduction_Fair600/campaign-full-20260819/<benchmark>`.
+  bugfix124 launched locally at `--jobs 4`.  peer182 and real203 follow on the
+  same host, one benchmark at a time.
 - [ ] Derive No Region Refinement, No Test Oracle Refinement, and No_Cer_Reg
   from the audited new Full corpus.  Do not rerun ESBMC for these three arms.
 - [ ] Run No Selection Strategy as the only rerun ablation.  This is the arm to
@@ -121,6 +173,169 @@ another note.
   smoke pass.
 - [ ] Run final RQ1 coverage and RQ2 mutation/real-bug evaluation only from
   the new audited corpus.
+
+### Machine assignment for the 2026-08-19 campaign
+
+The local Release ESBMC is a **static** binary, so remotes do not need to
+rebuild: copy
+`build-release-static/src/esbmc/esbmc` directly.  This matters for w1, which has
+too little memory to build comfortably.
+
+| Host | Arm | Benchmark | `--jobs` | `VERIPUT_ROOT` | `ESBMC_REPO` |
+|---|---|---|---:|---|---|
+| local | Full | bugfix124, then peer182, then real203 | 4 | `/home/samson/workspace/VeriPUT` | `/home/samson/workspace/esbmc` |
+| w2 | no-selection | real203 | 2-3 | `/home/administrator/VeriPUT` | `/home/administrator/veriput_esbmc/repo` |
+| w1 | no-selection | bugfix124 | 1 | `/root/VeriPUT` | `/root/workspace/ESBMC_Commit/esbmc` |
+
+Operational notes learned the hard way:
+
+- **Detach remote runs with `setsid`.**  `ssh host 'nohup ... &'` is reaped when
+  the ssh session closes; the first w2 smoke died silently after one subject.
+  Use `ssh -n host 'setsid nohup ... < /dev/null > log 2>&1 &'`.
+- **w1's `ESBMC_REPO` is `/root/workspace/ESBMC_Commit/esbmc`.**  The other path
+  the older notes mention, `/root/InvMut/invmut/esbmc`, has no build tree.
+- **w2 had no `Datasets/`,** which `target_manifest.py` needs for the bugfix and
+  stress target lists.  Syncing only `*.sol`, `*.csv`, `*.json` is ~692 MB
+  instead of the full 5.7 GB.
+- **The static `--jobs` guard refuses the documented local setting.**
+  `--jobs 4 --memlimit-gib 12` is 48 GiB against a 70% MemAvailable ceiling, so
+  it is refused outright.  The per-stage gate (`--stage-mem-fraction`, default
+  0.60) still throttles each Stage-2/4 launch at runtime, so raising
+  `--mem-fraction` is admission control only, not a real memory increase.
+  Measured peak with 4 concurrent ESBMC processes was about 9 GiB.  The
+  600-second case budget and the 12 GiB per-process cap are unchanged.
+
+### Defects found and fixed while validating the pre-campaign gates
+
+These were all found by measuring real sample output rather than by reading
+summary JSON.  Each has a regression test.
+
+1. **The nonpayable ABI value-gate path was degraded to a concrete replay.**
+   Stage 2 auto-pins `msg.value == 0` so the body paths can certify, which by
+   construction excludes the compiler's value-gate revert path from region
+   search.  That path then fell through to `no-coordinate-concrete-fallback`,
+   costing roughly one PUT per non-payable public/external unit.  On a 10-target
+   `bugfix124` sample it was 31 of 61 recorded non-certifications and held the
+   PUT rate at 55.9%.  `rq1_veriput_run.py` now promotes exactly those
+   pin-excluded paths to the existing structural certificate over
+   `msg.value in [1, 2**256-1]` and drops their duplicate concrete fallback, so
+   one path never yields both a PUT and a concrete replay.  The promoted rows
+   reuse `certification_source = structural-abi-gate-no-coordinate` so they take
+   the established structural-anchor handling; how the row was reached is
+   recorded in `driver_diagnostic.abi_value_gate_pin_promotion` and
+   `promoted_from`.  Measured on the same 10 targets: PUT 62 -> 97, PUT rate
+   55.9% -> 87.4%, valid unchanged at 111.  `acfix_real_BaseEscalationManager`
+   went from 0/5 to 6/6.
+   Only the literal pin-exclusion reason is promoted; every other
+   non-certification is a search result and is left alone.
+
+2. **Oracle input-part children carried no `put_json`.**  A split path emits one
+   physical `test_put_*_part_*` per final part, but the row lookup indexed only
+   the parent's `(file, test)`, so 19 of 36 valid rows on one subject had an
+   empty `put_json`.  Both `rq3_derive_from_full.py` and `rq3_compare_smoke.py`
+   read oracle counts from that file, so every derived ablation and the
+   comparison gate itself refused.  The lookup now also indexes each
+   `test_units` child under its own identity.
+
+3. **`rq3_derive_from_full.py` read `valid_tests` from the wrong level.**  The
+   runner writes `{"schema": ..., "row": {...}}` and keeps the rows inside
+   `row`; the derivation read the envelope top level and reported
+   "no strict-valid Full rows" for every current Full root.  It now accepts both
+   shapes, as `rq3_compare_smoke.py` already did.
+
+4. **Split paths collided on the concrete-basis identity.**  Each final oracle
+   input part retains its own basis, but the identity was
+   `(path_function, unit, enc, piece)`, so `--mode no-cer-reg` refused with
+   "duplicate concrete basis".  The identity now includes the oracle input part,
+   propagated as `oracle_input_part` on both the manifest origin
+   (`replay_identity`) and the Full result row.  Unsplit rows carry no part and
+   keep their previous identity.
+
+5. **`--benchmark real203` selected 241 targets, not 203.**  The runner mapped
+   both `real203` and `stress203` to the manifest selector `stress243`, which
+   returns the wider 241-target Stress set; only the manifest's own `stress203`
+   selector applies `prepared_ok_only` and returns 203.  The campaign would
+   therefore have run a 547-target denominator while every document says 509,
+   with no error anywhere.  Caught after w2 queued 241 rows and before any
+   result was published.  `TARGET_BENCHMARK_ARG` now maps `real203` and
+   `stress203` to `stress203`; `stress243` keeps the wider set under its own
+   name.  Verified: 124 + 182 + 203 = 509.  Regression test:
+   `test_official_benchmarks_resolve_to_the_509_target_denominator`.
+
+6. **Public state getters were never scheduled once a subject had any unit.**
+   `emit_no_unit_getter_fallbacks` fires only when the schedule contains no
+   units at all, but `roulette`-style subjects now schedule `fallback` as a
+   unit, which suppressed the rescue that the legacy corpus relied on to emit
+   the `pastBlockTime` getter PUTs.  A scan found 28 of 49 sampled subjects
+   holding 42 unscheduled zero-argument public-state getters, and 21 of the
+   first 42 local campaign cases returned `status=no-output raw=0` because of
+   it.  `emit_zero_yield_getter_fallbacks` now queries those getters, but only
+   for a case that produced no valid artifact at all, so a productive target
+   never loses budget to them.  Smoke: `roulette` 0 -> 2 PUTs and `ether_lotto`
+   0 -> 4 PUTs, all Forge-green.
+
+7. **A Stage-2 timeout discarded the structural ABI value gate.**  The
+   nonpayable value-gate region is certified structurally -- the entry reverts
+   for every `msg.value > 0` before its body runs -- so it needs no solver
+   evidence.  It was nevertheless emitted only after Stage 2 finished, so a
+   Stage-2 timeout on the last scheduled unit aborted the whole subject with
+   `status=timeout` and no output at all.  Six of the first 23 local campaign
+   cases were lost this way, every one of them an
+   `unchecked_low_level_calls` batch-transfer contract whose unbounded
+   `address[] memory` loop cannot converge inside the 600-second budget --
+   and the legacy corpus does hold a value-gate PUT for exactly those
+   subjects.  `_structural_abi_value_gate_rescue` now certifies the gate at
+   the point where Stage 2 would otherwise abandon the unit, and only when
+   that unit produced no Stage-4 candidate, so real Stage-2 evidence still
+   wins.  Smoke on `rcx_unchecked_low_level_calls__0xa46edd...__TIPS`: 0 -> 1
+   PUT, `test_put_EBU_transfer_path1p1`, Forge-green, matching the legacy
+   artifact for that subject.  Regression tests:
+   `test_stage2_timeout_rescue_certifies_the_structural_abi_value_gate` and
+   `test_stage2_timeout_rescue_skips_units_that_already_have_candidates`.
+
+8. **The strict-rerun publisher renamed a directory across filesystems.**
+   `_publish_strict_certification_artifacts` moved the pre-created
+   `cert/fixtures` directory into the staging root with a bare `os.replace`.
+   The staging root lives under the AST cache, so on any host where that cache
+   is not on the same mount as `VeriPUT/Results` the call raises
+   `EXDEV: Invalid cross-device link` and the case dies as
+   `status=error wall=0.0s` before Stage 2 runs.  Local never saw it because
+   `/tmp` and `Results` share one disk there; w2 lost three `ensdomains`
+   targets to it.  Moves now go through `_move_tree`, which falls back to a
+   copy on EXDEV, matching what the Stage-4 publisher already did.  Regression
+   test: `test_move_tree_falls_back_to_copy_across_filesystems`.
+
+   Related, on the same host: w2's `/tmp` is an 11 GiB **tmpfs**, so pointing
+   `--ast-cache-root` there put every AST cache and ESBMC workdir in RAM,
+   competing with the 12 GiB per-run memory limit.  `remote_nosel.sh` now
+   places the cache under `$VERIPUT_ROOT/.cache` on the 1 TB disk.  Check
+   `df -h` on any new host before assigning it work.
+
+### Hardware confounds the fixed 600-second budget
+
+The case budget is wall time, so a slower host produces fewer PUTs for the same
+code.  Measured on identical subjects and identical drivers:
+
+| subject | arm | host | wall_s | valid/PUT |
+|---|---|---|---:|---|
+| BaseEscalationManager | Full | local | 94.6 | 6/6 |
+| BaseEscalationManager | no-selection | local | 95.1 | 6/6 |
+| BaseEscalationManager | no-selection | w2 | 241.5 | 6/6 |
+| BaseEscalationManager | no-selection | w1 | 554.3 | 0/0 budget-exhausted |
+| DepositLog | Full | local | 236.4 | 36/36 |
+| DepositLog | no-selection | local | 235.6 | 36/36 |
+| DepositLog | no-selection | w2 | 457.9 | 30/30 |
+
+Locally the no-selection arm is indistinguishable from Full on both subjects.
+On w2 the same arm loses six PUTs and takes twice as long; on w1 it produces
+nothing at all.  **Running Full locally and no-selection on the remotes would
+report that hardware gap as an RQ3 ablation effect.**  Any Full-versus-ablation
+claim must therefore come from a single host.
+
+Decision taken: w1 is dropped from generation.  Local is the RQ1 Full
+authority for all 509 targets.  w2 runs *both* arms for `real203` so that
+benchmark's RQ3 comparison is within-host; w2's Full numbers are RQ3 baseline
+only and must never be merged into the RQ1 totals.
 
 ### P0: required before the final 509-target Full campaign
 

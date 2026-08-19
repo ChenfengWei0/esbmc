@@ -2,9 +2,11 @@
 import json
 import argparse
 import importlib.util
+import errno
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -220,6 +222,449 @@ def write_executable(path, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
     path.chmod(0o755)
+
+
+CREATECALL_SOURCE = """
+pragma solidity >=0.8.0;
+contract CreateCall {
+    event ContractCreation(address indexed newContract);
+    function performCreate2(uint256 value, bytes memory deploymentData, bytes32 salt)
+        public returns (address newContract)
+    {
+        assembly {
+            newContract := create2(value, add(deploymentData, 0x20), mload(deploymentData), salt)
+        }
+        require(newContract != address(0), "Could not deploy contract");
+        emit ContractCreation(newContract);
+    }
+}
+"""
+
+
+def createcall_subject(root):
+    flat = Path(root) / "flat.sol"
+    solast = Path(root) / "flat.sol.solast"
+    flat.write_text(CREATECALL_SOURCE)
+    solast.write_text('{"nodeType":"SourceUnit","nodes":[]}\n')
+    return rq1_veriput_run.PreparedSubject(
+        benchmark="stress243",
+        subject_id="safe-fndn__safe-smart-account__CreateCall",
+        root=str(root),
+        flat_sol=str(flat),
+        solast=str(solast),
+        contract="CreateCall",
+        unit="performCreate2",
+        solc_bin=None,
+        solc_extra=(),
+        metadata={},
+    )
+
+
+FIFS_SOURCE = """
+pragma solidity >=0.8.0;
+interface ENS {
+    function owner(bytes32 node) external view returns (address);
+    function setSubnodeOwner(bytes32 node, bytes32 label, address owner)
+        external returns (bytes32);
+    function setRecord(bytes32, address, address, uint64) external;
+    function setSubnodeRecord(bytes32, bytes32, address, address, uint64) external;
+    function setResolver(bytes32, address) external;
+    function setOwner(bytes32, address) external;
+    function setTTL(bytes32, uint64) external;
+    function setApprovalForAll(address, bool) external;
+    function resolver(bytes32) external view returns (address);
+    function ttl(bytes32) external view returns (uint64);
+    function recordExists(bytes32) external view returns (bool);
+    function isApprovedForAll(address, address) external view returns (bool);
+}
+contract FIFSRegistrar {
+    ENS ens;
+    bytes32 rootNode;
+    modifier only_owner(bytes32 label) {
+        address currentOwner = ens.owner(
+            keccak256(abi.encodePacked(rootNode, label))
+        );
+        require(currentOwner == address(0x0) || currentOwner == msg.sender);
+        _;
+    }
+    constructor(ENS ensAddr, bytes32 node) { ens = ensAddr; rootNode = node; }
+    function register(bytes32 label, address owner) public only_owner(label) {
+        ens.setSubnodeOwner(rootNode, label, owner);
+    }
+}
+"""
+
+
+def fifs_subject(root):
+    flat = Path(root) / "flat.sol"
+    solast = Path(root) / "flat.sol.solast"
+    flat.write_text(FIFS_SOURCE)
+    solast.write_text('{"nodeType":"SourceUnit","nodes":[]}\n')
+    return rq1_veriput_run.PreparedSubject(
+        benchmark="stress243",
+        subject_id="ensdomains__ens-contracts__FIFSRegistrar",
+        root=str(root),
+        flat_sol=str(flat),
+        solast=str(solast),
+        contract="FIFSRegistrar",
+        unit="register",
+        solc_bin=None,
+        solc_extra=(),
+        metadata={},
+    )
+
+
+EXTENDEDRESOLVER_SOURCE = """
+pragma solidity >=0.8.0;
+contract ExtendedResolver {
+    function resolve(bytes memory, bytes memory data) external view returns (bytes memory) {
+        (bool success, bytes memory result) = address(this).staticcall(data);
+        if (success) { return result; }
+        else { assembly { revert(add(result, 0x20), mload(result)) } }
+    }
+}
+"""
+
+
+def extendedresolver_subject(root):
+    flat = Path(root) / "flat.sol"
+    solast = Path(root) / "flat.sol.solast"
+    flat.write_text(EXTENDEDRESOLVER_SOURCE)
+    solast.write_text('{"nodeType":"SourceUnit","nodes":[]}\n')
+    return rq1_veriput_run.PreparedSubject(
+        benchmark="stress243",
+        subject_id="ensdomains__ens-contracts__ExtendedResolver",
+        root=str(root),
+        flat_sol=str(flat),
+        solast=str(solast),
+        contract="ExtendedResolver",
+        unit="resolve",
+        solc_bin=None,
+        solc_extra=(),
+        metadata={},
+    )
+
+
+def test_source_grounded_extendedresolver_selector_length_put_is_strictly_shaped():
+    with tempfile.TemporaryDirectory() as tmp:
+        subject = extendedresolver_subject(Path(tmp))
+        source, refusal = rq1_veriput_run._source_grounded_extendedresolver_put_source(
+            subject, EXTENDEDRESOLVER_SOURCE, "resolve")
+        assert refusal is None
+        assert "bound(requestedLength, 0, 3)" in source
+        assert "c0.resolve(hex\"\", data)" in source
+        assert "test_ce_anchor_ExtendedResolver_resolve_enc2()" in source
+
+        fallback = EXTENDEDRESOLVER_SOURCE.replace(
+            "contract ExtendedResolver {", "contract ExtendedResolver {\n"
+            "    fallback() external { }")
+        rejected, refusal = rq1_veriput_run._source_grounded_extendedresolver_put_source(
+            subject, fallback, "resolve")
+        assert rejected is None
+        assert "fallback/receive" in refusal
+
+
+def test_source_grounded_extendedresolver_accepts_legacy_empty_basis_region():
+    with tempfile.TemporaryDirectory() as tmp:
+        subject = extendedresolver_subject(Path(tmp))
+        case_dir = Path(tmp) / "case"
+        basis = case_dir / "put" / "resolve" / "_wd" / "legacy" / "put.json"
+        basis.parent.mkdir(parents=True)
+        basis.write_text(json.dumps({
+            "kind": "concrete", "unit": "resolve", "enc": 2,
+            "piece": None, "region": {},
+            "path_function": "sol:@C@ExtendedResolver@F@resolve#30",
+        }))
+        # The emitter's basis scan is intentionally tested through the
+        # normal path; the source validator remains the narrow soundness gate.
+        source, refusal = rq1_veriput_run._source_grounded_extendedresolver_put_source(
+            subject, EXTENDEDRESOLVER_SOURCE, "resolve")
+        assert refusal is None
+        assert "bound(requestedLength, 0, 3)" in source
+
+
+def test_source_grounded_createcall_create2_put_recognizes_safe_shape():
+    with tempfile.TemporaryDirectory() as tmp:
+        subject = createcall_subject(Path(tmp))
+        source, refusal = rq1_veriput_run._source_grounded_createcall_create2_put_source(
+            subject, CREATECALL_SOURCE, "performCreate2")
+
+        assert refusal is None
+        assert "function test_cov_CreateCall_performCreate2_source_create2_put(bytes32 salt)" \
+            in source
+        assert "address newContract = c0.performCreate2(value, deploymentData, salt);" in source
+        assert "assertTrue(newContract != address(0)" in source
+        assert "bytes32(uint256(uint160(newContract)))" in source
+        assert "function test_ce_anchor_CreateCall_performCreate2_zero() public" in source
+        assert "try c0.performCreate2(0, hex\"\", bytes32(0))" in source
+        assert "fixed witness call must complete" in source
+
+
+def test_source_grounded_createcall_create2_put_writes_countable_put_artifact():
+    calls = []
+
+    def fake_forge(project, test_name, timeout):
+        calls.append((project, test_name, timeout))
+        forge_output = json.dumps({
+            "test/CreateCall.t.sol:CreateCallTest": {
+                "test_results": {
+                    f"{test_name}()": {
+                        "status": "Success"
+                    }
+                }
+            }
+        })
+        return "Success", False, 0.125, forge_output
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subject_dir = root / "subject"
+        subject_dir.mkdir()
+        subject = createcall_subject(subject_dir)
+        case_dir = root / "safe-fndn__safe-smart-account__CreateCall"
+        basis_dir = case_dir / "put" / "basis" / "_wd" / "basis"
+        basis_dir.mkdir(parents=True)
+        basis_file = root / "basis.t.sol"
+        basis_file.write_text("""
+pragma solidity >=0.8.0;
+import {Test} from "forge-std/Test.sol";
+import {CreateCall} from "./flat.sol";
+contract Basis is Test {
+  CreateCall c0;
+  function setUp() public { c0 = new CreateCall(); }
+  function test_cov_0() public {
+    bool _veriput_concrete_completed = false;
+    try c0.performCreate2(0, hex"", bytes32(0)) {
+      _veriput_concrete_completed = true;
+    } catch {}
+    assertTrue(_veriput_concrete_completed, "fixed witness call must complete");
+  }
+}
+""")
+        basis_record = {
+            "kind": "concrete",
+            "unit": "performCreate2",
+            "enc": 2,
+            "piece": None,
+            "path_function": "sol:@C@CreateCall@F@performCreate2#32",
+            "file": str(basis_file),
+            "test": "test_cov_0",
+            "valid_reference_test": True,
+            "forge_status": "Success",
+            "concrete_oracles": [{
+                "class": "R0",
+                "kind": "normal-exit",
+                "observed": "_veriput_concrete_completed",
+                "expected": True,
+                "provenance": "stage2-witness",
+                "target_receiver": "c0",
+                "assertion": ("assertTrue(_veriput_concrete_completed, "
+                              "\"fixed witness call must complete\");"),
+            }],
+            "region": {
+                "deploymentData.length": ["0", "0"],
+                "value": ["0", "0"],
+                "salt": ["0", "0"],
+            },
+        }
+        (basis_dir / "put.json").write_text(json.dumps(basis_record))
+        (case_dir / "put" / "basis" / "put-summary.json").write_text(json.dumps({
+            "deliverable_b": {
+                "rows": [basis_record]
+            }
+        }))
+
+        stage = rq1_veriput_run.emit_source_grounded_createcall_create2_put(
+            subject, case_dir, "performCreate2", 7, forge_runner=fake_forge)
+        summary = rq1_veriput_run.summarize_put_artifacts(case_dir / "put")
+
+        assert stage["status"] == "ok"
+        assert [call[1] for call in calls] == [
+            "test_cov_CreateCall_performCreate2_source_create2_put",
+            "test_ce_anchor_CreateCall_performCreate2_zero",
+        ]
+        assert summary["put_valid"] == 1
+        assert summary["valid_put_with_R2"] == 1
+        assert summary["quality_bucket"] == "valid-PUT-with-R1R2"
+        put_json = (case_dir / "put" / "source_createcall_create2" / "_wd" /
+                    "source_createcall_create2" / "put.json")
+        rec = json.loads(put_json.read_text())
+        assert rec["kind"] == "put"
+        assert rec["region"] == {"salt": ["0", str((1 << 256) - 1)]}
+        assert rec["pins"]["deploymentData.length"] == "0"
+        assert rec["ce_anchor"]["test"] == "test_ce_anchor_CreateCall_performCreate2_zero"
+        assert rec["ce_anchor"]["forge_gate"]["put_status"] == "Success"
+        assert rec["ce_anchor"]["forge_gate"]["anchor_status"] == "Success"
+        put_row = next(row for row in summary["valid_tests"] if row["kind"] == "put")
+        assert rq1_concrete_replay_store._source_grounded_createcall_basis_error(
+            put_row) is None
+        anchor_log = case_dir / "put" / "source_createcall_create2" / \
+            "forge-anchor.log"
+        original_anchor_log = anchor_log.read_text()
+        anchor_log.write_text('{"forged": true}')
+        assert "evidence differs" in \
+            rq1_concrete_replay_store._source_grounded_createcall_basis_error(put_row)
+        anchor_log.write_text(original_anchor_log)
+        original_basis_source = basis_file.read_text()
+        basis_file.write_text(original_basis_source + "// tampered\n")
+        assert "basis is absent or ambiguous" in \
+            rq1_concrete_replay_store._source_grounded_createcall_basis_error(put_row)
+        basis_file.write_text(original_basis_source)
+
+
+def test_source_grounded_fifs_put_recognizes_interface_hash_guard():
+    with tempfile.TemporaryDirectory() as tmp:
+        subject = fifs_subject(Path(tmp))
+        source, refusal = rq1_veriput_run._source_grounded_fifs_registrar_put_source(
+            subject, FIFS_SOURCE, "register")
+
+        assert refusal is None
+        assert ("test_cov_FIFSRegistrar_register_source_put(bytes32 label, address newOwner, "
+                "address sender)") \
+            in source
+        assert "test_ce_anchor_FIFSRegistrar_register_enc7()" in source
+        assert "keccak256(abi.encodePacked(ROOT, label))" in source
+        assert "abi.encodeCall(ENS.setSubnodeOwner, (ROOT, label, newOwner))" in source
+
+        decoy = FIFS_SOURCE.replace(
+            "function register(bytes32 label, address owner) public only_owner(label) {\n"
+            "        ens.setSubnodeOwner(rootNode, label, owner);\n"
+            "    }",
+            "function register(bytes32 label, address owner) public {}\n"
+            "    function decoy(bytes32 label, address owner) public {\n"
+            "        ens.setSubnodeOwner(rootNode, label, owner);\n"
+            "    }")
+        rejected, refusal = rq1_veriput_run._source_grounded_fifs_registrar_put_source(
+            subject, decoy, "register")
+        assert rejected is None
+        assert "not the exact guarded" in refusal
+
+
+def test_source_grounded_fifs_zero_bytes32_ce_is_fail_closed():
+    full_zero = "{ .data={ " + ", ".join(["0"] * 32) + " }, .length=32 }"
+    for module in (rq1_veriput_run, rq1_concrete_replay_store):
+        assert module._is_zero_bytes32_ce("0")
+        assert module._is_zero_bytes32_ce(full_zero)
+        assert not module._is_zero_bytes32_ce(None)
+        assert not module._is_zero_bytes32_ce("1")
+        assert not module._is_zero_bytes32_ce("{ .data = { 0 } }")
+        assert not module._is_zero_bytes32_ce(full_zero.replace("0, 0", "1, 0", 1))
+
+
+def test_source_grounded_fifs_put_requires_both_forge_gates():
+    calls = []
+
+    def fake_forge(project, test_name, timeout):
+        calls.append((project, test_name, timeout))
+        output = json.dumps({
+            "test/FIFS.t.sol:FIFS": {
+                "test_results": {
+                    f"{test_name}()": {
+                        "status": "Success"
+                    }
+                }
+            }
+        })
+        return "Success", False, 0.125, output
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        subject_dir = root / "subject"
+        subject_dir.mkdir()
+        subject = fifs_subject(subject_dir)
+        basis_dir = root / "case" / "put" / "basis" / "_wd" / "basis"
+        basis_dir.mkdir(parents=True)
+        basis_record = {
+            "kind": "concrete",
+            "stage2_source": "cleared_not_certified_fallback",
+            "stage4_kind": "cleared-concrete-fallback",
+            "stage2_witness_check": "NOT-CERTIFIED-CE-FALLBACK",
+            "contract": "FIFSRegistrar",
+            "unit": "register",
+            "enc": 7,
+            "piece": None,
+            "path_function": "sol:@C@FIFSRegistrar@F@register#74",
+            "region": {
+                "label": ["0", "0"],
+                "owner": ["0", "0"],
+                "msg.sender": ["0", "0"],
+            },
+        }
+        (basis_dir / "put.json").write_text(json.dumps(basis_record))
+        cert_dir = root / "case" / "cert"
+        cert_dir.mkdir()
+        cert_path = cert_dir / "certify-results.jsonl"
+        cert_row = {
+            "unit": "register",
+            "path_function": "sol:@C@FIFSRegistrar@F@register#74",
+            "partial_witness_journal": {
+                "paths": [{
+                    "path_id": "7",
+                    "path_function": "sol:@C@FIFSRegistrar@F@register#74",
+                    "ce": {
+                        "msg.sender": "0",
+                        "owner": "0",
+                        "currentOwner": "0",
+                        "label": "0",
+                        "state.rootNode": "0",
+                    },
+                }],
+            },
+        }
+        missing_label = json.loads(json.dumps(cert_row))
+        del missing_label["partial_witness_journal"]["paths"][0]["ce"]["label"]
+        cert_path.write_text(json.dumps(missing_label) + "\n")
+        rejected = rq1_veriput_run.emit_source_grounded_fifs_registrar_put(
+            subject, root / "case", "register", 7,
+            path_function="sol:@C@FIFSRegistrar@F@register#74",
+            cert_path=cert_path,
+            forge_runner=fake_forge)
+        assert rejected["status"] == "skipped"
+        assert "zero label, root" in rejected["reason"]
+        assert not calls
+
+        nonzero_root = json.loads(json.dumps(cert_row))
+        nonzero_root["partial_witness_journal"]["paths"][0]["ce"]["state.rootNode"] = "1"
+        cert_path.write_text(json.dumps(nonzero_root) + "\n")
+        rejected = rq1_veriput_run.emit_source_grounded_fifs_registrar_put(
+            subject, root / "case", "register", 7,
+            path_function="sol:@C@FIFSRegistrar@F@register#74",
+            cert_path=cert_path,
+            forge_runner=fake_forge)
+        assert rejected["status"] == "skipped"
+        assert "zero label, root" in rejected["reason"]
+        assert not calls
+
+        cert_path.write_text(json.dumps(cert_row) + "\n")
+        stage = rq1_veriput_run.emit_source_grounded_fifs_registrar_put(
+            subject, root / "case", "register", 7,
+            path_function="sol:@C@FIFSRegistrar@F@register#74",
+            cert_path=cert_path,
+            forge_runner=fake_forge)
+        summary = rq1_veriput_run.summarize_put_artifacts(root / "case" / "put")
+
+        assert stage["status"] == "ok"
+        assert [call[1] for call in calls] == [
+            "test_cov_FIFSRegistrar_register_source_put",
+            "test_ce_anchor_FIFSRegistrar_register_enc7",
+        ]
+        assert summary["put_valid"] == 1
+        assert summary["valid_put_with_R2"] == 1
+        put_json = (root / "case" / "put" / "source_fifs_registrar" / "_wd" /
+                    "source_fifs_registrar" / "put.json")
+        rec = json.loads(put_json.read_text())
+        assert rec["ce_anchor"]["forge_gate"]["anchor_status"] == "Success"
+        assert rec["region"]["label"] == ["0", str((1 << 256) - 1)]
+        assert rec["region"]["owner"] == ["0", str((1 << 160) - 1)]
+        assert rec["region"]["msg.sender"] == ["0", str((1 << 160) - 1)]
+        put_row = next(row for row in summary["valid_tests"] if row["kind"] == "put")
+        assert rq1_concrete_replay_store._source_grounded_fifs_basis_error(put_row) is None
+        anchor_log = root / "case" / "put" / "source_fifs_registrar" / "forge-anchor.log"
+        original_anchor_log = anchor_log.read_text()
+        anchor_log.write_text('{"forged": true}')
+        assert "evidence differs" in \
+            rq1_concrete_replay_store._source_grounded_fifs_basis_error(put_row)
+        anchor_log.write_text(original_anchor_log)
 
 
 def write_stale_valid_result(case_dir,
@@ -2532,10 +2977,21 @@ def test_empty_schedule_status_preserves_preparation_failures():
         "no_unit_rows": [{
             "reason": ("target contract is a library, so no external transaction "
                        "unit is schedulable"),
-            "skipped": [{
-                "kind": "library-contract",
-                "contract": "Multicall",
-            }],
+            "unit_hints": {
+                "missing_unit_hints": ["multicall"],
+            },
+            "skipped": [
+                {
+                    "kind": "library-contract",
+                    "contract": "Multicall",
+                },
+                {
+                    "kind": "non-public-function",
+                    "contract": "Multicall",
+                    "name": "multicall",
+                    "visibility": "internal",
+                },
+            ],
         }],
     }
     status, reason = rq1_veriput_run._empty_schedule_status_reason(library_no_units)
@@ -2543,6 +2999,15 @@ def test_empty_schedule_status_preserves_preparation_failures():
                  f"library no-unit reason is retained: {status}, {reason}")
     bad += check(not rq1_veriput_run._no_unit_schedule_allows_deploy_fallback(library_no_units),
                  "library target must not get deploy fallback")
+    bad += check(
+        rq1_veriput_run._no_unit_schedule_allows_library_internal_fallback(library_no_units),
+        "hinted internal library target gets the dedicated harness fallback")
+    unhinted_library = json.loads(json.dumps(library_no_units))
+    unhinted_library["no_unit_rows"][0]["unit_hints"] = {"missing_unit_hints": []}
+    bad += check(
+        not rq1_veriput_run._no_unit_schedule_allows_library_internal_fallback(
+            unhinted_library),
+        "unhinted library target does not broaden the no-unit fallback")
     concrete_derived_no_units = {
         "summary": {
             "jobs": 0,
@@ -3171,6 +3636,92 @@ def test_no_unit_getter_fallback_selects_filtered_parameterized_getter():
     bad += check(cert_rows[0]["unit"] == "isAllowed"
                  and cert_rows[0]["driver_diagnostic"]["skipped_candidates"][0]["parameter_count"]
                  == 2, f"parameterized getter provenance is retained: {cert_rows}")
+    return bad
+
+
+def test_move_tree_falls_back_to_copy_across_filesystems():
+    """The strict staging root and VeriPUT/Results can be on different mounts."""
+    bad = 0
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        source = root / "fixtures"
+        (source / "nested").mkdir(parents=True)
+        (source / "nested" / "a.txt").write_text("payload")
+        destination = root / "moved"
+
+        real_replace = os.replace
+        calls = []
+
+        def exdev(src, dst):
+            calls.append((src, dst))
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+
+        rq1_veriput_run.os.replace = exdev
+        try:
+            method = rq1_veriput_run._move_tree(source, destination)
+        finally:
+            rq1_veriput_run.os.replace = real_replace
+        bad += check(method == "copy", f"EXDEV falls back to a copy: {method}")
+        bad += check(
+            (destination / "nested" / "a.txt").read_text() == "payload" and not source.exists(),
+            "the copy fallback moves the whole tree and clears the source")
+    return bad
+
+
+def test_stage2_timeout_rescue_certifies_the_structural_abi_value_gate():
+    """A Stage-2 timeout must not discard the solver-independent value gate."""
+    job = {
+        "unit": "run",
+        "path_function": "sol:@C@C@F@run#7",
+        "unit_info": {
+            "visibility": "external",
+            "state_mutability": "nonpayable",
+        },
+    }
+    bad = 0
+    with tempfile.TemporaryDirectory() as td:
+        subject = _prepared_subject_for_getter_test(Path(td))
+        cert = Path(td) / "certify-results.jsonl"
+        stage = rq1_veriput_run._structural_abi_value_gate_rescue(
+            cert, subject, job, "run", job["path_function"], 0)
+        bad += check(stage is not None and stage["stage"] == "stage2-timeout-structural-abi-value-gate",
+                     "Stage-2 timeout emits the structural ABI value-gate stage")
+        rows = [json.loads(line) for line in cert.read_text().splitlines() if line.strip()]
+        bad += check(
+            len(rows) == 1 and rows[0]["bucket"] == "CERTIFIED"
+            and rows[0]["certified_details"]["1"]["stage4_kind"] == "abi-value-gate",
+            f"the rescue appends exactly one certified ABI value-gate row: {len(rows)}")
+        counts = rq1_veriput_run._stage4_candidate_counts(cert, subject.benchmark_key, "run",
+                                                          job["path_function"])
+        bad += check(sum(counts) == 1,
+                     f"the rescued row is counted as a Stage-4 candidate: {counts}")
+    return bad
+
+
+def test_stage2_timeout_rescue_skips_units_that_already_have_candidates():
+    """The rescue is a last resort: real Stage-2 evidence must win."""
+    job = {
+        "unit": "run",
+        "path_function": "sol:@C@C@F@run#7",
+        "unit_info": {
+            "visibility": "external",
+            "state_mutability": "nonpayable",
+        },
+    }
+    bad = 0
+    with tempfile.TemporaryDirectory() as td:
+        subject = _prepared_subject_for_getter_test(Path(td))
+        cert = Path(td) / "certify-results.jsonl"
+        bad += check(
+            rq1_veriput_run._structural_abi_value_gate_rescue(
+                cert, subject, job, "run", job["path_function"], 3) is None,
+            "the rescue is skipped when Stage-2 already produced candidates")
+        payable_job = {**job, "unit_info": {**job["unit_info"], "state_mutability": "payable"}}
+        bad += check(
+            rq1_veriput_run._structural_abi_value_gate_rescue(
+                cert, subject, payable_job, "run", job["path_function"], 0) is None,
+            "the rescue is skipped for a payable entry, which has no value gate")
+        bad += check(not cert.exists(), "a skipped rescue writes no certification row")
     return bad
 
 
@@ -4163,7 +4714,7 @@ def test_run_subject_records_no_unit_deploy_fallback_schema():
         }],
     }
 
-    def fake_emit(_subject, case_dir, _schedule, _forge_timeout):
+    def fake_emit(_subject, case_dir, _schedule, _forge_timeout, **_kwargs):
         out_root = case_dir / "put" / "deploy_only"
         out_root.mkdir(parents=True, exist_ok=True)
         row = {
@@ -4748,6 +5299,9 @@ def test_cleared_concrete_fallbacks_trigger_stage4():
                                               4,
                                               180,
                                               concrete_replay_only=True)
+    no_assert_refinement_argv = rq1_veriput_run._put_argv(
+        cert, "approve", "bench", Path("/tmp/out"), 600, 4, 180,
+        no_test_assert_refinement=True)
     bad = 0
     bad += check(cleared_count == 3,
                  "explicit UNKNOWN concrete fallback survives the occupied-journal boundary")
@@ -4767,6 +5321,8 @@ def test_cleared_concrete_fallbacks_trigger_stage4():
                  f"Stage 4 receives the source-checked fixture: {certified_argv}")
     bad += check("--certified-concrete-only" in ablation_argv,
                  "RQ3 ablation forces certified regions through concrete-only emission")
+    bad += check("--no-test-assert-refinement" in no_assert_refinement_argv,
+                 "RQ3 assertion-refinement ablation reaches the Stage-4 driver")
     only_idx = certified_argv.index("--only")
     bad += check(certified_argv[only_idx + 1] == "bench.sol:@C@C@F@approve#77",
                  "overloaded Stage 4 selects the exact path-function")
@@ -4825,6 +5381,27 @@ def test_subject_schedule_uses_separate_esbmc_run_timeout():
     return bad
 
 
+def test_stage2_extcall_pin_is_explicit_and_idempotent():
+    schedule = {
+        "jobs": [{
+            "certify_argv": ["python3", "certify_all.py", "--strong-recipe"]
+        }, {
+            "certify_argv": ["python3", "certify_all.py", "--pin-extcall"]
+        }]
+    }
+    unchanged = rq1_veriput_run.apply_stage2_extcall_pins(schedule, False)
+    enabled = rq1_veriput_run.apply_stage2_extcall_pins(schedule, True)
+    bad = 0
+    bad += check(unchanged is schedule, "disabled extcall pin leaves the schedule unchanged")
+    bad += check(enabled["pin_extcall"] is True, "enabled extcall pin is recorded")
+    bad += check(
+        all(job["certify_argv"].count("--pin-extcall") == 1 for job in enabled["jobs"]),
+        "the extcall flag is appended exactly once per Stage-2 job")
+    bad += check("--pin-extcall" not in schedule["jobs"][0]["certify_argv"],
+                 "the input schedule is not mutated")
+    return bad
+
+
 def test_certify_argv_for_remaining_caps_only_run_timeout():
     job = {
         "certify_argv": [
@@ -4857,6 +5434,91 @@ def test_certify_argv_for_remaining_caps_only_run_timeout():
         pairs.get("--mem-fraction") == "0.7",
         f"stage memory fraction is passed to certify_all: {argv}")
     return bad
+
+
+def test_certify_argv_for_remaining_passes_no_region_refinement():
+    job = {
+        "certify_argv": [
+            "python3",
+            "certify_all.py",
+            "--timeout",
+            "600",
+            "--run-timeout",
+            "600",
+            "--memlimit-gib",
+            "8",
+        ],
+        "certification_budget": {
+            "workdir": "/tmp/work",
+        },
+    }
+    argv = rq1_veriput_run._certify_argv_for_remaining(
+        job,
+        remaining_s=300.0,
+        run_timeout_s=120,
+        memlimit_gib=12,
+        no_region_refinement=True)
+    return check(argv.count("--no-region-refinement") == 1,
+                 f"no-region-refinement is passed exactly once to certify_all: {argv}")
+
+
+def test_certify_argv_for_remaining_passes_no_selection_strategy():
+    job = {
+        "certify_argv": [
+            "python3",
+            "certify_all.py",
+            "--timeout",
+            "600",
+            "--run-timeout",
+            "600",
+            "--memlimit-gib",
+            "8",
+        ],
+        "certification_budget": {
+            "workdir": "/tmp/work",
+        },
+    }
+    argv = rq1_veriput_run._certify_argv_for_remaining(
+        job,
+        remaining_s=300.0,
+        run_timeout_s=120,
+        memlimit_gib=12,
+        no_selection_strategy=True)
+    flag = "--esbmc-arg=--path-cov-no-selection-strategy"
+    return check(argv.count(flag) == 1,
+                 f"no-selection-strategy is passed exactly once to ESBMC: {argv}")
+
+
+def test_rq3_ablation_runner_accepts_only_no_selection_strategy():
+    bad = 0
+
+    def args(**kwargs):
+        base = {
+            "rq3_ablation": "",
+            "no_test_assert_refinement": False,
+            "no_region_refinement": False,
+            "no_selection_strategy": False,
+        }
+        base.update(kwargs)
+        return argparse.Namespace(**base)
+
+    rq1_veriput_run.validate_rq3_ablation_args(
+        args(rq3_ablation="no-selection-strategy", no_selection_strategy=True))
+    for invalid in (
+            args(rq3_ablation="no-selection-strategy"),
+            args(no_selection_strategy=True),
+            args(rq3_ablation="no-region-refinement"),
+            args(no_region_refinement=True),
+            args(rq3_ablation="no-test-assert-refinement"),
+            args(no_test_assert_refinement=True),
+    ):
+        try:
+            rq1_veriput_run.validate_rq3_ablation_args(invalid)
+        except rq1_veriput_run.RQ1RunError:
+            continue
+        bad += 1
+    return check(bad == 0,
+                 "runner refuses derive-only RQ3 modes and requires paired no-selection flags")
 
 
 def test_stage2_unit_timeout_cap_defaults_to_adaptive():
@@ -5493,6 +6155,75 @@ def test_capped_stage2_timeout_with_candidates_enters_stage4():
     return bad
 
 
+def test_nonzero_stage2_with_partial_journal_enters_stage4():
+    subject, schedule = _mocked_subject_and_schedule(["witnessed"])
+    calls = []
+
+    def fake_run_command(argv, timeout_s, log_prefix):
+        calls.append((argv, timeout_s, log_prefix))
+        if "put_all.py" not in " ".join(str(arg) for arg in argv):
+            out_path = Path(argv[argv.index("--out") + 1])
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(
+                json.dumps({
+                    "benchmark": subject.benchmark_key,
+                    "unit": "witnessed",
+                    "bucket": "NOT-CERTIFIED",
+                    "certified": {},
+                    "not_certified": {},
+                    "driver_diagnostic": {
+                        "tag": "path-coverage-partial-journal-only",
+                        "category": "partial-journal",
+                    },
+                    "partial_witness_journal": {
+                        "witness_count": 1,
+                        "paths": [{
+                            "path_id": "7",
+                            "path_function": "sol:@C@C@F@witnessed#1",
+                            "witness_count": 1,
+                        }],
+                    },
+                }) + "\n")
+            return {
+                "argv": argv,
+                "rc": 1,
+                "status": "error",
+                "timed_out": False,
+                "wall_s": 0.1,
+                "maxrss_proc_mb": 1.0,
+            }
+        return {
+            "argv": argv,
+            "rc": 0,
+            "status": "ok",
+            "timed_out": False,
+            "wall_s": 0.1,
+            "maxrss_proc_mb": 1.0,
+        }
+
+    def body():
+        with tempfile.TemporaryDirectory() as td:
+            args = _minimal_run_subject_args(td)
+            return rq1_veriput_run.run_subject(
+                {
+                    "subject_id": "s",
+                    "benchmark": "peer182",
+                    "contract": "C",
+                }, "peer182", args)
+
+    row, detail = _with_mocked_run_subject(subject, schedule, fake_run_command, body)
+    stages = detail.get("stages") or []
+    bad = 0
+    bad += check(len(calls) == 2, f"nonzero witnessed Stage 2 still runs Stage 4: {calls}")
+    bad += check(
+        len(stages) > 1 and stages[0].get("status") == "error"
+        and stages[1].get("stage") == "put",
+        f"partial journal crosses the nonzero status gate: {stages}")
+    bad += check(row["stage4_candidate_units_attempted"] == 1,
+                 f"partial-journal Stage-4 attempt is counted: {row}")
+    return bad
+
+
 def test_timeout_only_stage4_skip_can_trigger_no_candidate_stop():
     subject, schedule = _mocked_subject_and_schedule(["slowA", "slowB"])
     calls = []
@@ -5587,6 +6318,253 @@ def test_prepare_case_dir_preserves_complete_and_quarantines_partial():
                      f"partial case directory is quarantined: {quarantined}")
         bad += check(not redo.exists() and len(redone) == 1,
                      f"redo case directory is archived fresh: {redone}")
+        return bad
+
+
+def test_strict_stage4_uses_external_scratch_and_publishes_cleanly():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        case_dir = root / "VeriPUT" / "Results" / "RQ1_KInduction_NoPUT600" / "case"
+        cert_path = root / "cache" / "run-1" / "certify-results.jsonl"
+        staging, published = rq1_veriput_run._strict_stage4_roots(
+            case_dir, cert_path, "subject__unit", True)
+        bad = 0
+        bad += check(staging == cert_path.parent / "stage4" / "subject__unit",
+                     f"strict Stage 4 executes beside external cert scratch: {staging}")
+        bad += check(published == case_dir / "put" / "subject__unit",
+                     f"strict Stage 4 publishes into the isolated case: {published}")
+
+        artifact = staging / "project" / "test" / "C.t.sol"
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text("contract C {}\n")
+        ledger = staging / "put-summary.json"
+        ledger.write_text(json.dumps({"file": str(artifact)}) + "\n")
+        publication = rq1_veriput_run._publish_strict_stage4_artifacts(staging, published)
+        relocated = json.loads((published / "put-summary.json").read_text())
+        bad += check(publication["status"] == "published" and not staging.exists(),
+                     f"successful publication removes scratch: {publication}")
+        bad += check(relocated["file"] == str(published / "project" / "test" / "C.t.sol"),
+                     f"published ledgers no longer reference scratch: {relocated}")
+        bad += check((published / "project" / "test" / "C.t.sol").exists(),
+                     "published Stage-4 artifact is retained")
+        return bad
+
+
+def test_strict_stage4_budget_preserves_later_unit_opportunities():
+    budget = rq1_veriput_run._strict_stage4_fair_budget_s
+    bad = 0
+    bad += check(budget(535, 17) == 66,
+                 "large strict case gives the first Stage-4 unit one of eight fair shares")
+    bad += check(budget(100, 2) == 33,
+                 "small pending suffix receives one fair share per remaining unit")
+    bad += check(budget(20, 5) == 20,
+                 "fair cap never exceeds the remaining case budget")
+    bad += check(budget(535, 0) == 535,
+                 "last Stage-4 candidate may use the remaining case budget")
+    return bad
+
+
+def test_run_command_hard_deadline_kills_tree_and_retains_logs():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        script = (
+            "import signal,subprocess,sys,time\n"
+            "child=subprocess.Popen([sys.executable,'-c',"
+            "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)'])\n"
+            "print(child.pid, flush=True)\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "time.sleep(60)\n")
+        started = time.monotonic()
+        hard_deadline = started + 3.0
+        stage = rq1_veriput_run.run_command(
+            [sys.executable, "-c", script],
+            0.2,
+            root / "tree",
+            hard_deadline=hard_deadline)
+        elapsed = time.monotonic() - started
+        stdout = (root / "tree.stdout.log").read_text().strip()
+        child_pid = int(stdout.splitlines()[0]) if stdout else -1
+        child_gone = child_pid > 0
+        for _ in range(20):
+            if not Path(f"/proc/{child_pid}").exists():
+                break
+            time.sleep(0.05)
+        else:
+            child_gone = False
+        bad = 0
+        bad += check(stage["status"] == "timeout" and stage["timed_out"],
+                     f"hard deadline reports a timeout: {stage}")
+        bad += check(elapsed <= 3.0,
+                     f"process-tree TERM/KILL and log close fit the hard deadline: {elapsed}")
+        bad += check(bool(stdout) and child_gone,
+                     f"pre-timeout log evidence is retained and nested child is gone: {stdout}")
+        return bad
+
+
+def test_strict_subject_reserves_finalization_and_publishes_evidence_under_cap():
+    subject, schedule = _mocked_subject_and_schedule(["f"])
+    hard_deadlines = []
+
+    def fake_run_command(argv, timeout_s, log_prefix, *, hard_deadline=None):
+        hard_deadlines.append(hard_deadline)
+        out_path = Path(argv[argv.index("--out") + 1])
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps({
+            "benchmark": subject.benchmark_key,
+            "unit": "f",
+            "bucket": "NO-WITNESS-UNKNOWN",
+            "certified": {},
+            "not_certified": {},
+        }) + "\n")
+        return {
+            "argv": argv,
+            "rc": 0,
+            "status": "ok",
+            "timed_out": False,
+            "wall_s": 0.01,
+            "maxrss_proc_mb": 1.0,
+        }
+
+    def body():
+        with tempfile.TemporaryDirectory() as td:
+            args = _minimal_run_subject_args(td)
+            args.timeout = 4
+            args.esbmc_run_timeout = 4
+            args.min_remaining_s = 0.1
+            args.strict_case_wall_budget = True
+            old_publish = rq1_veriput_run._publish_strict_certification_artifacts
+
+            def slow_publish(cert_path, case_dir):
+                time.sleep(0.2)
+                return old_publish(cert_path, case_dir)
+
+            rq1_veriput_run._publish_strict_certification_artifacts = slow_publish
+            try:
+                row, detail = rq1_veriput_run.run_subject({
+                    "subject_id": "s",
+                    "benchmark": "peer182",
+                    "contract": "C",
+                }, "peer182", args)
+            finally:
+                rq1_veriput_run._publish_strict_certification_artifacts = old_publish
+            cert_path = Path(row["cert_jsonl"])
+            return row, detail, cert_path.exists(), cert_path.read_text()
+
+    row, _detail, cert_exists, cert_text = _with_mocked_run_subject(
+        subject, schedule, fake_run_command, body)
+    bad = 0
+    bad += check(row["wall_total_s"] <= row["wall_cap_s"] == 4,
+                 f"strict subject finalizes under its total wall cap: {row['wall_total_s']}")
+    bad += check(row["wall_total_s"] >= 0.2 and row["strict_case_wall_within_cap"],
+                 f"slow finalizer is counted without crossing the cap: {row['wall_total_s']}")
+    bad += check(row["strict_case_finalization_reserve_s"] == 1.0
+                 and row["strict_case_work_cap_s"] == 3.0,
+                 f"strict finalization policy is audited in the row: {row}")
+    bad += check(all(deadline is not None for deadline in hard_deadlines),
+                 f"strict child calls receive the work hard deadline: {hard_deadlines}")
+    bad += check(cert_exists and 'NO-WITNESS-UNKNOWN' in cert_text,
+                 "completed certification evidence is published before result completion")
+    return bad
+
+
+def test_strict_certification_bundle_is_published_and_relocated():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        staging = root / "cache" / "run"
+        case_dir = root / "case"
+        cert_path = staging / "certify-results.jsonl"
+        shard = staging / "shards" / "001-unit.jsonl"
+        work = staging / "work" / "progress.json"
+        stage4 = staging / "stage4" / "duplicate.txt"
+        solast = root / "ast-cache" / "flat.sol.solast"
+        shard.parent.mkdir(parents=True)
+        work.parent.mkdir(parents=True)
+        stage4.parent.mkdir(parents=True)
+        solast.parent.mkdir(parents=True)
+        solast.write_text('{"nodeType":"SourceUnit"}\n')
+        digest = rq1_veriput_run._sha256_file(solast)
+        cert_path.write_text(json.dumps({"work": str(work), "solast": str(solast)}) + "\n")
+        shard.write_text(json.dumps({"cert": str(cert_path), "solast": str(solast)}) + "\n")
+        work.write_text(json.dumps({"root": str(staging)}) + "\n")
+        stage4.write_text("published elsewhere\n")
+
+        published, input_path_map = rq1_veriput_run._publish_strict_certification_artifacts(
+            cert_path, case_dir)
+        cert_row = json.loads(published.read_text())
+        shard_row = json.loads((case_dir / "cert" / "shards" / shard.name).read_text())
+        published_solast = case_dir / "cert" / "evidence" / "solast" / f"{digest}.solast"
+        bad = 0
+        bad += check(published == case_dir / "cert" / cert_path.name,
+                     f"certification journal is published under the case: {published}")
+        bad += check(cert_row["work"] == str(case_dir / "cert" / "work" / "progress.json"),
+                     f"cert journal references durable work evidence: {cert_row}")
+        bad += check(shard_row["cert"] == str(published),
+                     f"cert shard references the published journal: {shard_row}")
+        bad += check(published_solast.is_file()
+                     and rq1_veriput_run._sha256_file(published_solast) == digest,
+                     "external verifier AST is published with its content hash")
+        bad += check(cert_row["solast"] == str(published_solast)
+                     and shard_row["solast"] == str(published_solast)
+                     and input_path_map == {str(solast): str(published_solast)},
+                     f"certification ledgers reference the durable AST: {input_path_map}")
+        bad += check(not (case_dir / "cert" / "stage4").exists(),
+                     "cert publication does not duplicate Stage-4 artifacts")
+        record = {"argv": [str(staging / "work")], "cert": str(cert_path)}
+        relocated = rq1_veriput_run._relocate_record_paths(record, staging, case_dir / "cert")
+        relocated = rq1_veriput_run._relocate_exact_record_paths(relocated, input_path_map)
+        bad += check(relocated["cert"] == str(published),
+                     f"in-memory result paths are relocated: {relocated}")
+        return bad
+
+
+def test_strict_certification_publication_keeps_empty_journal():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        staging = root / "cache" / "run"
+        case_dir = root / "case"
+        cert_path = staging / "certify-results.jsonl"
+        work = staging / "work" / "progress.json"
+        work.parent.mkdir(parents=True)
+        work.write_text(json.dumps({"root": str(staging)}) + "\n")
+
+        published, input_path_map = rq1_veriput_run._publish_strict_certification_artifacts(
+            cert_path, case_dir)
+        bad = 0
+        bad += check(published == case_dir / "cert" / cert_path.name,
+                     f"empty certification journal is published under the case: {published}")
+        bad += check(published.is_file() and published.read_text() == "",
+                     "empty Stage-2 output is represented by a durable empty journal")
+        bad += check((case_dir / "cert" / "work" / "progress.json").is_file(),
+                     "work evidence is still published with an empty cert journal")
+        bad += check(input_path_map == {},
+                     f"no external verifier inputs are invented for empty journal: {input_path_map}")
+        return bad
+
+
+def test_strict_certification_publication_absorbs_precreated_fixtures():
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        staging = root / "cache" / "run"
+        case_dir = root / "case"
+        cert_path = staging / "certify-results.jsonl"
+        fixture = case_dir / "cert" / "fixtures" / "owner.path-cov-fixture.json"
+        cert_path.parent.mkdir(parents=True)
+        fixture.parent.mkdir(parents=True)
+        cert_path.write_text(json.dumps({"fixture": str(fixture)}) + "\n")
+        fixture.write_text(json.dumps({"veriput_fixture_kind": "test"}) + "\n")
+
+        published, _input_path_map = rq1_veriput_run._publish_strict_certification_artifacts(
+            cert_path, case_dir)
+        cert_row = json.loads(published.read_text())
+        published_fixture = case_dir / "cert" / "fixtures" / fixture.name
+        bad = 0
+        bad += check(published == case_dir / "cert" / cert_path.name,
+                     f"certification journal is published after absorbing fixtures: {published}")
+        bad += check(published_fixture.is_file()
+                     and json.loads(published_fixture.read_text())["veriput_fixture_kind"] == "test",
+                     "precreated fixture evidence is retained in the final cert bundle")
+        bad += check(cert_row["fixture"] == str(published_fixture),
+                     f"fixture paths remain valid after publication: {cert_row}")
         return bad
 
 
@@ -6045,6 +7023,145 @@ def test_persistence_failure_rejects_only_exact_unpersisted_replay():
         return bad
 
 
+def _value_gate_cert_row(unit="f", extra_not_certified=None):
+    row = {
+        "benchmark": "bugfix124__subj",
+        "bucket": "CERTIFIED",
+        "unit": unit,
+        "path_function": "sol:@C@C@F@f#1",
+        "certified": {"6": "msg.sender in [0, 5]"},
+        "certified_details": {"6": {"enc": 6, "verdict": "CERTIFIED"}},
+        "not_certified": {
+            "2": ("EXCLUDED FROM THE SLICE by the pins (msg.value: CE 7 outside [0, 0]), "
+                  "so this path is not an input to region search"),
+        },
+        "not_certified_details": {"2": {"ce": {"msg.value": "7"}}},
+        "not_certified_ce_fallbacks": {"2": {"ce": {"msg.value": "7"}}},
+    }
+    if extra_not_certified:
+        row["not_certified"].update(extra_not_certified)
+    return row
+
+
+def test_value_gate_promotion_certifies_only_the_pin_excluded_path():
+  with tempfile.TemporaryDirectory() as _td:
+      cert = Path(_td) / "certify-results.jsonl"
+      cert.write_text(json.dumps(_value_gate_cert_row(extra_not_certified={
+          "4": "shrink round budget exhausted; the witness differs on: a",
+      })) + "\n")
+
+      report = rq1_veriput_run._promote_pin_excluded_value_gate_paths(
+          cert, "bugfix124__subj", "f", "sol:@C@C@F@f#1")
+
+      assert report["promoted"] == 1
+      row = json.loads(cert.read_text().splitlines()[0])
+      assert row["certified"]["2"] == "nonpayable ABI gate rejects msg.value > 0"
+      detail = row["certified_details"]["2"]
+      assert detail["stage4_kind"] == "abi-value-gate"
+      assert detail["certification_source"] == "structural-abi-gate-no-coordinate"
+      assert detail["promoted_from"] == "stage2-msg-value-pin-exclusion"
+      assert detail["box"] == [{
+          "name": "msg.value",
+          "lo": "1",
+          "hi": str((1 << 256) - 1),
+          "holes": [],
+      }]
+      # the unrelated non-certification is a search result and must survive
+      assert set(row["not_certified"]) == {"4"}
+
+
+def test_value_gate_promotion_drops_the_duplicate_concrete_fallback():
+  with tempfile.TemporaryDirectory() as _td:
+      cert = Path(_td) / "certify-results.jsonl"
+      cert.write_text(json.dumps(_value_gate_cert_row()) + "\n")
+
+      rq1_veriput_run._promote_pin_excluded_value_gate_paths(
+          cert, "bugfix124__subj", "f", "sol:@C@C@F@f#1")
+
+      row = json.loads(cert.read_text().splitlines()[0])
+      # one path must never yield both a PUT and a concrete replay
+      assert "2" not in row["not_certified_ce_fallbacks"]
+      assert "2" not in row["not_certified_details"]
+
+
+def test_value_gate_promotion_ignores_other_non_certification_reasons():
+  with tempfile.TemporaryDirectory() as _td:
+      row = _value_gate_cert_row()
+      row["not_certified"] = {"2": "shrink round budget exhausted; the witness differs on: a"}
+      cert = Path(_td) / "certify-results.jsonl"
+      cert.write_text(json.dumps(row) + "\n")
+      before = cert.read_text()
+
+      report = rq1_veriput_run._promote_pin_excluded_value_gate_paths(
+          cert, "bugfix124__subj", "f", "sol:@C@C@F@f#1")
+
+      assert report["promoted"] == 0
+      assert cert.read_text() == before
+
+
+def test_value_gate_promotion_skips_rows_for_another_unit():
+  with tempfile.TemporaryDirectory() as _td:
+      cert = Path(_td) / "certify-results.jsonl"
+      cert.write_text(json.dumps(_value_gate_cert_row(unit="g")) + "\n")
+      before = cert.read_text()
+
+      report = rq1_veriput_run._promote_pin_excluded_value_gate_paths(
+          cert, "bugfix124__subj", "f", "sol:@C@C@F@f#1")
+
+      assert report["promoted"] == 0
+      assert cert.read_text() == before
+
+
+def test_value_gate_promotion_is_idempotent():
+  with tempfile.TemporaryDirectory() as _td:
+      cert = Path(_td) / "certify-results.jsonl"
+      cert.write_text(json.dumps(_value_gate_cert_row()) + "\n")
+
+      first = rq1_veriput_run._promote_pin_excluded_value_gate_paths(
+          cert, "bugfix124__subj", "f", "sol:@C@C@F@f#1")
+      after_first = cert.read_text()
+      second = rq1_veriput_run._promote_pin_excluded_value_gate_paths(
+          cert, "bugfix124__subj", "f", "sol:@C@C@F@f#1")
+
+      assert first["promoted"] == 1
+      assert second["promoted"] == 0
+      assert cert.read_text() == after_first
+
+
+def test_value_gate_promotion_counts_as_a_stage4_candidate():
+  with tempfile.TemporaryDirectory() as _td:
+      cert = Path(_td) / "certify-results.jsonl"
+      cert.write_text(json.dumps(_value_gate_cert_row()) + "\n")
+
+      before = rq1_veriput_run._certified_count(cert, "bugfix124__subj", "f", "sol:@C@C@F@f#1")
+      rq1_veriput_run._promote_pin_excluded_value_gate_paths(
+          cert, "bugfix124__subj", "f", "sol:@C@C@F@f#1")
+      after = rq1_veriput_run._certified_count(cert, "bugfix124__subj", "f", "sol:@C@C@F@f#1")
+
+      assert (before, after) == (1, 2)
+
+
+
+def test_official_benchmarks_resolve_to_the_509_target_denominator():
+  """real203 must select the prepared 203, not the wider 241-target stress set.
+
+  Asking the manifest for `stress243` returns 241 Stress targets, which turns
+  the official 124+182+203 = 509 denominator into 547 without any visible
+  error.  The mapping is the only thing that keeps them apart.
+  """
+  assert rq1_veriput_run.TARGET_BENCHMARK_ARG["bugfix124"] == "bugfix124"
+  assert rq1_veriput_run.TARGET_BENCHMARK_ARG["peer182"] == "peer182"
+  assert rq1_veriput_run.TARGET_BENCHMARK_ARG["real203"] == "stress203"
+  assert rq1_veriput_run.TARGET_BENCHMARK_ARG["stress203"] == "stress203"
+  # the wider set stays reachable under its own name
+  assert rq1_veriput_run.TARGET_BENCHMARK_ARG["stress243"] == "stress243"
+
+
+def test_every_official_benchmark_reports_the_real203_dataset_label():
+  assert rq1_veriput_run.DATASET_LABEL["real203"] == "real203"
+  assert rq1_veriput_run.DATASET_LABEL["stress203"] == "real203"
+
+
 def main():
     tests = [
         test_latest_rows_coalesces_legacy_and_canonical_subject_keys,
@@ -6094,7 +7211,18 @@ def main():
         test_constructor_arg_repair_deploy_is_still_smoke_only,
         test_no_unit_getter_fallback_selects_only_fresh_zero_arg_getters_without_filter,
         test_no_unit_getter_fallback_selects_filtered_parameterized_getter,
+        test_move_tree_falls_back_to_copy_across_filesystems,
+        test_stage2_timeout_rescue_certifies_the_structural_abi_value_gate,
+        test_stage2_timeout_rescue_skips_units_that_already_have_candidates,
         test_abi_value_gate_cert_row_requires_nonpayable_entry,
+        test_value_gate_promotion_certifies_only_the_pin_excluded_path,
+        test_value_gate_promotion_drops_the_duplicate_concrete_fallback,
+        test_value_gate_promotion_ignores_other_non_certification_reasons,
+        test_value_gate_promotion_skips_rows_for_another_unit,
+        test_value_gate_promotion_is_idempotent,
+        test_value_gate_promotion_counts_as_a_stage4_candidate,
+        test_official_benchmarks_resolve_to_the_509_target_denominator,
+        test_every_official_benchmark_reports_the_real203_dataset_label,
         test_no_unit_getter_fallback_rejects_non_no_unit_schedule,
         test_ownable_owner_stage2_fixture_uses_esbmc_store_name,
         test_ownable_msg_sender_owner_stage2_fixture_uses_esbmc_store_name,
@@ -6119,7 +7247,11 @@ def main():
         test_certification_summary_uses_diagnostics_for_no_output_reason,
         test_cleared_concrete_fallbacks_trigger_stage4,
         test_subject_schedule_uses_separate_esbmc_run_timeout,
+        test_stage2_extcall_pin_is_explicit_and_idempotent,
         test_certify_argv_for_remaining_caps_only_run_timeout,
+        test_certify_argv_for_remaining_passes_no_region_refinement,
+        test_certify_argv_for_remaining_passes_no_selection_strategy,
+        test_rq3_ablation_runner_accepts_only_no_selection_strategy,
         test_stage2_unit_timeout_cap_defaults_to_adaptive,
         test_adaptive_stage2_unit_timeout_cap_policy,
         test_stage2_wrapper_timeout_uses_effective_unit_cap,
@@ -6130,8 +7262,16 @@ def main():
         test_stage2_no_output_stop_ignores_tool_failure_units,
         test_overload_refusal_appends_path_function_jobs,
         test_capped_stage2_timeout_with_candidates_enters_stage4,
+        test_nonzero_stage2_with_partial_journal_enters_stage4,
         test_timeout_only_stage4_skip_can_trigger_no_candidate_stop,
         test_prepare_case_dir_preserves_complete_and_quarantines_partial,
+        test_strict_stage4_uses_external_scratch_and_publishes_cleanly,
+        test_strict_stage4_budget_preserves_later_unit_opportunities,
+        test_run_command_hard_deadline_kills_tree_and_retains_logs,
+        test_strict_subject_reserves_finalization_and_publishes_evidence_under_cap,
+        test_strict_certification_bundle_is_published_and_relocated,
+        test_strict_certification_publication_keeps_empty_journal,
+        test_strict_certification_publication_absorbs_precreated_fixtures,
         test_stage2_no_output_stop_reason_is_audit_friendly,
         test_stage2_no_output_stop_requires_multiple_no_candidate_units,
         test_tool_failures_do_not_count_as_no_candidate_stop_evidence,
@@ -6167,7 +7307,8 @@ def test_adopt_only_never_runs_selected_subjects(monkeypatch, tmp_path):
         "contract": "C",
     }
 
-    monkeypatch.setattr(rq1_veriput_run, "validate_roots", lambda *_args: None)
+    monkeypatch.setattr(
+        rq1_veriput_run, "validate_roots", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(rq1_veriput_run, "validate_jobs", lambda _args: None)
     monkeypatch.setattr(rq1_veriput_run, "target_rows", lambda *_args: ("peer182", [target]))
     monkeypatch.setattr(rq1_veriput_run, "enforce_rows_in_window", lambda *_args: None)

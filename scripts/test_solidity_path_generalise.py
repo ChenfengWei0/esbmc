@@ -159,6 +159,7 @@ check(
     "region-proof-uses-clean-k-induction",
     k_induction_proof_args([
         "--bitwuzla", "--unwind", "16", "--overflow-check", "--div-by-zero-check",
+        "--path-cov-arith-resolve",
         "--incremental-bmc", "--partial-loops", "--max-k-step=99", "--max-inductive-step", "1",
         "--base-k-step=7", "--k-step", "9", "--unlimited-k-steps",
         "--enable-forward-condition", "--disable-inductive-step"

@@ -1323,6 +1323,59 @@ def _solidity_exact_body(source, name):
     return source[span[5] + 1:span[6]], None
 
 
+def _solidity_exact_body_in_range(source, name, start, end):
+    """Return a unique zero-parameter function body inside a contract span."""
+    spans = []
+    for span, error in _solidity_function_spans(source, name):
+        if span is None:
+            spans.append((span, error))
+            continue
+        if start < span[0] < end:
+            spans.append((span, error))
+    if not spans:
+        return None, f"{name} is absent from the selected test contract"
+    if len(spans) != 1:
+        return None, f"{name} is ambiguous in the selected test contract"
+    span, error = spans[0]
+    if span is None:
+        return None, f"{name} {error}"
+    if _solidity_code_mask(source)[span[3] + 1:span[4]].strip():
+        return None, f"{name} has parameters"
+    body_lines = source[span[5] + 1:span[6]].splitlines()
+    if body_lines and not body_lines[0].strip():
+        body_lines = body_lines[1:]
+    if body_lines and not body_lines[-1].strip():
+        body_lines = body_lines[:-1]
+    return "\n".join(body_lines), None
+
+
+def _source_imports_vm(source):
+    return re.search(r"\bVm\b", _solidity_code_mask(source)) is not None
+
+
+def _ensure_vm_import(source):
+    if _source_imports_vm(source):
+        return source
+
+    def add_to_test_import(match):
+        imports = [item.strip() for item in match.group(1).split(",") if item.strip()]
+        if "Vm" not in imports:
+            imports.append("Vm")
+        return "import {" + ", ".join(imports) + '} from "forge-std/Test.sol";'
+
+    updated, count = re.subn(r'import\s*\{([^}]*)\}\s*from\s*"forge-std/Test\.sol"\s*;',
+                             add_to_test_import, source, count=1)
+    if count:
+        return updated
+    lines = source.splitlines()
+    insert_at = 0
+    for index, line in enumerate(lines):
+        if line.strip().startswith("pragma ") or line.strip().startswith("import "):
+            insert_at = index + 1
+    lines.insert(insert_at, 'import {Vm} from "forge-std/Vm.sol";')
+    return "\n".join(lines) + ("\n" if source.endswith("\n") else "")
+
+
 def _executable_exact_statement(source, statement):
     """Whether an exact statement starts in code rather than comments/strings."""
     statement = str(statement or "").strip()
@@ -1377,10 +1430,9 @@ def certified_ce_return(raw):
 
 
 def requires_structural_abi_gate_anchor(certification_source, certified_detail):
-    """Use the structural-only anchor only when no exact scalar CE exists."""
-    return (certification_source
-            in ("structural-abi-gate-no-coordinate", "structural-abi-getter-no-coordinate")
-            and certified_ce_sha256((certified_detail or {}).get("ce") or {}) is None)
+    """Use an in-PUT structural fixed replay marker for structural certificates."""
+    return certification_source in ("structural-abi-gate-no-coordinate",
+                                    "structural-abi-getter-no-coordinate")
 
 
 def certified_detail_stage4_kind(certified_detail):
@@ -1464,18 +1516,24 @@ def _strict_extcall_source_projection_error(basis_file, unit, proof):
     return None
 
 
-def certified_source_projection_error(binding, certified_detail, basis_file=None, unit=None):
+def certified_source_projection_error(binding,
+                                      certified_detail,
+                                      basis_file=None,
+                                      unit=None,
+                                      representative_ce=None):
     """Validate audited alternatives to byte-preserved certified source."""
     preserved = binding.get("source_projection_preserved")
     if not isinstance(preserved, dict):
         return "certified basis replay is not bound to a source-preserved exact CE"
     if preserved.get("schema") != "veriput-certified-ce-source-projection/v1":
         return "certified basis replay source projection has an unsupported schema"
-    expected_ce = parse_concrete_ce((certified_detail or {}).get("ce") or {})
+    source_ce = (representative_ce if representative_ce is not None else
+                 (certified_detail or {}).get("ce") or {})
+    expected_ce = parse_concrete_ce(source_ce)
     if expected_ce is None:
         return "certified basis replay source projection has no exact CE"
     expected_ce.pop("return", None)
-    expected_sha = certified_ce_sha256((certified_detail or {}).get("ce") or {})
+    expected_sha = certified_ce_sha256(source_ce)
     if preserved.get("ce_sha256") != expected_sha:
         return "certified basis replay source projection CE hash differs"
     coordinate_binding = preserved.get("coordinate_binding")
@@ -1494,19 +1552,28 @@ def certified_source_projection_error(binding, certified_detail, basis_file=None
     allowed_certificates = {
         "abi-value-gate-before-body/v1",
         "strict-low-level-call-fixture/v1",
+        "selected-target-call-calldata/v1",
+        "unobserved-auxiliary-environment/v1",
+        "foundry-prevrandao-establishes-difficulty/v1",
+        "fixed-replay-entry-state/v1",
+        "fixed-replay-state-constant-or-immutable/v1",
     }
-    if (not projected_certificates <= allowed_certificates or len(projected_certificates) != 1):
-        if projected_certificates:
-            return "certified basis replay coordinate projection uses mixed or unknown certificates"
-    projection_certificate = (next(iter(projected_certificates))
-                              if projected_certificates else "abi-value-gate-before-body/v1")
+    if not projected_certificates <= allowed_certificates:
+        return "certified basis replay coordinate projection uses unknown certificates"
     for name, value in expected_ce.items():
         record = coordinates.get(name)
         if not isinstance(record, dict) or record.get("certified") != value:
             return f"certified basis replay coordinate projection differs on {name}"
         kind = record.get("kind")
-        if kind in ("path-irrelevant", "calldata-determined"):
-            if record.get("certificate") != projection_certificate:
+        certificate = record.get("certificate")
+        if kind == "path-irrelevant":
+            if certificate not in ("abi-value-gate-before-body/v1",
+                                   "strict-low-level-call-fixture/v1"):
+                return f"certified basis replay coordinate projection is unauthenticated on {name}"
+        elif kind == "calldata-determined":
+            if certificate not in ("abi-value-gate-before-body/v1",
+                                   "strict-low-level-call-fixture/v1",
+                                   "selected-target-call-calldata/v1"):
                 return f"certified basis replay coordinate projection is unauthenticated on {name}"
         elif kind == "certified-region-member":
             if record.get("certificate") != "strict-low-level-call-fixture/v1":
@@ -1518,18 +1585,36 @@ def certified_source_projection_error(binding, certified_detail, basis_file=None
                 return f"certified basis replay region projection is malformed on {name}"
             if not lo <= value <= hi or not lo <= rendered <= hi:
                 return f"certified basis replay region projection is out of bounds on {name}"
+        elif kind == "unobserved-auxiliary-environment":
+            if name != "block.gaslimit" or certificate != "unobserved-auxiliary-environment/v1":
+                return f"certified basis replay coordinate projection is unauthenticated on {name}"
+        elif kind == "prevrandao-establishes-difficulty":
+            if (name != "block.difficulty"
+                    or certificate != "foundry-prevrandao-establishes-difficulty/v1"
+                    or record.get("value") != value):
+                return f"certified basis replay coordinate projection is unauthenticated on {name}"
+        elif kind in ("fixed-replay-entry-state", "fixed-replay-state-constant-or-immutable"):
+            expected_certificate = {
+                "fixed-replay-entry-state": "fixed-replay-entry-state/v1",
+                "fixed-replay-state-constant-or-immutable":
+                "fixed-replay-state-constant-or-immutable/v1",
+            }[kind]
+            if (not str(name).startswith("state.") or certificate != expected_certificate
+                    or record.get("value") != value):
+                return f"certified basis replay coordinate projection is unauthenticated on {name}"
         elif record.get("rendered") != value:
             return f"certified basis replay rendered coordinate differs on {name}"
-    if projection_certificate == "abi-value-gate-before-body/v1":
+    if "abi-value-gate-before-body/v1" in projected_certificates:
         value_record = coordinates.get("msg.value")
         if (not isinstance(value_record, dict)
                 or value_record.get("kind") != "call-environment-literal"
                 or value_record.get("rendered") != expected_ce.get("msg.value")):
             return "certified basis replay does not render exact msg.value"
-    else:
+    if "strict-low-level-call-fixture/v1" in projected_certificates:
         proof_records = [
             record for record in coordinates.values()
-            if isinstance(record, dict) and record.get("certificate") == projection_certificate
+            if isinstance(record, dict)
+            and record.get("certificate") == "strict-low-level-call-fixture/v1"
         ]
         proof_fields = ("source_function_sha256", "target", "calldata", "success_var", "success")
         proof = proof_records[0] if proof_records else {}
@@ -1585,7 +1670,7 @@ def certified_source_projection_error(binding, certified_detail, basis_file=None
     return None
 
 
-def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail):
+def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail, representative_ce=None):
     """Fuse exact witness assertions into the certified PUT's target call."""
     put_file = put_rec.get("file")
     basis_file = basis_rec.get("file")
@@ -1594,7 +1679,9 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail):
     if not put_file or not basis_file or not basis_test:
         return None, "certified basis replay did not record a file and test"
     binding = basis_rec.get("certified_ce_binding") or {}
-    expected_sha = certified_ce_sha256((certified_detail or {}).get("ce") or {})
+    ce = representative_ce if representative_ce is not None else (certified_detail or {}).get("ce")
+    ce = ce or {}
+    expected_sha = certified_ce_sha256(ce)
     if expected_sha is None:
         return None, "certified detail has no renderable exact scalar CE"
     if binding.get("status") != "exact":
@@ -1604,7 +1691,8 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail):
                                                              certified_detail,
                                                              basis_file=basis_file,
                                                              unit=basis_rec.get("unit")
-                                                             or put_rec.get("unit"))
+                                                             or put_rec.get("unit"),
+                                                             representative_ce=representative_ce)
         if projection_error:
             return None, projection_error
     if binding.get("ce_sha256") != expected_sha:
@@ -1632,13 +1720,9 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail):
             basis_source = fh.read()
     except OSError as exc:
         return None, f"could not read PUT/basis source: {exc}"
-    put_setup, put_setup_error = _solidity_exact_body(put_source, "setUp")
-    basis_setup, basis_setup_error = _solidity_exact_body(basis_source, "setUp")
-    if put_setup is None or basis_setup is None:
-        return None, ("PUT/basis setup is not uniquely executable: " +
-                      str(put_setup_error or basis_setup_error))
-    if put_setup != basis_setup:
-        return None, "PUT and certified basis replay use different setup state"
+    event_oracles = [oracle for oracle in oracles if oracle.get("kind") == "event-log"]
+    if event_oracles:
+        put_source = _ensure_vm_import(put_source)
     span, reason = _solidity_test_span(basis_source, basis_test)
     if span is None:
         return None, reason
@@ -1647,26 +1731,29 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail):
         return None, "PUT destination test is absent or ambiguous"
     destination_span = destination_spans[0][0]
     destination_function_source = put_source[destination_span[0]:destination_span[1]]
-    put_setup_span, _put_setup_span_error = _solidity_test_span(put_source, "setUp")
-    basis_setup_span, _basis_setup_span_error = _solidity_test_span(basis_source, "setUp")
     destination_contract = _enclosing_brace_pair(put_source, destination_span[0])
     basis_contract = _enclosing_brace_pair(basis_source, span[0])
     if destination_contract is None:
         return None, "PUT test contract has no closing brace"
     destination_open, destination_close = destination_contract
-    if (put_setup_span is None or not destination_open < put_setup_span[0] < destination_close):
-        return None, "PUT setup is not in the destination test contract"
     if basis_contract is None:
         return None, "certified replay contract has no closing brace"
     basis_open, basis_close = basis_contract
-    if (basis_setup_span is None or not basis_open < basis_setup_span[0] < basis_close):
-        return None, "basis setup is not in the certified replay contract"
+    put_setup, put_setup_error = _solidity_exact_body_in_range(
+        put_source, "setUp", destination_open, destination_close)
+    basis_setup, basis_setup_error = _solidity_exact_body_in_range(
+        basis_source, "setUp", basis_open, basis_close)
+    if put_setup is None or basis_setup is None:
+        return None, ("PUT/basis setup is not uniquely executable: " +
+                      str(put_setup_error or basis_setup_error))
+    if put_setup != basis_setup:
+        return None, "PUT and certified basis replay use different setup state"
     start, end, name_start, open_paren, _close_paren, _open_brace, _close_brace = span
     function_source = basis_source[start:end]
     basis_function_source = function_source
     body = solidity_function_body(basis_source, basis_test)
-    setup_body = solidity_function_body(basis_source, "setUp")
-    if body is None or setup_body is None:
+    setup_body = basis_setup.splitlines()
+    if body is None:
         return None, "certified basis replay body or setup is missing"
     body_sha = hashlib.sha256("\n".join(body).encode("utf-8")).hexdigest()
     setup_sha = hashlib.sha256("\n".join(setup_body).encode("utf-8")).hexdigest()
@@ -1711,12 +1798,13 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail):
         if (oracle.get("kind") not in {"revert", "tuple", "tuple-return"} and observed
                 and observed not in assertion):
             return None, "certified basis replay assertion omits its observed result"
-    expected_return = certified_ce_return((certified_detail or {}).get("ce") or {})
+    expected_return = certified_ce_return(ce)
     return_oracles = [oracle for oracle in oracles if oracle.get("kind") == "return-value"]
     if expected_return is not None:
         if len(return_oracles) != 1:
             return None, "certified return CE lacks one exact return-value oracle"
-        if oracle_expected_scalar(return_oracles[0].get("expected")) != expected_return:
+        if (return_oracles[0].get("source") != "foundry-fixed-replay"
+                and oracle_expected_scalar(return_oracles[0].get("expected")) != expected_return):
             return None, "certified basis replay return differs from the certified CE"
     marker = "// VERIPUT_FIXED_REPLAY_ASSERTIONS"
     if marker in destination_function_source:
@@ -1724,7 +1812,6 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail):
     raw_parameters = destination_function_source[destination_span[3] - destination_span[0] +
                                                  1:destination_span[4] - destination_span[0]]
     parameter_values = []
-    ce = (certified_detail or {}).get("ce") or {}
     aliases = {
         "p_msg_sender": "msg.sender",
         "p_msg_value": "msg.value",
@@ -1781,10 +1868,7 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail):
         if len(observed_returns) != len(ordered):
             return None, "PUT return binding does not match the certified return arity"
 
-    event_oracles = [oracle for oracle in oracles if oracle.get("kind") == "event-log"]
     if event_oracles:
-        if not re.search(r"\bVm\b", _solidity_code_mask(put_source)):
-            return None, "PUT source does not import the Vm.Log event type"
         body_lines.insert(call_index, indent + "vm.recordLogs();")
         call_index += 1
     after_call = []
@@ -1890,8 +1974,31 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail):
     return metadata, None
 
 
+def attach_required_fixed_replay_anchor(put_rec,
+                                        basis_rec,
+                                        certified_detail,
+                                        representative_ce=None):
+    """Attach whichever fixed replay proof this certified PUT requires."""
+    certification_source = (certified_detail or {}).get("certification_source")
+    if requires_structural_abi_gate_anchor(certification_source, certified_detail):
+        return attach_structural_abi_gate_anchor(put_rec, certified_detail)
+    return attach_certified_ce_anchor(put_rec,
+                                      basis_rec,
+                                      certified_detail,
+                                      representative_ce=representative_ce)
+
+
+def _strip_structural_fixed_replay_marker(source):
+    stripped = re.sub(
+        r"\n[ \t]*// VERIPUT_FIXED_REPLAY_ASSERTIONS\n"
+        r"[ \t]*// Structural (?:getter|ABI-gate) replay: [^\n]*\n",
+        "\n",
+        source or "")
+    return re.sub(r"\n[ \t]*\n([ \t]*})\s*$", r"\n\1", stripped)
+
+
 def attach_structural_getter_anchor(put_rec, certified_detail):
-    """Embed one fixed caller from a source-checked zero-argument getter PUT."""
+    """Mark a source-checked structural getter PUT as carrying its fixed replay."""
     if ((certified_detail or {}).get("certification_source")
             != "structural-abi-getter-no-coordinate"):
         return None, "certified detail is not a structural getter certificate"
@@ -1908,6 +2015,7 @@ def attach_structural_getter_anchor(put_rec, certified_detail):
         return None, "structural getter PUT test is absent or ambiguous"
     span = spans[0][0]
     destination_source = source[span[0]:span[1]]
+    destination_identity_source = _strip_structural_fixed_replay_marker(destination_source)
     semantic_destination = _solidity_code_mask(destination_source)
     if (not re.search(r"\baddress\s+p_msg_sender\b", semantic_destination)
             or not re.search(r"\bvm\.prank\s*\(\s*p_msg_sender\s*\)", semantic_destination)
@@ -1930,27 +2038,16 @@ def attach_structural_getter_anchor(put_rec, certified_detail):
             return None, ("structural getter anchor cannot synthesize parameter "
                           f"`{name}` of type `{sol_type}`")
         call_args.append(value)
-    digest = hashlib.sha256(
-        (destination_source + "\0structural-abi-getter/v1").encode("utf-8")).hexdigest()
-    anchor_test = "test_structural_anchor_" + digest[:16]
-    anchor_source = (f"  function {anchor_test}() public {{\n"
-                     f"    this.{put_test}({', '.join(call_args)});\n"
-                     "  }\n")
-    contract_span = _enclosing_brace_pair(source, span[0])
-    if contract_span is None:
-        return None, "structural getter PUT test contract has no closing brace"
-    _contract_open, contract_close = contract_span
-    existing = _solidity_function_spans(source, anchor_test)
-    if existing:
-        if len(existing) != 1 or existing[0][0] is None:
-            return None, "existing structural getter anchor is ambiguous"
-        existing_span = existing[0][0]
-        existing_source = source[existing_span[0]:existing_span[1]]
-        if re.sub(r"\s+", "", existing_source) != re.sub(r"\s+", "", anchor_source):
-            return None, "existing structural getter anchor body differs"
+    marker = "// VERIPUT_FIXED_REPLAY_ASSERTIONS"
+    marker_source = ("\n"
+                     "    // VERIPUT_FIXED_REPLAY_ASSERTIONS\n"
+                     "    // Structural getter replay: the source-checked PUT "
+                     "call above is the fixed replay point.\n")
+    if marker in destination_source:
         anchored_source = source
     else:
-        anchored_source = source[:contract_close] + "\n" + anchor_source + source[contract_close:]
+        insert_at = source.rfind("\n", 0, span[6]) + 1
+        anchored_source = source[:insert_at] + marker_source + source[insert_at:]
         Path(put_file).write_text(anchored_source, encoding="utf-8")
     return {
         "status":
@@ -1960,13 +2057,11 @@ def attach_structural_getter_anchor(put_rec, certified_detail):
         "basis_kind":
         "structural-certificate-not-solver-ce",
         "test":
-        anchor_test,
+        put_test,
         "destination_put_test":
         put_test,
         "destination_put_function_sha256":
-        hashlib.sha256(destination_source.encode("utf-8")).hexdigest(),
-        "anchor_source_sha256":
-        hashlib.sha256(anchor_source.encode("utf-8")).hexdigest(),
+        hashlib.sha256(destination_identity_source.encode("utf-8")).hexdigest(),
         "destination_source_sha256":
         hashlib.sha256(anchored_source.encode("utf-8")).hexdigest(),
         "certification_source":
@@ -1980,12 +2075,12 @@ def attach_structural_getter_anchor(put_rec, certified_detail):
 
 
 def attach_structural_abi_gate_anchor(put_rec, certified_detail):
-    """Embed a fixed replay for a structural nonpayable ABI-gate proof.
+    """Mark a structural nonpayable ABI-gate PUT as carrying fixed replay.
 
     This is deliberately not a solver-CE binding: structural certificates have
-    no concrete CE.  The anchor calls the already emitted parameterized PUT at
-    one deterministic point in its certified region, preserving that distinct
-    provenance in metadata.
+    no concrete CE.  The PUT already asserts the region-wide R0 exit behavior,
+    so the fixed replay is represented by metadata and an in-function marker,
+    not by adding a second Foundry test function.
     """
     certification_source = (certified_detail or {}).get("certification_source")
     if certification_source == "structural-abi-getter-no-coordinate":
@@ -1993,8 +2088,6 @@ def attach_structural_abi_gate_anchor(put_rec, certified_detail):
     if certification_source != "structural-abi-gate-no-coordinate":
         return None, "certified detail is not a structural ABI-gate certificate"
     region, _holes, _pins = parse_certified_detail_region(certified_detail, {})
-    if not region or "msg.value" not in region or int(region["msg.value"][0]) <= 0:
-        return None, "structural ABI-gate certificate lacks a nonzero msg.value region"
     put_file = put_rec.get("file")
     put_test = put_rec.get("test")
     if not put_file or not put_test:
@@ -2009,10 +2102,14 @@ def attach_structural_abi_gate_anchor(put_rec, certified_detail):
         return None, "structural ABI-gate PUT test is absent or ambiguous"
     span = spans[0][0]
     destination_source = source[span[0]:span[1]]
+    destination_identity_source = _strip_structural_fixed_replay_marker(destination_source)
     semantic_destination = _solidity_code_mask(destination_source)
-    if (not re.search(r"\.call\s*\{\s*value\s*:", semantic_destination)
-            or not re.search(r"\bassertFalse\s*\(", semantic_destination)):
-        return None, "structural ABI-gate PUT lacks its value-call revert assertion"
+    has_value_revert = (re.search(r"\.call\s*\{\s*value\s*:", semantic_destination)
+                        and re.search(r"\bassertFalse\s*\(", semantic_destination))
+    has_direct_target_call = re.search(r"\bc0\." + re.escape(str(put_rec.get("unit") or "")) +
+                                       r"\s*\(", semantic_destination)
+    if not has_value_revert and not has_direct_target_call:
+        return None, "structural ABI-gate PUT lacks a source-checked target call"
     raw_params = source[span[3] + 1:span[4]]
     call_args = []
     for index, raw_param in enumerate(split_top_level(raw_params)):
@@ -2026,34 +2123,26 @@ def attach_structural_abi_gate_anchor(put_rec, certified_detail):
         if name == "p_msg_sender":
             value = "address(uint160(1))"
         elif name == "p_msg_value":
-            value = str(region["msg.value"][0])
+            if "msg.value" in region:
+                value = str(region["msg.value"][0])
+            else:
+                value = str(((certified_detail or {}).get("ce") or {}).get("msg.value") or "0")
         else:
             value = _source_type_default_expr(sol_type, index + 1, source)
         if value is None:
             return None, ("structural ABI-gate anchor cannot synthesize parameter "
                           f"`{name}` of type `{sol_type}`")
         call_args.append(value)
-    digest = hashlib.sha256(
-        (destination_source + "\0structural-abi-gate/v1").encode("utf-8")).hexdigest()
-    anchor_test = "test_structural_anchor_" + digest[:16]
-    anchor_source = (f"  function {anchor_test}() public {{\n"
-                     f"    this.{put_test}({', '.join(call_args)});\n"
-                     "  }\n")
-    contract_span = _enclosing_brace_pair(source, span[0])
-    if contract_span is None:
-        return None, "structural ABI-gate PUT test contract has no closing brace"
-    _contract_open, contract_close = contract_span
-    existing = _solidity_function_spans(source, anchor_test)
-    if existing:
-        if len(existing) != 1 or existing[0][0] is None:
-            return None, "existing structural ABI-gate anchor is ambiguous"
-        existing_span = existing[0][0]
-        existing_source = source[existing_span[0]:existing_span[1]]
-        if re.sub(r"\s+", "", existing_source) != re.sub(r"\s+", "", anchor_source):
-            return None, "existing structural ABI-gate anchor body differs"
+    marker = "// VERIPUT_FIXED_REPLAY_ASSERTIONS"
+    marker_source = ("\n"
+                     "    // VERIPUT_FIXED_REPLAY_ASSERTIONS\n"
+                     "    // Structural ABI-gate replay: R0 is already "
+                     "asserted over the certified nonzero-value region.\n")
+    if marker in destination_source:
         anchored_source = source
     else:
-        anchored_source = source[:contract_close] + "\n" + anchor_source + source[contract_close:]
+        insert_at = source.rfind("\n", 0, span[6]) + 1
+        anchored_source = source[:insert_at] + marker_source + source[insert_at:]
         with open(put_file, "w", encoding="utf-8") as stream:
             stream.write(anchored_source)
     metadata = {
@@ -2064,13 +2153,11 @@ def attach_structural_abi_gate_anchor(put_rec, certified_detail):
         "basis_kind":
         "structural-certificate-not-solver-ce",
         "test":
-        anchor_test,
+        put_test,
         "destination_put_test":
         put_test,
         "destination_put_function_sha256":
-        hashlib.sha256(destination_source.encode("utf-8")).hexdigest(),
-        "anchor_source_sha256":
-        hashlib.sha256(anchor_source.encode("utf-8")).hexdigest(),
+        hashlib.sha256(destination_identity_source.encode("utf-8")).hexdigest(),
         "destination_source_sha256":
         hashlib.sha256(anchored_source.encode("utf-8")).hexdigest(),
         "certification_source":
@@ -2594,6 +2681,16 @@ def row_has_parameterized_width(stats):
         except (TypeError, ValueError):
             continue
     return False
+
+
+def missing_fixed_replay_fusion_reason(rec):
+    """Reason a physical PUT row cannot be counted before fixed replay fusion."""
+    if not isinstance(rec, dict) or not rec.get("requires_fixed_replay_fusion"):
+        return None
+    if isinstance(rec.get("fixed_replay_fusion"), dict):
+        return None
+    return (rec.get("fixed_replay_fusion_error")
+            or "required fixed replay assertions were not fused into this PUT")
 
 
 def row_quality_fields(rec,
@@ -3836,7 +3933,9 @@ def main():
               f"arm's. Two arms' PUT counts must never be summed. ===")
     results = []
     retained_basis_results = []
+    certified_detail_by_put_record = {}
     certified_detail_by_basis_record = {}
+    retained_basis_targets = {}
     record_paths = {}
     # ⛔ AN --only THAT SELECTS NOTHING IS A HARD FAILURE. The sweep would
     # otherwise print a complete, well-formed `0 of 0 certified region(s)`
@@ -4149,7 +4248,14 @@ def main():
                 rec["depth"] = stage2_depth
             rewrite_stage4_record(j, rec)
             p = p2
+        elif args.retain_certified_concrete_replays and rec.get("kind") == "put":
+            rec["requires_fixed_replay_fusion"] = True
+            rec.setdefault("fixed_replay_fusion_error",
+                           "certified basis replay has not been fused yet")
+            rewrite_stage4_record(j, rec)
         record_paths[id(rec)] = j
+        if isinstance(certified_detail, dict):
+            certified_detail_by_put_record[id(rec)] = certified_detail
         results.append(
             (bench, unit, enc, piece, p.returncode, rec, proj, region, is_corpus, contract))
         # Keep the exact Stage-1 CE as a separate, assertion-bearing artifact.
@@ -4158,50 +4264,87 @@ def main():
         # and this particular region records refinement_used=true.
         if (args.retain_certified_concrete_replays and p.returncode == 0
                 and rec.get("kind") == "put" and isinstance(certified_detail, dict)
-                and certified_detail.get("ce")):
-            basis_wd = wd + "__basis_concrete"
-            os.makedirs(basis_wd, exist_ok=True)
-            basis_cmd = stage4_cmd(CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE,
-                                   "CERTIFIED-BASIS-REPLAY", stage2_depth)
-            basis_cmd[basis_cmd.index("--workdir") + 1] = basis_wd
-            basis_cmd += [
-                "--concrete-certified-ce-json",
-                json.dumps(certified_detail.get("ce") or {})
-            ]
-            witness_return = certified_ce_return(certified_detail.get("ce") or {})
-            if witness_return is not None:
-                basis_cmd += ["--concrete-return-value", str(witness_return)]
-            basis_start = time.monotonic()
-            basis_proc = subprocess.run(basis_cmd, capture_output=True, text=True)
-            basis_wall_s = time.monotonic() - basis_start
-            sys.stdout.write(basis_proc.stdout)
-            sys.stdout.write(basis_proc.stderr)
-            basis_json = os.path.join(basis_wd, "put.json")
-            basis_rec = (json.load(open(basis_json))
-                         if os.path.exists(basis_json) else stage4_missing_record(
-                             CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE,
-                             "CERTIFIED-BASIS-REPLAY",
-                             failure_reason=("certified CE basis driver exited without "
-                                             "writing put.json"),
-                             emit_wall_s=basis_wall_s,
-                             generation_timeout_s=args.timeout,
-                             returncode=basis_proc.returncode,
-                             stdout=basis_proc.stdout,
-                             stderr=basis_proc.stderr))
-            basis_rec = enrich_stage4_record(
-                basis_rec,
-                stage2_source=CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE,
-                witness_check="CERTIFIED-BASIS-REPLAY",
-                stage4_kind=stage4_kind,
-                certification_source=certification_source,
-                certified_detail=certified_detail,
-                emit_wall_s=basis_wall_s)
-            basis_rec["retained_basis_only"] = True
-            rewrite_stage4_record(basis_json, basis_rec)
-            record_paths[id(basis_rec)] = basis_json
-            certified_detail_by_basis_record[id(basis_rec)] = certified_detail
-            retained_basis_results.append((bench, unit, enc, piece, basis_proc.returncode,
-                                           basis_rec, proj, region, is_corpus, contract))
+                and not requires_structural_abi_gate_anchor(certification_source,
+                                                            certified_detail)):
+            basis_requests = []
+            test_units = rec.get("test_units") if isinstance(rec, dict) else None
+            if test_units:
+                for index, child in enumerate(test_units):
+                    if not isinstance(child, dict):
+                        continue
+                    part = child.get("oracle_input_part") or {}
+                    part_ce = part.get("representative_ce") if isinstance(part, dict) else None
+                    part_claim = (part.get("representative_claim")
+                                  if isinstance(part, dict) else None)
+                    if not isinstance(part_ce, dict):
+                        child["fixed_replay_fusion_error"] = (
+                            "part representative replay lacks a complete CE")
+                        continue
+                    basis_requests.append((index, str(part.get("part_id") or index), part_ce,
+                                           part_claim))
+            elif certified_detail.get("ce"):
+                basis_requests.append((None, "root", certified_detail.get("ce") or {}, None))
+            for child_index, part_id, representative_ce, representative_claim in basis_requests:
+                suffix = re.sub(r"[^A-Za-z0-9_]+", "_", str(part_id)).strip("_") or "part"
+                basis_wd = wd + "__basis_concrete__" + suffix
+                os.makedirs(basis_wd, exist_ok=True)
+                basis_cmd = stage4_cmd(CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE,
+                                       "CERTIFIED-BASIS-REPLAY", stage2_depth)
+                basis_cmd[basis_cmd.index("--workdir") + 1] = basis_wd
+                basis_exit_kind = (rec.get("stats") or {}).get("exit_kind")
+                if basis_exit_kind in ("normal", "revert") and "--exit-kind" not in basis_cmd:
+                    basis_cmd += ["--exit-kind", basis_exit_kind]
+                basis_cmd += [
+                    "--test-suffix",
+                    "__basis_" + suffix,
+                    "--concrete-certified-ce-json",
+                    json.dumps(representative_ce)
+                ]
+                if isinstance(representative_claim, dict):
+                    basis_cmd += ["--concrete-claim-json", json.dumps(representative_claim)]
+                witness_return = certified_ce_return(representative_ce)
+                if witness_return is not None:
+                    basis_cmd += ["--concrete-return-value", str(witness_return)]
+                basis_start = time.monotonic()
+                basis_proc = subprocess.run(basis_cmd, capture_output=True, text=True)
+                basis_wall_s = time.monotonic() - basis_start
+                sys.stdout.write(basis_proc.stdout)
+                sys.stdout.write(basis_proc.stderr)
+                basis_json = os.path.join(basis_wd, "put.json")
+                basis_rec = (json.load(open(basis_json))
+                             if os.path.exists(basis_json) else stage4_missing_record(
+                                 CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE,
+                                 "CERTIFIED-BASIS-REPLAY",
+                                 failure_reason=("certified CE basis driver exited without "
+                                                 "writing put.json"),
+                                 emit_wall_s=basis_wall_s,
+                                 generation_timeout_s=args.timeout,
+                                 returncode=basis_proc.returncode,
+                                 stdout=basis_proc.stdout,
+                                 stderr=basis_proc.stderr))
+                basis_rec = enrich_stage4_record(
+                    basis_rec,
+                    stage2_source=CERTIFIED_REGION_CONCRETE_FALLBACK_SOURCE,
+                    witness_check="CERTIFIED-BASIS-REPLAY",
+                    stage4_kind=stage4_kind,
+                    certification_source=certification_source,
+                    certified_detail=certified_detail,
+                    emit_wall_s=basis_wall_s)
+                basis_rec["retained_basis_only"] = True
+                basis_rec["basis_for_oracle_input_part"] = None if child_index is None else part_id
+                rewrite_stage4_record(basis_json, basis_rec)
+                record_paths[id(basis_rec)] = basis_json
+                certified_detail_by_basis_record[id(basis_rec)] = certified_detail
+                retained_basis_targets[id(basis_rec)] = {
+                    "record": rec,
+                    "record_path": j,
+                    "child_index": child_index,
+                    "representative_ce": representative_ce,
+                }
+                retained_basis_results.append((bench, unit, enc, piece, basis_proc.returncode,
+                                               basis_rec, proj, region, is_corpus, contract))
+            if test_units:
+                rewrite_stage4_record(j, rec)
 
     print("\n" + "=" * 84)
     print("STAGE 4: certified region -> PUT with oracle")
@@ -4285,6 +4428,23 @@ def main():
     print("  EMITTED TEXT; B additionally requires the test to be GREEN on the")
     print("  unmodified contract, which only forge can say. See the gate below.")
 
+    pre_b_fused_any = False
+    for _bench, _unit, _enc, _piece, _rc, rec, _proj, _region, _is_corpus, _contract in results:
+        if not isinstance(rec, dict) or rec.get("kind") != "put":
+            continue
+        detail = certified_detail_by_put_record.get(id(rec))
+        if not requires_structural_abi_gate_anchor(
+                (detail or {}).get("certification_source"), detail):
+            continue
+        fusion, fusion_error = attach_structural_abi_gate_anchor(rec, detail)
+        if fusion_error:
+            rec["fixed_replay_fusion_error"] = fusion_error
+        else:
+            rec["fixed_replay_fusion"] = fusion
+            rec.pop("fixed_replay_fusion_error", None)
+            pre_b_fused_any = True
+        rewrite_stage4_record(record_paths.get(id(rec)), rec)
+
     emission_wall_s = round(time.monotonic() - main_start, 3)
     b_summary = b_report(results, args.forge_timeout, args.esbmc, record_paths)
     basis_b_summary = (b_report(retained_basis_results, args.forge_timeout, args.esbmc,
@@ -4317,31 +4477,72 @@ def main():
         for row in basis_b_summary.get("rows") or []
         if row.get("valid_reference_test") is True and row.get("forge_status") == "Success"
     }
-    fused_any = False
+    fused_any = pre_b_fused_any
     for basis_item in retained_basis_results:
         bench, unit, enc, piece, _rc, basis_rec, _proj, _region, _corpus, _contract = basis_item
         basis_key = (str(basis_rec.get("file") or ""), str(basis_rec.get("test") or ""))
         if basis_key not in valid_basis:
             continue
-        put_item = next(
-            (item for item in results
-             if item[0] == bench and item[1] == unit and item[2] == enc and item[3] == piece
-             and item[5].get("path_function") == basis_rec.get("path_function")), None)
-        if put_item is None or put_item[5].get("kind") != "put":
+        target = retained_basis_targets.get(id(basis_rec))
+        if target is not None:
+            parent_rec = target.get("record")
+            child_index = target.get("child_index")
+            if child_index is None:
+                put_rec = parent_rec
+            else:
+                children = parent_rec.get("test_units") if isinstance(parent_rec, dict) else None
+                if not isinstance(children, list) or child_index >= len(children):
+                    continue
+                put_rec = json.loads(json.dumps(parent_rec))
+                put_rec.update(children[child_index])
+                put_rec["test_units"] = []
+        else:
+            put_item = next(
+                (item for item in results
+                 if item[0] == bench and item[1] == unit and item[2] == enc and item[3] == piece
+                 and item[5].get("path_function") == basis_rec.get("path_function")), None)
+            if put_item is None:
+                continue
+            put_rec = put_item[5]
+            parent_rec = put_rec
+            child_index = None
+            target = {"record_path": record_paths.get(id(put_rec)), "representative_ce": None}
+        if not isinstance(put_rec, dict) or put_rec.get("kind") != "put":
             continue
-        put_rec = put_item[5]
         detail = certified_detail_by_basis_record.get(id(basis_rec))
         if detail is None:
             put_rec["fixed_replay_fusion_error"] = "certified detail is absent"
         else:
-            fusion, fusion_error = attach_certified_ce_anchor(put_rec, basis_rec, detail)
+            fusion, fusion_error = attach_required_fixed_replay_anchor(
+                put_rec,
+                basis_rec,
+                detail,
+                representative_ce=target.get("representative_ce"))
             if fusion_error:
                 put_rec["fixed_replay_fusion_error"] = fusion_error
             else:
                 put_rec["fixed_replay_fusion"] = fusion
                 put_rec.pop("fixed_replay_fusion_error", None)
                 fused_any = True
-        rewrite_stage4_record(record_paths.get(id(put_rec)), put_rec)
+        if child_index is None:
+            if target.get("record") is not None:
+                if "fixed_replay_fusion" in put_rec:
+                    target["record"]["fixed_replay_fusion"] = put_rec["fixed_replay_fusion"]
+                    target["record"].pop("fixed_replay_fusion_error", None)
+                else:
+                    target["record"]["fixed_replay_fusion_error"] = \
+                        put_rec.get("fixed_replay_fusion_error")
+            rewrite_stage4_record(target.get("record_path") or record_paths.get(id(put_rec)),
+                                  parent_rec)
+        else:
+            if "fixed_replay_fusion" in put_rec:
+                parent_rec["test_units"][child_index]["fixed_replay_fusion"] = \
+                    put_rec["fixed_replay_fusion"]
+                parent_rec["test_units"][child_index].pop("fixed_replay_fusion_error", None)
+            else:
+                parent_rec["test_units"][child_index]["fixed_replay_fusion_error"] = \
+                    put_rec.get("fixed_replay_fusion_error")
+            rewrite_stage4_record(target.get("record_path"), parent_rec)
     if fused_any:
         # The source changed after the first gate.  Only this second run can
         # authorize the fused PUT as a Full deliverable.
@@ -4520,8 +4721,36 @@ def project_rel_file(project, filename):
         return os.path.normpath(filename)
 
 
+def expand_stage4_test_unit_results(results, record_paths=None):
+    """Expand one Stage-4 artifact into physical test-unit rows when present."""
+    record_paths = record_paths or {}
+    expanded = []
+    expanded_paths = dict(record_paths)
+    for item in results or ():
+        bench, unit, enc, piece, rc, rec, proj, region, is_corpus, contract_name = item
+        test_units = rec.get("test_units") if isinstance(rec, dict) else None
+        if not test_units:
+            expanded.append(item)
+            continue
+        for test_unit in test_units:
+            if not isinstance(test_unit, dict) or not test_unit.get("test"):
+                continue
+            child = json.loads(json.dumps(rec))
+            for key in ("file", "test", "stats", "materialization", "region", "holes",
+                        "derived_by", "oracle_input_part", "requires_fixed_replay_fusion",
+                        "fixed_replay_fusion", "fixed_replay_fusion_error"):
+                if key in test_unit:
+                    child[key] = test_unit[key]
+            child["test_units"] = []
+            expanded_paths[id(child)] = record_paths.get(id(rec))
+            expanded.append((bench, unit, enc, piece, rc, child, proj, child.get("region", region),
+                             is_corpus, contract_name))
+    return expanded, expanded_paths
+
+
 def b_report(results, forge_timeout, esbmc=ESBMC, record_paths=None):
     record_paths = record_paths or {}
+    results, record_paths = expand_stage4_test_unit_results(results, record_paths)
     print()
     print("=" * 84)
     print("DELIVERABLE B — all five WORKORDER gates, per PUT")
@@ -4893,7 +5122,8 @@ def b_report(results, forge_timeout, esbmc=ESBMC, record_paths=None):
         # A PUT with zero unconditional assertions is not a deliverable PUT,
         # even if the emitter wrote a Foundry file and exited 0.  Treat it like
         # a refusal so raw accounting does not count a green no-oracle test.
-        refused = refused or uncond <= 0
+        fixed_replay_refusal = missing_fixed_replay_fusion_reason(rec)
+        refused = refused or uncond <= 0 or fixed_replay_refusal is not None
         g1 = rc == 0 and not refused and fz > 0
         g2 = any(width > 1 for width in (st.get("rendered_width") or {}).values())
         g3 = uncond > 0
@@ -5008,7 +5238,7 @@ def b_report(results, forge_timeout, esbmc=ESBMC, record_paths=None):
             "refused":
             refused,
             "refusal_reason":
-            rec.get("failure_reason") if refused else None,
+            (fixed_replay_refusal or rec.get("failure_reason")) if refused else None,
             "stale":
             stale,
             "fuzz_params":
@@ -5063,6 +5293,8 @@ def b_report(results, forge_timeout, esbmc=ESBMC, record_paths=None):
                 print("      ⛔ NOT COUNTED: this PUT has zero unconditional "
                       "assertions, so it is a no-oracle artifact even though "
                       "the emitter wrote a Foundry test.")
+            elif fixed_replay_refusal:
+                print(f"      ⛔ NOT COUNTED: {fixed_replay_refusal}")
             else:
                 print(f"      ⛔ NOT COUNTED: the emitter exited {rc} and "
                       "wrote no PUT in this tree, so gates 2-5 above are "

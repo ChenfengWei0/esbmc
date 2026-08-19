@@ -73,7 +73,12 @@ from veriput_subjects import (SubjectError, ensure_solast,
 INPUTS = os.environ.get(
     "VERIPUT_INPUTS_DIR",
     os.path.join(ESBMC_ROOT, "notes", "coverage", "inputs"))
-DRIVER = os.path.join(ESBMC_ROOT, "scripts", "solidity_path_generalise.py")
+DRIVER = os.environ.get(
+    "VERIPUT_GENERALISE_DRIVER")
+if DRIVER is None:
+    _LOCAL_DRIVER = os.path.join(HERE, "solidity_path_generalise.py")
+    DRIVER = (_LOCAL_DRIVER if os.path.isfile(_LOCAL_DRIVER) else os.path.join(
+        ESBMC_ROOT, "scripts", "solidity_path_generalise.py"))
 ESBMC = os.path.join(ESBMC_ROOT, "build", "src", "esbmc", "esbmc")
 
 STRONG_CERTIFY_VALUE_OPTIONS = {
@@ -139,6 +144,31 @@ def apply_strong_certify_recipe(args):
         raise ValueError(f"unsupported strong certify recipe option: {opt}")
     args.recipe_version = STRONG_RECIPE_VERSION
     return args.recipe_version
+
+
+NO_REGION_REFINEMENT_FALLBACK_REASON = (
+    "no-region-refinement ablation: the first failed region certification "
+    "is retained only as a concrete replay fallback")
+
+
+def stage2_region_refinement_controls(args):
+    """Return the region refinement knobs actually passed to the Stage-2 driver."""
+    if getattr(args, "no_region_refinement", False):
+        return 0, 0, 0
+    return (args.refine_rounds, args.shrink_rounds,
+            args.safety_retreat_after_tiny_cuts)
+
+
+def classification_retries_enabled(args):
+    """Return whether certify_all may launch automatic Stage-2 retry policies."""
+    return (ENABLE_CERTIFY_CLASSIFICATION_RETRIES
+            and not getattr(args, "no_region_refinement", False))
+
+
+def concrete_fallback_reason_for_args(args):
+    if getattr(args, "no_region_refinement", False):
+        return NO_REGION_REFINEMENT_FALLBACK_REASON
+    return None
 
 # benchmark -> (flat source basename, contract). The contract is the part after
 # `__` in the input's name, but it is written out rather than parsed: a mapping
@@ -3117,6 +3147,11 @@ def main():
                          "than merely unpinned. ⚠ It costs the other paths -- "
                          "measured 0 of 5 certified unpinned vs 4 of 5 pinned -- "
                          "so give this arm its OWN --out.")
+    ap.add_argument("--no-region-refinement", action="store_true",
+                    help="RQ3 ablation: run the first Stage-2 region "
+                         "certification attempt without refine/shrink retries; "
+                         "failed certified-region attempts may only become "
+                         "concrete replay fallbacks when they carry a usable CE")
     ap.add_argument("--memlimit-gib", type=int, default=8, metavar="N",
                     help="per-ESBMC-process memory limit, in GiB. DEFAULT 8, "
                          "the value that used to be hardcoded for --jobs 1 and "
@@ -3966,6 +4001,8 @@ def main():
             # lines and no evidence. Same fix in certify_poc.py, applied in the
             # same change: one of these two learning it and the other not is how
             # a fixed defect comes back under a different sweep's name.
+            stage2_refine_rounds, stage2_shrink_rounds, stage2_retreat_after_tiny_cuts = (
+                stage2_region_refinement_controls(args))
             cmd = [sys.executable, "-u", DRIVER,
                    "--esbmc", args.esbmc,
                    "--sol", sol,
@@ -3974,10 +4011,10 @@ def main():
                    "--scope", args.scope, "--max-tx", str(args.max_tx),
                    "--probes", str(args.probes),
                    "--claim-budget", str(args.claim_budget),
-                   "--refine-rounds", str(args.refine_rounds),
-                   "--shrink-rounds", str(args.shrink_rounds),
+                   "--refine-rounds", str(stage2_refine_rounds),
+                   "--shrink-rounds", str(stage2_shrink_rounds),
                    "--safety-retreat-after-tiny-cuts",
-                   str(args.safety_retreat_after_tiny_cuts),
+                   str(stage2_retreat_after_tiny_cuts),
                    # ---- THE PER-ESBMC-RUN BUDGET, NOW `--run-timeout` ----
                    #
                    # It was the literal 180 the comment below argues about. The
@@ -4110,9 +4147,10 @@ def main():
             cheap_stage2_retry = None
             ce_region_retry = None
             unknown_certification_retry = None
+            retry_allowed = classification_retries_enabled(args)
             retry_args = unwindset_retry_args(
                 result_driver_diagnostic(out), effective_esbmc_args)
-            if retry_args and ENABLE_CERTIFY_CLASSIFICATION_RETRIES:
+            if retry_args and retry_allowed:
                 remaining = max(1, int(args.timeout - wall))
                 retry_uwd = uwd + "__retry_unwindset"
                 os.makedirs(retry_uwd, exist_ok=True)
@@ -4146,7 +4184,7 @@ def main():
                 t1 = retry_since
             goal_cap_diagnostic = result_driver_diagnostic(out)
             if (
-                    ENABLE_CERTIFY_CLASSIFICATION_RETRIES and
+                    retry_allowed and
                     goal_cap_diagnostic or {}
             ).get("tag") == "path-coverage-probe-goal-cap":
                 remaining = max(1, int(args.timeout - wall))
@@ -4187,7 +4225,7 @@ def main():
                 wall += retry_wall
                 t1 = retry_since
             if (
-                    ENABLE_CERTIFY_CLASSIFICATION_RETRIES and
+                    retry_allowed and
                     result_driver_diagnostic(out) or {}
             ).get("tag") == "outer-box-solver-oom":
                 remaining = max(1, int(args.timeout - wall))
@@ -4229,7 +4267,7 @@ def main():
                 t1 = retry_since
             bounded_reason = (
                 bounded_holds_retry_reason(out, rc)
-                if ENABLE_CERTIFY_CLASSIFICATION_RETRIES else None)
+                if retry_allowed else None)
             if bounded_reason:
                 remaining = max(1, int(args.timeout - wall))
                 retry_initial_uwd = active_uwd
@@ -4284,8 +4322,8 @@ def main():
                 t1 = retry_since
             cheap_reason = (
                 coverage_retryable_diagnostic(result_driver_diagnostic(out))
-                if ENABLE_CERTIFY_CLASSIFICATION_RETRIES else None)
-            if (ENABLE_CERTIFY_CLASSIFICATION_RETRIES
+                if retry_allowed else None)
+            if (retry_allowed
                     and cheap_reason is None and bounded_holds_retry is None
                     and result_driver_diagnostic(out) is None):
                 cheap_reason = empty_witness_retry_reason(out, rc)
@@ -4329,10 +4367,10 @@ def main():
                 t1 = retry_since
             ce_retry_reason = (
                 not_certified_counterexample_retry_reason(out, rc)
-                if ENABLE_CERTIFY_CLASSIFICATION_RETRIES else None)
+                if retry_allowed else None)
             unknown_retry_reason = (
                 not_certified_unknown_retry_reason(out, rc)
-                if ENABLE_CERTIFY_CLASSIFICATION_RETRIES else None)
+                if retry_allowed else None)
             if ce_retry_reason or unknown_retry_reason:
                 remaining = max(1, int(args.timeout - wall))
                 retry_initial_uwd = active_uwd
@@ -4399,6 +4437,7 @@ def main():
                 result_certified_details, artifact_runs)
             not_certified_details = merge_detail_sidecars(
                 result_not_certified_details, artifact_runs)
+            concrete_fallback_reason = concrete_fallback_reason_for_args(args)
             certified_fallback_details = \
                 certified_internal_state_concrete_fallbacks(certified_details)
             for enc, detail in certified_fallback_details.items():
@@ -4408,7 +4447,7 @@ def main():
                     not_certified_details.pop(enc, None)
             not_certified_ce_fallbacks = \
                 mark_not_certified_ce_concrete_fallbacks(
-                    not_certified_details)
+                    not_certified_details, reason=concrete_fallback_reason)
             structural_fallback = structural_no_witness_unknown_fallback(
                 subject, unit, rec, certified_details, not_certified_details,
                 driver_diagnostic)
@@ -4417,7 +4456,6 @@ def main():
                     result_enumeration_report(
                         workdir, args.enumeration_report, since_mtime),
                 artifact_runs)
-            concrete_fallback_reason = None
             if (
                     isinstance(driver_diagnostic, dict) and
                     driver_diagnostic.get("tag") ==
@@ -4623,10 +4661,12 @@ def main():
                         "structural_fallback": structural_fallback,
                         "probes": args.probes,
                         "claim_budget": args.claim_budget,
-                        "refine_rounds": args.refine_rounds,
-                        "shrink_rounds": args.shrink_rounds,
+                        "refine_rounds": stage2_refine_rounds,
+                        "shrink_rounds": stage2_shrink_rounds,
                         "safety_retreat_after_tiny_cuts":
-                            args.safety_retreat_after_tiny_cuts,
+                            stage2_retreat_after_tiny_cuts,
+                        "no_region_refinement":
+                            bool(args.no_region_refinement),
                         "unit_timeout_s": args.timeout,
                         "subject": subject_record,
                         # The per-ESBMC-RUN budget, which is NOT `unit_timeout_s`

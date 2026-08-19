@@ -45,6 +45,7 @@ def blank_args():
         slot_coords=0,
         static_uncontrolled_inseparable=False,
         esbmc_arg=["--overflow-check"],
+        no_region_refinement=False,
     )
 
 
@@ -62,8 +63,9 @@ def main():
     bad += check(args.skip_bracket and args.env_coord_disagreed
                  and args.pin_agreed_state and args.state_struct_fields,
                  f"strong structural controls are applied: {args}")
-    bad += check(args.slot_coords == 8 and args.max_holes == 1
-                 and args.max_region_pieces == 2,
+    bad += check(args.slot_coords == veriput_recipe.STRONG_SLOT_COORDS
+                 and args.max_holes == veriput_recipe.STRONG_MAX_HOLES
+                 and args.max_region_pieces == veriput_recipe.STRONG_MAX_REGION_PIECES,
                  f"slot and hole controls are applied: {args}")
     bad += check(args.esbmc_arg.count("--overflow-check") == 1
                  and "--div-by-zero-check" in args.esbmc_arg
@@ -79,6 +81,29 @@ def main():
     got_plain = certify_all.apply_strong_certify_recipe(plain)
     bad += check(got_plain == "manual-label" and vars(plain) == before,
                  "plain recipe leaves arguments untouched")
+
+    no_region = blank_args()
+    no_region.no_region_refinement = True
+    bad += check(certify_all.stage2_region_refinement_controls(no_region) == (0, 0, 0),
+                 "no-region-refinement zeros Stage-2 region refinement controls")
+    bad += check(not certify_all.classification_retries_enabled(no_region),
+                 "no-region-refinement disables certify_all classification retries")
+    fallback_reason = certify_all.concrete_fallback_reason_for_args(no_region)
+    bad += check(fallback_reason and "no-region-refinement ablation" in fallback_reason,
+                 f"no-region-refinement concrete fallback reason is explicit: {fallback_reason}")
+    not_certified = {
+        "3": {
+            "bucket": "NOT-CERTIFIED",
+            "ce": {
+                "msg.value": "0",
+            },
+        },
+    }
+    added = certify_all.mark_not_certified_ce_concrete_fallbacks(
+        not_certified, reason=fallback_reason)
+    bad += check(added.get("3", {}).get("concrete_fallback") is True
+                 and added["3"].get("reason") == fallback_reason,
+                 f"no-region-refinement reason is written to concrete fallback rows: {added}")
 
     matched_none = """
 [enumerate] ESBMC produced no cov-report.json. Its output was:

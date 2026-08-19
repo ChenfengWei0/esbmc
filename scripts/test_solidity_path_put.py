@@ -50,6 +50,7 @@ below is a VERBATIM capture of the emitter's own output for this contract
 paraphrased one could drift from the parser it is here to exercise.
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -71,8 +72,12 @@ from solidity_path_put import (
     apply_foundry_fixture_target_call_mode,
     apply_runtime_interface_mocks,
     add_concrete_fixed_return_oracle,
+    add_concrete_fixed_return_oracles,
+    add_concrete_fixed_state_oracles,
+    add_concrete_fixed_event_oracles,
     add_concrete_normal_exit_oracle,
     authenticated_concrete_oracle_error,
+    event_signatures_from_ast_file,
     assembly_no_iteration_length_cap,
     attempt_is_usable,
     assemble_concrete_source,
@@ -102,6 +107,7 @@ from solidity_path_put import (
     establish_env_value,
     exit_kind_asserted,
     find_unit_call,
+    function_body_lines,
     fixture_from_esbmc_args,
     inconsistent_partial_r1_vars,
     source_returned_immutable_indices,
@@ -112,6 +118,27 @@ from solidity_path_put import (
     expand_path_guard_coord_idents,
     assigned_source_locals,
     budget_with_followup_reserve,
+    boundary_observation_points,
+    boundary_observation_r2_spec,
+    make_oracle_input_part,
+    merge_adjacent_oracle_parts,
+    oracle_part_materialization_plan,
+    oracle_input_part_build_rows,
+    oracle_input_part_ladder_rows,
+    oracle_part_assert_spec,
+    oracle_part_candidate_verdict,
+    oracle_part_verdict_cache,
+    oracle_input_part_suffix,
+    prepare_oracle_part_publications,
+    refine_oracle_candidate_parts,
+    refine_oracle_parts,
+    refine_boundary_observation_r2_spec,
+    claim_oracle_coordinate_values,
+    r2_refutation_observations,
+    r2_subfamily_for_rung,
+    split_oracle_input_part,
+    boundary_probe_observed_uint,
+    fix_put_parameters_at_boundary,
     layout_scalar_key,
     mapping_source_coord_alias,
     prefer_esbmc_mapping_aliases,
@@ -129,6 +156,7 @@ from solidity_path_put import (
     path_condition_from_branch_claim,
     path_conditions_from_branch_claim,
     path_condition_terms_from_branch_claim,
+    prevrandao_difficulty_ce_projection,
     path_decision_assumes,
     promote_zero_sender_owner_slice,
     stable_unlabeled_revert_from_forge_prefilter,
@@ -157,7 +185,12 @@ from solidity_path_put import (
     bind_emitted_source_to_certified_ce,
     abi_value_gate_ce_projection,
     extcall_fixture_ce_projection,
+    materialize_concrete_certified_env_point,
+    materialize_concrete_certified_state_point,
     materialize_concrete_nonpayable_value_gate,
+    target_call_calldata_ce_projection,
+    unobserved_auxiliary_env_ce_projection,
+    fixed_replay_state_ce_projection,
     synthetic_emitter_probe_budget,
     synthetic_claim_with_report,
     synthetic_claim_with_certified_ce,
@@ -886,18 +919,23 @@ contract Target {
   function setFlag(bool flag) external {}
 }
 """
-    put = ["", "  function test_put_Target_setFlag_path7() public {",
-           "    c1.setFlag(true);", "  }"]
+    put = [
+        "", "  function test_put_Target_setFlag_path7() public {", "    c1.setFlag(true);", "  }"
+    ]
     text = assemble_put_source(
-        em, case, [put], "TargetCovTest_fixture_expr", {
+        em,
+        case, [put],
+        "TargetCovTest_fixture_expr", {
             "contract": "Target",
             "foundry": {
-                "constructor_args": [
-                    "address(uint160(abstract contract Context { function f() external; }))"
-                ]
+                "constructor_args":
+                ["address(uint160(abstract contract Context { function f() external; }))"]
             },
-        }, {}, "Target", "setFlag",
-        constructor_params=["address"], flat_source=flat)
+        }, {},
+        "Target",
+        "setFlag",
+        constructor_params=["address"],
+        flat_source=flat)
     bad = 0
     bad += check("abstract contract Context" not in text,
                  "fixture source payload is not spliced into a constructor call")
@@ -918,15 +956,22 @@ contract Target is Base {
   function setFlag(bool flag) external {}
 }
 """
-    put = ["", "  function test_put_Target_setFlag_path7() public {",
-           "    c1.setFlag(true);", "  }"]
-    text = assemble_put_source(
-        em, case, [put], "TargetCovTest_immutable_fixture", {
-            "contract": "Target",
-            "skip_constructor": True,
-            "foundry": {"skip_constructor": True},
-        }, {}, "Target", "setFlag",
-        constructor_params=["address"], flat_source=flat)
+    put = [
+        "", "  function test_put_Target_setFlag_path7() public {", "    c1.setFlag(true);", "  }"
+    ]
+    text = assemble_put_source(em,
+                               case, [put],
+                               "TargetCovTest_immutable_fixture", {
+                                   "contract": "Target",
+                                   "skip_constructor": True,
+                                   "foundry": {
+                                       "skip_constructor": True
+                                   },
+                               }, {},
+                               "Target",
+                               "setFlag",
+                               constructor_params=["address"],
+                               flat_source=flat)
     bad = 0
     bad += check("type(Target).runtimeCode" not in text,
                  "immutable fixtures do not use Solidity's forbidden runtimeCode expression")
@@ -954,8 +999,8 @@ def test_proxy_fixture_getter_uses_low_level_success_oracle():
     return bad
 
 
-def test_certified_basis_raw_call_moves_off_zero_sender():
-    """Certified basis replays use an executable nonzero sender point."""
+def test_certified_basis_raw_call_keeps_zero_sender_when_certified():
+    """Certified basis replays keep the exact Stage-2 sender point."""
     lines = [
         "    vm.deal(address(this), 99);",
         "    vm.prank(address(uint160(0)));",
@@ -967,12 +1012,12 @@ def test_certified_basis_raw_call_moves_off_zero_sender():
     text = "\n".join(out)
     bad = 0
     bad += check(changed == 1, f"one governing prank is rewritten: {out}")
-    bad += check("vm.prank(address(uint160(1)));" in text,
-                 "sender 0 is replaced by the first executable certified point")
-    bad += check("vm.deal(address(uint160(1)), 99);" in text,
-                 "the replacement sender is funded for value-bearing raw calls")
-    bad += check("vm.prank(address(uint160(0)))" not in text,
-                 "the unprankable zero sender is absent")
+    bad += check("vm.prank(address(uint160(0)));" in text,
+                 "the certified zero sender is preserved")
+    bad += check("vm.deal(address(uint160(0)), 99);" in text,
+                 "the exact certified sender is funded for value-bearing raw calls")
+    bad += check("vm.prank(address(uint160(1)))" not in text,
+                 "the replay does not project the certified sender to another address")
     return bad
 
 
@@ -1050,17 +1095,15 @@ contract Proxy {
         os.makedirs(os.path.join(project, "src"))
         with open(os.path.join(project, "src", "flat.sol"), "w") as f:
             f.write(source)
-        yes, yes_err = runtime_low_level_success_mock_lines(
-            project, "Proxy", "forward", {"extcall.ok": "1"}, "    ")
-        no, no_err = runtime_low_level_success_mock_lines(
-            project, "Proxy", "forward", {"extcall.ok": "0"}, "    ")
+        yes, yes_err = runtime_low_level_success_mock_lines(project, "Proxy", "forward",
+                                                            {"extcall.ok": "1"}, "    ")
+        no, no_err = runtime_low_level_success_mock_lines(project, "Proxy", "forward",
+                                                          {"extcall.ok": "0"}, "    ")
     bad = 0
-    bad += check(yes_err is None and yes == [
-        "    // VERIPUT_EXTCALL_CALLSITE callee data 1"
-    ], "an address/bytes parameter call records a success callsite fixture")
-    bad += check(no_err is None and no == [
-        "    // VERIPUT_EXTCALL_CALLSITE callee data 0"
-    ], "an address/bytes parameter call records a failure callsite fixture")
+    bad += check(yes_err is None and yes == ["    // VERIPUT_EXTCALL_CALLSITE callee data 1"],
+                 "an address/bytes parameter call records a success callsite fixture")
+    bad += check(no_err is None and no == ["    // VERIPUT_EXTCALL_CALLSITE callee data 0"],
+                 "an address/bytes parameter call records a failure callsite fixture")
     return bad
 
 
@@ -1074,21 +1117,29 @@ def test_empty_bytes_claim_binds_to_its_certified_length_coordinate():
         "entry_storage": {},
     }
     expected = {"callee": "0", "data.length": "0"}
-    binding, reason = bind_emitted_claim_to_certified_ce(
-        claim, expected, params=[("callee", "address"), ("data", "bytes memory")])
+    binding, reason = bind_emitted_claim_to_certified_ce(claim,
+                                                         expected,
+                                                         params=[("callee", "address"),
+                                                                 ("data", "bytes memory")])
     bad = 0
     bad += check(binding is not None and reason is None,
                  "an empty bytes witness binds through its exact zero length")
     nonempty = dict(claim)
     nonempty["inputs"] = dict(claim["inputs"], data="{ .length=1 }")
-    rejected, rejected_reason = bind_emitted_claim_to_certified_ce(
-        nonempty, expected, params=[("callee", "address"), ("data", "bytes memory")])
+    rejected, rejected_reason = bind_emitted_claim_to_certified_ce(nonempty,
+                                                                   expected,
+                                                                   params=[("callee", "address"),
+                                                                           ("data", "bytes memory")
+                                                                           ])
     bad += check(rejected is None and "non-scalar" in (rejected_reason or ""),
                  "nonempty bytes remain refused without exact content evidence")
     body = ['    c0.forward(address(uint160(0)), hex"");']
-    digest, source_reason = bind_emitted_source_to_certified_ce(
-        body, 0, "forward", [("callee", "address"), ("data", "bytes memory")],
-        {"callee": 0, "data.length": 0})
+    digest, source_reason = bind_emitted_source_to_certified_ce(body, 0, "forward",
+                                                                [("callee", "address"),
+                                                                 ("data", "bytes memory")], {
+                                                                     "callee": 0,
+                                                                     "data.length": 0
+                                                                 })
     bad += check(digest is not None and source_reason is None,
                  "the exact empty bytes source literal binds to certified length zero")
     return bad
@@ -1518,10 +1569,9 @@ contract Extension {
     ], "Extension", specs, flat)
     text = "\n".join(lines)
     bad = 0
-    bad += check(
-        [(spec["signature"], spec["returns"]) for spec in specs] ==
-        [("vault()", ["IVault1"])],
-        f"receiver-scoped ABI resolves the nominal return type: {specs}")
+    bad += check([(spec["signature"], spec["returns"])
+                  for spec in specs] == [("vault()", ["IVault1"])],
+                 f"receiver-scoped ABI resolves the nominal return type: {specs}")
     bad += check(changed == 1, "one Extension deployment receives constructor mocks")
     bad += check(
         'abi.encodeWithSignature("vault()"), '
@@ -6575,6 +6625,7 @@ def test_extra_numeric_env_ranges_use_modeled_cheatcodes():
                                "bps": (0, 250),
                                "u": (0, (1 << 160) - 1),
                                "block.basefee": (1, 3),
+                               "block.difficulty": (4, 6),
                                "block.prevrandao": (4, 6),
                                "tx.gasprice": (7, 9)
                            },
@@ -6608,6 +6659,9 @@ def test_extra_numeric_env_ranges_use_modeled_cheatcodes():
         and "vm.assume(p_block_prevrandao != 5);" in text
         and "    vm.prevrandao(uint256(p_block_prevrandao));" in text,
         "block.prevrandao is established with holes")
+    bad += check("p_block_difficulty" not in text
+                 and text.count("vm.prevrandao(") == 1,
+                 "block.difficulty shares the single prevrandao cheatcode")
     bad += check(
         "uint256 p_tx_gasprice" in text and "p_tx_gasprice = bound(p_tx_gasprice, 7, 9);" in text
         and "    vm.txGasPrice(p_tx_gasprice);" in text,
@@ -6742,11 +6796,9 @@ def test_r1_r2_proof_uses_clean_k_induction_args():
         "--enable-forward-condition",
         "--disable-inductive-step",
     ])
-    return check(got == [
-        "--cvc5", "--k-induction", "--enable-forward-condition",
-        "--max-k-step", "30"
-    ],
-                 f"R1/R2 proof args are clean k-induction only: {got}")
+    return check(
+        got == ["--cvc5", "--k-induction", "--enable-forward-condition", "--max-k-step", "30"],
+        f"R1/R2 proof args are clean k-induction only: {got}")
 
 
 def test_certified_basis_requires_the_exact_certified_ce():
@@ -6822,27 +6874,26 @@ def test_certified_basis_requires_the_exact_certified_ce():
     }
     projection = abi_value_gate_ce_projection(gate_ce, [], stage4_kind="abi-value-gate")
     audit = {}
-    source_sha, reason = bind_emitted_source_to_certified_ce(
-        gate_body,
-        find_unit_call(gate_body, "f"),
-        "f", [],
-        gate_ce,
-        coordinate_evidence=projection,
-        audit=audit)
+    source_sha, reason = bind_emitted_source_to_certified_ce(gate_body,
+                                                             find_unit_call(gate_body, "f"),
+                                                             "f", [],
+                                                             gate_ce,
+                                                             coordinate_evidence=projection,
+                                                             audit=audit)
     bad += check(source_sha is not None and reason is None,
                  f"the structural ABI gate binds the complete CE: {reason}")
-    bad += check(audit.get("ce_sha256") == source_sha
-                 and audit.get("coordinates", {}).get("msg.sender", {}).get("rendered") == 1
-                 and audit.get("coordinates", {}).get("state.feed", {}).get("certified") == 7,
-                 f"the audit records rendered and projected full-CE coordinates: {audit}")
+    bad += check(
+        audit.get("ce_sha256") == source_sha
+        and audit.get("coordinates", {}).get("msg.sender", {}).get("rendered") == 1
+        and audit.get("coordinates", {}).get("state.feed", {}).get("certified") == 7,
+        f"the audit records rendered and projected full-CE coordinates: {audit}")
     wrong_value = list(gate_body)
     wrong_value[2] = wrong_value[2].replace("value: 1", "value: 2")
-    source_sha, reason = bind_emitted_source_to_certified_ce(
-        wrong_value,
-        find_unit_call(wrong_value, "f"),
-        "f", [],
-        gate_ce,
-        coordinate_evidence=projection)
+    source_sha, reason = bind_emitted_source_to_certified_ce(wrong_value,
+                                                             find_unit_call(wrong_value, "f"),
+                                                             "f", [],
+                                                             gate_ce,
+                                                             coordinate_evidence=projection)
     bad += check(source_sha is None and "msg.value" in reason,
                  "the ABI projection never permits a different msg.value")
     return bad
@@ -6868,62 +6919,79 @@ contract Proxy {
         "data.length": ["0", str((1 << 64) - 1)],
     }
     params = [("callee", "address"), ("data", "bytes memory")]
-    projection = extcall_fixture_ce_projection(
-        source, "Proxy", "forward", expected, params, region,
-        {"extcall.success": "1"})
+    projection = extcall_fixture_ce_projection(source, "Proxy", "forward", expected, params, region,
+                                               {"extcall.success": "1"})
     body = [
         "    vm.prank(address(uint160(7)));",
         "    vm.mockCall(address(uint160(13125)), hex\"\", bytes(\"\"));",
         "    c0.forward(address(uint160(13125)), hex\"\");",
     ]
     audit = {}
-    digest, reason = bind_emitted_source_to_certified_ce(
-        body, 2, "forward", params, expected,
-        coordinate_evidence=projection, audit=audit)
+    digest, reason = bind_emitted_source_to_certified_ce(body,
+                                                         2,
+                                                         "forward",
+                                                         params,
+                                                         expected,
+                                                         coordinate_evidence=projection,
+                                                         audit=audit)
     bad = check(digest is not None and reason is None,
                 f"strict extcall fixture projects an executable region member: {reason}")
     callee = audit.get("coordinates", {}).get("callee", {})
-    bad += check(callee.get("rendered") == 13125 and callee.get("lo") == 0
-                 and callee.get("hi") == (1 << 160) - 1,
-                 f"extcall projection audit retains certified region bounds: {callee}")
-    digest, reason = bind_emitted_source_to_certified_ce(
-        [body[0], body[2]], 1, "forward", params, expected,
-        coordinate_evidence=projection)
+    bad += check(
+        callee.get("rendered") == 13125 and callee.get("lo") == 0
+        and callee.get("hi") == (1 << 160) - 1,
+        f"extcall projection audit retains certified region bounds: {callee}")
+    digest, reason = bind_emitted_source_to_certified_ce([body[0], body[2]],
+                                                         1,
+                                                         "forward",
+                                                         params,
+                                                         expected,
+                                                         coordinate_evidence=projection)
     bad += check(digest is None and "exact callsite mock" in reason,
                  f"a projected replay without its extcall mock is refused: {reason}")
     cleared = [body[0], body[1], "    vm.clearMockedCalls();", body[2]]
-    digest, reason = bind_emitted_source_to_certified_ce(
-        cleared, 3, "forward", params, expected,
-        coordinate_evidence=projection)
+    digest, reason = bind_emitted_source_to_certified_ce(cleared,
+                                                         3,
+                                                         "forward",
+                                                         params,
+                                                         expected,
+                                                         coordinate_evidence=projection)
     bad += check(digest is None and "exact callsite mock" in reason,
                  f"a cleared extcall mock cannot authenticate the call: {reason}")
     conditional = [body[0], "    if (false) {", "      " + body[1].strip(), "    }", body[2]]
-    digest, reason = bind_emitted_source_to_certified_ce(
-        conditional, 4, "forward", params, expected,
-        coordinate_evidence=projection)
+    digest, reason = bind_emitted_source_to_certified_ce(conditional,
+                                                         4,
+                                                         "forward",
+                                                         params,
+                                                         expected,
+                                                         coordinate_evidence=projection)
     bad += check(digest is None and "exact callsite mock" in reason,
                  f"a conditional extcall mock cannot authenticate the call: {reason}")
     outside = list(body)
     outside[1] = "    vm.mockCall(address(uint160(9)), hex\"\", bytes(\"\"));"
     outside[2] = "    c0.forward(address(uint160(9)), hex\"\");"
-    narrow = extcall_fixture_ce_projection(
-        source, "Proxy", "forward", expected, params,
-        {"callee": ["0", "8"], "data.length": ["0", "0"]},
-        {"extcall.success": "1"})
-    digest, reason = bind_emitted_source_to_certified_ce(
-        outside, 2, "forward", params, expected, coordinate_evidence=narrow)
+    narrow = extcall_fixture_ce_projection(source, "Proxy", "forward", expected, params, {
+        "callee": ["0", "8"],
+        "data.length": ["0", "0"]
+    }, {"extcall.success": "1"})
+    digest, reason = bind_emitted_source_to_certified_ce(outside,
+                                                         2,
+                                                         "forward",
+                                                         params,
+                                                         expected,
+                                                         coordinate_evidence=narrow)
     bad += check(digest is None and "callee" in reason and "region" in reason,
                  f"an address outside the certified region is refused: {reason}")
     reads_sender = source.replace("{ (bool success,)",
                                   "require(msg.sender != address(0)); { (bool success,)")
-    bad += check(extcall_fixture_ce_projection(
-        reads_sender, "Proxy", "forward", expected, params, region,
-        {"extcall.success": "1"}) is None,
-                 "an extra sender-dependent statement cannot acquire the certificate")
-    bad += check(extcall_fixture_ce_projection(
-        source, "Proxy", "forward", expected, params, region,
-        {"extcall.other": "1"}) is None,
-                 "a pin not naming the exact low-level-call result is refused")
+    bad += check(
+        extcall_fixture_ce_projection(reads_sender, "Proxy", "forward", expected, params, region,
+                                      {"extcall.success": "1"}) is None,
+        "an extra sender-dependent statement cannot acquire the certificate")
+    bad += check(
+        extcall_fixture_ce_projection(source, "Proxy", "forward", expected, params, region,
+                                      {"extcall.other": "1"}) is None,
+        "a pin not naming the exact low-level-call result is refused")
     return bad
 
 
@@ -6955,15 +7023,15 @@ def test_synthetic_claim_retains_report_ce_coordinates():
         report_path = os.path.join(td, "cov-report.json")
         with open(report_path, "w") as out:
             json.dump({"claims": [report_claim]}, out)
-        claim = synthetic_claim_with_report(report_path, "latest", 2, path_function,
-                                            fallback)
+        claim = synthetic_claim_with_report(report_path, "latest", 2, path_function, fallback)
     binding, reason = bind_emitted_claim_to_certified_ce(claim, {
         "msg.sender": "0",
         "msg.value": "1",
         "state.feed": "1",
     })
-    bad = check(claim.get("env") == report_claim["env"],
-                f"synthetic source keeps the verifier claim: {claim}")
+    bad = check(
+        claim.get("env") == report_claim["env"],
+        f"synthetic source keeps the verifier claim: {claim}")
     bad += check(binding is not None and reason is None,
                  f"retained synthetic claim binds to the exact certified CE: {reason}")
     return bad
@@ -6989,15 +7057,15 @@ def test_synthetic_claim_can_be_rebuilt_from_authenticated_certified_ce():
     binding, reason = bind_emitted_claim_to_certified_ce(claim, certified_ce)
     bad = check(binding is not None and reason is None,
                 f"the authenticated CE rebuilds an exact synthetic claim: {reason}")
-    bad += check(claim.get("inputs") == {"amount": 7}
-                 and claim.get("env") == {
-                     "block.timestamp": 9,
-                     "msg.sender": 0,
-                     "msg.value": 1,
-                 } and claim.get("entry_storage") == {"feed": 3},
-                 f"CE coordinates retain their claim groups: {claim}")
-    refused = synthetic_claim_with_certified_ce({"msg.value": "1"},
-                                                [("amount", "uint256")], fallback)
+    bad += check(
+        claim.get("inputs") == {"amount": 7} and claim.get("env") == {
+            "block.timestamp": 9,
+            "msg.sender": 0,
+            "msg.value": 1,
+        } and claim.get("entry_storage") == {"feed": 3},
+        f"CE coordinates retain their claim groups: {claim}")
+    refused = synthetic_claim_with_certified_ce({"msg.value": "1"}, [("amount", "uint256")],
+                                                fallback)
     bad += check("inputs" not in refused,
                  "a certified CE missing a declared parameter fails closed")
     return bad
@@ -9149,6 +9217,578 @@ def test_R2_fuzz_filter_removes_only_concretely_refuted_candidates():
     return bad
 
 
+def test_boundary_observation_points_use_linear_coordinate_plan():
+    points = boundary_observation_points({
+        "amount": (10, 100),
+        "rate": (2, 4),
+        "who": (1, 20)
+    }, [("amount", "uint256"), ("rate", "uint8"), ("who", "address")], {
+        "amount": "50",
+        "rate": "3",
+        "who": "7"
+    })
+    got = [(row["origin"], row["coordinates"]) for row in points]
+    expected = [
+        ("witness", {
+            "amount": 50,
+            "rate": 3
+        }),
+        ("amount.lo", {
+            "amount": 10,
+            "rate": 3
+        }),
+        ("amount.hi", {
+            "amount": 100,
+            "rate": 3
+        }),
+        ("rate.lo", {
+            "amount": 50,
+            "rate": 2
+        }),
+        ("rate.hi", {
+            "amount": 50,
+            "rate": 4
+        }),
+    ]
+    bad = 0
+    bad += check(got == expected, f"the plan is witness plus 2n numeric boundaries: {got}")
+    bad += check(all("who" not in row["coordinates"] for row in points),
+                 "identity coordinates do not become numeric R2 probes")
+    bad += check(len(points) == 5, "two numeric coordinates produce at most 2n+1 points")
+    return bad
+
+
+def test_boundary_observations_propose_unproved_absolute_and_delta_bounds():
+    specs = boundary_observation_r2_spec([
+        {
+            "values": {
+                "state.y": {
+                    "pre": 0,
+                    "post": 1
+                },
+                "return": {
+                    "post": 7
+                }
+            }
+        },
+        {
+            "values": {
+                "state.y": {
+                    "pre": 0,
+                    "post": 40
+                },
+                "return": {
+                    "post": 19
+                }
+            }
+        },
+    ], {"state.y": "inc"})
+    bad = 0
+    bad += check(
+        len(specs) == 1 and specs[0]["kind"] == "boundary-observation",
+        f"boundary values create one separately identified proposal batch: {specs}")
+    entries = {entry["name"]: entry for entry in specs[0]["vars"]}
+    y_abs = entries["state.y"]["abs"][0]
+    y_delta = entries["state.y"]["deltas"][0]
+    ret_abs = entries["return"]["abs"][0]
+    bad += check((y_abs["lo"]["value"], y_abs["hi"]["value"]) == ("1", "40"),
+                 f"observed post-state extrema propose [1,40]: {y_abs}")
+    bad += check((y_delta["lo"]["value"], y_delta["hi"]["value"]) == ("1", "40"),
+                 f"observed increasing deltas propose [1,40]: {y_delta}")
+    bad += check((ret_abs["lo"]["value"], ret_abs["hi"]["value"]) == ("7", "19"),
+                 f"return extrema are proposed independently: {ret_abs}")
+    bad += check(specs[0]["candidate_count"] == 3,
+                 "the batch records two state candidates and one return candidate")
+    return bad
+
+
+def test_boundary_probe_is_a_deterministic_unit_test():
+    lines = [
+        "  function test_put_C_f_path3(address p_msg_sender, uint256 amount) public {",
+        "    amount = bound(amount, 10, 100);",
+        "    vm.prank(p_msg_sender);",
+        "    c0.f(amount);",
+        "  }",
+    ]
+    fixed, error = fix_put_parameters_at_boundary(lines, {
+        "msg.sender": 7,
+        "amount": 100,
+    })
+    bad = 0
+    bad += check(error is None, f"the complete scalar point is renderable: {error}")
+    bad += check(fixed[0] == "  function test_put_C_f_path3() public {",
+                 f"the probe is a unit test, not a fuzz test: {fixed[0]}")
+    bad += check(fixed[1] == "    address p_msg_sender = address(uint160(7));",
+                 f"the sender is fixed from the authenticated point: {fixed[1]}")
+    bad += check(fixed[2] == "    uint256 amount = uint256(100);",
+                 f"the calldata coordinate is fixed at its endpoint: {fixed[2]}")
+    bad += check("    amount = bound(amount, 10, 100);" in fixed,
+                 "the original region landing check remains active")
+    missing, error = fix_put_parameters_at_boundary(lines, {"amount": 10})
+    bad += check(missing is None and "msg.sender" in error,
+                 "an incomplete point is refused instead of partially fuzzed")
+    return bad
+
+
+def test_boundary_probe_reads_only_its_labeled_uint_assertion():
+    bad = 0
+    bad += check(
+        boundary_probe_observed_uint("OBS", {"status": "Success"}) == 0,
+        "a passing equality-to-zero probe observes zero")
+    bad += check(
+        boundary_probe_observed_uint("OBS", {
+            "status": "Failure",
+            "reason": "OBS: 40 != 0",
+        }) == 40, "a labeled assertEq failure exposes the observed uint")
+    bad += check(
+        boundary_probe_observed_uint("OBS", {
+            "status": "Failure",
+            "reason": "OTHER: 40 != 0",
+        }) is None, "an unrelated failure is not accepted as an observation")
+    return bad
+
+
+def test_boundary_observation_refinement_uses_counterexample_value():
+    specs = boundary_observation_r2_spec([
+        {
+            "values": {
+                "state.y": {
+                    "post": 5
+                }
+            }
+        },
+        {
+            "values": {
+                "state.y": {
+                    "post": 50
+                }
+            }
+        },
+    ],
+                                         refinement_rounds=2)
+    initial = specs[0]
+    candidates = initial["vars"][0]["abs"]
+    bad = 0
+    bad += check(len(candidates) == 1,
+                 f"only the observed initial bound is proposed before verification: {candidates}")
+    refined, changed = refine_boundary_observation_r2_spec(
+        initial, {("state.y", "post in [5, 50]"): {"post": 73}})
+    interval = refined["vars"][0]["abs"][0]
+    bad += check(changed and (interval["lo"]["value"], interval["hi"]["value"]) == ("5", "73"),
+                 f"the verifier CE expands exactly one endpoint: {interval}")
+    refined2, changed2 = refine_boundary_observation_r2_spec(
+        refined, {("state.y", "post in [5, 73]"): {"post": 2}})
+    interval2 = refined2["vars"][0]["abs"][0]
+    bad += check(changed2 and (interval2["lo"]["value"], interval2["hi"]["value"]) == ("2", "73"),
+                 f"the second verifier CE expands the lower endpoint: {interval2}")
+    exhausted, changed3 = refine_boundary_observation_r2_spec(
+        refined2, {("state.y", "post in [2, 73]"): {"post": 100}})
+    bad += check(not changed3 and exhausted == refined2,
+                 "the configured refinement budget stops further widening")
+    return bad
+
+
+def test_oracle_input_part_split_preserves_certified_union_and_witnesses():
+    part = make_oracle_input_part(
+        "p0", {
+            "x": (0, 10),
+            "z": (0, 2),
+        }, {
+            "x": [3, 8]
+        }, {
+            "x": 2,
+            "z": 1,
+        },
+        representative_ce={"x": "2", "z": "1", "msg.sender": "9"},
+        assertions=("R0", "post == pre"))
+    split = split_oracle_input_part(part, {
+        "coordinates": {"x": 7, "z": 2},
+        "ce": {"x": "7", "z": "2", "msg.sender": "4"},
+    }, ["x", "z"])
+    bad = 0
+    bad += check(split is not None, "a complete refuting input splits the part")
+    if split is None:
+        return bad
+    witness_child, refuting_child, coordinate = split
+    bad += check(coordinate == "x", f"the configured coordinate order is stable: {coordinate}")
+    bad += check(witness_child.region["x"] == (0, 6)
+                 and refuting_child.region["x"] == (7, 10),
+                 f"children are disjoint at the CE boundary: {split}")
+    bad += check(witness_child.holes == {"x": (3,)}
+                 and refuting_child.holes == {"x": (8,)},
+                 f"holes are projected into the correct child: {split}")
+    bad += check(witness_child.witness == {"x": 2, "z": 1}
+                 and refuting_child.witness == {"x": 7, "z": 2},
+                 f"each child carries a representative inside itself: {split}")
+    bad += check(witness_child.representative_ce == {"x": "2", "z": "1", "msg.sender": "9"}
+                 and refuting_child.representative_ce == {"x": "7", "z": "2",
+                                                          "msg.sender": "4"},
+                 f"each child carries its own complete representative CE: {split}")
+    bad += check(witness_child.assertions == part.assertions
+                 and refuting_child.assertions == part.assertions,
+                 "facts proved on the parent are inherited by both subsets")
+
+    def admitted(input_part):
+        return {
+            x for x in range(input_part.region["x"][0], input_part.region["x"][1] + 1)
+            if x not in input_part.holes.get("x", ())
+        }
+
+    bad += check(admitted(witness_child).isdisjoint(admitted(refuting_child)),
+                 "split children do not overlap")
+    bad += check(admitted(witness_child) | admitted(refuting_child) == admitted(part),
+                 "split children preserve the exact certified parent set")
+    bad += check(split_oracle_input_part(part, {"x": 7}, ["x"]) is None,
+                 "an incomplete CE cannot become a representative witness")
+    bad += check(split_oracle_input_part(part, {"x": 3, "z": 2}, ["x"]) is None,
+                 "a CE in a certified hole is rejected")
+    bad += check(split_oracle_input_part(part, part.witness, ["x", "z"]) is None,
+                 "a CE identical to the representative cannot refine the part")
+
+    reverse = make_oracle_input_part("p1", {"x": (0, 10)}, {}, {"x": 8})
+    reverse_split = split_oracle_input_part(reverse, {"x": 4}, ["x"])
+    bad += check(reverse_split is not None
+                 and reverse_split[0].region["x"] == (5, 10)
+                 and reverse_split[1].region["x"] == (0, 4),
+                 f"reverse-side witness splitting remains exact: {reverse_split}")
+    return bad
+
+
+def test_oracle_candidate_refinement_rechecks_only_the_witness_child():
+    part = make_oracle_input_part("p0", {"x": (0, 10)}, {}, {"x": 2},
+                                  assertions=("R0",))
+    calls = []
+
+    def verifier(child, candidate):
+        calls.append((child.part_id, child.region, candidate))
+        return "HOLDS", None
+
+    parts, queries = refine_oracle_candidate_parts(
+        part,
+        "post <= pre",
+        "R2.1",
+        "REFUTED", {
+            "coordinates": {
+                "x": 6
+            }
+        },
+        verifier, ["x"],
+        max_parts=4,
+        max_depth=2)
+    bad = 0
+    by_region = {value.region["x"]: value for value in parts}
+    bad += check(set(by_region) == {(0, 5), (6, 10)},
+                 f"one refutation partitions the whole region: {parts}")
+    bad += check(by_region[(0, 5)].assertions == ("R0", "post <= pre"),
+                 "the re-proved witness child receives the R2.1 assertion")
+    bad += check(by_region[(6, 10)].assertions == ("R0",),
+                 "the child containing the CE retains coverage without the refuted assertion")
+    bad += check(calls == [("p0.w", {"x": (0, 5)}, "post <= pre")],
+                 f"only the child that excludes the CE is rechecked: {calls}")
+    bad += check(len(queries) == 1 and queries[0]["family"] == "R2.1",
+                 f"the query plan retains family and part provenance: {queries}")
+
+    undecided, undecided_queries = refine_oracle_candidate_parts(
+        part, "post != pre", "R1", "UNDECIDED", None, verifier)
+    bad += check(len(undecided) == 1 and undecided[0].assertions == ("R0",)
+                 and not undecided_queries,
+                 "UNDECIDED omits only the candidate and does not partition")
+    try:
+        refine_oracle_candidate_parts(part, "post in [1, 2]", "R2.2", "REFUTED", {},
+                                      verifier)
+    except ValueError:
+        pass
+    else:
+        bad += check(False, "R2.2 must use output-bound expansion, never input splitting")
+    return bad
+
+
+def test_oracle_part_scheduler_combines_opposite_direction_subregions():
+    root = make_oracle_input_part("p0", {"x": (0, 10)}, {}, {"x": 2},
+                                  assertions=("R0",))
+
+    def verifier(part, candidate):
+        lo, hi = part.region["x"]
+        if candidate == "post <= pre":
+            if hi <= 5:
+                return "HOLDS", None
+            if lo >= 6:
+                return "UNDECIDED", None
+            return "REFUTED", {"coordinates": {"x": 6}}
+        if candidate == "post >= pre":
+            if lo >= 6:
+                return "HOLDS", None
+            return "UNDECIDED", None
+        raise AssertionError(candidate)
+
+    parts, queries = refine_oracle_parts(
+        [root], [("post <= pre", "R2.1"), ("post >= pre", "R2.1")], verifier,
+        ["x"], max_parts=4, max_depth=2)
+    bad = 0
+    by_region = {part.region["x"]: part for part in parts}
+    bad += check(set(by_region) == {(0, 5), (6, 10)},
+                 f"the common partition is retained across candidates: {parts}")
+    bad += check(by_region[(0, 5)].assertions == ("R0", "post <= pre"),
+                 "the decreasing-side part retains only its proved direction")
+    bad += check(by_region[(6, 10)].assertions == ("R0", "post >= pre"),
+                 "the increasing-side part retains only its proved direction")
+    bad += check(any(query["part_id"] == "p0.r" and query["candidate"] == "post >= pre"
+                     for query in queries if query.get("initial")),
+                 f"later candidates are checked on every retained child: {queries}")
+    return bad
+
+
+def test_oracle_part_query_narrows_only_inputs_and_matches_exact_rung():
+    part = make_oracle_input_part("p0.w", {"amount": (10, 40)},
+                                  {"amount": (17,)}, {"amount": 10})
+    base = {
+        "unit": "sol:@C@C@F@f#7",
+        "enc": 3,
+        "depth": 1,
+        "region": [{"name": "amount", "lo": "0", "hi": "100"},
+                   {"name": "msg.value", "lo": "0", "hi": "0"}],
+        "establish": [{"name": "state.owner", "value": "1"}],
+        "vars_policy": "state-exact",
+        "vars": [{"name": "state.y"}],
+    }
+    spec = oracle_part_assert_spec(base, part, variable="state.y")
+    bad = 0
+    bad += check(spec["unit"] == base["unit"] and spec["enc"] == 3
+                 and spec["depth"] == 1 and spec["establish"] == base["establish"],
+                 f"path and fixture identity survive child query construction: {spec}")
+    bad += check(spec["region"] == [{
+        "name": "amount", "lo": "10", "hi": "40", "holes": ["17"]
+    }, {
+        "name": "msg.value", "lo": "0", "hi": "0"
+    }], f"only the certified child input part replaces the parent interval: {spec}")
+    rows = [("state.y", "post <= pre", "HOLDS"),
+            ("state.y", "post >= pre", "REFUTED")]
+    verdict = oracle_part_candidate_verdict(
+        rows, (1, 1, 0, 0), ("state.y", "post >= pre"), {
+            ("state.y", "post >= pre"): {
+                "coordinates": {"amount": 31},
+                "ce": {"amount": "31", "msg.sender": "5"},
+            }
+        })
+    bad += check(verdict == ("REFUTED", {
+        "coordinates": {"amount": 31},
+        "ce": {"amount": "31", "msg.sender": "5"},
+    }),
+                 f"the exact requested rung receives its own CE: {verdict}")
+    bad += check(oracle_part_candidate_verdict(rows, None,
+                                               ("state.y", "post <= pre")) ==
+                 ("UNDECIDED", None),
+                 "partial rows without a final summary are never adopted")
+    bad += check(oracle_part_candidate_verdict(rows, (1, 1, 0, 0),
+                                               ("state.y", "post != pre")) ==
+                 ("UNDECIDED", None),
+                 "a different rung on the same variable cannot answer the candidate")
+    return bad
+
+
+def test_oracle_part_query_caches_every_returned_rung():
+    rows = [
+        ("state.y", "post == pre", "HOLDS"),
+        ("state.y", "post >= pre", "HOLDS"),
+        ("state.y", "post <= pre", "REFUTED"),
+    ]
+    refutation = {("state.y", "post <= pre"): {"coordinates": {"x": 7}}}
+    cached = oracle_part_verdict_cache(rows, (3, 2, 1, 0, 0), refutation)
+    bad = 0
+    bad += check(len(cached) == 3,
+                 f"one state-exact verifier run caches its complete ladder: {cached}")
+    bad += check(cached[("state.y", "post == pre")] == ("HOLDS", None),
+                 "a proved sibling rung is reusable without another ESBMC run")
+    bad += check(cached[("state.y", "post <= pre")] ==
+                 ("REFUTED", {"coordinates": {"x": 7}}),
+                 "the exact refutation remains attached to its rung")
+    bad += check(oracle_part_verdict_cache(rows, None, refutation) == {},
+                 "a partial ladder never populates the cross-candidate cache")
+    return bad
+
+
+def test_oracle_part_publication_requires_own_representative_and_merges_equal_oracles():
+    left = make_oracle_input_part("p0", {"x": (0, 4)}, {}, {"x": 1},
+                                  assertions=(("state.y", "post <= pre"),))
+    right = make_oracle_input_part("p1", {"x": (5, 10)}, {}, {"x": 7},
+                                   assertions=(("state.y", "post <= pre"),))
+    merged = merge_adjacent_oracle_parts([left, right], ["x"])
+    bad = 0
+    bad += check(len(merged) == 1 and merged[0].region["x"] == (0, 10),
+                 f"adjacent parts with identical oracle sets merge: {merged}")
+    distinct = make_oracle_input_part("p2", {"x": (5, 10)}, {}, {"x": 7},
+                                      assertions=(("state.y", "post >= pre"),))
+    bad += check(len(merge_adjacent_oracle_parts([left, distinct], ["x"])) == 2,
+                 "parts with different proved assertions remain distinct PUTs")
+
+    def authenticate(part):
+        if part.part_id == "p0":
+            return {"authenticated": True, "coordinates": {"x": "1"},
+                    "fixed_assertions": ["assertEq(c0.y(), 2);"]}
+        if part.part_id == "p1":
+            return {"authenticated": True, "coordinates": {"x": "1"}}
+        return None
+
+    published, refused = prepare_oracle_part_publications([left, right, distinct], authenticate)
+    bad += check([entry["part"].part_id for entry in published] == ["p0"],
+                 f"only a child with its own exact authenticated replay publishes: {published}")
+    bad += check(len(refused) == 2 and {row["part_id"] for row in refused} == {"p1", "p2"},
+                 f"missing or cross-part representatives fail closed: {refused}")
+    return bad
+
+
+def test_oracle_part_materialization_rows_are_stable_and_proved_only():
+    part = make_oracle_input_part(
+        "0.left/amount=0..5",
+        {"amount": (0, 5)},
+        {},
+        {"amount": 2},
+        assertions=(("state.y", "post <= pre"), "R0",
+                    ("state.y", "post <= pre"), ("return", "return in [1, 3]")))
+    bad = 0
+    bad += check(oracle_input_part_suffix(part) == "part_p_0_left_amount_0_5",
+                 f"part id becomes a Solidity-safe suffix: {oracle_input_part_suffix(part)}")
+    bad += check(oracle_input_part_ladder_rows(part) == [
+        ("state.y", "post <= pre", "HOLDS"),
+        ("return", "return in [1, 3]", "HOLDS"),
+    ], f"only proved generalized assertions become ladder rows: {oracle_input_part_ladder_rows(part)}")
+    try:
+        oracle_input_part_suffix("part0")
+    except TypeError:
+        pass
+    else:
+        bad += check(False, "suffix generation rejects non-part inputs")
+    return bad
+
+
+def test_oracle_part_build_rows_replace_refined_candidates_only():
+    part = make_oracle_input_part(
+        "left",
+        {"x": (0, 5)},
+        {},
+        {"x": 2},
+        assertions=(("state.y", "post <= pre"),))
+    base_rows = [
+        ("state.y", "post >= pre", "REFUTED"),
+        ("return", "return in [1, 3]", "HOLDS"),
+        ("state.z", "post == pre", "HOLDS"),
+    ]
+    rows = oracle_input_part_build_rows(
+        base_rows,
+        part,
+        refined_candidates=(("state.y", "post >= pre"), ("state.y", "post <= pre")))
+    bad = 0
+    bad += check(rows == [
+        ("return", "return in [1, 3]", "HOLDS"),
+        ("state.z", "post == pre", "HOLDS"),
+        ("state.y", "post <= pre", "HOLDS"),
+    ], f"part rows keep global rungs and replace only refined candidates: {rows}")
+    return bad
+
+
+def test_oracle_part_materialization_plan_requires_authenticated_ce():
+    left = make_oracle_input_part("left", {"x": (0, 5)}, {}, {"x": 2},
+                                  assertions=(("state.y", "post <= pre"),))
+    right = make_oracle_input_part("right", {"x": (6, 10)}, {}, {"x": 8},
+                                   assertions=(("state.y", "post >= pre"),))
+    no_ce = make_oracle_input_part("no_ce", {"x": (11, 20)}, {}, {"x": 12},
+                                   assertions=(("state.y", "post == pre"),))
+
+    def authenticate(part):
+        if part.part_id == "left":
+            return {
+                "authenticated": True,
+                "coordinates": {
+                    "x": "2",
+                },
+                "ce": {
+                    "x": "2",
+                    "return": "7",
+                },
+            }
+        if part.part_id == "no_ce":
+            return {"authenticated": True, "coordinates": {"x": "12"}}
+        return {"authenticated": True, "coordinates": {"x": "2"}}
+
+    plans, refused = oracle_part_materialization_plan([left, right, no_ce], authenticate)
+    bad = 0
+    bad += check(len(plans) == 1 and plans[0]["suffix"] == "part_left",
+                 f"only the part with its own representative is planned: {plans}")
+    bad += check(plans[0]["region"] == {"x": (0, 5)}
+                 and plans[0]["holes"] == {}
+                 and plans[0]["representative_ce"] == {"x": "2", "return": "7"},
+                 f"the plan carries the exact child inputs and CE: {plans[0]}")
+    bad += check(plans[0]["ladder_rows"] == [("state.y", "post <= pre", "HOLDS")],
+                 f"the plan carries only proved generalized rows: {plans[0]['ladder_rows']}")
+    bad += check({row["part_id"] for row in refused} == {"right", "no_ce"},
+                 f"cross-part and incomplete representative evidence are refused: {refused}")
+    return bad
+
+
+def test_r2_refutation_observation_is_scoped_to_exact_failed_claim():
+    log = """\
+✗ FAILED: 'C:f:path:3#r2_boundary_y at file flat.sol line 7 function f'
+--path-cov-assert: y: post in [5, 50]  REFUTED
+✗ FAILED: 'C:f:path:3#r2_boundary_return at'
+--path-cov-assert: return: return in [1, 9]  REFUTED
+"""
+    report = {
+        "claims": [{
+            "condition": "C:f:path:3#r2_boundary_y",
+            "status": "F",
+            "inputs": {"amount": "0x2A"},
+            "env": {"msg.sender": "7"},
+            "entry_storage": {"y$17": "4"},
+            "final_state": {"y$17": "73"},
+        }, {
+            "condition": "C:f:path:3#r2_boundary_return",
+            "status": "F",
+            "return_value_known": True,
+            "return_value": "12",
+        }, {
+            "condition": "unrelated",
+            "status": "F",
+            "final_state": {"y$17": "999"},
+        }]
+    }
+    observations = r2_refutation_observations(log, report)
+    bad = 0
+    bad += check(observations[("y", "post in [5, 50]")] == {
+        "post": "73",
+        "pre": "4",
+        "claim": report["claims"][0],
+        "ce": {
+            "amount": "0x2A",
+            "msg.sender": "7",
+            "state.y$17": "4",
+        },
+    },
+                 f"state values come from the exact failed claim: {observations}")
+    bad += check(observations[("return", "return in [1, 9]")] == {
+        "post": "12",
+        "pre": None,
+        "claim": report["claims"][1],
+        "ce": {
+            "return": "12",
+        },
+    }, f"return values are bound to the return candidate: {observations}")
+    bad += check(len(observations) == 2, "an unrelated CE is never borrowed")
+    coordinates = claim_oracle_coordinate_values(report["claims"][0],
+                                                  ["amount", "msg.sender", "state.y"])
+    bad += check(coordinates == {"amount": 42, "msg.sender": 7, "state.y": 4},
+                 f"the failed claim exposes one complete renderable input point: {coordinates}")
+    bad += check(claim_oracle_coordinate_values(report["claims"][0],
+                                                ["amount", "block.timestamp"]) is None,
+                 "a missing coordinate refuses partitioning instead of inventing a value")
+    bad += check(r2_subfamily_for_rung("post >= pre") == "R2.1",
+                 "direction relations are reported as R2.1")
+    bad += check(r2_subfamily_for_rung("post in [5, 50]", "R2.2") == "R2.2",
+                 "boundary-observation provenance is reported as R2.2")
+    bad += check(r2_subfamily_for_rung("post == amount", "R2.3") == "R2.3",
+                 "source and typed relations are reported as R2.3")
+    return bad
+
+
 def test_R2_candidate_dedup_uses_safe_normalized_text_before_fuzz():
     from solidity_path_put import (
         dedup_r2_specs_by_normalized_text,  # noqa: E402
@@ -10415,21 +11055,22 @@ def test_partial_ladder_R2_skip_requires_a_rendered_strict_oracle():
 
 def test_oracle_class_metadata_keeps_R0_R1_R2_apart():
     bad = 0
-    bad += check(oracle_classes_for_rung("post >= pre") == ["R1"], "plain pre/post ordering is R1")
+    bad += check(oracle_classes_for_rung("post >= pre") == ["R2"],
+                 "plain pre/post ordering is R2.1")
     bad += check(
-        oracle_classes_for_rung("pre >= post") == ["R1"],
-        "reverse-spelled pre/post ordering is still R1")
+        oracle_classes_for_rung("pre >= post") == ["R2"],
+        "reverse-spelled pre/post ordering is still R2.1")
     bad += check(
         oracle_classes_for_rung("post == amount") == ["R2"], "exact endpoint over an input is R2")
     bad += check(
-        oracle_classes_for_rung("post - pre in [amount, amount] with post >= pre") == ["R1", "R2"],
-        "a delta bound with a direction records the R1/R2 combination")
+        oracle_classes_for_rung("post - pre in [amount, amount] with post >= pre") == ["R2"],
+        "a delta bound is R2.2 and does not infer an R1 assertion")
     bad += check(
-        oracle_classes_for_rung("(post-pre) in[amount,amount] with (post>=pre)") == ["R1", "R2"],
-        "compact renderer spacing keeps the R1/R2 combination")
+        oracle_classes_for_rung("(post-pre) in[amount,amount] with (post>=pre)") == ["R2"],
+        "compact renderer spacing keeps the R2.2 classification")
     bad += check(
-        oracle_classes_for_rung("pre - post in [amount, amount] with pre >= post") == ["R1", "R2"],
-        "a decreasing delta bound records the same R1/R2 combination")
+        oracle_classes_for_rung("pre - post in [amount, amount] with pre >= post") == ["R2"],
+        "a decreasing delta bound is also R2.2")
     bad += check(
         oracle_classes_for_rung("(post) in[lo, hi]") == ["R2"],
         "absolute interval R2 tolerates parentheses and compact spacing")
@@ -10461,12 +11102,13 @@ def test_oracle_class_metadata_keeps_R0_R1_R2_apart():
                       r2_terms=r2_terms),
         oracle_detail("return", "return", "(return) in[msg.sender,msg.sender]", r2_terms=r2_terms),
         oracle_detail("state", "owner", "post == state.owner", r2_terms=r2_terms),
+        oracle_detail("state", "count", "post != pre"),
         oracle_detail("exit", "exit", "path exits normally", classes=["R0"]),
     ]
     bad += check(rich[0]["canonical_text"] == "post - pre in [amount, amount] with post >= pre",
                  f"detail records canonical compact R1/R2 text: {rich[0]}")
-    bad += check(rich[0]["classes"] == ["R1", "R2"] and rich[0]["class_combo"] == "R1+R2",
-                 f"detail records the combined oracle class: {rich[0]}")
+    bad += check(rich[0]["classes"] == ["R2"] and rich[0]["class_combo"] == "R2",
+                 f"detail records the R2.2 oracle class: {rich[0]}")
     bad += check(rich[0]["coordinates"] == [{
         "name": "amount",
         "class": "calldata"
@@ -10484,12 +11126,33 @@ def test_oracle_class_metadata_keeps_R0_R1_R2_apart():
         "R2": 3
     }, f"aggregate class counts count combined rows in both "
                  f"classes: {summary}")
-    bad += check(summary["oracle_class_combinations"] == ["R0", "R1+R2", "R2"],
+    bad += check(summary["oracle_class_combinations"] == ["R0", "R1", "R2"],
                  f"aggregate combination labels are directly countable: "
                  f"{summary}")
     bad += check(summary["oracle_coordinate_classes"] == ["calldata", "env", "state"],
                  f"aggregate coordinate classes support return/state/env "
                  f"statistics: {summary}")
+    family_details = [
+        oracle_detail("state", "balance", "post >= pre"),
+        oracle_detail(
+            "state",
+            "balance",
+            "post in [5, 50]",
+            r2_subfamilies={("balance", "post in [5, 50]"): "R2.2"}),
+        oracle_detail(
+            "state",
+            "balance",
+            "post == amount",
+            r2_subfamilies={("balance", "post == amount"): "R2.3"}),
+    ]
+    bad += check([detail["r2_subfamily"] for detail in family_details] ==
+                 ["R2.1", "R2.2", "R2.3"],
+                 f"final oracle rows preserve each R2 subfamily: {family_details}")
+    bad += check(oracle_stats_summary(family_details)["r2_subfamily_counts"] == {
+        "R2.1": 1,
+        "R2.2": 1,
+        "R2.3": 1,
+    }, "final PUT accounting reports R2.1/R2.2/R2.3 separately")
     return bad
 
 
@@ -10572,6 +11235,7 @@ def test_typed_R2_proposes_bool_equality_to_bool_coordinate():
             "key": "s0:v0:equals:e0",
             "var": "flag",
             "text": "post == flag_",
+            "r2_subfamily": "R2.3",
         }], f"only equality to the bool coordinate is asked: {candidates}")
     entry = got[0]["vars"][0] if got else {}
     bad += check(not entry.get("abs") and not entry.get("deltas"),
@@ -18228,6 +18892,50 @@ def test_an_ABSOLUTE_row_is_MERGED_and_not_silently_dropped():
     return bad
 
 
+def test_R2_2_refutation_schedules_counterexample_bound_retry():
+    said, written = [], []
+
+    def write_spec(suffix, spec):
+        written.append((suffix, json.loads(json.dumps(spec))))
+        return "/tmp/spec" + suffix + ".json"
+
+    def runner(_path):
+        if len(written) == 1:
+            return ("round0", {("state.y", "post in [5, 50]"): {"post": "73"}})
+        return "round1", {}
+
+    def parse(text):
+        row = (("state.y", "post in [5, 50]", "REFUTED") if text == "round0" else
+               ("state.y", "post in [5, 73]", "HOLDS"))
+        return [row], (1, int(row[2] == "HOLDS"), int(row[2] == "REFUTED"), 0, 0), None, None
+
+    spec = boundary_observation_r2_spec([{
+        "values": {
+            "state.y": {
+                "post": 5
+            }
+        }
+    }, {
+        "values": {
+            "state.y": {
+                "post": 50
+            }
+        }
+    }], refinement_rounds=2)[0]
+    rows = run_r2_passes([spec], {"unit": "f", "enc": 3}, write_spec, runner, parse,
+                         log=said.append)
+    bad = 0
+    bad += check(len(written) == 2, f"one verifier CE schedules one retry: {written}")
+    retried = written[1][1]["vars"][0]["abs"][0] if len(written) > 1 else {}
+    bad += check((retried.get("lo", {}).get("value"), retried.get("hi", {}).get("value")) ==
+                 ("5", "73"), f"the retry uses the CE value rather than geometric span: {retried}")
+    bad += check(rows[-1] == ("state.y", "post in [5, 73]", "HOLDS"),
+                 f"the proved refined R2.2 row is retained: {rows}")
+    bad += check(any("R2.2 counterexample refinement" in line for line in said),
+                 f"the refinement is auditable in the run log: {said}")
+    return bad
+
+
 def test_a_RETURN_R2_row_is_MERGED_and_not_reported_empty():
     """Pure/view units buy their oracle through `return == literal`.
 
@@ -21180,7 +21888,9 @@ def test_a_mapping_dynarray_length_slot_is_read_as_scalar_oracle():
                  "the length lives at the mapped dynamic-array base slot")
     bad += check("assertGt(_post_choices_u__length, _pre_choices_u__length" in text,
                  "the verifier rung over the length slot renders")
-    bad += check("R1" in stats["oracle_classes"], f"the emitted oracle is counted as R1: {stats}")
+    bad += check("R2" in stats["oracle_classes"] and stats["r2_subfamily_counts"] == {
+        "R2.1": 1
+    }, f"the emitted direction oracle is counted as R2.1: {stats}")
     bad += check(not stats["oracle_skipped"], f"nothing about the length slot is skipped: "
                  f"{stats['oracle_skipped']}")
     return bad
@@ -23210,9 +23920,8 @@ contract Vault { function accept(PayableTarget target) external {} }
     text = "\n".join(put or [])
     bad = 0
     bad += check(put is not None, f"a payable-contract PUT is produced: {notes}")
-    bad += check(
-        "try c1.accept(PayableTarget(payable(address(uint160(1))))) {} catch {}" in text,
-        "a raw replay address is restored to the payable contract identity")
+    bad += check("try c1.accept(PayableTarget(payable(address(uint160(1))))) {} catch {}" in text,
+                 "a raw replay address is restored to the payable contract identity")
     bad += check("c1.accept(PayableTarget(payable(target)));" in text,
                  "the lifted address keeps its source-level payable contract cast")
     bad += check(stats and stats["fuzz_params"] == 1,
@@ -23677,7 +24386,8 @@ struct Order { address owner; Item[] items; Kind kind; }
             "Target",
             "take",
             "sol:@C@Target@F@take#7",
-            1, [("order", "struct Order")], [], notes,
+            1, [("order", "struct Order")], [],
+            notes,
             flat_source=source + "\ncontract Target { function take(Order memory) external {} }\n")
         text = "\n".join(emitted.lines) if emitted is not None else ""
     bad += check(case is not None and "c0.take(Order({" in text,
@@ -24083,14 +24793,31 @@ def test_try_concrete_replay_can_assert_the_fixed_revert_exit():
   }
 }
 """
-    rewritten, oracles = add_concrete_normal_exit_oracle(
-        source, "test_cov_0", "f", "revert")
+    rewritten, oracles = add_concrete_normal_exit_oracle(source, "test_cov_0", "f", "revert")
     bad = check("assertFalse(_veriput_concrete_completed" in rewritten,
                 "the fixed replay explicitly asserts its R0 revert result")
     bad += check(
         len(oracles) == 1 and oracles[0]["kind"] == "call-status"
         and oracles[0]["expected"] is False,
         f"the revert replay carries an authenticated failed-status oracle: {oracles}")
+    return bad
+
+
+def test_bare_concrete_replay_can_assert_the_fixed_revert_exit():
+    source = """contract CReplay is Test {
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    rewritten, oracles = add_concrete_normal_exit_oracle(source, "test_cov_0", "f", "revert")
+    bad = 0
+    bad += check("vm.expectRevert();\n    c0.f();" in rewritten,
+                 "a bare fixed replay can assert generic revert exit status")
+    bad += check(
+        len(oracles) == 1 and oracles[0]["kind"] == "revert"
+        and oracles[0]["source"] == "expectRevert",
+        f"the generic revert assertion has structured R0 provenance: {oracles}")
     return bad
 
 
@@ -24104,18 +24831,20 @@ def test_try_concrete_replay_selects_the_final_same_name_call():
   }
 }
 """
-    rewritten, oracles = add_concrete_normal_exit_oracle(
-        source, "test_cov_0", "allowance", "revert")
+    rewritten, oracles = add_concrete_normal_exit_oracle(source, "test_cov_0", "allowance",
+                                                         "revert")
     bad = 0
-    bad += check(len(oracles) == 1 and oracles[0].get("kind") == "call-status"
-                 and oracles[0].get("expected") is False,
-                 "the exit oracle binds the final same-name try call")
     bad += check(
-        rewritten.index("address(3), address(4)") <
-        rewritten.index("_veriput_concrete_completed = true;"),
+        len(oracles) == 1 and oracles[0].get("kind") == "call-status"
+        and oracles[0].get("expected") is False,
+        "the exit oracle binds the final same-name try call")
+    bad += check(
+        rewritten.index("address(3), address(4)")
+        < rewritten.index("_veriput_concrete_completed = true;"),
         "the completion marker is inserted in the selected final try success block")
-    bad += check(rewritten.count("_veriput_concrete_completed = true;") == 1,
-                 "earlier same-name calls cannot receive the selected-call marker")
+    bad += check(
+        rewritten.count("_veriput_concrete_completed = true;") == 1,
+        "earlier same-name calls cannot receive the selected-call marker")
     return bad
 
 
@@ -24183,7 +24912,7 @@ def test_source_synthesized_concrete_binds_fixed_scalar_return():
     bad += check(
         oracles == [{
             "class":
-            "R0",
+            "concrete-value",
             "kind":
             "return-value",
             "solidity_type":
@@ -24223,115 +24952,548 @@ def test_concrete_return_binding_requires_one_known_scalar_return():
     return bad
 
 
+def test_fixed_replay_binds_every_tuple_return_component():
+    source = """contract CReplay is Test {
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    rewritten, oracles = add_concrete_fixed_return_oracles(source, "test_cov_0", "f",
+                                                           [("a", "uint256"),
+                                                            ("b", "bool")], "(2, true)")
+    bad = 0
+    bad += check(
+        "(uint256 _veriput_concrete_return_0, bool _veriput_concrete_return_1) = c0.f();"
+        in rewritten, "tuple replay binds the complete typed target return")
+    bad += check("assertEq(_veriput_concrete_return_0, uint256(2)" in rewritten,
+                 "tuple replay asserts the first concrete component")
+    bad += check("assertEq(_veriput_concrete_return_1, true" in rewritten,
+                 "tuple replay asserts the second concrete component")
+    bad += check([oracle.get("return_index") for oracle in oracles] == [0, 1],
+                 f"tuple oracle metadata preserves ABI order: {oracles}")
+    return bad
+
+
+def test_fixed_replay_asserts_all_exact_scalar_final_state_values():
+    source = """contract CReplay is Test {
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    claim = {"final_state": {"_owner$9": "7", "flag": "true"}}
+    layout = {"owner": (0, 0, 20), "flag": (0, 20, 1)}
+    rewritten, oracles, skipped = add_concrete_fixed_state_oracles(source, "test_cov_0", "f", claim,
+                                                                   layout, {},
+                                                                   {"owner": "_owner$9"})
+    bad = 0
+    bad += check(skipped == [], f"both readable state values are retained: {skipped}")
+    bad += check(len(oracles) == 2, f"both final-state values have fixed oracles: {oracles}")
+    bad += check("vm.load(address(c0), bytes32(uint256(0)))" in rewritten,
+                 "fixed state reads use the exact solc slot")
+    bad += check("fixed witness state" in rewritten and "uint256(7)" in rewritten,
+                 "fixed state assertions retain the witness values")
+    error = authenticated_concrete_oracle_error(oracles)
+    bad += check(error is None, f"fixed state oracle metadata authenticates: {error}")
+    _same, retained, binding_error = reuse_authenticated_concrete_oracles(
+        rewritten, "test_cov_0", "f", oracles)
+    bad += check(binding_error is None and len(retained) == 2,
+                 f"both state assertions remain bound to the selected call: {binding_error}")
+    return bad
+
+
+def test_fixed_replay_asserts_exact_event_topics_and_data():
+    source = """import {Test} from "forge-std/Test.sol";
+contract CReplay is Test {
+  C c0;
+  function test_cov_0() public {
+    c0.f(uint256(7));
+  }
+}
+"""
+    ast = {
+        "nodeType":
+        "SourceUnit",
+        "nodes": [{
+            "nodeType":
+            "ContractDefinition",
+            "name":
+            "C",
+            "id":
+            1,
+            "nodes": [{
+                "nodeType": "EventDefinition",
+                "name": "E",
+                "id": 10,
+                "anonymous": False,
+                "parameters": {
+                    "parameters": [{
+                        "nodeType": "VariableDeclaration",
+                        "id": 11,
+                        "name": "value",
+                        "indexed": False,
+                        "typeName": {
+                            "nodeType": "ElementaryTypeName",
+                            "name": "uint256"
+                        },
+                    }]
+                },
+            }, {
+                "nodeType": "FunctionDefinition",
+                "name": "f",
+                "id": 20,
+                "parameters": {
+                    "parameters": [{
+                        "nodeType": "VariableDeclaration",
+                        "id": 30,
+                        "name": "x",
+                        "typeName": {
+                            "nodeType": "ElementaryTypeName",
+                            "name": "uint256"
+                        },
+                    }]
+                },
+                "body": {
+                    "nodeType":
+                    "Block",
+                    "statements": [{
+                        "nodeType": "EmitStatement",
+                        "eventCall": {
+                            "nodeType":
+                            "FunctionCall",
+                            "expression": {
+                                "nodeType": "Identifier",
+                                "referencedDeclaration": 10
+                            },
+                            "arguments": [{
+                                "nodeType": "Identifier",
+                                "name": "x",
+                                "referencedDeclaration": 30
+                            }],
+                        },
+                    }]
+                },
+            }],
+        }],
+    }
+    claim = {
+        "path_function": "sol:@C@C@F@f#20",
+        "exit_kind": "normal",
+        "inputs": {
+            "x": "7"
+        },
+        "events": ["sol:@C@C@F@E#10"],
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".solast") as stream:
+        json.dump(ast, stream)
+        stream.flush()
+        rewritten, oracles, error = add_concrete_fixed_event_oracles(source, "test_cov_0", "f",
+                                                                     claim, stream.name)
+    bad = 0
+    bad += check(error is None and len(oracles) == 1,
+                 f"one exact retained event is materialized: {error}, {oracles}")
+    bad += check("vm.recordLogs();" in rewritten and "vm.getRecordedLogs()" in rewritten,
+                 "the event assertion owns one target-call log window")
+    bad += check('keccak256("E(uint256)")' in rewritten and "abi.encode(uint256(7))" in rewritten,
+                 "event signature and concrete data are asserted exactly")
+    _same, retained, binding_error = reuse_authenticated_concrete_oracles(
+        rewritten, "test_cov_0", "f", oracles)
+    bad += check(binding_error is None and len(retained) == 1,
+                 f"event assertions remain bound to the selected call: {binding_error}")
+    return bad
+
+
+def test_fixed_replay_event_oracle_accepts_rehomed_inherited_ids():
+    source = """import {Test} from "forge-std/Test.sol";
+contract DReplay is Test {
+  D c0;
+  function test_cov_0() public {
+    c0.f(uint256(7));
+  }
+}
+"""
+    ast = {
+        "nodeType":
+        "SourceUnit",
+        "nodes": [{
+            "nodeType":
+            "ContractDefinition",
+            "name":
+            "Base",
+            "id":
+            1,
+            "nodes": [{
+                "nodeType": "EventDefinition",
+                "name": "E",
+                "id": 10,
+                "anonymous": False,
+                "parameters": {
+                    "parameters": [{
+                        "nodeType": "VariableDeclaration",
+                        "id": 11,
+                        "name": "value",
+                        "indexed": False,
+                        "typeName": {
+                            "nodeType": "ElementaryTypeName",
+                            "name": "uint256"
+                        },
+                    }]
+                },
+            }, {
+                "nodeType": "FunctionDefinition",
+                "name": "f",
+                "id": 20,
+                "parameters": {
+                    "parameters": [{
+                        "nodeType": "VariableDeclaration",
+                        "id": 30,
+                        "name": "x",
+                        "typeName": {
+                            "nodeType": "ElementaryTypeName",
+                            "name": "uint256"
+                        },
+                    }]
+                },
+                "body": {
+                    "nodeType":
+                    "Block",
+                    "statements": [{
+                        "nodeType": "EmitStatement",
+                        "eventCall": {
+                            "nodeType":
+                            "FunctionCall",
+                            "expression": {
+                                "nodeType": "Identifier",
+                                "referencedDeclaration": 10
+                            },
+                            "arguments": [{
+                                "nodeType": "Identifier",
+                                "name": "x",
+                                "referencedDeclaration": 30
+                            }],
+                        },
+                    }]
+                },
+            }],
+        }, {
+            "nodeType": "ContractDefinition",
+            "name": "D",
+            "id": 2,
+            "nodes": [],
+        }],
+    }
+    claim = {
+        "path_function": "sol:@C@D@F@f#20",
+        "exit_kind": "normal",
+        "inputs": {
+            "x": "7"
+        },
+        "events": ["sol:@C@D@F@E#10"],
+    }
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".solast") as stream:
+        json.dump(ast, stream)
+        stream.flush()
+        rewritten, oracles, error = add_concrete_fixed_event_oracles(source, "test_cov_0", "f",
+                                                                     claim, stream.name)
+    bad = 0
+    bad += check(error is None and len(oracles) == 1,
+                 f"re-homed inherited event id is accepted exactly: {error}")
+    bad += check('keccak256("E(uint256)")' in rewritten and "abi.encode(uint256(7))" in rewritten,
+                 "the inherited event keeps its exact ABI signature and value")
+    return bad
+
+
+def test_fixed_replay_skips_reverted_event_traces():
+    source = """import {Test} from "forge-std/Test.sol";
+contract CReplay is Test {
+  C c0;
+  function test_cov_0() public {
+    c0.f();
+  }
+}
+"""
+    claim = {
+        "path_function": "sol:@C@C@F@f#20",
+        "exit_kind": "revert",
+        "events": ["sol:@C@C@F@E#10"],
+    }
+    rewritten, oracles, error = add_concrete_fixed_event_oracles(source, "test_cov_0", "f",
+                                                                 claim, "/missing.solast")
+    bad = 0
+    bad += check(error is None and oracles == [], f"reverted logs are skipped: {error}")
+    bad += check(rewritten == source, "source is unchanged when logs cannot survive revert")
+    return bad
+
+
+def test_fixed_replay_combines_return_event_and_state_oracles():
+    source = """import {Test} from "forge-std/Test.sol";
+contract CReplay is Test {
+  C c0;
+  function test_cov_0() public {
+    c0.f(uint256(7));
+  }
+}
+"""
+    ast = {
+        "nodeType":
+        "SourceUnit",
+        "nodes": [{
+            "nodeType":
+            "ContractDefinition",
+            "name":
+            "C",
+            "id":
+            1,
+            "nodes": [{
+                "nodeType": "EventDefinition",
+                "name": "E",
+                "id": 10,
+                "anonymous": False,
+                "parameters": {
+                    "parameters": [{
+                        "nodeType": "VariableDeclaration",
+                        "id": 11,
+                        "name": "value",
+                        "indexed": False,
+                        "typeName": {
+                            "nodeType": "ElementaryTypeName",
+                            "name": "uint256"
+                        },
+                    }]
+                },
+            }, {
+                "nodeType": "FunctionDefinition",
+                "name": "f",
+                "id": 20,
+                "returnParameters": {
+                    "parameters": [{
+                        "nodeType": "VariableDeclaration",
+                        "id": 21,
+                        "name": "",
+                        "typeName": {
+                            "nodeType": "ElementaryTypeName",
+                            "name": "uint256"
+                        },
+                    }]
+                },
+                "parameters": {
+                    "parameters": [{
+                        "nodeType": "VariableDeclaration",
+                        "id": 30,
+                        "name": "x",
+                        "typeName": {
+                            "nodeType": "ElementaryTypeName",
+                            "name": "uint256"
+                        },
+                    }]
+                },
+                "body": {
+                    "nodeType":
+                    "Block",
+                    "statements": [{
+                        "nodeType": "EmitStatement",
+                        "eventCall": {
+                            "nodeType":
+                            "FunctionCall",
+                            "expression": {
+                                "nodeType": "Identifier",
+                                "referencedDeclaration": 10
+                            },
+                            "arguments": [{
+                                "nodeType": "Identifier",
+                                "name": "x",
+                                "referencedDeclaration": 30
+                            }],
+                        },
+                    }]
+                },
+            }],
+        }],
+    }
+    claim = {
+        "path_function": "sol:@C@C@F@f#20",
+        "exit_kind": "normal",
+        "inputs": {
+            "x": "7"
+        },
+        "return_value": "9",
+        "entry_storage": {
+            "count": "0"
+        },
+        "final_state": {
+            "count": "11"
+        },
+        "events": ["sol:@C@C@F@E#10"],
+    }
+    layout = {"count": (1, 0, 32)}
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".solast") as stream:
+        json.dump(ast, stream)
+        stream.flush()
+        rewritten, return_oracles = add_concrete_fixed_return_oracles(source, "test_cov_0", "f",
+                                                                      [("", "uint256")], "9")
+        rewritten, event_oracles, event_error = add_concrete_fixed_event_oracles(
+            rewritten, "test_cov_0", "f", claim, stream.name)
+        rewritten, state_oracles, skipped = add_concrete_fixed_state_oracles(
+            rewritten, "test_cov_0", "f", claim, layout, {})
+        event_signatures = event_signatures_from_ast_file(stream.name)
+    oracles = return_oracles + event_oracles + state_oracles
+    bad = 0
+    bad += check(event_error is None and skipped == [],
+                 f"all fixed witness observable classes are rendered: {event_error}, {skipped}")
+    bad += check("uint256 _veriput_concrete_return = c0.f(uint256(7));" in rewritten,
+                 "the return assertion binds the same target statement")
+    bad += check("vm.recordLogs();" in rewritten and "Vm.Log[] memory _veriputLogs" in rewritten,
+                 "the event window surrounds the statement containing the target call")
+    bad += check("_veriput_fixed_state_count_0" in rewritten,
+                 "the exact post-state assertion is retained after the call")
+    auth_error = authenticated_concrete_oracle_error(oracles)
+    bad += check(auth_error is None, f"combined fixed oracles authenticate: {auth_error}")
+    claim_error = _oracle_claim_coverage_error(claim, oracles, event_signatures)
+    bad += check(claim_error is None,
+                 f"combined fixed oracles cover the retained claim: {claim_error}")
+    _same, retained, binding_error = reuse_authenticated_concrete_oracles(
+        rewritten, "test_cov_0", "f", oracles)
+    bad += check(binding_error is None and len(retained) == 3,
+                 f"combined fixed assertions stay bound to one target call: {binding_error}")
+    return bad
+
+
 def test_authenticated_structured_concrete_oracles_are_reused_without_downgrade():
     bad = 0
     return_source = ('contract R { function test_cov_0() public { '
                      'uint8 got = c0.f(); assertEq(got, uint8(7)); } }')
     return_oracle = [{
-        "class": "R0", "kind": "return-value", "solidity_type": "uint8",
-        "observed": "got", "expected": "uint8(7)",
-        "provenance": "stage2-witness", "target_receiver": "c0",
+        "class": "R0",
+        "kind": "return-value",
+        "solidity_type": "uint8",
+        "observed": "got",
+        "expected": "uint8(7)",
+        "provenance": "stage2-witness",
+        "target_receiver": "c0",
         "assertion": "assertEq(got, uint8(7));",
     }]
     status_source = ('contract R { function test_cov_0() public { '
                      '(bool ok,) = address(c0).call(abi.encodeWithSignature("f()")); '
                      'assertTrue(ok, "status"); } }')
     status_oracle = [{
-        "class": "R0", "kind": "call-status", "observed": "ok", "expected": True,
-        "provenance": "stage2-witness", "target_receiver": "c0",
+        "class": "R0",
+        "kind": "call-status",
+        "observed": "ok",
+        "expected": True,
+        "provenance": "stage2-witness",
+        "target_receiver": "c0",
         "assertion": 'assertTrue(ok, "status");',
     }]
     state_source = ('contract R { function test_cov_0() public { '
                     'c0.f(); assertEq(c0.value(), uint256(7)); } }')
     state_oracle = [{
-        "class": "concrete-value", "kind": "post-state", "observed": "c0.value()",
-        "expected": "uint256(7)", "provenance": "stage2-witness",
-        "target_receiver": "c0", "assertion": "assertEq(c0.value(), uint256(7));",
+        "class": "concrete-value",
+        "kind": "post-state",
+        "observed": "c0.value()",
+        "expected": "uint256(7)",
+        "provenance": "stage2-witness",
+        "target_receiver": "c0",
+        "assertion": "assertEq(c0.value(), uint256(7));",
     }]
     tuple_source = ('contract R { function test_cov_0() public { '
                     '(uint8 first, uint16 second) = c0.f(); '
                     'assertEq(first, uint8(1)); assertEq(second, uint16(2)); } }')
     tuple_oracles = [{
-        "class": "R0", "kind": "return-value", "solidity_type": sol_type,
-        "return_index": index, "return_arity": 2, "observed": observed,
-        "expected": expected, "provenance": "stage2-witness", "target_receiver": "c0",
+        "class": "R0",
+        "kind": "return-value",
+        "solidity_type": sol_type,
+        "return_index": index,
+        "return_arity": 2,
+        "observed": observed,
+        "expected": expected,
+        "provenance": "stage2-witness",
+        "target_receiver": "c0",
         "assertion": assertion,
     } for index, (sol_type, observed, expected, assertion) in enumerate((
         ("uint8", "first", "uint8(1)", "assertEq(first, uint8(1));"),
         ("uint16", "second", "uint16(2)", "assertEq(second, uint16(2));"),
     ))]
-    for source, oracle, label in (
-            (return_source, return_oracle, "return-value"),
-            (status_source, status_oracle, "call-status"),
-            (state_source, state_oracle, "post-state"),
-            (tuple_source, tuple_oracles, "indexed tuple return")):
+    for source, oracle, label in ((return_source, return_oracle,
+                                   "return-value"), (status_source, status_oracle, "call-status"),
+                                  (state_source, state_oracle, "post-state"),
+                                  (tuple_source, tuple_oracles, "indexed tuple return")):
         rewritten, retained, error = reuse_authenticated_concrete_oracles(
             source, "test_cov_0", "f", oracle)
         bad += check((rewritten, retained, error) == (source, oracle, None),
                      f"{label} remains target-bound")
-    storage_source = (
-        'contract R { function test_cov_0() public { c0.f(); '
-        'uint256 observed = uint256(vm.load(address(c0), bytes32(uint256(2)))); '
-        'assertEq(observed, uint256(7)); } }')
+    storage_source = ('contract R { function test_cov_0() public { c0.f(); '
+                      'uint256 observed = uint256(vm.load(address(c0), bytes32(uint256(2)))); '
+                      'assertEq(observed, uint256(7)); } }')
     storage_oracle = [{
-        "class": "concrete-value", "kind": "storage-slot-post-state",
-        "observed": "observed", "expected": "uint256(7)",
-        "provenance": "stage2-witness", "target_receiver": "c0",
-        "storage_variable": "value", "storage_slot": 2,
-        "storage_offset_bytes": 0, "storage_width_bytes": 32,
+        "class": "concrete-value",
+        "kind": "storage-slot-post-state",
+        "observed": "observed",
+        "expected": "uint256(7)",
+        "provenance": "stage2-witness",
+        "target_receiver": "c0",
+        "storage_variable": "value",
+        "storage_slot": 2,
+        "storage_offset_bytes": 0,
+        "storage_width_bytes": 32,
         "assertion": "assertEq(observed, uint256(7));",
     }]
-    rewritten, retained, error = reuse_authenticated_concrete_oracles(
-        storage_source, "test_cov_0", "f", storage_oracle)
-    bad += check((rewritten, retained, error) ==
-                 (storage_source, storage_oracle, None),
+    rewritten, retained, error = reuse_authenticated_concrete_oracles(storage_source, "test_cov_0",
+                                                                      "f", storage_oracle)
+    bad += check((rewritten, retained, error) == (storage_source, storage_oracle, None),
                  "real storage-slot-post-state schema remains target-bound")
-    event_assertions = (
-        "assertEq(_veriputLogs.length, 1);"
-        "assertEq(_veriputLogs[0].emitter, address(c0));"
-        "assertEq(_veriputLogs[0].topics.length, 1);"
-        'assertEq(_veriputLogs[0].topics[0], keccak256("Updated()"));'
-        "assertEq(_veriputLogs[0].data, hex\"\");")
-    event_source = (
-        "contract R { function test_cov_0() public { vm.recordLogs(); c0.f(); "
-        "Vm.Log[] memory _veriputLogs = vm.getRecordedLogs(); " +
-        event_assertions + " } }")
+    event_assertions = ("assertEq(_veriputLogs.length, 1);"
+                        "assertEq(_veriputLogs[0].emitter, address(c0));"
+                        "assertEq(_veriputLogs[0].topics.length, 1);"
+                        'assertEq(_veriputLogs[0].topics[0], keccak256("Updated()"));'
+                        "assertEq(_veriputLogs[0].data, hex\"\");")
+    event_source = ("contract R { function test_cov_0() public { vm.recordLogs(); c0.f(); "
+                    "Vm.Log[] memory _veriputLogs = vm.getRecordedLogs(); " + event_assertions +
+                    " } }")
     event_oracle = [{
-        "class": "concrete-value", "kind": "event-log",
+        "class": "concrete-value",
+        "kind": "event-log",
         "observed": "_veriputLogs",
-        "expected": {"log_count": 1, "event_index": 0,
-                     "emitter": "address(c0)",
-                     "topics": ['keccak256("Updated()")'], "data": 'hex""'},
-        "provenance": "source-grounded", "target_receiver": "c0",
+        "expected": {
+            "log_count": 1,
+            "event_index": 0,
+            "emitter": "address(c0)",
+            "topics": ['keccak256("Updated()")'],
+            "data": 'hex""'
+        },
+        "provenance": "source-grounded",
+        "target_receiver": "c0",
         "assertion": event_assertions,
     }]
-    rewritten, retained, error = reuse_authenticated_concrete_oracles(
-        event_source, "test_cov_0", "f", event_oracle)
+    rewritten, retained, error = reuse_authenticated_concrete_oracles(event_source, "test_cov_0",
+                                                                      "f", event_oracle)
     bad += check((rewritten, retained, error) == (event_source, event_oracle, None),
                  "real event-log schema remains target-bound")
     revert_source = ('contract R { function test_cov_0() public { '
                      'vm.expectRevert(bytes4(0x12345678)); c0.f(); } }')
     revert = [{
-        "class": "R0", "kind": "revert", "source": "expectRevert",
+        "class": "R0",
+        "kind": "revert",
+        "source": "expectRevert",
     }]
-    rewritten, retained, error = reuse_authenticated_concrete_oracles(
-        revert_source, "test_cov_0", "f", revert)
-    bad += check(rewritten == revert_source and error is None
-                 and retained[0].get("source") == "expectRevert"
-                 and retained[0].get("target_receiver") == "c0",
-                 "minimal revert metadata is completed from the exact anchor source")
-    legacy_revert = [{key: value for key, value in revert[0].items()
-                      if key != "source"}]
-    rewritten, retained, error = reuse_authenticated_concrete_oracles(
-        revert_source, "test_cov_0", "f", legacy_revert)
-    bad += check(error is None and retained[0].get("source") == "expectRevert"
-                 and retained[0].get("target_receiver") == "c0",
-                 "source-bound legacy revert metadata is upgraded to the strict schema")
+    rewritten, retained, error = reuse_authenticated_concrete_oracles(revert_source, "test_cov_0",
+                                                                      "f", revert)
+    bad += check(
+        rewritten == revert_source and error is None and retained[0].get("source") == "expectRevert"
+        and retained[0].get("target_receiver") == "c0",
+        "minimal revert metadata is completed from the exact anchor source")
+    legacy_revert = [{key: value for key, value in revert[0].items() if key != "source"}]
+    rewritten, retained, error = reuse_authenticated_concrete_oracles(revert_source, "test_cov_0",
+                                                                      "f", legacy_revert)
+    bad += check(
+        error is None and retained[0].get("source") == "expectRevert"
+        and retained[0].get("target_receiver") == "c0",
+        "source-bound legacy revert metadata is upgraded to the strict schema")
     prior_calls = revert_source.replace(
         "vm.expectRevert(bytes4(0x12345678)); c0.f();",
         "try c0.f() {} catch {} vm.expectRevert(bytes4(0x12345678)); c0.f();")
-    rewritten, retained, error = reuse_authenticated_concrete_oracles(
-        prior_calls, "test_cov_0", "f", legacy_revert)
+    rewritten, retained, error = reuse_authenticated_concrete_oracles(prior_calls, "test_cov_0",
+                                                                      "f", legacy_revert)
     bad += check(error is None and retained[0].get("target_receiver") == "c0",
                  "prior same-name calls do not hide the uniquely armed revert target")
     intervening_revert = revert_source.replace(
@@ -24354,8 +25516,7 @@ def test_normal_exit_oracle_binds_call_options_receiver():
   }
 }
 """
-    unchanged, retained = add_concrete_normal_exit_oracle(
-        source, "test_cov_0", "f", "normal")
+    unchanged, retained = add_concrete_normal_exit_oracle(source, "test_cov_0", "f", "normal")
     bad = 0
     bad += check(unchanged == source and retained[0].get("target_receiver") == "c0",
                  "call-options normal-exit generation binds the actual receiver")
@@ -24384,31 +25545,40 @@ def test_authenticated_concrete_oracle_downgrade_fails_closed():
     }
     bad = 0
     bad += check(
-        "normal-exit cannot downgrade" in str(
-            authenticated_concrete_oracle_error([completion, exact_return])),
+        "normal-exit cannot downgrade"
+        in str(authenticated_concrete_oracle_error([completion, exact_return])),
         "completion cannot replace or accompany an exact return")
-    for damaged in (
-            {**exact_return, "kind": "unknown"},
-            {key: value for key, value in exact_return.items() if key != "expected"},
-            {**exact_return, "assertion": ""},
-            {**exact_return, "provenance": "guessed"}):
-        bad += check(authenticated_concrete_oracle_error([damaged]) is not None,
-                     "missing or unauthenticated structured evidence fails closed")
+    for damaged in ({
+            **exact_return, "kind": "unknown"
+    }, {
+            key: value
+            for key, value in exact_return.items() if key != "expected"
+    }, {
+            **exact_return, "assertion": ""
+    }, {
+            **exact_return, "provenance": "guessed"
+    }):
+        bad += check(
+            authenticated_concrete_oracle_error([damaged]) is not None,
+            "missing or unauthenticated structured evidence fails closed")
     source = "contract C { function test_cov_0() public { c0.f(); } }"
-    unchanged, retained, error = reuse_authenticated_concrete_oracles(
-        source, "test_cov_0", "f", [exact_return])
+    unchanged, retained, error = reuse_authenticated_concrete_oracles(source, "test_cov_0", "f",
+                                                                      [exact_return])
     bad += check(unchanged == source and retained == [] and error is not None,
                  "metadata cannot claim an assertion absent from the replay")
     unrelated_source = ('contract C { function test_cov_0() public { c0.f(); '
                         'assertEq(helper.value(), uint256(7)); } }')
     unrelated = [{
-        "class": "concrete-value", "kind": "post-state",
-        "observed": "helper.value()", "expected": "uint256(7)",
-        "provenance": "stage2-witness", "target_receiver": "helper",
+        "class": "concrete-value",
+        "kind": "post-state",
+        "observed": "helper.value()",
+        "expected": "uint256(7)",
+        "provenance": "stage2-witness",
+        "target_receiver": "helper",
         "assertion": "assertEq(helper.value(), uint256(7));",
     }]
-    unchanged, retained, error = reuse_authenticated_concrete_oracles(
-        unrelated_source, "test_cov_0", "f", unrelated)
+    unchanged, retained, error = reuse_authenticated_concrete_oracles(unrelated_source,
+                                                                      "test_cov_0", "f", unrelated)
     bad += check(unchanged == unrelated_source and retained == [] and error is not None,
                  "an unrelated helper assertion cannot authenticate the target call")
     untyped_exact = """contract C {
@@ -24418,67 +25588,106 @@ def test_authenticated_concrete_oracle_downgrade_fails_closed():
   }
 }
 """
-    unchanged, retained = add_concrete_normal_exit_oracle(
-        untyped_exact, "test_cov_0", "f")
+    unchanged, retained = add_concrete_normal_exit_oracle(untyped_exact, "test_cov_0", "f")
     bad += check(unchanged == untyped_exact and retained == [],
                  "an untyped exact assertion is refused instead of downgraded")
     scalar_oracle = [{"kind": "return-value", "expected": "uint8(8)"}]
-    bad += check("differs" in _oracle_claim_coverage_error(
-        {"return_value": "7"}, scalar_oracle),
-        "wrong scalar expected value is rejected")
-    bad += check("differs" in _oracle_claim_coverage_error(
-        {"return_value": "reportSymbol"},
-        [{"kind": "return-value", "expected": "differentSymbol"}]),
+    bad += check("differs" in _oracle_claim_coverage_error({"return_value": "7"}, scalar_oracle),
+                 "wrong scalar expected value is rejected")
+    foundry_observed = [{
+        "kind": "return-value",
+        "expected": "uint8(18)",
+        "source": "foundry-fixed-replay",
+    }]
+    bad += check(
+        _oracle_claim_coverage_error({
+            "return_value": "0",
+            "exit_kind": "normal"
+        }, foundry_observed) is None,
+        "a fixed replay return observed by Foundry is not compared to the model witness")
+    bad += check(
+        _oracle_claim_coverage_error({"return_value": "reportSymbol"}, [{
+            "kind": "return-value",
+            "expected": "differentSymbol"
+        }]) is not None,
         "different unrenderable scalar texts cannot compare equal")
     tuple_oracles = [{
-        "kind": "return-value", "return_index": index, "return_arity": 2,
+        "kind": "return-value",
+        "return_index": index,
+        "return_arity": 2,
         "expected": expected,
     } for index, expected in enumerate(("uint8(1)", "uint16(9)"))]
-    bad += check("differs" in _oracle_claim_coverage_error(
-        {"return_value": "(1,2)"}, tuple_oracles),
+    bad += check(
+        "differs" in _oracle_claim_coverage_error({"return_value": "(1,2)"}, tuple_oracles),
         "wrong tuple component is rejected")
-    bad += check("differs" in _oracle_claim_coverage_error(
-        {"events": [{"name": "Expected"}]},
-        [{"kind": "event-log", "expected": {"name": "Other"}}]),
-        "wrong event sequence is rejected")
-    bad += check("differs" in _oracle_claim_coverage_error(
-        {"call_status": False}, [{"kind": "call-status", "expected": True}]),
-        "wrong call status is rejected")
-    bad += check("normal exit" in _oracle_claim_coverage_error(
-        {"exit_kind": "normal"}, [{"kind": "call-status", "expected": False}]),
-        "normal exit rejects a failed target call status without report status metadata")
-    bad += check("differs" in _oracle_claim_coverage_error(
-        {"revert_selector": "0x12345678"},
-        [{"kind": "revert", "expected": "0x87654321"}]),
-        "wrong revert selector is rejected")
+    bad += check(
+        "differs" in _oracle_claim_coverage_error({
+            "exit_kind": "normal",
+            "events": [{
+                "name": "Expected"
+            }]
+        }, [{
+            "kind": "event-log",
+            "expected": {
+                "name": "Other"
+            }
+        }]), "wrong event sequence is rejected")
+    bad += check(
+        "differs" in _oracle_claim_coverage_error({"call_status": False}, [{
+            "kind": "call-status",
+            "expected": True
+        }]), "wrong call status is rejected")
+    bad += check(
+        "normal exit" in _oracle_claim_coverage_error({"exit_kind": "normal"}, [{
+            "kind": "call-status",
+            "expected": False
+        }]), "normal exit rejects a failed target call status without report status metadata")
+    bad += check(
+        "differs" in _oracle_claim_coverage_error({"revert_selector": "0x12345678"},
+                                                  [{
+                                                      "kind": "revert",
+                                                      "expected": "0x87654321"
+                                                  }]), "wrong revert selector is rejected")
     exact_event = {
         "kind": "event-log",
         "expected": {
-            "log_count": 1, "event_index": 0, "emitter": "address(c0)",
+            "log_count": 1,
+            "event_index": 0,
+            "emitter": "address(c0)",
             "topics": ['keccak256("Updated(address,uint256)")'],
             "data": "abi.encode(uint256(9))",
         },
     }
-    bad += check(_oracle_claim_coverage_error({
-        "exit_kind": "normal",
-        "events": ["sol:@C@Probe@F@Updated#42"],
-    }, [exact_event], {42: "Updated(address,uint256)"}) is None,
+    bad += check(
+        _oracle_claim_coverage_error(
+            {
+                "exit_kind": "normal",
+                "events": ["sol:@C@Probe@F@Updated#42"],
+            }, [exact_event], {42: "Updated(address,uint256)"}) is None,
         "event declaration identity maps to the exact event-log signature")
-    bad += check("event declaration" in _oracle_claim_coverage_error({
-        "exit_kind": "normal",
-        "events": ["sol:@C@Probe@F@Updated#42"],
-    }, [{**exact_event, "expected": {
-        **exact_event["expected"],
-        "topics": ['keccak256("Updated(address,address)")'],
-    }}], {42: "Updated(address,uint256)"}),
+    bad += check(
+        "event declaration" in _oracle_claim_coverage_error(
+            {
+                "exit_kind": "normal",
+                "events": ["sol:@C@Probe@F@Updated#42"],
+            }, [{
+                **exact_event, "expected": {
+                    **exact_event["expected"],
+                    "topics": ['keccak256("Updated(address,address)")'],
+                }
+            }], {42: "Updated(address,uint256)"}),
         "same-name overloaded event cannot use another declaration signature")
-    bad += check("event declaration" in _oracle_claim_coverage_error({
-        "exit_kind": "normal",
-        "events": ["sol:@C@Probe@F@Transfer#44"],
-    }, [{**exact_event, "expected": {
-        **exact_event["expected"],
-        "topics": ['keccak256("OtherTransfer(bytes32)")'],
-    }}], {44: "Transfer(bytes32)"}),
+    bad += check(
+        "event declaration" in _oracle_claim_coverage_error(
+            {
+                "exit_kind": "normal",
+                "events": ["sol:@C@Probe@F@Transfer#44"],
+            }, [{
+                **exact_event, "expected": {
+                    **exact_event["expected"],
+                    "topics": ['keccak256("OtherTransfer(bytes32)")'],
+                }
+            }], {44: "Transfer(bytes32)"}),
         "an event signature substring cannot impersonate the declaration")
     return bad
 
@@ -24520,13 +25729,17 @@ def test_known_nonvoid_certified_basis_requires_return_witness():
         "known non-void certified basis accepts an exact witness")
     bad += check(
         not certified_basis_missing_return_witness(
-            True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY",
-            [("", "uint8")], None,
+            True,
+            "certified-region-concrete-fallback",
+            "CERTIFIED-BASIS-REPLAY", [("", "uint8")],
+            None,
             concrete_oracles=[{
-                "kind": "post-state", "observed": "c0.value()", "expected": 7,
-                "provenance": "stage2-witness", "assertion": "assertEq(c0.value(), 7);",
-            }]),
-        "an exact structured state oracle need not be downgraded to a return oracle")
+                "kind": "post-state",
+                "observed": "c0.value()",
+                "expected": 7,
+                "provenance": "stage2-witness",
+                "assertion": "assertEq(c0.value(), 7);",
+            }]), "an exact structured state oracle need not be downgraded to a return oracle")
     bad += check(
         not certified_basis_missing_return_witness(
             True, "certified-region-concrete-fallback", "CERTIFIED-BASIS-REPLAY", [("", "uint8")],
@@ -24798,8 +26011,7 @@ def test_certified_value_gate_basis_materializes_exact_ce_sender_and_value():
         "  }",
     ]
     rendered, changed, reason = materialize_concrete_nonpayable_value_gate(
-        lines,
-        "f", [("amount", "uint256")], {
+        lines, "f", [("amount", "uint256")], {
             "msg.value": (1, 100),
             "msg.sender": (0, 100),
         }, {}, {
@@ -24826,9 +26038,10 @@ def test_certified_value_gate_basis_materializes_exact_ce_sender_and_value():
             "msg.sender": "0",
             "msg.value": "11",
         })
-    bad += check(changed == 1 and reason is None
-                 and "vm.prank(address(uint160(1)));" in "\n".join(zero_sender),
-                 "the structural gate projects zero before checking Foundry's renderable domain")
+    bad += check(
+        changed == 1 and reason is None
+        and "vm.prank(address(uint160(1)));" in "\n".join(zero_sender),
+        "the structural gate projects zero before checking Foundry's renderable domain")
     _rendered, changed, reason = materialize_concrete_nonpayable_value_gate(
         lines, "f", [("amount", "uint256")], {
             "msg.value": (1, 10),
@@ -24855,10 +26068,12 @@ def test_concrete_value_gate_uses_fresh_status_identifiers():
     bad = 0
     bad += check(changed == 2 and reason is None,
                  f"both repeated replay calls are materialized: {reason}")
-    bad += check(source.count("bool _esbmc_value_gate_ok,") == 1,
-                 "the first generated call-status variable keeps the stable base name")
-    bad += check(source.count("bool _esbmc_value_gate_ok_1,") == 1,
-                 "a repeated value-gate call receives a fresh local identifier")
+    bad += check(
+        source.count("bool _esbmc_value_gate_ok,") == 1,
+        "the first generated call-status variable keeps the stable base name")
+    bad += check(
+        source.count("bool _esbmc_value_gate_ok_1,") == 1,
+        "a repeated value-gate call receives a fresh local identifier")
     return bad
 
 
@@ -24990,6 +26205,180 @@ def test_a_value_gate_certified_at_ZERO_still_REFUSES():
     bad += check(put is None, "a call that sends 1 is NOT in the slice value==0")
     bad += check(any("msg.value is certified at 0" in n and "sets it to 1" in n for n in notes),
                  f"and the refusal quotes the value it actually read: {notes}")
+    return bad
+
+
+def test_certified_basis_materializes_env_pins_and_binds_full_ce():
+    em, case = make_case()
+    source = "\n".join(em.lines) + "\n"
+    certified_ce = {
+        "u": "0",
+        "bps": "250",
+        "msg.sender": "5",
+        "msg.value": "0",
+        "tx.origin": "6",
+        "block.timestamp": "42",
+        "block.number": "7",
+        "block.chainid": "31337",
+        "block.basefee": "101",
+        "block.blobbasefee": "55",
+        "block.difficulty": "202",
+        "block.gaslimit": "999",
+        "block.prevrandao": "202",
+        "tx.gasprice": "303",
+        "block.coinbase": "404",
+        "msg.data": "0",
+        "msg.sig": "0",
+    }
+    rendered, changed, reason = materialize_concrete_certified_env_point(
+        source, case[1], "setDiscount", certified_ce)
+    body = function_body_lines(rendered, case[1])
+    call_i = find_unit_call(body, "setDiscount")
+    audit = {}
+    coordinate_evidence = target_call_calldata_ce_projection(certified_ce) or {}
+    coordinate_evidence.update(
+        unobserved_auxiliary_env_ce_projection(certified_ce, source, region={"u": (0, 10)}, pins={})
+        or {})
+    coordinate_evidence.update(prevrandao_difficulty_ce_projection(certified_ce) or {})
+    digest, bind_error = bind_emitted_source_to_certified_ce(
+        body,
+        call_i,
+        "setDiscount",
+        PARAMS,
+        certified_ce,
+        coordinate_evidence=coordinate_evidence,
+        audit=audit)
+    text = "\n".join(body or [])
+    bad = 0
+    bad += check(reason is None and changed >= 8, f"env CE point is materialized: {reason}")
+    bad += check("vm.warp(42);" in text and "vm.roll(7);" in text,
+                 "block timestamp/number are established")
+    bad += check("vm.chainId(31337);" in text and "vm.fee(101);" in text,
+                 "chainid/basefee are established")
+    bad += check("vm.blobBaseFee(55);" in text and "vm.difficulty(" not in text,
+                 "blobbasefee is established and deprecated difficulty cheatcode is absent")
+    bad += check("vm.prevrandao(uint256(202));" in text and "vm.txGasPrice(303);" in text,
+                 "prevrandao/gasprice are established")
+    bad += check("vm.coinbase(address(uint160(404)));" in text,
+                 "coinbase is established")
+    bad += check("vm.prank(address(uint160(5)), address(uint160(6)));" in text,
+                 "sender and origin are established by one target-local prank")
+    bad += check(digest is not None and bind_error is None,
+                 f"the final source authenticates the full CE: {bind_error}")
+    bad += check(audit.get("coordinates", {}).get("msg.sig", {}).get("kind") ==
+                 "calldata-determined", "msg.sig is covered by target-call calldata evidence")
+    bad += check(audit.get("coordinates", {}).get("block.gaslimit", {}).get("kind") ==
+                 "unobserved-auxiliary-environment",
+                 "unread block.gaslimit is covered by an audited auxiliary-env projection")
+    bad += check(
+        not unobserved_auxiliary_env_ce_projection(certified_ce,
+                                                   source + "\ncontract G { function g() public view returns(uint) { return block.gaslimit; } }\n",
+                                                   region={"u": (0, 10)},
+                                                   pins={}), "block.gaslimit is not projected when source reads it")
+    return bad
+
+
+def test_certified_basis_materializes_state_pins_and_binds_full_ce():
+    em, case = make_case()
+    source = "\n".join(em.lines) + "\n"
+    certified_ce = {
+        "u": "0",
+        "bps": "250",
+        "state.owner": "0",
+    }
+    rendered, changed, reason = materialize_concrete_certified_state_point(
+        source, case[1], "setDiscount", certified_ce, LAYOUT)
+    body = function_body_lines(rendered, case[1])
+    call_i = find_unit_call(body, "setDiscount")
+    body_sha = hashlib.sha256("\n".join(body or []).encode("utf-8")).hexdigest()
+    evidence = fixed_replay_state_ce_projection(certified_ce, body)
+    audit = {}
+    digest, bind_error = bind_emitted_source_to_certified_ce(body,
+                                                            call_i,
+                                                            "setDiscount",
+                                                            PARAMS,
+                                                            certified_ce,
+                                                            coordinate_evidence=evidence,
+                                                            audit=audit,
+                                                            setup_source_sha256=body_sha)
+    text = "\n".join(body or [])
+    bad = 0
+    bad += check(reason is None and changed >= 2, f"state CE point is materialized: {reason}")
+    bad += check("vm.store(address(c0), bytes32(uint256(0))" in text,
+                 "state.owner is written to its scalar slot")
+    bad += check("entry pin state.owner did NOT land" in text,
+                 "the fixed replay checks the vm.store landed")
+    bad += check(digest is not None and bind_error is None,
+                 f"the final source authenticates the full state CE: {bind_error}")
+    bad += check(audit.get("coordinates", {}).get("state.owner", {}).get("kind") ==
+                 "fixed-replay-entry-state",
+                 "state.owner is covered by fixed replay state evidence")
+    return bad
+
+
+def test_certified_basis_state_setup_does_not_leave_pending_prank():
+    em, case = make_case()
+    source = "\n".join(em.lines) + "\n"
+    certified_ce = {
+        "u": "0",
+        "bps": "250",
+        "state.owner": "0",
+        "msg.sender": "9",
+        "tx.origin": "8",
+    }
+    rendered, _state_changed, state_reason = materialize_concrete_certified_state_point(
+        source, case[1], "setDiscount", certified_ce, LAYOUT)
+    rendered, _env_changed, env_reason = materialize_concrete_certified_env_point(
+        rendered, case[1], "setDiscount", certified_ce)
+    body = function_body_lines(rendered, case[1])
+    text = "\n".join(body or [])
+    store_at = text.find("vm.store(address(c0)")
+    prank_at = text.find("vm.prank(address(uint160(9)), address(uint160(8)))")
+    bad = 0
+    bad += check(state_reason is None and env_reason is None,
+                 f"state and env CE materialization succeed: {state_reason}, {env_reason}")
+    bad += check("vm.prank(address(uint160(0)))" not in text,
+                 "the stale emitted target prank is removed")
+    bad += check(0 <= store_at < prank_at,
+                 "entry-state setup runs before the final certified target prank")
+    return bad
+
+
+def test_certified_basis_projects_unsettable_state_constants():
+    em, case = make_case()
+    source = "\n".join(em.lines) + "\n"
+    certified_ce = {
+        "u": "0",
+        "bps": "250",
+        "state.owner": "0",
+        "state.DURATION": "30",
+    }
+    rendered, changed, reason = materialize_concrete_certified_state_point(
+        source, case[1], "setDiscount", certified_ce, LAYOUT)
+    body = function_body_lines(rendered, case[1])
+    call_i = find_unit_call(body, "setDiscount")
+    body_sha = hashlib.sha256("\n".join(body or []).encode("utf-8")).hexdigest()
+    evidence = fixed_replay_state_ce_projection(certified_ce, body)
+    audit = {}
+    digest, bind_error = bind_emitted_source_to_certified_ce(body,
+                                                            call_i,
+                                                            "setDiscount",
+                                                            PARAMS,
+                                                            certified_ce,
+                                                            coordinate_evidence=evidence,
+                                                            audit=audit,
+                                                            setup_source_sha256=body_sha)
+    text = "\n".join(body or [])
+    bad = 0
+    bad += check(reason is None and changed >= 2,
+                 f"storage-backed state CE point is still materialized: {reason}")
+    bad += check("state.DURATION" in text and "VERIPUT_FIXED_REPLAY_STATE_PROJECTION" in text,
+                 "unsettable state coordinate is projected in the fixed replay body")
+    bad += check(digest is not None and bind_error is None,
+                 f"the full CE binds despite the unsettable constant: {bind_error}")
+    bad += check(audit.get("coordinates", {}).get("state.DURATION", {}).get("kind") ==
+                 "fixed-replay-state-constant-or-immutable",
+                 "state.DURATION is covered by constant/immutable projection evidence")
     return bad
 
 
@@ -25234,6 +26623,21 @@ def main():
               test_JSON_fuzz_filter_refutes_only_its_labeled_assertion,
               test_stable_unlabeled_revert_from_prefilter_is_path_exit_evidence,
               test_R2_fuzz_filter_removes_only_concretely_refuted_candidates,
+              test_boundary_observation_points_use_linear_coordinate_plan,
+              test_boundary_observations_propose_unproved_absolute_and_delta_bounds,
+              test_boundary_probe_is_a_deterministic_unit_test,
+              test_boundary_probe_reads_only_its_labeled_uint_assertion,
+              test_boundary_observation_refinement_uses_counterexample_value,
+              test_oracle_input_part_split_preserves_certified_union_and_witnesses,
+              test_oracle_candidate_refinement_rechecks_only_the_witness_child,
+              test_oracle_part_scheduler_combines_opposite_direction_subregions,
+              test_oracle_part_query_narrows_only_inputs_and_matches_exact_rung,
+              test_oracle_part_query_caches_every_returned_rung,
+              test_oracle_part_publication_requires_own_representative_and_merges_equal_oracles,
+              test_oracle_part_materialization_rows_are_stable_and_proved_only,
+              test_oracle_part_build_rows_replace_refined_candidates_only,
+              test_oracle_part_materialization_plan_requires_authenticated_ce,
+              test_r2_refutation_observation_is_scoped_to_exact_failed_claim,
               test_typed_R2_is_ONE_BATCH_and_contains_pre_plus_coordinate,
               test_typed_R2_proposes_return_equals_entry_state_coord_for_getters,
               test_typed_R2_return_candidates_never_name_pre_snapshot,
@@ -25333,6 +26737,7 @@ def main():
               test_oracle_mapping_candidates_share_the_dependency_filter,
               test_an_R2_PASS_actually_runs_and_carries_the_proposed_vars,
               test_an_ABSOLUTE_row_is_MERGED_and_not_silently_dropped,
+              test_R2_2_refutation_schedules_counterexample_bound_retry,
               test_a_RETURN_R2_row_is_MERGED_and_not_reported_empty,
               test_the_CAP_pass_RUNS_when_stage_1_REFUTED_the_exact_delta,
               test_the_CAP_pass_IS_SKIPPED_when_stage_1_ALREADY_HOLDS,
@@ -25451,7 +26856,7 @@ def main():
               test_ladder_budget_reserves_r2_followup_when_possible,
               test_refused_put_record_preserves_build_put_reason,
               test_concrete_stage2_source_record_preserves_certified_region_reason,
-              test_certified_basis_raw_call_moves_off_zero_sender,
+              test_certified_basis_raw_call_keeps_zero_sender_when_certified,
               test_interface_parameter_can_be_lifted_as_address_fuzz_input,
               test_fuzzed_interface_address_parameter_is_mocked_before_target_call,
               test_missing_low_level_value_gate_args_update_abi_signature,
@@ -25463,10 +26868,17 @@ def main():
               test_concrete_replay_gets_explicit_normal_exit_oracle,
               test_try_concrete_replay_marks_only_successful_target_exit,
               test_try_concrete_replay_can_assert_the_fixed_revert_exit,
+              test_bare_concrete_replay_can_assert_the_fixed_revert_exit,
               test_try_concrete_replay_selects_the_final_same_name_call,
               test_multiline_typed_try_replay_marks_success_after_all_catches,
               test_source_synthesized_concrete_binds_fixed_scalar_return,
               test_concrete_return_binding_requires_one_known_scalar_return,
+              test_fixed_replay_binds_every_tuple_return_component,
+              test_fixed_replay_asserts_all_exact_scalar_final_state_values,
+              test_fixed_replay_asserts_exact_event_topics_and_data,
+              test_fixed_replay_event_oracle_accepts_rehomed_inherited_ids,
+              test_fixed_replay_skips_reverted_event_traces,
+              test_fixed_replay_combines_return_event_and_state_oracles,
               test_authenticated_structured_concrete_oracles_are_reused_without_downgrade,
               test_normal_exit_oracle_binds_call_options_receiver,
               test_authenticated_concrete_oracle_downgrade_fails_closed,
@@ -25478,6 +26890,10 @@ def main():
               test_certified_value_gate_basis_concrete_uses_low_level_call,
               test_certified_value_gate_basis_drops_stale_revert_prelude,
               test_certified_value_gate_basis_materializes_exact_ce_sender_and_value,
+              test_certified_basis_materializes_env_pins_and_binds_full_ce,
+              test_certified_basis_materializes_state_pins_and_binds_full_ce,
+              test_certified_basis_state_setup_does_not_leave_pending_prank,
+              test_certified_basis_projects_unsettable_state_constants,
               test_concrete_value_gate_uses_fresh_status_identifiers,
               test_certified_value_gate_setup_materialization_is_narrowly_projected,
               test_abstract_target_deployment_uses_concrete_harness,

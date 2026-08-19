@@ -405,6 +405,7 @@ K_INDUCTION_PROOF_FLAGS = {
     "--incremental-bmc",
     "--overflow-check",
     "--div-by-zero-check",
+    "--path-cov-arith-resolve",
     "--k-induction",
     "--k-induction-parallel",
     "--inductive-step",
@@ -9939,6 +9940,11 @@ def main():
     failed.update(pre_failed)
     ok, ok_holes, ok_retreated, ok_established, ok_source = \
         {}, {}, {}, {}, {}
+    # Whether certification had to change the first candidate region after a
+    # refutation.  RQ3 derives the no-region-refinement arm from Full using
+    # this per-piece fact; recording configured round counts is insufficient,
+    # because those counts do not say whether a particular path used them.
+    ok_refinement_used = {}
     # Per (enc, piece), like ok_retreated and for the same reason: a region
     # reported without naming the harness-chosen values it was certified under
     # reads as an unconditional statement, and the emitter's rendering decision
@@ -10035,6 +10041,7 @@ def main():
         key = (enc, 1)
         ok[key] = dict(box)
         ok_holes[key] = copy_holes(pre_structural_holes.get(enc) or {})
+        ok_refinement_used[key] = False
         if str(pre_structural_source.get(enc)
                or "").startswith("STRUCTURAL external-call array length no-loop region"):
             ok_source[key] = "structural-extcall-length-no-loop"
@@ -10156,14 +10163,9 @@ def main():
             continue
         structural = structural_abi_gate_certificate(path_decisions.get(enc), box, holes, ce)
         if structural:
-            key = (enc, 1)
-            ok[key] = dict(box)
-            ok_holes[key] = copy_holes(holes)
-            ok_source[key] = "structural-abi-gate"
-            witness_check[enc] = "STRUCTURAL"
-            print(f"[certify enc={enc}] {structural}. No ESBMC certification "
-                  f"query is started for this path.")
-            continue
+            print(f"[certify enc={enc}] structural ABI gate recognized: "
+                  f"{structural}. The normal ESBMC k-induction and non-vacuity "
+                  "query is still required.")
         # THE WITNESS AND THE BOX IT WAS SOLVED UNDER TRAVEL TOGETHER.
         #
         # They must, and getting this wrong produced a FALSE POSITIVE on real
@@ -10216,10 +10218,10 @@ def main():
                   "arguments: the region below holds of the executions in "
                   "which the callee behaved this way, and a test rendering it "
                   "has to realise that some other way")
-        queue = [(dict(box), copy_holes(holes), True)]
+        queue = [(dict(box), copy_holes(holes), True, False)]
         piece_no, piece_fail = 0, []
         while queue:
-            box, holes, has_ce = queue.pop(0)
+            box, holes, has_ce, refinement_used = queue.pop(0)
             piece_no += 1
             tag = (f"enc={enc}" if args.max_region_pieces <= 1 else f"enc={enc} piece {piece_no}")
             last_wit, last_wit_box = {}, dict(box)
@@ -10446,6 +10448,7 @@ def main():
                     # parameterized/concrete decision depends on the
                     # difference.
                     ok_retreated[(enc, piece_no)] = dict(retreated)
+                    ok_refinement_used[(enc, piece_no)] = bool(refinement_used)
                     ok_established[(enc, piece_no)] = dict(established)
                     ok_extcall[(enc, piece_no)] = dict(xpins)
                     if retreated:
@@ -10545,6 +10548,7 @@ def main():
                 # before this existed -- which is what the must-flip test pins.
                 usable = [(c, val) for c, val in punches if len(holes.get(c, ())) < args.max_holes]
                 if usable:
+                    refinement_used = True
                     tiny_safety_cut_coord, tiny_safety_cut_streak = None, 0
                     for c, val in usable:
                         holes.setdefault(c, [])
@@ -10636,6 +10640,7 @@ def main():
                         # asked about, while this retreat is this path's own.
                         applied = {n: v for n, v in payload.items() if box.get(n) != (v, v)}
                         if applied:
+                            refinement_used = True
                             for n, v in applied.items():
                                 box[n] = (v, v)
                             retreated.update(applied)
@@ -10669,6 +10674,7 @@ def main():
                         if retreat:
                             applied = {n: v for n, v in retreat.items() if box.get(n) != (v, v)}
                             if applied:
+                                refinement_used = True
                                 for n, v in applied.items():
                                     box[n] = (v, v)
                                 retreated.update(applied)
@@ -10754,13 +10760,15 @@ def main():
                                   f"is DISCARDED UNMEASURED -- it is not known "
                                   f"to be outside the domain, only unexamined")
                             continue
-                        queue.append((r, copy_holes(holes), not ce_in_region(r, holes, ce)))
+                        queue.append((r, copy_holes(holes),
+                                      not ce_in_region(r, holes, ce), True))
                         print(f"[split {tag}] keeping the discarded side "
                               f"{coord} in [{r[coord][0]}, {r[coord][1]}] as a "
                               f"separate piece")
                 prev_size = new_size
                 print(f"[shrink {tag}] {box} -> {nb}  |R| {new_size}")
                 box = nb
+                refinement_used = True
             else:
                 reason = (
                     "shrink round budget exhausted" +
@@ -11006,6 +11014,7 @@ def main():
                     n: str(v)
                     for n, v in sorted((ok_retreated.get(key) or {}).items())
                 },
+                "refinement_used": bool(ok_refinement_used.get(key, False)),
                 "established": [{
                     "target": target,
                     "source": source
