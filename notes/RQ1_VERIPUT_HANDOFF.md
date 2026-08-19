@@ -2138,3 +2138,68 @@ If P1 times out in refine, the next arm is `--refine-rounds 1` plus
 `--pin-extcall` (both `.call` success bits pinned at the witness, which is
 exactly the successful-withdraw path) — attacking the third factor, path count,
 which is the only one not yet reduced.
+
+## 05:00 — the motivation example's real blocker: a pin that empties the region
+
+Four arms failed before the cause was visible, and each one eliminated a
+hypothesis rather than merely burning budget:
+
+| arm | hypothesis | measured result |
+|---|---|---|
+| A2 (2400s) | not enough budget | level-0 ALONE took 996.6s; zero certify queries |
+| L1/L2 | probe budget too large | "~12 candidate values per direction" UNCHANGED under `--probes 1..2` / `--probe-witnesses 2..4` — that flag does not control it |
+| — | `--ce-materialize` can bypass Stage 2 | 0 candidates on all three journals; enumeration reports `--path-cov-probe was too expensive for this unit`, so no witness pool was ever written |
+| P1 (`--pin`) | too many coordinates | **level-0 996.6s -> 35.7s**, free set 5-6 -> 1, and it REACHED certification |
+
+Reaching certification is what exposed the actual cause. All three paths in the
+pinned slice came back:
+
+```
+witness_check: VACUOUS
+"the certification query witnessed NO execution admitted by it that walks this
+ path, so every exit assert held for want of an execution"
+```
+
+enc=127's witness is `state.deposits[0] = 1`, and the pin set contained
+`msg.value = 0`. `deposit()` is `deposits[msg.sender] += msg.value`, so with
+msg.value pinned at 0 across the whole transaction sequence **no sequence can
+establish a non-zero balance** — the region is empty, and every assertion in it
+holds for want of an execution.
+
+The pin has TWO sources and both had to go:
+
+1. `--pin-agreed-establishable-env` pins env quantities all witnessed paths
+   agree on, and the surviving paths all have `msg.value = 0` because `withdraw`
+   itself takes no value. Dropping the flag was NOT enough.
+2. **`--no-auto-pin-value` is off by default**, i.e. msg.value IS pinned to 0
+   automatically on a unit the source declares non-payable
+   (`solidity_path_generalise.py:7934`). The help says this default "is
+   deliberately NOT the conservative one, because it is not a policy: a
+   non-payable function's ABI gate reverts every call carrying value, so no
+   input with msg.value != 0 reaches the body."
+
+That reasoning is exactly right for the FINAL call and exactly wrong for the
+SETUP transactions in a multi-transaction scope. `--scope deposit,withdraw`
+needs `deposit{value: v}` with `v > 0`; the auto-pin forbids it.
+
+**This is a method-level constraint, not a tuning detail**, and it belongs in
+the write-up next to A8/B3: a pin is a statement about the whole bounded
+transaction sequence, so it must be consistent with the ESTABLISHABILITY of the
+entry state, and a per-call ABI fact does not generalise to the sequence.
+
+The tool behaved correctly throughout — it reported VACUOUS rather than
+counting an empty region as certified, and said in as many words that "an
+undecided answer is not a discharged one". The defect was in how the arms were
+configured, not in the verifier.
+
+P4 therefore runs `--no-auto-pin-value` on top of P1's coordinate pins, with
+bracketing on, `--refine-rounds 1` and `--pin-extcall`.
+
+## Campaign watch
+
+Two `no-valid` cases so far, both `TimelockController`
+(`acfix_032_CVE_2021_39167`, `acfix_033_CVE_2021_39168`), both
+`status=budget-exhausted`: `certify:timeout` x2 then
+`zero-yield-getter-fallback:timeout` x4, nothing emitted inside 600s. The target
+contract is the right one (it is the CVE's subject), so this is OUR budget, not
+the contract being untestable. Tally these at the end.
