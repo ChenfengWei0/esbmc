@@ -327,7 +327,46 @@ not wasted work.
   negative ones (uncalled authority, unguarded callee); 507 solidity_path_put
   tests pass.
 
-  STILL OPEN, the 66 body failures: 23 `EvmError: Revert`, 15 `fixed witness
+- [ ] **PAPER-CRITICAL: an R2 rung is emitted over a WIDER region than the one
+  it was proved on.**  Root-caused on
+  `bugfix124/acfix_026_CVE_2019_15080` `transferOwnership` path 7, which is one
+  of the 5 R2 rows failing on chain.  This is the only class that would
+  contradict the mechanical-preservation claim, so it is written out in full.
+
+  The contract is 3 lines: `transferOwnership(address _newOwner) onlyOwner
+  { owner = _newOwner; }`.  The emitted PUT asserts two rungs:
+
+      assertEq(_post_owner, uint256(uint160(_newOwner)), "owner: post == _newOwner");
+      assertGt(_post_owner, _pre_owner,                  "owner: post > pre");
+
+  The first always holds.  The second cannot hold over the region the test
+  fuzzes: the entry state is ESTABLISHED as `state.owner$3 := msg.sender`, so
+  `pre == msg.sender`, and the test bounds `msg.sender` over the whole address
+  space while `_newOwner` is bounded to a band.  `post > pre` is false for every
+  `msg.sender` above that band.
+
+  It is NOT that ESBMC was asked the wrong question.  The assert spec carries
+  `establish: [{"source": "msg.sender", "target": "state.owner$3"}]`, so the
+  establishment was in the query.  The `assert/run.*.log` for this unit shows
+  the rung was asked several times, once per oracle input part, with different
+  regions:
+
+      owner: post > pre   HOLDS     4
+      owner: post > pre   REFUTED   3
+
+  The rung is REGION-DEPENDENT and both verdicts are correct for their own part.
+  What went wrong is downstream: a HOLDS from one part was adopted into a test
+  whose bounds come from a different, wider part.  The emitted
+  `_newOwner` interval ends at 1096126227998177188652763624537212264744096890878
+  while the part-3 spec that produced a HOLDS ends at 2^160-1 -- the rung and the
+  region it is emitted with do not come from the same query.
+
+  So the fix is in rung ADOPTION, not in the verifier: every rung must stay bound
+  to the exact part-region it was proved on, and a rung whose region differs from
+  the emitted part's must be re-proved or dropped.  Until then this class is a
+  soundness gap, not a Foundry flake, and it must not be filtered away.
+
+  STILL OPEN, the rest of the 66 body failures: 23 `EvmError: Revert`, 15 `fixed witness
   state: N != 0` (the emitter's own entry-state self-check refusing, which is
   correct behaviour and a separate entry-state gap), 10 `next call did not
   revert as expected` (R0), 5 R2 relation/direction oracles false on chain,
