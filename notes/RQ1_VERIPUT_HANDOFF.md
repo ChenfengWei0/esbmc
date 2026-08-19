@@ -2088,3 +2088,53 @@ put=13/13 bucket=valid-PUT-with-R1R2 wall=570s`.
 
 Metrics helper (the three numbers, on any result root):
 `scratchpad/metrics.py <result-root> [label]`.
+
+## 04:30 — campaign in flight, w2 lost, motivation diagnosed
+
+**Local Full 509** started 03:39 (`campaign-full-v2`, `--jobs 6`). At 71 cases
+the pace is ~1.5 cases/min, i.e. finishing about 09:15. Partial metrics at 51
+cases, all better than the sample baselines:
+
+| | Full (partial) | sample-v5 | sample-v6 |
+|---|---|---|---|
+| no-valid | **0** | 1 | 2 |
+| PUT : concrete | **117 : 0 = 100%** | 89.9% | 89.2% |
+| R1/R2 share of valid PUTs | **60.7%** | 55.6% | 69.2% |
+
+**w2 is DOWN.** It ran shards 1-20 of bugfix124 (26 cases) at `--jobs 5`, which
+extrapolated to 13.5 h and would have missed the deadline, so it was restarted
+from shard 21 at `--jobs 9` (16 CPU, 21 GiB, load had been 5.0 — badly
+underused). Minutes later the host stopped answering ping entirely, not just
+ssh. It is a WSL2 guest on a Windows box; nothing here can wake it.
+
+PLAN: let local Full finish first (~09:15), then run `no_selection` LOCALLY on
+the whole box (`--jobs 10`), which at the observed local rate is ~4 h and lands
+before 14:00. A watcher is polling w2 every 5 minutes; if it returns, run the
+arm there instead and keep the local box free. Shards 1-20 of bugfix124 on w2
+are complete and need not be redone (`~/VeriPUT/Results/RQ3/
+No_selection_strategy/campaign-nosel-v2/`, logs `nosel-v2.log` and
+`nosel-v2b.log`).
+
+**Motivation — the cost model is now measured, and the lever is found.**
+Level-0 cost is `coordinates x candidate values x paths`. Each factor was tested
+separately:
+
+| lever | result |
+|---|---|
+| more time (A2, 2400s) | level-0 alone took 996.6s; ZERO certify queries |
+| fewer probes (L1/L2, `--probes 1..2`, `--probe-witnesses 2..4`) | "~12 candidate values per direction" UNCHANGED — that flag does not control it. Level-0 got *slower* (1494s) under contention |
+| `--ce-materialize` (bypass Stage 2 entirely) | 0 candidates on all three journals: enumeration reports `--path-cov-probe was too expensive for this unit`, so no witness pool was ever written |
+| **fewer coordinates (P1, `--pin`)** | **level-0 996.6s -> 35.7s**, free set 5-6 -> 1 |
+
+P1 pins `state.discountBps$23[msg.sender]=0`, `block.number=0`,
+`block.timestamp=0` on top of the strong recipe, everything else unchanged. The
+no-discount path is sufficient: the hand-written ideal PUT kills BOTH mutants
+through `test_R0_no_discount` alone. The pins narrow the slice to enc=127, 6,
+62 — and **enc=127 is one of the three witnessed normal-exit paths**
+(`amount=1, deposits[0]=1`, returns). Its `linear-refine` round then took
+626.5s, so the remaining risk is that refine, not level-0.
+
+If P1 times out in refine, the next arm is `--refine-rounds 1` plus
+`--pin-extcall` (both `.call` success bits pinned at the witness, which is
+exactly the successful-withdraw path) — attacking the third factor, path count,
+which is the only one not yet reduced.
