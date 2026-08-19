@@ -5571,18 +5571,36 @@ check("pin-source-name-does-not-split-inside-a-mapping-key",
 check("pin-source-name-resolves-a-mapping-entry",
       _pin_source_name("state.deposits[msg.sender]"), "deposits")
 
-# The closure filter deliberately does NOT use the rule above; see its
-# docstring for the measurement that reverted that change. These pin the
-# ACCIDENT so it cannot be "fixed" again without re-reading why.
 _fusc_kept, _fusc_dropped = filter_unreferenced_state_coords(
     ["amount", "msg.sender", "state.deposits[0]", "state.deposits[msg.sender]",
      "state.discountBps$23[msg.sender]", "state.feeBps", "state.owner"],
     ["deposits", "discountBps", "feeBps", "feeReceiver", "maxFee"])
-check("a-lowering-suffix-lets-a-mapping-entry-survive-the-closure-filter",
-      "state.discountBps$23[msg.sender]" in _fusc_kept, True)
-check("without-one-the-same-shaped-mapping-entry-is-dropped",
-      sorted(_fusc_dropped),
-      ["state.deposits[0]", "state.deposits[msg.sender]", "state.owner"])
+check("mapping-entries-inside-the-closure-are-kept-regardless-of-a-lowering-suffix",
+      sorted(_fusc_kept),
+      sorted(["amount", "msg.sender", "state.deposits[0]",
+              "state.deposits[msg.sender]", "state.discountBps$23[msg.sender]",
+              "state.feeBps"]))
+check("a-state-field-outside-the-closure-is-still-dropped",
+      _fusc_dropped, ["state.owner"])
+
+# The budget caps SUBSCRIPTED coordinates only, and names what it cut. Keeping
+# every closure match OOM'd ETHRegistrarController at 12 GiB and cost the case.
+_bud_kept, _bud_dropped = filter_unreferenced_state_coords(
+    ["state.s"] + [f"state.m[{i}]" for i in range(10)], ["s", "m"], budget=3)
+check("a-plain-scalar-is-never-capped", "state.s" in _bud_kept, True)
+check("subscripted-coordinates-are-capped-at-the-budget",
+      len([c for c in _bud_kept if "[" in c]), 3)
+check("what-the-budget-cut-is-named-not-dropped-silently",
+      len(_bud_dropped), 7)
+check("the-budget-names-its-reason",
+      all("retention budget" in d for d in _bud_dropped), True)
+# Deterministic order: shortest first, then lexicographic, so two runs of one
+# configuration cannot disagree about which coordinates the budget bought.
+check("budget-selection-is-deterministic",
+      filter_unreferenced_state_coords(
+          ["state.m[10]", "state.m[2]", "state.m[1]"], ["m"], budget=2)[0],
+      ["state.m[1]", "state.m[2]"])
+
 check("a-null-closure-drops-nothing",
       filter_unreferenced_state_coords(["state.deposits[0]"], None),
       (["state.deposits[0]"], []))

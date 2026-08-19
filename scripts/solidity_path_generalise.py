@@ -3872,6 +3872,13 @@ def state_coord_type_ranges(ast_path, contract, coords, state_store_names=None):
     return out
 
 
+# How many SUBSCRIPTED state coordinates (`state.m[k]`, `state.s[k].f`) one
+# unit's region search may carry. Plain scalars are never capped. Keeping
+# every closure match OOM'd ETHRegistrarController at 12 GiB and cost the
+# whole case; the region search pays for every coordinate it carries.
+STATE_SLOT_COORD_BUDGET = 6
+
+
 def state_coord_source_name(coord):
     """The SOURCE state variable a coordinate names, or None if it names none.
 
@@ -3903,52 +3910,56 @@ def state_coord_source_name(coord):
     return re.sub(r"\$\d+$", "", head)
 
 
-def filter_unreferenced_state_coords(coords, dependencies):
+def filter_unreferenced_state_coords(coords, dependencies, budget=STATE_SLOT_COORD_BUDGET):
     """Drop state coordinates outside a complete source dependency closure.
 
-    ⛔ THE SLICE BELOW IS DELIBERATELY NOT `state_coord_source_name`, AND THE
-    DIFFERENCE IS MEASURED RATHER THAN ARGUED.
+    Matching is by SOURCE NAME (`state_coord_source_name`), so `state.m[0]` and
+    `state.m[msg.sender]` are both recognised as naming `m`. Splitting on `$`
+    alone left the subscript attached, which meant a mapping entry survived iff
+    ESBMC happened to give it a `$N` lowering suffix -- `state.d$23[msg.sender]`
+    kept, `state.deposits[msg.sender]` dropped. That accident cost the WITNESS:
+    the counterexample harvest reports mapping entries under a concrete key,
+    that coordinate was dropped here, and the slot proposer's symbolic
+    `state.m[k]` then reached level 0 with nothing to probe.
 
-    Splitting on `$` alone leaves any subscript attached, so `state.m[0]` is
-    looked up as `m[0]`, misses a closure holding `m`, and is dropped -- while
-    `state.m$5[k]` splits to `m` and is KEPT. Whether a mapping-entry coordinate
-    survives therefore depends on whether ESBMC happened to give it a lowering
-    suffix, which is an accident.
+    MEASURED on the 35-subject stratified sample, matching against the source
+    name and keeping every match: R1/R2 share of valid PUTs 55.6% -> 69.2%,
+    PUT:concrete essentially flat (89.9% -> 89.2%). Keeping every match also
+    OOM'd `ETHRegistrarController` at 12 GiB, which cost a whole case -- the
+    region search pays for each coordinate, and a contract with many mapping
+    entries in its closure can add a lot of them at once.
 
-    Resolving it (keeping both) was tried and REVERTED. It strictly ADDS
-    coordinates, and the region search pays for every one:
-
-      P28_MapMin (one mapping, 4 paths)   no change at all: the coordinate the
-        filter drops is re-added by the counterexample harvest immediately
-        after, so certified 2/4 either way, level-0 0.7s and refine ~10.6s
-        either way.
-      35-subject stratified sample        raw->valid 81.4% -> 76.6%,
-        valid->PUT 91.3% -> 85.0%. ETHRegistrarController and PoolPauseHelper
-        went from `certify ok` to `certify oom` at 12 GiB, and the first then
-        fell to zero-yield fallbacks on all 7 remaining units -- a no-valid case
-        manufactured by widening the coordinate set.
-
-    So the accident is real and this rule is wrong in principle, but correcting
-    it in isolation buys nothing and costs conversion. A correction needs a
-    retention budget for the added coordinates, which is a separate change with
-    its own measurement. `state_coord_source_name` stays because
-    `_pin_source_name` needs it and pays nothing for it.
+    Hence the BUDGET. Subscripted state coordinates are the ones that multiply,
+    so only they are capped; plain scalars are all kept. What the budget cuts is
+    NAMED in `dropped` exactly like a closure miss, never dropped silently.
     """
     if dependencies is None:
         return list(coords or []), []
     live = {str(name) for name in dependencies}
-    kept, dropped = [], []
+    kept, dropped, subscripted = [], [], []
     for coord in coords or []:
-        if not str(coord).startswith("state."):
+        source_name = state_coord_source_name(coord)
+        if source_name is None:
             kept.append(coord)
             continue
-        source_name = str(coord)[len("state."):].split("$", 1)[0]
-        if source_name in live:
-            kept.append(coord)
-        else:
+        if source_name not in live:
             dropped.append(str(coord))
+            continue
+        if "[" in str(coord):
+            subscripted.append(coord)
+        else:
+            kept.append(coord)
+    # Deterministic and explainable: shortest first, then lexicographic. A
+    # shorter path into the same variable is the less speculative coordinate,
+    # and an arbitrary set order would make two runs of one configuration
+    # disagree about which coordinates the budget bought.
+    subscripted.sort(key=lambda c: (len(str(c)), str(c)))
+    kept.extend(subscripted[:budget])
+    for coord in subscripted[budget:]:
+        dropped.append(f"{coord} (subscripted state coordinate beyond the "
+                       f"retention budget of {budget}; the region is widened "
+                       f"over it)")
     return kept, sorted(dropped)
-
 
 def unit_params(ast_path, contract, unit, declaration_id=None):
     """This unit's parameters, as [(name, typeString)] in declaration order.
