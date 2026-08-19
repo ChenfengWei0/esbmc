@@ -555,6 +555,46 @@ not wasted work.
   previously logged the depth refusal?  Re-measure the real conversion rate on
   the local host once the Full campaign finishes.
 
+### Stratified-sample validation (the gate before the single rerun)
+
+35 subjects -- 10 bugfix124, 14 peer182, 11 real203 -- drawn by even spread over
+each defect-signature pool, excluding subjects any single-fix pilot was written
+against, plus an unaffected control stratum.  Lists and the drawing rule are in
+`VeriPUT/Notes/samples/`, in the repo rather than in tmpfs.  Same 600s budget,
+same host.  `sample-v3` carries the first five fixes:
+
+| | before | after |
+|---|---:|---:|
+| R1/R2 share of PUT | 24.6% | **43.9%** |
+| PUT rows with R1/R2 | 76 | 125 |
+| ladder ran | 223 | 291 |
+| REFUSED depth mismatch | 61 | **0** |
+| REFUSED enc not enumerated | 34 | 21 |
+| phantom `forge=None` PUT rows | 28 | 16 |
+| forge `green=False` rows | 28 | 25 |
+| raw -> valid conversion | 71.8% | 73.3% |
+| PUT share of valid | 91.5% | 91.1% |
+| valid PUTs | 214 | 195 |
+| cases with R1/R2 | 14/35 | 19/35 |
+
+READ THE PUT COUNT HONESTLY.  Valid PUTs fall 9% and that is the budget trade,
+confirmed per subject rather than assumed: `peer_ccsolbmc__AIRBets` goes 509s ->
+571s and now saturates the 600s budget, returning 17 units where it returned 24,
+every one of them with R1/R2 and with raw == valid == put.  A unit that used to
+refuse its ladder instantly now runs it.  Whether that trade is the right one is
+the author's call, and the lever is
+`ABI_VALUE_GATE_MAX_CERTIFIED_PATHS` (currently 64).
+
+WHAT THE SAMPLE CAUGHT that no single-fix pilot did:
+  * the persistence fix had a SECOND gate behind it (recorded oracle
+    provenance), so all 5 `persistence-error` cases were still failing;
+  * 18 of 20 value-gate rescues never got their enumeration, because the rescue
+    fires at the budget wall -- which is what moved the enumeration to one
+    subject-wide run at case start.
+
+Both are fixed and re-measured in `sample-v4`.  This is the reason the protocol
+runs a sample before the rerun, and the reason the rerun stays at exactly one.
+
 ### Stage-2 non-certification budget (bugfix124 sample, preliminary)
 
 | reason family | share | nature |
