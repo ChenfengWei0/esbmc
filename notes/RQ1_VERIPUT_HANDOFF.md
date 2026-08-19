@@ -2203,3 +2203,60 @@ Two `no-valid` cases so far, both `TimelockController`
 `zero-yield-getter-fallback:timeout` x4, nothing emitted inside 600s. The target
 contract is the right one (it is the CVE's subject), so this is OUR budget, not
 the contract being untestable. Tally these at the end.
+
+## 2026-08-20 — motivation: three independent causes, all found by reading logs
+
+Every earlier motivation arm (P1, P3, P4, P5) failed for reasons that had
+nothing to do with the hypotheses I was testing (time, probes, coordinates).
+The logs named all three:
+
+1. **Pin collision.** I passed `--pin 'state.discountBps$23[msg.sender]=0'`.
+   The generaliser already proposes that same name as a mapping slot
+   coordinate, so the spec bounded it twice and ESBMC refused the query
+   outright: *"the coordinate is bounded TWICE in this spec; two bounds on one
+   name can intersect to an empty box ... Certification is not attempted."*
+   No certification query was ever issued on any arm carrying that pin. The
+   "VACUOUS" I recorded earlier was this refusal, not an empty region.
+   Fix: drop the pin. The slot coordinate covers it, at full range, which is
+   what the motivation needs anyway — both mutants alter discount arithmetic.
+
+2. **Wrong transaction alphabet.** `cert_DRY` and `cert_tx2` were both
+   `scope=focus`, i.e. `withdraw` alone. Only 2 paths are witnessed that way and
+   neither is a successful withdrawal, so Stage 4 could only ever emit the
+   revert-path PUT — which is why it passed on M1 and M2. The successful path
+   (enc=127) needs `--scope deposit,withdraw --max-tx 2`.
+
+3. **Per-run budget, not the unit budget.** `certify_all.py --run-timeout`
+   defaults to **180s** and is what binds the driver; `--timeout` alone does
+   nothing for it. Under scope `deposit,withdraw` at max-tx 2 the unit has
+   **635 path claims**; at 180s the enumeration covered 2 and left 633
+   undecided, certified enc=6 (the revert path) and stopped. Re-run as `tx2t`
+   with `--timeout 3600 --run-timeout 3600`.
+
+## 2026-08-20 — Stage-4 bug: a commented-out constructor was read as a constructor
+
+`_source_constructor_params_from_source` matched `constructor(` on the raw
+contract chunk. `peer_soltg__exampl` declares no constructor -- its only such
+text is `//  constructor(uint i) {a = i;}` -- so the emitter deployed
+`new A(0)`, every emitted test failed to compile with *"Wrong argument count
+for function call: 1 arguments given but expected 0"*, and the subject produced
+0 valid tests (bucket `no-valid`, status `ok`, which is what made it look like
+a method failure rather than a crash). Fixed in `7bdedbfbba` by masking
+comments and strings first, as every other constructor reader in that module
+already does; two regression tests added. A scan of all three benchmarks finds
+`exampl` to be the only affected subject, so the campaign stays internally
+consistent and only that one subject needs re-running.
+
+## 2026-08-20 06:49 — scheduling decision: the two campaigns run concurrently
+
+w2 never came back, so no-selection has to run on the same box. Measured rates:
+bugfix124 124 cases in 111 min at `--jobs 6`; peer182 at ~1.6 cases/min. Full
+projects to ~10:40. Sequentially, no-selection could not start before then and
+would land ~14:30, past the deadline. Measured memory is not the constraint --
+31 concurrent esbmc processes held 7.8 GiB total (0.25 GiB avg) against 32 GiB
+available, so the 12 GiB per-process cap is nearly never reached.
+
+So no-selection was started at 06:49 alongside Full, at `--jobs 4` against
+Full's 6 on a 12-core box. **Caveat to record with the numbers:** Full's first
+251 cases ran uncontended and the rest run under load, while no-selection runs
+under load throughout. The per-case wall stays 600s for both, unchanged.
