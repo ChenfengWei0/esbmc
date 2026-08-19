@@ -3769,6 +3769,60 @@ def test_split_records_recover_their_parts_not_the_parent():
     return bad
 
 
+def test_subject_path_enumeration_serves_the_rescue_from_one_run():
+    """Per-unit enumeration cannot run at the wall, so take the map up front."""
+    bad = 0
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        subject = _prepared_subject_for_getter_test(root)
+        stub = root / "esbmc-stub"
+        stub.write_text("#!/bin/sh\n"
+                        "printf '%s\\n' \"$@\" > \"$0.argv\"\n"
+                        "echo 'ASSERT path_tr$1 != 6 || path_cnt$1 != 2"
+                        " // sol:@C@C@F@run#7:path:3'\n"
+                        "echo 'ASSERT path_tr$1 != 2 || path_cnt$1 != 1"
+                        " // sol:@C@C@F@run#7:path:1'\n"
+                        "echo 'ASSERT path_tr$1 != 9 || path_cnt$1 != 3"
+                        " // sol:@C@C@F@other#9:path:2'\n")
+        stub.chmod(0o755)
+        by_unit = rq1_veriput_run._enumerate_subject_paths(subject, str(stub), 4, 30.0)
+        bad += check(
+            by_unit == {
+                "sol:@C@C@F@run#7": [(2, 1), (6, 2)],
+                "sol:@C@C@F@other#9": [(9, 3)],
+            }, "one run maps every in-scope unit to its own path identities")
+        argv = (root / "esbmc-stub.argv").read_text().split("\n")
+        bad += check("--focus-function" not in argv,
+                     "the subject-wide run is not narrowed to one unit")
+        bad += check("--goto-functions-only" in argv, "it still runs no solver")
+
+        # The rescue must take the map, because at the wall it has no budget of
+        # its own -- which is the whole reason the map is collected early.
+        job = {
+            "unit": "run",
+            "path_function": "sol:@C@C@F@run#7",
+            "unit_info": {
+                "visibility": "external",
+                "state_mutability": "nonpayable",
+            },
+        }
+        cert = root / "certify-results.jsonl"
+        stage = rq1_veriput_run._structural_abi_value_gate_rescue(
+            cert, subject, job, "run", job["path_function"], 0, str(stub), 4, 0.0, by_unit)
+        bad += check(stage is not None and stage["certified_paths"] == 2,
+                     "the rescue certifies both enumerated paths with no budget of its own")
+        bad += check(stage["path_identity_source"] == "goto-enumeration",
+                     "and records that the identities are enumerated, not assumed")
+
+        cert2 = root / "certify-results-2.jsonl"
+        without = rq1_veriput_run._structural_abi_value_gate_rescue(
+            cert2, subject, job, "run", job["path_function"], 0, str(stub), 4, 0.0, {})
+        bad += check(
+            without["path_identity_source"] == "unenumerated-single-path-assumption",
+            "with no map and no budget the rescue still degrades safely")
+    return bad
+
+
 def test_value_gate_certificate_anchors_to_every_enumerated_path():
     """A hardcoded enc makes ESBMC refuse the whole ladder, so use the real ones."""
     job = {
@@ -5973,7 +6027,7 @@ def test_capped_stage2_timeout_advances_to_next_unit():
                  f"stop evidence: {row}")
     bad += check(row["status"] == "no-output",
                  f"all-capped no-output subject is not a runner error: {row}")
-    stages = detail.get("stages") or []
+    stages = _unit_pipeline_stages(detail)
     bad += check(all(stage.get("wrapper_timeout_s") == 5.0 for stage in stages),
                  f"stage records keep wrapper cap: {stages}")
     return bad
@@ -6198,6 +6252,19 @@ def _mocked_subject_and_schedule(units: list[str]) -> tuple:
     }
 
 
+def _unit_pipeline_stages(detail):
+    """The per-unit certify/put stages, in order.
+
+    Selected by name rather than by position: case-level records such as the
+    subject-wide path enumeration surround them, and a test that means "certify
+    then put" should not break when one is added.
+    """
+    return [
+        stage for stage in (detail.get("stages") or [])
+        if stage.get("stage") in ("certify", "put")
+    ]
+
+
 def _with_mocked_run_subject(subject, schedule, fake_run_command, body):
     old_resolve = rq1_veriput_run.subject_unit_manifest.resolve_subject
     old_build = rq1_veriput_run.build_subject_schedule
@@ -6272,7 +6339,7 @@ def test_capped_stage2_timeout_with_candidates_enters_stage4():
                 }, "peer182", args)
 
     row, detail = _with_mocked_run_subject(subject, schedule, fake_run_command, body)
-    stages = detail.get("stages") or []
+    stages = _unit_pipeline_stages(detail)
     bad = 0
     bad += check(len(calls) == 2, f"capped timeout with candidates still runs Stage 4: {calls}")
     bad += check(stages[0].get("capped_timeout_stage4_candidates_retained") is True,
@@ -6341,7 +6408,7 @@ def test_nonzero_stage2_with_partial_journal_enters_stage4():
                 }, "peer182", args)
 
     row, detail = _with_mocked_run_subject(subject, schedule, fake_run_command, body)
-    stages = detail.get("stages") or []
+    stages = _unit_pipeline_stages(detail)
     bad = 0
     bad += check(len(calls) == 2, f"nonzero witnessed Stage 2 still runs Stage 4: {calls}")
     bad += check(
@@ -7374,6 +7441,7 @@ def main():
         test_stage2_timeout_rescue_certifies_the_structural_abi_value_gate,
         test_stage2_timeout_rescue_skips_units_that_already_have_candidates,
         test_split_records_recover_their_parts_not_the_parent,
+        test_subject_path_enumeration_serves_the_rescue_from_one_run,
         test_value_gate_certificate_anchors_to_every_enumerated_path,
         test_unit_path_enumeration_reads_the_instrumented_goto,
         test_abi_value_gate_cert_row_requires_nonpayable_entry,

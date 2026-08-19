@@ -2831,6 +2831,64 @@ def _resolved_esbmc_binary(esbmc_arg: str | None) -> Path:
     return path
 
 
+def _enumerate_subject_paths(subject: PreparedSubject,
+                             esbmc_bin: str | None,
+                             memlimit_gib: int,
+                             budget_s: float) -> dict[str, list[tuple[int, int]]]:
+    """Every in-scope unit's ``(enc, depth)`` pairs, from ONE frontend-only run.
+
+    Enumerating per unit at the moment a unit is rescued does not work: the
+    rescue fires when Stage 2 ran out of time, so by then the case has no budget
+    left to spend and the enumeration is skipped.  MEASURED on the stratified
+    sample: 18 of 20 rescue certificates fell back to the single-path assumption
+    for exactly this reason.
+
+    Dropping ``--focus-function`` instruments every in-scope unit in one run, and
+    ESBMC states the identity consequence itself -- focusing narrows which units
+    are INSTRUMENTED, and "this unit's path identity is unchanged" because a
+    callee's decisions are part of it either way.  So one run at case start
+    costs one frontend and serves every unit that later needs rescuing.
+    """
+    budget = int(budget_s)
+    if budget < 1:
+        return {}
+    solast = str(subject.solast or "")
+    flat_sol = str(subject.flat_sol or "")
+    if not solast or not flat_sol:
+        return {}
+    command = [
+        str(_resolved_esbmc_binary(esbmc_bin)),
+        solast,
+        "--sol",
+        flat_sol,
+        "--contract",
+        str(subject.contract or ""),
+        "--solidity-path-coverage",
+        "--solidity-max-tx",
+        "1",
+        "--memlimit",
+        f"{int(memlimit_gib)}g",
+        "--goto-functions-only",
+    ]
+    try:
+        completed = subprocess.run(command,
+                                   text=True,
+                                   errors="replace",
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT,
+                                   timeout=budget,
+                                   check=False)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    by_unit: dict[str, set[tuple[int, int]]] = {}
+    for enc, depth, claim_unit in PATH_IDENTITY_RE.findall(completed.stdout or ""):
+        by_unit.setdefault(claim_unit, set()).add((int(enc), int(depth)))
+    return {
+        unit: sorted(pairs, key=lambda pair: (pair[1], pair[0]))
+        for unit, pairs in by_unit.items()
+    }
+
+
 def _enumerate_unit_paths(subject: PreparedSubject,
                           unit: str,
                           path_function: str | None,
@@ -4974,7 +5032,8 @@ def _structural_abi_value_gate_rescue(cert_path: Path,
                                       n_stage4_candidates: int | None,
                                       esbmc_bin: str | None = None,
                                       memlimit_gib: int = 12,
-                                      remaining_s: float = 0.0) -> dict | None:
+                                      remaining_s: float = 0.0,
+                                      subject_paths: dict | None = None) -> dict | None:
     """Certify the nonpayable ABI value gate for a unit whose Stage-2 run ran out of time.
 
     A nonpayable public/external entry reverts for every ``msg.value > 0`` before its
@@ -4991,9 +5050,15 @@ def _structural_abi_value_gate_rescue(cert_path: Path,
         return None
     if not _is_nonpayable_abi_entry_job(job):
         return None
-    enumerated_paths = _enumerate_unit_paths(
-        subject, unit, path_function, esbmc_bin, memlimit_gib,
-        min(ABI_VALUE_GATE_ENUMERATION_BUDGET_S, float(remaining_s)))
+    # The subject-wide enumeration is taken once, at case start, while the case
+    # still has budget.  Falling back to a per-unit run here is right only when
+    # that map is absent, and it will usually find no budget left -- which is
+    # why the map exists.
+    enumerated_paths = (subject_paths or {}).get(str(path_function or ""))
+    if enumerated_paths is None:
+        enumerated_paths = _enumerate_unit_paths(
+            subject, unit, path_function, esbmc_bin, memlimit_gib,
+            min(ABI_VALUE_GATE_ENUMERATION_BUDGET_S, float(remaining_s)))
     row = _abi_value_gate_cert_row(subject, job, enumerated_paths)
     _append_jsonl(cert_path, row)
     return {
@@ -8800,6 +8865,30 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                             args, "concrete_replay_only_ablation", False))
                 stages.append(fallback_stage)
 
+    # ---- ONE frontend-only run, while the case still has budget --------
+    #
+    # The value-gate rescue needs this unit's real (enc, depth) pairs, and it
+    # fires exactly when Stage 2 ran out of time -- so asking for them at that
+    # moment finds no budget and falls back to a fabricated identity that ESBMC
+    # then refuses.  Taking the map once here costs one frontend for the whole
+    # case and serves every unit that later needs rescuing.  An empty map is a
+    # degraded but correct run, not a failure.
+    subject_path_enumeration = {}
+    if jobs:
+        enumeration_started = time.monotonic()
+        subject_path_enumeration = _enumerate_subject_paths(
+            subject, getattr(args, "esbmc", "") or None, args.memlimit_gib,
+            min(ABI_VALUE_GATE_ENUMERATION_BUDGET_S, _remaining(deadline)))
+        stages.append({
+            "stage": "subject-path-enumeration",
+            "status": "ok" if subject_path_enumeration else "unavailable",
+            "units": len(subject_path_enumeration),
+            "paths": sum(len(v) for v in subject_path_enumeration.values()),
+            "wall_s": round(time.monotonic() - enumeration_started, 3),
+            "reason": ("one --goto-functions-only run supplies every unit's exact path "
+                       "identities to the Stage-2-timeout value-gate rescue"),
+        })
+
     for idx, job in enumerate(jobs, 1):
         unit = job["unit"]
         path_function = job.get("path_function")
@@ -8957,7 +9046,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 gate_stage = _structural_abi_value_gate_rescue(
                     cert_path, subject, job, unit, path_function, n_stage4_candidates,
                     getattr(args, "esbmc", "") or None, args.memlimit_gib,
-                    _remaining(deadline))
+                    _remaining(deadline), subject_path_enumeration)
                 if gate_stage is not None:
                     stages.append(gate_stage)
                     (n_certified, n_cleared_fallback, n_timeout_fallback,
@@ -9060,7 +9149,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             # the single-path assumption, which is recorded as such.
             gate_stage = _structural_abi_value_gate_rescue(
                 cert_path, subject, job, unit, path_function, n_stage4_candidates,
-                getattr(args, "esbmc", "") or None, args.memlimit_gib, _remaining(deadline))
+                getattr(args, "esbmc", "") or None, args.memlimit_gib, _remaining(deadline), subject_path_enumeration)
             if gate_stage is not None:
                 stages.append(gate_stage)
                 (n_certified, n_cleared_fallback, n_timeout_fallback,
