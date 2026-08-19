@@ -8636,6 +8636,12 @@ def _source_constructor_params_from_source(source, contract):
     chunk = _source_contract_chunk(source, contract)
     if not chunk:
         return []
+    # Match on the MASKED chunk.  A commented-out declaration such as
+    # `//  constructor(uint i) {a = i;}` is not a constructor, and taking its
+    # parameter list emits `new A(0)` against a contract that declares no
+    # constructor -- the whole subject then fails to compile and yields no
+    # valid test at all (peer_soltg__exampl).
+    chunk = _mask_solidity_comments_and_strings(chunk)
     m = re.search(r"\bconstructor\s*\((.*?)\)", chunk, re.S)
     if m is None:
         return []

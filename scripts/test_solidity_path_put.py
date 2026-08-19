@@ -27010,3 +27010,26 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_commented_out_constructor_is_not_a_constructor():
+    # `peer_soltg__exampl` declares no constructor; the only `constructor(`
+    # text in the file is commented out.  Reading its parameter list emitted
+    # `new A(0)` and the whole subject failed to compile, so it produced no
+    # valid test at all.
+    source = ("contract A{\n"
+              "  uint a;\n"
+              "//  constructor(uint i) {a = i;}\n"
+              "  function set(uint j) public {a = j;}\n"
+              "}\n")
+    assert solidity_path_put._source_constructor_params_from_source(source, "A") == []
+
+
+def test_a_real_constructor_still_parses_past_a_commented_one():
+    source = ("contract B{\n"
+              "  /* constructor(uint q) {} */\n"
+              "  // constructor(uint z) {}\n"
+              "  constructor(address a, uint b) {}\n"
+              "}\n")
+    assert solidity_path_put._source_constructor_params_from_source(source, "B") == [
+        ("a", "address"), ("b", "uint256")]
