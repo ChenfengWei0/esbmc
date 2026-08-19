@@ -59,18 +59,24 @@ denominator.
 
 ## Current Execution Snapshot
 
-Current local state at this handoff boundary:
+Live state as of 2026-08-19 18:20 (update this block, do not append to it):
 
-- No local long-running `rq1_veriput_run.py`, `put_all.py`,
-  `solidity_path_put.py`, ESBMC, or `forge test` experiment process was active
-  when this note was updated.
-- The active experiment binary for generation is the Release ESBMC binary:
-  `$ESBMC_REPO/build-release-static/src/esbmc/esbmc`.  Debug builds are for
-  diagnosis only, not campaign timing.
-- The standalone tool package under `$VERIPUT_ROOT/Tools/VeriPUT` is synced to
-  the current smoke-tested driver hashes recorded in `SOURCE.json`.
-- Do not start the final 509-target Full campaign until the remaining P0 items
-  below are closed.
+- **Local host**: Full arm.  bugfix124 and peer182 are COMPLETE; real203 is
+  resuming after a host reboot via `$VERIPUT_ROOT/resume_real203.sh`
+  (80 remaining subjects named explicitly, no `--redo`).
+  Log: `~/logs/campaign-real203-resume.log`.  AST cache: `~/.cache/`.
+- **w2** (`invmut-w2`): the no-selection ablation for real203, sharded 20 at a
+  time by `$VERIPUT_ROOT/w2_sharded.sh`, with the owner-side reaper pulling each
+  shard back and freeing the remote copy.  Log:
+  `/home/administrator/VeriPUT/nosel-real203-resume.log`.
+- **w1**: removed from the experiment; see the operational-failures list.
+- Experiment binary is the Release ESBMC: `$ESBMC_REPO/build-release-static/src/esbmc/esbmc`.
+- `$VERIPUT_ROOT/Tools/VeriPUT` is synced and pushed; `SOURCE.json` verifies
+  13 files with no hash mismatch and the standalone smoke passes.
+- Both repositories are pushed: esbmc `fix/put-materialization-no-valid-stress-shard1`
+  (`7f47fcbc3c`) and VeriPUT `exp/rq1-rq3-anchor-closure` (`0adf14f57c`).  The
+  esbmc commit deliberately excludes the unrelated in-progress `src/` and
+  `regression/` changes.
 
 Current completed implementation evidence:
 
@@ -78,17 +84,19 @@ Current completed implementation evidence:
   Full PUT files must not contain separate `test_structural_anchor_*`,
   `test_cov_*`, or `test_concrete_replay_*` functions.
 - R1/R2.1/R2.3 counterexample-guided input-part splitting is implemented and
-  has a live physical smoke:
-  `/tmp/veriput_transfer_physical_split_v8`, where one certified path produced
-  four separate Forge-green physical PUT files.
-- R2.2 boundary-observation bound expansion is implemented in the driver, but
-  still needs one small official RQ1 live smoke whose initial observed bound is
-  refuted and then repaired on the unchanged input part.
+  has a live physical smoke where one certified path produced four separate
+  Forge-green physical PUT files.
+- R2.2 boundary-observation bound expansion is implemented and closed on
+  `peer_solar__DateTime.getWeekday`; see the short list below.
 - No Region Refinement, No Test Oracle Refinement, and No_Cer_Reg are
-  derivation-only arms from Full.  They should not rerun ESBMC.
-- No Selection Strategy is the only RQ3 ablation that reruns VeriPUT.  It is
-  wired through `--path-cov-no-selection-strategy`; discriminating smokes show
-  it can spend much more verifier time and/or produce fewer PUTs than Full.
+  derivation-only arms from Full.  They must not rerun ESBMC.
+- No Selection Strategy is the only RQ3 ablation that reruns VeriPUT, wired
+  through `--path-cov-no-selection-strategy`.
+
+Reporting rule: every progress report gives BOTH the case count against the 509
+denominator AND the test-unit counts (raw / valid / PUT / concrete / R1R2).
+`Results/results_all.py` is the reporting entry point; it is organised as tables
+and split by research question (`--rq 1,2,3`, `--detail`, `--audit-detail`).
 
 ## Authoritative TODO
 
@@ -162,17 +170,138 @@ another note.
   compiler-inserted checks from path identity, and the nonpayable ABI gate is
   compiler-inserted.  The wording needs one sentence to cover it.
 
-- [ ] 509-target Full campaign, started 2026-08-19 under
-  `Results/RQ1_KInduction_Fair600/campaign-full-20260819/<benchmark>`.
-  bugfix124 launched locally at `--jobs 4`.  peer182 and real203 follow on the
-  same host, one benchmark at a time.
+- [~] **509-target Full campaign**, `Results/RQ1_KInduction_Fair600/campaign-full-20260819/<benchmark>`,
+  local host, `--jobs 8`.  State at 2026-08-19 18:20:
+
+  | benchmark | cases | raw | valid | PUT | concrete | PUT share | R1/R2 | R1/R2 share |
+  |---|---:|---:|---:|---:|---:|---:|---:|---:|
+  | bugfix124 | **124/124 done** | 862 | 690 | 631 | 59 | 91.4% | 225 | 35.7% |
+  | peer182 | **182/182 done** | 2146 | 1858 | 1778 | 80 | 95.7% | 711 | 40.0% |
+  | real203 | 140/203 | 866 | 677 | 622 | 55 | 91.9% | 152 | 24.4% |
+  | total | 446/509 | 3874 | 3225 | **3031** | 194 | **94.0%** | 1088 | 35.9% |
+
+  Report BOTH levels every time: the 509 case denominator AND the test-unit
+  counts.  The case count alone hides the deliverable, which is test units.
 - [ ] Derive No Region Refinement, No Test Oracle Refinement, and No_Cer_Reg
   from the audited new Full corpus.  Do not rerun ESBMC for these three arms.
-- [ ] Run No Selection Strategy as the only rerun ablation.  This is the arm to
-  distribute to w1/w2 or another collaborator after the dry-run and two-subject
-  smoke pass.
+- [~] No Selection Strategy (the only rerun ablation) on w2 for real203,
+  `Results/RQ3/No_selection_strategy/campaign-nosel-20260819-real203`, sharded
+  20 subjects at a time and pulled back to the owner's host after each shard.
+- [ ] Re-confirm a no-selection degradation witness under the current driver.
+  w1 cannot serve: its within-host Full/no-selection pair on
+  `peer_ccsolbmc__Thicc` returned raw=10/valid=0 for BOTH arms at 562s, i.e.
+  budget-exhausted and non-discriminating.  Run the pair locally after the Full
+  campaign instead; that is also the only hardware-clean comparison available.
 - [ ] Run final RQ1 coverage and RQ2 mutation/real-bug evaluation only from
   the new audited corpus.
+
+### Open quality defects in the 2026-08-19 corpus
+
+**The expensive stage is already banked.**  Every case retains its Stage-2
+journal (`<subject>/cert/certify-results.jsonl`; 124 + 182 + 140 present so
+far), and `put_all.py --cert <journal>` drives Stage 3/4 straight from it.  So
+every defect below that lives in oracle synthesis, emission, or persistence can
+be repaired and re-derived WITHOUT redoing path enumeration or certification.
+Only a Stage-2 change forces a full recampaign.  Finish the corpus first; it is
+not wasted work.
+
+- [ ] **`persistence-error` discards Forge-green valid artifacts** (5 cases:
+  `peer_soltg__constructor_state_variable_init`, `..._chain_al`, `..._diamond`,
+  `peer_soltg__constructors`, `compound-finance__comet__MainnetBulkerWithWstETHSupp`).
+  The dropped rows report `forge_status=Success` AND
+  `valid_reference_test=true`, and are then quarantined with "N concrete
+  replay(s) could not be persisted" / "the default concrete constructor call
+  reverted and the exact target source ...".  A green, valid test must not be
+  lost by the publication step.
+- [ ] **A proved PUT fails its Forge replay** (7 cases with raw>0 and valid=0;
+  worst is `peer_ccsolbmc__BurnableERC20` with raw=22, ALL `forge Failure`).
+  The PUT clears `assert`, `corpus`, `fuzz` and `width` gates and fails only
+  `green`.  This contradicts the paper's claim that Test Construction preserves
+  the verifier proof mechanically, so it must be root-caused, not filtered.
+  Note the Forge replay log is written under the AST cache workdir and is NOT
+  published into the case directory -- publish it, or the evidence is gone the
+  moment the cache is cleared (it was, by the host reboot).
+- [ ] **`no-output` on library-shaped targets** (`safe-fndn__safe-smart-account__MultiSend`,
+  `MultiSendCallOnly`, `compound-finance__comet__CometFactoryWithExtendedAss`).
+  Decide whether these are legitimately unschedulable like the two `no-units`
+  cases, or a scheduling gap.
+- [ ] **R1/R2 headroom is in `abi-value-gate` PUTs.**  Measured over 3031 PUTs:
+
+  | stage4 kind | PUT | R1/R2 | R0-only | rate |
+  |---|---:|---:|---:|---:|
+  | abi-value-gate | 2333 | 509 | 1824 | 21.8% |
+  | certified-region | 654 | 579 | 75 | 88.5% |
+  | getter-only | 22 | 0 | 22 | 0.0% |
+  | getter-value-gate | 22 | 0 | 22 | 0.0% |
+
+  Correcting an earlier claim in this note: the split is NOT "certified-region
+  100% / everything else 0% by construction".  That was an artifact of partial
+  bugfix124 data.  Value-gate PUTs DO carry R1/R2 in 509 cases, so the 1824
+  without are a gap, not a definition.  The 1824 carry `exit` observation rungs
+  only -- no `state` and no `return` rung was ever proposed for them, whereas
+  the 509 that succeeded carry 13890 `return` and 5232 `state` rungs.  Only
+  3.7% of the 1824 come from `peer_soltg__*` micro-benchmarks, where the unit
+  is `pure` with no return value and the contract has no state variable, so
+  R0-only is genuinely correct there.  The bulk are real token contracts
+  (`peer_ccsolbmc__KOALA`, `LILY`, `Galaxium`, `DogeRocket`, ...) that do have
+  observable state.  This is a Stage-3 gap and therefore re-derivable.
+
+### Stage-2 non-certification budget (bugfix124 sample, preliminary)
+
+| reason family | share | nature |
+|---|---:|---|
+| shrink budget exhausted, witness differs on a NON-coordinate | 42.9% | modelling gap, fixable |
+| single-point check returned UNKNOWN, driver fails closed | 30.0% | solver limit, behaviour is correct |
+| region VACUOUS | 21.4% | region search miss |
+| statically inseparable sibling | 5.7% | intrinsic |
+
+The 42.9% is one concrete cause: the external-call result (`extcall.__sent_result*`)
+decides the branch but is not a coordinate, so shrink can never converge on a
+separating region and the path degrades to the structural gate.  Promoting it
+to a constrainable coordinate is the single highest-leverage Stage-2 change --
+and the only item here that would force a full recampaign, so schedule it last,
+after the baseline exists and the Stage-3/4 repairs above have been measured.
+
+Correcting an earlier note: the 30.0% "no verdict" family is NOT a wiring
+defect.  All 31 occurrences are the same sub-family -- the §Certification
+single-point check returns UNKNOWN and the driver refuses to treat an undecided
+answer as discharged.  That is correct conservative behaviour.
+
+### Operational failures during the 2026-08-19 campaign, and their fixes
+
+Each of these silently cost data or time.  They are recorded because every one
+of them looked like success from the outside.
+
+1. **A refused shard was recorded as done (w2, 103 subjects lost).**  The static
+   memory gate refused `--jobs 4 x --memlimit-gib 10 = 40GiB` against
+   `2.2 x MemAvailable(18.1GiB) = 39.8GiB` -- a 0.2 GiB margin that flipped once
+   earlier shards warmed the page cache.  The shard script treated a non-zero
+   exit as non-fatal, so shards 6-11 "finished" in zero seconds and the log
+   still printed `ALL SHARDS DONE`.  Fixes: `--mem-fraction 6.0` (the real
+   safety valve is the runtime `--stage-mem-fraction 0.60`; measured peak was
+   9 GiB of 21), and the shard loop now prints
+   `!!!!! shard i-j FAILED ... its subjects are NOT in the corpus`, counts
+   failures, and exits non-zero with `SHARDS FINISHED WITH N FAILED SHARD(S)`
+   instead of `ALL SHARDS DONE`.  A resume takes `START_AT=<n>`.
+2. **w2 is WSL2; its "936 GiB free" is fiction.**  ext4 lives in a VHDX on a
+   Windows C: drive with ~13 GiB free, and a VHDX only ever grows -- deleting
+   files inside Linux never returns space to C:.  A full 203-case run needs
+   ~10 GiB and had already crashed the VM once.  Fix: shard, and run a reaper on
+   the owner's host that rsyncs each published subject back and deletes the
+   remote copy, holding w2's high-water mark at ~20 GiB.  Also check `df -h` and
+   `free -g` on any new host first: w2's `/tmp` is an 11 GiB **tmpfs**, so an
+   AST cache placed there competes with the per-run memory limit.  It now lives
+   on the 1 TB disk.
+3. **The local host rebooted mid-campaign and `/tmp` was wiped.**  Published
+   results survived (bugfix124 124/124 and peer182 182/182 intact), but the
+   campaign log and AST cache did not.  Logs and caches now live under `$HOME`
+   (`~/logs/`, `~/.cache/`).  Recovery must NOT rerun `run_full_campaign.sh`:
+   it passes `--redo` over all three benchmarks and would delete the two
+   finished ones.  `resume_real203.sh` instead names only subjects lacking a
+   `result.json` via repeated `--subject-id`, and omits `--redo`.
+4. **w1 is not usable for RQ3.**  Its within-host Full/no-selection pair on
+   `peer_ccsolbmc__Thicc` returned raw=10/valid=0 for both arms at ~562s of the
+   600s budget.  It cannot produce a baseline, so it cannot show degradation.
 
 ### Machine assignment for the 2026-08-19 campaign
 
