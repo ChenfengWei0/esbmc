@@ -2051,3 +2051,40 @@ from the audited Full with `rq3_derive_from_full.py`.
   parameters.
 - `results_all.py --rq 1` still prints `--` for VeriPUT coverage because of a
   hardcoded `Results/RQ1/VeriPUT/campaign-timing/canonical-case-wall.json`.
+
+## 02:40 — the metric that decided the stage-2 revert, and its reversal
+
+The campaign is judged on **PUT : concrete replay**, not on valid → PUT. I had
+been reading the second, reverted the stage-2 closure-filter correction on it,
+and that was wrong. Same 35 subjects, same config, only the correction differs:
+
+| | no-valid | PUT : concrete | R1/R2 share of valid PUTs |
+|---|---|---|---|
+| without the correction (`sample-v5`) | 1 | 232 : 26 = **89.9%** | 129/232 = **55.6%** |
+| with it (`sample-v6`)                | 2 | 198 : 24 = **89.2%** | 137/198 = **69.2%** |
+
+So the correction is **+13.6pt on the R1/R2 share** and flat on conversion. Its
+only real cost was one case: `ETHRegistrarController` OOM'd at 12 GiB.
+
+Reinstated in `49a18c2232` with `STATE_SLOT_COORD_BUDGET = 6`, which caps only
+SUBSCRIPTED state coordinates (plain scalars are never capped), selects
+shortest-first then lexicographically so two runs of one configuration cannot
+disagree, and NAMES whatever it cuts in the dropped list. 507 + generalise tests
+pass; `Tools/VeriPUT` re-synced.
+
+`no-valid` on `sample-v5` was `ERC-3643__TREXFactory` — `put setIdFactory:
+timeout`, i.e. the case budget, not the contract. That one is ours and is still
+open.
+
+The ablation is genuinely weaker by construction, not by tuning:
+`--path-cov-no-selection-strategy` (`src/esbmc/options.cpp:917`) "disables
+call-site selection/degradation ... every internal call remains expanded in the
+path identity", so the same 600s budget buys strictly fewer certified paths.
+First evidence: `acfix_002_Templedao` gives `raw=19 valid=15 put=15` under Full
+and `raw=13 valid=13 put=13` under no-selection on w2.
+
+w2 SMOKE PASSED end to end: `acfix_002_Templedao -> status=ok raw=13 valid=13
+put=13/13 bucket=valid-PUT-with-R1R2 wall=570s`.
+
+Metrics helper (the three numbers, on any result root):
+`scratchpad/metrics.py <result-root> [label]`.
