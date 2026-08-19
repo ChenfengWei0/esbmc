@@ -246,6 +246,48 @@ not wasted work.
   (`peer_ccsolbmc__KOALA`, `LILY`, `Galaxium`, `DogeRocket`, ...) that do have
   observable state.  This is a Stage-3 gap and therefore re-derivable.
 
+  **Measured headroom (3087 PUTs).**  R1/R2 is 1090 = 35.3% today.  The gap is
+  1878 value-gate PUTs carrying `exit` rungs only.  What decides whether one of
+  them can gain an oracle is whether its contract has readable state, because a
+  `state` rung is read with `vm.load` at the slot solc reports and so does not
+  depend on which unit was called:
+
+  | judgement | count | share of gap |
+  |---|---:|---:|
+  | contract has readable state (a `state` rung appears somewhere for it) | 1131 | 60.2% |
+  | same unit produced a non-exit observable elsewhere | 376 | 20.0% |
+  | this gate path is the ONLY PUT for its unit | 1120 | 59.6% |
+
+  The 20.0% row is a misleading lower bound: 59.6% of the gap PUTs are the only
+  PUT their unit has, so "same unit elsewhere" has no sample to draw on.  The
+  60.2% row is the honest denominator.
+
+  | assumption | R1/R2 share of PUT |
+  |---|---:|
+  | today | 35.3% |
+  | 25% of ceiling reached | 44.4% |
+  | 50% of ceiling reached | **53.6%** |
+  | 75% of ceiling reached | 62.8% |
+  | physical ceiling: every state-bearing contract gets `post == pre` | **71.9%** |
+
+  Planning number: **~50%**, i.e. roughly +15 points.  Not the ceiling, because
+  `constant`/`immutable` variables have no slot, the ladder has a candidate
+  budget, and slicing drops some state.  Not the lower bound either, because on
+  a value-gate path the call reverts before the body runs, so `post == pre` is
+  trivially true and k-induction will not fail on it -- the question is whether
+  the candidate is ever PROPOSED, not whether it can be proved.  The mechanism
+  already works: 509 value-gate PUTs carry R1/R2 today and emit exactly
+  `assertEq(_post_<var>, _pre_<var>, "<var>: post == pre")`.
+
+- [ ] **Pilot before committing to the R1/R2 repair.**  Do not estimate twice:
+  pick 5-10 state-bearing subjects (`peer_ccsolbmc__KOALA`, `LILY`, `Galaxium`,
+  `DogeRocket`, ...), re-run ONLY Stage 3/4 from their retained journals with
+  `put_all.py --cert <subject>/cert/certify-results.jsonl`, and measure the real
+  conversion rate on them.  Extrapolate to the 1131.  Minutes of compute, and it
+  settles the ~50% planning number with evidence.  Run it AFTER the Full
+  campaign finishes -- running it concurrently would contend for CPU and
+  distort the 600-second budget of the cases still in flight.
+
 ### Stage-2 non-certification budget (bugfix124 sample, preliminary)
 
 | reason family | share | nature |
