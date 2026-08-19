@@ -8876,17 +8876,51 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     subject_path_enumeration = {}
     if jobs:
         enumeration_started = time.monotonic()
+        enumeration_deadline = enumeration_started + min(ABI_VALUE_GATE_ENUMERATION_BUDGET_S,
+                                                         _remaining(deadline))
         subject_path_enumeration = _enumerate_subject_paths(
             subject, getattr(args, "esbmc", "") or None, args.memlimit_gib,
-            min(ABI_VALUE_GATE_ENUMERATION_BUDGET_S, _remaining(deadline)))
+            enumeration_deadline - time.monotonic())
+        enumeration_scope = "subject" if subject_path_enumeration else None
+        if not subject_path_enumeration:
+            # ---- THE UNFOCUSED RUN IS THE MEMORY-HUNGRY ONE ----
+            #
+            # Dropping --focus-function instruments every unit at once, and on a
+            # contract whose units expand to many paths that exceeds the same
+            # memlimit the focused runs fit inside -- MEASURED on
+            # `pop_042_VaultAdapter`, which reports "6 unit(s), 157 path(s)
+            # total" and then "ERROR: Out of memory".  It exits well under the
+            # time budget, so an empty map here is not a timeout and must not be
+            # read as one.
+            #
+            # Falling back to focused runs costs one frontend per scheduled unit
+            # instead of one per case, which is why it is the fallback and not
+            # the default.  It shares the SAME budget, so a case cannot spend
+            # more on enumeration by failing at it.
+            for job in jobs:
+                if _remaining(enumeration_deadline) < 1:
+                    break
+                job_path_function = str(job.get("path_function") or "")
+                if not job_path_function or job_path_function in subject_path_enumeration:
+                    continue
+                pairs = _enumerate_unit_paths(subject, job.get("unit"), job_path_function,
+                                              getattr(args, "esbmc", "") or None,
+                                              args.memlimit_gib,
+                                              _remaining(enumeration_deadline))
+                if pairs:
+                    subject_path_enumeration[job_path_function] = pairs
+            if subject_path_enumeration:
+                enumeration_scope = "per-unit-fallback"
         stages.append({
             "stage": "subject-path-enumeration",
             "status": "ok" if subject_path_enumeration else "unavailable",
+            "scope": enumeration_scope,
             "units": len(subject_path_enumeration),
             "paths": sum(len(v) for v in subject_path_enumeration.values()),
             "wall_s": round(time.monotonic() - enumeration_started, 3),
-            "reason": ("one --goto-functions-only run supplies every unit's exact path "
-                       "identities to the Stage-2-timeout value-gate rescue"),
+            "reason": ("--goto-functions-only supplies every unit's exact path identities to "
+                       "the Stage-2-timeout value-gate rescue, which fires when the case has "
+                       "no budget left to ask for them itself"),
         })
 
     for idx, job in enumerate(jobs, 1):

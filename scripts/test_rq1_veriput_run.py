@@ -3820,6 +3820,31 @@ def test_subject_path_enumeration_serves_the_rescue_from_one_run():
         bad += check(
             without["path_identity_source"] == "unenumerated-single-path-assumption",
             "with no map and no budget the rescue still degrades safely")
+
+        # Instrumenting every unit at once is the memory-hungry shape and can
+        # run out of memory where the focused runs fit -- measured on
+        # `pop_042_VaultAdapter` ("6 unit(s), 157 path(s) total" then
+        # "ERROR: Out of memory"), which exits well inside the time budget.  An
+        # empty subject-wide map must therefore stay usable per unit.
+        oom = root / "esbmc-oom"
+        oom.write_text("#!/bin/sh\n"
+                       "for a in \"$@\"; do\n"
+                       "  if [ \"$a\" = --focus-function ]; then\n"
+                       "    echo 'ASSERT path_tr$1 != 2 || path_cnt$1 != 1"
+                       " // sol:@C@C@F@run#7:path:1'\n"
+                       "    exit 0\n"
+                       "  fi\n"
+                       "done\n"
+                       "echo 'ERROR: Out of memory'\n"
+                       "exit 6\n")
+        oom.chmod(0o755)
+        bad += check(
+            rq1_veriput_run._enumerate_subject_paths(subject, str(oom), 4, 30.0) == {},
+            "a subject-wide run that ran out of memory enumerates nothing")
+        bad += check(
+            rq1_veriput_run._enumerate_unit_paths(subject, "run", "sol:@C@C@F@run#7", str(oom), 4,
+                                                  30.0) == [(2, 1)],
+            "and the focused fallback still enumerates that unit")
     return bad
 
 
