@@ -312,9 +312,20 @@ not wasted work.
   | valid PUTs | 4 | 21 |
   | no-valid cases | 3/4 | 1/4 |
 
-  The one still red is `peer_ccsolbmc__ClockBoxContract`, whose `setUp()` fails
-  on `Only owner can perform this operation` -- a deployer-identity problem that
-  needs a `vm.prank`, not a constructor argument.
+  The one still red was `peer_ccsolbmc__ClockBoxContract`, and it turned out to
+  be the SAME defect one level deeper: its constructor does
+  `admin = _admin; ... mint(...)`, and `mint` carries `onlyAdmin`, which is
+  `require(msg.sender == admin)`.  With `_admin` defaulted to a mock address the
+  deployment reverts, because the deployer is the test contract.
+
+  `_authority_state_vars_reachable_from_constructor()` resolves this THROUGH THE
+  MODIFIER rather than guessing from the name: collect modifiers whose body is
+  `require(msg.sender == X)`, collect the functions carrying them, and only when
+  the constructor body actually CALLS one of those functions is the parameter
+  assigned to `X` deployed as `address(this)`.  A variable called `owner` that no
+  constructor-reachable check reads is left alone.  Four tests, including the two
+  negative ones (uncalled authority, unguarded callee); 507 solidity_path_put
+  tests pass.
 
   STILL OPEN, the 66 body failures: 23 `EvmError: Revert`, 15 `fixed witness
   state: N != 0` (the emitter's own entry-state self-check refusing, which is

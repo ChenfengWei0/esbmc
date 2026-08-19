@@ -8489,6 +8489,44 @@ def _constructor_guard_lower_bounds(body, params, constants):
     return bounds
 
 
+def _authority_state_vars_reachable_from_constructor(chunk, body):
+    """State variables the constructor's OWN calls require `msg.sender` to equal.
+
+    `constructor(address _admin, ...) { admin = _admin; mint(...); }` where
+    `mint` carries `onlyAdmin` and `onlyAdmin` is
+    `require(msg.sender == admin, ...)` reverts at deployment for every
+    `_admin` other than the deployer -- the emitted `setUp()` passes a distinct
+    mock address, so the whole project is RED before any certified call runs.
+
+    Resolved through the modifier rather than guessed from the name: a variable
+    called `owner` that no constructor-reachable check reads is left alone.
+    """
+    authority_modifiers = {}
+    for match in re.finditer(r"\bmodifier\s+([A-Za-z_$][\w$]*)\s*(?:\([^)]*\))?\s*\{", chunk):
+        name = match.group(1)
+        start = match.end() - 1
+        depth, i = 1, start + 1
+        while i < len(chunk) and depth:
+            if chunk[i] == "{":
+                depth += 1
+            elif chunk[i] == "}":
+                depth -= 1
+            i += 1
+        text = chunk[start:i]
+        for var in re.findall(r"require\s*\(\s*msg\.sender\s*==\s*([A-Za-z_$][\w$]*)", text):
+            authority_modifiers[name] = var
+    if not authority_modifiers:
+        return set()
+    guarded_functions = {}
+    for fname, tail in re.findall(
+            r"\bfunction\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)([^{;]*)[{;]", chunk):
+        for mod, var in authority_modifiers.items():
+            if re.search(r"\b" + re.escape(mod) + r"\b", tail):
+                guarded_functions[fname] = var
+    called = set(re.findall(r"\b([A-Za-z_$][\w$]*)\s*\(", body))
+    return {var for fname, var in guarded_functions.items() if fname in called}
+
+
 def constructor_guard_param_overrides(source, contract, constructor_params):
     """Constructor arguments that satisfy the constructor's own guards.
 
@@ -8513,10 +8551,33 @@ def constructor_guard_param_overrides(source, contract, constructor_params):
     params = [(name, typ) for name, typ in (constructor_params or []) if name and typ]
     if not params:
         return {}, []
-    constants = _source_named_uint_constants(_mask_solidity_comments_and_strings(chunk))
+    masked_chunk = _mask_solidity_comments_and_strings(chunk)
+    constants = _source_named_uint_constants(masked_chunk)
     bounds = _constructor_guard_lower_bounds(body, params, constants)
     overrides = {}
     notes = []
+
+    # An authority address the constructor's own calls check against must be the
+    # DEPLOYER, or `setUp()` reverts.  `address(this)` is the test contract,
+    # which is what deploys, and it keeps the deployer in control afterwards.
+    authority = _authority_state_vars_reachable_from_constructor(masked_chunk, body)
+    if authority:
+        assigned = dict(
+            (rhs, lhs)
+            for lhs, rhs in re.findall(r"([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\s*;", body))
+        for idx, (pname, ptype) in enumerate(params):
+            if assigned.get(pname) not in authority:
+                continue
+            if not re.fullmatch(r"address(?:\s+payable)?", re.sub(r"\s+", " ", str(ptype).strip())):
+                continue
+            expr = "address(this)"
+            if "payable" in str(ptype):
+                expr = "payable(address(this))"
+            overrides[idx] = expr
+            notes.append(f"constructor parameter `{pname}` deployed as the test contract because "
+                         f"the constructor's own call chain requires msg.sender == "
+                         f"`{assigned[pname]}`")
+
     for idx, (pname, ptype) in enumerate(params):
         if pname not in bounds:
             continue

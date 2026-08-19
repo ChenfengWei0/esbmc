@@ -26383,6 +26383,43 @@ def test_certified_basis_projects_unsettable_state_constants():
     return bad
 
 
+def test_constructor_authority_address_is_the_deployer_only_when_the_ctor_checks_it():
+    """`admin = _admin; mint();` with `mint` onlyAdmin reverts at deployment."""
+    guarded = """
+contract Box {
+  address admin; address other;
+  modifier onlyAdmin() { require(msg.sender == admin, "Only owner can perform this operation"); _; }
+  function mint(uint256 a) public onlyAdmin returns (bool) { return true; }
+  constructor(address _admin, address _fee) { admin = _admin; other = _fee; mint(1); }
+}
+"""
+    params = [("_admin", "address"), ("_fee", "address")]
+    bad = 0
+    overrides, notes = solidity_path_put.constructor_guard_param_overrides(guarded, "Box", params)
+    bad += check(overrides == {0: "address(this)"},
+                 "only the parameter the constructor's call chain checks becomes the deployer")
+    bad += check(len(notes) == 1 and "msg.sender ==" in notes[0],
+                 "the override names the check that forced it")
+
+    uncalled = guarded.replace("other = _fee; mint(1);", "other = _fee;")
+    bad += check(
+        solidity_path_put.constructor_guard_param_overrides(uncalled, "Box", params) == ({}, []),
+        "an authority variable no constructor call reads is left alone")
+
+    unguarded_fn = guarded.replace("public onlyAdmin returns", "public returns")
+    bad += check(
+        solidity_path_put.constructor_guard_param_overrides(unguarded_fn, "Box", params) == ({}, []),
+        "a call to a function without the authority modifier forces nothing")
+
+    payable_admin = guarded.replace("address admin;", "address payable admin;").replace(
+        "address _admin,", "address payable _admin,")
+    overrides, _notes = solidity_path_put.constructor_guard_param_overrides(
+        payable_admin, "Box", [("_admin", "address payable"), ("_fee", "address")])
+    bad += check(overrides == {0: "payable(address(this))"},
+                 "a payable authority parameter keeps its payable cast")
+    return bad
+
+
 def test_constructor_guard_overrides_deploy_past_the_constructors_own_require():
     """A `setUp()` that reverts makes every test in its project RED."""
     source = """
@@ -26444,7 +26481,8 @@ def main():
     registered = set()
     declared = {k for k, v in list(globals().items()) if k.startswith("test_") and callable(v)}
     ran = 0
-    for t in (test_constructor_guard_overrides_deploy_past_the_constructors_own_require,
+    for t in (test_constructor_authority_address_is_the_deployer_only_when_the_ctor_checks_it,
+              test_constructor_guard_overrides_deploy_past_the_constructors_own_require,
               test_dropped_rungs_are_not_reported_as_no_rung_holding,
               test_the_ANTICHAIN_keeps_the_STRICT_rung_and_drops_what_it_entails,
               test_the_ANTICHAIN_may_not_let_a_GUARDED_rung_dominate_an_UNGUARDED_one,
