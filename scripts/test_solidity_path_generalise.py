@@ -5571,16 +5571,18 @@ check("pin-source-name-does-not-split-inside-a-mapping-key",
 check("pin-source-name-resolves-a-mapping-entry",
       _pin_source_name("state.deposits[msg.sender]"), "deposits")
 
+# The closure filter deliberately does NOT use the rule above; see its
+# docstring for the measurement that reverted that change. These pin the
+# ACCIDENT so it cannot be "fixed" again without re-reading why.
 _fusc_kept, _fusc_dropped = filter_unreferenced_state_coords(
     ["amount", "msg.sender", "state.deposits[0]", "state.deposits[msg.sender]",
      "state.discountBps$23[msg.sender]", "state.feeBps", "state.owner"],
     ["deposits", "discountBps", "feeBps", "feeReceiver", "maxFee"])
-check("mapping-entries-inside-the-closure-are-kept",
-      _fusc_kept,
-      ["amount", "msg.sender", "state.deposits[0]", "state.deposits[msg.sender]",
-       "state.discountBps$23[msg.sender]", "state.feeBps"])
-check("a-state-field-outside-the-closure-is-still-dropped",
-      _fusc_dropped, ["state.owner"])
+check("a-lowering-suffix-lets-a-mapping-entry-survive-the-closure-filter",
+      "state.discountBps$23[msg.sender]" in _fusc_kept, True)
+check("without-one-the-same-shaped-mapping-entry-is-dropped",
+      sorted(_fusc_dropped),
+      ["state.deposits[0]", "state.deposits[msg.sender]", "state.owner"])
 check("a-null-closure-drops-nothing",
       filter_unreferenced_state_coords(["state.deposits[0]"], None),
       (["state.deposits[0]"], []))

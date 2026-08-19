@@ -3904,16 +3904,45 @@ def state_coord_source_name(coord):
 
 
 def filter_unreferenced_state_coords(coords, dependencies):
-    """Drop state coordinates outside a complete source dependency closure."""
+    """Drop state coordinates outside a complete source dependency closure.
+
+    ⛔ THE SLICE BELOW IS DELIBERATELY NOT `state_coord_source_name`, AND THE
+    DIFFERENCE IS MEASURED RATHER THAN ARGUED.
+
+    Splitting on `$` alone leaves any subscript attached, so `state.m[0]` is
+    looked up as `m[0]`, misses a closure holding `m`, and is dropped -- while
+    `state.m$5[k]` splits to `m` and is KEPT. Whether a mapping-entry coordinate
+    survives therefore depends on whether ESBMC happened to give it a lowering
+    suffix, which is an accident.
+
+    Resolving it (keeping both) was tried and REVERTED. It strictly ADDS
+    coordinates, and the region search pays for every one:
+
+      P28_MapMin (one mapping, 4 paths)   no change at all: the coordinate the
+        filter drops is re-added by the counterexample harvest immediately
+        after, so certified 2/4 either way, level-0 0.7s and refine ~10.6s
+        either way.
+      35-subject stratified sample        raw->valid 81.4% -> 76.6%,
+        valid->PUT 91.3% -> 85.0%. ETHRegistrarController and PoolPauseHelper
+        went from `certify ok` to `certify oom` at 12 GiB, and the first then
+        fell to zero-yield fallbacks on all 7 remaining units -- a no-valid case
+        manufactured by widening the coordinate set.
+
+    So the accident is real and this rule is wrong in principle, but correcting
+    it in isolation buys nothing and costs conversion. A correction needs a
+    retention budget for the added coordinates, which is a separate change with
+    its own measurement. `state_coord_source_name` stays because
+    `_pin_source_name` needs it and pays nothing for it.
+    """
     if dependencies is None:
         return list(coords or []), []
     live = {str(name) for name in dependencies}
     kept, dropped = [], []
     for coord in coords or []:
-        source_name = state_coord_source_name(coord)
-        if source_name is None:
+        if not str(coord).startswith("state."):
             kept.append(coord)
             continue
+        source_name = str(coord)[len("state."):].split("$", 1)[0]
         if source_name in live:
             kept.append(coord)
         else:
