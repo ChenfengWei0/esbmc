@@ -106,6 +106,80 @@ another note.
 
 ### Current short list
 
+#### BLOCKING, set by the user on 2026-08-20 after reading the Full results
+
+These five supersede anything below them.  Items 1--4 are open; item 5 is a
+standing rule on how any of them may be worked, not a task.
+
+- [ ] **1. Batch every assertion into as few multi-property queries as
+  possible.**  `--multi-property` is passed NOWHERE in the pipeline
+  (`solidity_path_generalise.py`, `solidity_path_put.py`, `certify_all.py`,
+  `put_all.py`, `rq1_veriput_run.py` -- zero references), and neither is
+  `--parallel-solving`, which activates multi-property AND solves each VCC in
+  parallel.  The only way multi-property is reached today is as a side effect of
+  `--all-witnesses`, which is used on the probe call alone and is DROPPED the
+  moment the probe is judged too expensive -- so the more expensive a unit is,
+  the more certainly it loses batching.  The paper states batching in three
+  places and the implementation matches none of them:
+    * contribution list: candidate bounds "settles them in one batch of verifier
+      queries";
+    * `sec:cert`: `Certify` "submits the current region assumptions and all
+      boundary assertions together";
+    * `sec:cert-ref`: the threshold ladder submits "these properties together in
+      one multi-property query" -- and this one is not cosmetic, because
+      selecting "among the proved thresholds the one that removes the fewest
+      current values" REQUIRES per-claim verdicts, which single-property mode
+      cannot give: it stops at the first refutation.
+  MEASURED consequences on the Full run: path enumeration decides one claim per
+  job (`--path-cov-claim-timeout` default 120s per claim); the motivation
+  contract, 43 lines and 6 witnessed paths, spent 1286s of an 1800s budget on
+  enumeration and decided 327 of 635 claims, so certification issued no query at
+  all.  Median per-unit budget across the corpus is 38s (802 units got exactly
+  30s).  1232 of the 2003 uncertified regions -- 61.5% -- are recorded as "the
+  Stage-2 driver stopped", i.e. refinement never ran on them.
+  NOT the bottleneck, measured and excluded: the probe/threshold ladder already
+  runs as in-process incremental SMT at a median 4ms per query (227,118 queries
+  over 2342 rounds), so it is not issuing one process per property.
+
+- [ ] **2. Remove the hollow ABI tests; they are false positives.**
+  `structural-abi-gate-no-coordinate` regions are the compiler's own value gate:
+  a non-payable entry rejects value, and the EVM restores storage across that
+  revert by definition.  They are 4573 of 5710 certified regions (80.1%) and
+  produce 2607 of the 3270 valid PUTs (79.7%).  They are not invalid tests --
+  they do discriminate a mutant that stops reverting, via the R0 exit assertion
+  -- but they must not be counted as method output.  Removing them takes the
+  corpus to 641 valid PUTs over 186 of 509 cases.
+
+- [ ] **3. A PUT whose boundary is a revert must not synthesise other R1/R2
+  assertions.**  Given the call reverts, `post == pre` is implied by EVM
+  semantics, so it adds nothing over the R0 revert assertion -- and
+  `post == pre` / `post >= pre` / `post <= pre` are one fact written three ways,
+  counted as 1xR1 + 2xR2.  The paper already requires this removal
+  (`paper/VeriPUT.tex:1625`: "We remove a proved assertion when a stronger
+  assertion implies it over the same input part"), so this is the
+  implementation failing a stated rule, not a design choice.  Effect on the
+  headline: R1/R2 drops from 1669/3270 (51.0%) to 800/3270 (24.5%).
+  ALSO REQUIRED NOW, as a data fix and not only a code fix: strip these
+  assertions from the 49 entries in `Results/RQ1/VeriPUT` that carry
+  `revert_frame_only: true` (bugfix124 15, peer182 22, real203 12).
+
+- [ ] **4. The motivation example must be solved BEFORE any Full run.**  It is
+  not solved.  The only thing done to it so far was raising the budget from
+  1800s to 7200s, which is avoidance: the question is why a 43-line contract
+  with 6 paths needs 1286s to enumerate, and that is unanswered.  Expect item 1
+  to be the cause; it is the minimal reproducer for item 1 and should be used
+  as one.
+
+- [ ] **5. STANDING RULE -- full-corpus runs are FORBIDDEN.**  Work in rounds of
+  5 concurrent subjects, and inspect every round's results as a batch before
+  starting the next.  A round is acceptable only when `valid` and `PUT` clearly
+  dominate `concrete`, and R1/R2 is present.  "Certified on the first try or not
+  certified at all" is NOT an acceptable region outcome, and the same applies to
+  R1/R2: an ablation cannot be run against a stage that never varies.  Today
+  refinement fires on 88 of ~3700 paths and rescues 2, which leaves the
+  no-region-refinement arm with nothing to ablate.
+
+
 - [x] Find one small official RQ1 R2.2 live smoke candidate and run it to
   completion.  **Closed on `peer_solar__DateTime.getWeekday`**, whose return
   `uint8((timestamp / DAY_IN_SECONDS + 4) % 7)` is non-monotone in its single
