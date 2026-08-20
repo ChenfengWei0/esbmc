@@ -6991,7 +6991,19 @@ def certify(esbmc,
     log = run(esbmc,
               sol,
               contract, ["--path-cov-certify", path, "--cov-report-json"],
-              1,
+              # THE UNIT'S OWN TRANSACTION BOUND, not 1. Enumeration runs at
+              # `max_tx` and a path whose guard needs an EARLIER transaction's
+              # write is only witnessed there; certifying it at 1 tx runs the
+              # setup transaction not at all, so no execution reaches the
+              # guard and the query answers VACUOUS -- an empty region
+              # reported as a property of the contract rather than of the
+              # command line. MEASURED on a 20-line reproducer with
+              # `--scope deposit,withdraw --max-tx 2`: `deposit()` never ran,
+              # the balance stayed 0, and every path requiring a non-zero
+              # balance came back VACUOUS while the zero-balance revert path
+              # certified normally. Runs at `--max-tx 1` are unaffected: the
+              # value passed is the same 1.
+              max_tx,
               timeout,
               cwd,
               ast=ast,

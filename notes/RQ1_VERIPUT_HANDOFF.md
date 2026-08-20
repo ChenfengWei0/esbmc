@@ -2297,3 +2297,106 @@ P7 (auto-pin off) nor P9 (agreed-state off) covers it.
 If P10 also comes back vacuous, the finding is a real limitation and the fix is
 to scope the auto `msg.value` pin to the final transaction of the sequence
 rather than to every transaction in it.
+
+## 2026-08-20 13:48 — THE motivation root cause: certification ran at 1 transaction
+
+`certify()` receives `max_tx` and never uses it. `solidity_path_generalise.py`
+passed the literal `1` as `run()`'s fifth positional argument, which is
+`max_tx`:
+
+    log = run(esbmc, sol, contract,
+              ["--path-cov-certify", path, "--cov-report-json"],
+              1,                      # <- run(..., max_tx, ...)
+              timeout, cwd, ...)
+
+Enumeration (lines 1732 and 1758) passes `max_tx` correctly, so the two stages
+disagreed: paths were WITNESSED at 2 transactions and CERTIFIED at 1. Under one
+transaction `deposit()` never runs, the balance stays 0, and every path whose
+guard needs an earlier transaction's write has no execution at all — reported
+as `region is VACUOUS`, i.e. as a property of the contract rather than of the
+command line. The zero-balance revert path (enc=6) needs no setup transaction
+and certified normally throughout, which is what made the failure look
+selective and sent me chasing seven wrong hypotheses.
+
+Caught with a shim binary in place of `--esbmc` that logs argv before exec'ing
+the real one. The captured calls say it outright:
+
+    probe      --solidity-max-tx 2
+    enumerate  --solidity-max-tx 2   (x2)
+    CERTIFY    --solidity-max-tx 1   (x5)
+
+**Runs at `--max-tx 1` are bit-identical** — the value passed is the same 1 —
+so the 509 campaign (2697 of 2704 put-summaries record `max_tx: 1`) does NOT
+need re-running. Only multi-transaction scopes change.
+
+### Hypotheses eliminated by measurement, not argument
+
+Each was tested and killed; recording them so they are not re-tried:
+
+1. **keccak256 / mapping slot over-approximation** — `--goto-functions-only`
+   shows `deposits[msg.sender]` lowering to a precise array subscript
+   (`deposits[(unsigned _ExtInt(256))msg_sender]`); no keccak in the path.
+   `_sol_save_g_deposits = NONDET(...)` is save/restore initialisation,
+   overwritten by the real value on the next instruction.
+2. **External-call nondet modelling** — V1/V3 delete both `.call`s; still fails.
+3. **Path/branch complexity** — V3 is 20 lines with 4 paths; still fails.
+4. **`msg.value` pinned across the sequence** — the region ASSUME is inserted at
+   the certified unit's own body entry (`goto_coverage.cpp:9542`, `bat_entry`)
+   and `msg_value` is re-havoc'd per transaction, so the pin binds only the
+   final call. A widest-box query with `msg.value in [0,0]` printed
+   "Non-vacuity WAS witnessed".
+5. **Balance needing a payable setup** — V4 establishes it with a NON-payable
+   `credit(uint256)`; still fails.
+6. **`block.number`/`block.timestamp` pins** — V3np drops them; still fails.
+7. **k-induction not converging** — retracted. The UNDECIDED I read came from
+   `--result-only` masking the verdict; without that flag the same query
+   reports `UNSAFE`, and it does so with k-induction ON or OFF alike. The
+   opt-in switch added on the strength of that wrong reading was reverted.
+
+Also retracted: the motivation contract was briefly given a seeded balance in
+its constructor. That change is gone (`motivation_FeeVault2` deleted); the
+original `flat.sol` is untouched, md5 6e62e8794e1a4eab84cc40f77651536b.
+
+## 2026-08-20 — Full 509 final, and where the ablations stand
+
+`campaign-full-v2`, 03:39:52 -> 12:23:16 (8h43m), `--jobs 6`, 600s per case.
+
+    (a) no-valid          16 / 509
+    (b) PUT : concrete    3263 : 263  = 92.5%   (v1 sample-v5: 89.9%)
+    (c) R1/R2 of valid PUTs 1662/3263 = 50.9%   (v1 sample-v5: 55.6%)
+        raw -> valid      3526/4225   = 83.5%
+
+(c) is BELOW the v1 figure, and the comparison is not like-for-like: v1's 55.6%
+is `sample-v5`, 35 cases, and no v1 full-509 run exists. Per benchmark:
+
+    bugfix124 (124)  (b) 92.0%  (c) 61.2%    v1 sample (18 cases): 71.2%
+    peer182   (182)  (b) 94.4%  (c) 59.5%    v1 sample (10 cases): 41.1%
+    real203   (203)  (b) 89.6%  (c) 27.7%    v1 sample (10 cases): 51.1%
+
+real203 is what pulls the total down. The v1 per-benchmark samples span
+41%-71% on 10-18 cases each, so they do not settle the question either way.
+
+RQ3 status:
+
+  * `no-selection` — running locally (w2 never came back). 352/509 at 13:46.
+  * `no-test-oracle-refinement` — DERIVED, and it bites: 1666 of 3270 entries
+    lost their oracle-refinement assertion block.
+  * `no-region-refinement` — DERIVED but a NO-OP: 3526 of 3526 kept as is,
+    because only 1 of 4173 PUT rows in the Full tree has
+    `region_refinement_used=True`. Under this recipe that stage barely fires,
+    so ablating it measures nothing.
+  * `no-cer-reg` — FAILED at 13:10, `DerivationError: RoundFactory_
+    renounceOwnership_path6p1_part_part0_r_r: PUT has no exact authenticated
+    concrete basis`. `set -e` aborted the script. The Full run did not retain a
+    basis for every PUT, so this arm is not derivable from it as it stands.
+
+Derivation runs no ESBMC at all; it re-runs Forge only, because the derived
+test TEXT differs (different source file, or oracle blocks removed).
+14 min and 29 min respectively for the two that completed.
+
+### Incident: 28 minutes idle
+
+The `--jobs 10` ablation resume was refused at 12:23 by the memory gate
+(`--jobs 10 x --memlimit-gib 12 = 120GiB exceeds 300% of MemAvailable 34.8GiB`)
+and `set -e` killed the loop. Nothing ran until 12:51, when it was relaunched at
+`--jobs 8` (96GiB, inside the gate, same memlimit and mem-fraction as Full).
