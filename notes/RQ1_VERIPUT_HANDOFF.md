@@ -2260,3 +2260,40 @@ So no-selection was started at 06:49 alongside Full, at `--jobs 4` against
 Full's 6 on a 12-core box. **Caveat to record with the numbers:** Full's first
 251 cases ran uncontended and the rest run under load, while no-selection runs
 under load throughout. The per-case wall stays 600s for both, unchanged.
+
+## 2026-08-20 10:30 — motivation: the msg.value tension, stated exactly
+
+P9 (msg.value auto-pin ON, no `--pin-agreed-state`, no `--pin-extcall`, no
+`discountBps` pin) is the first arm with none of the four earlier mistakes.
+It **certified enc=6** and left enc=62 / enc=127 VACUOUS. Reading the source
+makes the reason structural rather than incidental:
+
+    function deposit()  external payable { deposits[msg.sender] += msg.value; }
+    function withdraw(uint256 amount) external returns (uint256 net) {
+        uint256 d = deposits[msg.sender];
+        require(amount > 0 && amount <= d);   // <- enc=127 needs d > 0
+
+`deposit()` is the ONLY way a balance is established, and it establishes it
+from `msg.value`. `withdraw` is non-payable, so certifying any of its body
+paths requires the `msg.value == 0` ABI pin (P8 proved the alternative: with
+msg.value unconstrained the driver says outright *"A non-payable function has
+an ABI-level decision on msg.value, so its paths cannot certify while it is
+unconstrained"*, and every body path came back VACUOUS).
+
+But the pin is a single spec constraint with no transaction index, so it binds
+`msg.value` for the WHOLE sequence — including the setup `deposit()`. Under
+that pin no sequence in the region can move the balance off zero, so the
+successful-withdrawal path admits no execution and the region is vacuous.
+The two requirements are in direct tension:
+
+  * withdraw's ABI gate needs `msg.value == 0` on the FINAL transaction
+  * enc=127's guard needs `msg.value > 0` on a SETUP transaction
+
+P10 tests the remaining uncovered cell of those two knobs: msg.value auto-pin
+ON **and** `--pin-agreed-state` ON, so `state.deposits[0] == 1` enters as an
+assumed entry state and no value-carrying setup transaction is needed. Neither
+P7 (auto-pin off) nor P9 (agreed-state off) covers it.
+
+If P10 also comes back vacuous, the finding is a real limitation and the fix is
+to scope the auto `msg.value` pin to the final transaction of the sequence
+rather than to every transaction in it.
