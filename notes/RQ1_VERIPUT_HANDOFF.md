@@ -2400,3 +2400,56 @@ The `--jobs 10` ablation resume was refused at 12:23 by the memory gate
 (`--jobs 10 x --memlimit-gib 12 = 120GiB exceeds 300% of MemAvailable 34.8GiB`)
 and `set -e` killed the loop. Nothing ran until 12:51, when it was relaunched at
 `--jobs 8` (96GiB, inside the gate, same memlimit and mem-fraction as Full).
+
+## 2026-08-20 16:29 — host reboot, and what it cost
+
+The machine power-cycled (`up 1 min` at 16:30). Every background process died and
+`/tmp` was cleared. Measured survivors and losses:
+
+SURVIVED (all on the repo disk):
+  * Full 509/509 — `ALL BENCHMARKS DONE 2026-08-20T12:23:16+08:00`, untouched.
+  * no-selection bugfix124 — 124/124 `result.json`, all `status != error`.
+  * no-selection peer182 — 164 good, 9 partial trees (no `result.json`).
+  * the two committed tool fixes: `032a3d585b` (certify at the unit's own
+    transaction bound) and `7bdedbfbba` (commented-out constructor).
+
+LOST (all had been living in `/tmp`):
+  * the entire motivation working tree — `feevault/subjects/motivation_FeeVault`,
+    `cert_*.jsonl`, `mot_stage4_kill.sh`, `mot_killmatrix.sh`, `mk_cert_row.py`,
+    `mot_M1.sh`/`mot_M2.sh`, and the `dbg/` reproducers V1..V5 with the esbmc
+    argv shim. The M2 run that was pinning `extcall.ok1`/`ok2` died with it.
+  * `redo_bugfix124.txt` / `todo_peer182.txt` / the done-lists.
+  * no-selection real203 — it had not started, so nothing was lost there.
+
+This is the second time tmpfs has eaten work in this project; the first produced
+the "keep the validation sample in the repo, not in tmpfs" commit (`3f5a722e0d`)
+and I did not carry that lesson to the motivation harness. It is now carried:
+the motivation subject lives at `VeriPUT/Work/motivation-kill/`, on disk.
+
+### Restart procedure used, and why it is not just "run it again"
+
+`todo_peer182.txt` was rebuilt from the FULL run's `results.jsonl` subject ids,
+not from the ablation's `subjects/` directory listing, because the two do not
+agree: the runner sanitises `peer_solar__MultiSigWallet (1)` into the directory
+`peer_solar__MultiSigWallet__1`. Diffing directory names against jsonl ids
+reported those two subjects as UNDONE when they were done, and re-running them
+would have hit the "refusing to overwrite certification artifact" guard and put
+an error row on top of a good one -- the exact failure that destroyed 104
+bugfix124 results at 12:51. Reconciled: 164 good + 18 remaining = 182.
+
+The 9 partial peer182 trees were DELETED before relaunching, for the same
+reason: the guard refuses to overwrite an existing certification artifact, so a
+half-written tree cannot simply be re-entered.
+
+Config is byte-identical to the run that produced the surviving 288 results
+(`--jobs 8 --timeout 600 --esbmc-run-timeout 600 --memlimit-gib 12
+--mem-fraction 3.0 --stage-mem-fraction 0.75 --strict-case-wall-budget`). An
+ablation arm whose halves ran under different budgets is not an ablation.
+
+### w2
+
+Not usable. It answers on port 22 but closes the connection during key
+exchange (`kex_exchange_identification: Connection closed by remote host`) and
+does not answer ping. That is the remote sshd refusing before authentication,
+not a credential problem on this side, so there is nothing to fix from here.
+The no-selection remainder runs on the local box alone.
