@@ -1,5 +1,5 @@
 CORE
 contract.sol
 --contract BoolR2 --solidity-path-coverage --solidity-max-tx 1 --path-cov-assert spec.json --memlimit 8g
-^ERROR: --path-cov-assert: unit '[^']*' -- REFUSING THE LADDER: variable 'flag' is BOOLEAN, but its spec contains structured R2 interval or delta candidate\(s\)\. Typed R2 arithmetic/interval terms require an ordering-capable unsigned scalar; silently dropping ASKED candidates would leave the batch summary incomplete
+^ERROR: --path-cov-assert: unit '[^']*' -- REFUSING THE LADDER: variable 'flag' is not an ordering-capable unsigned scalar, but its spec contains structured R2 interval or delta candidate\(s\)\. Typed R2 arithmetic/interval terms require an ordering-capable unsigned scalar; silently dropping ASKED candidates would leave the batch summary incomplete
 \A(?!(.|\n)*^--path-cov-assert: ladder summary)

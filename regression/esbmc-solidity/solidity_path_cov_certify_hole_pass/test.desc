@@ -6,4 +6,4 @@ NON-VACUITY was witnessed
 ^✗ FAILED: 'send:path:3#nonvacuous at file .*contract.sol line 37 function send'
 ^VERIFICATION FAILED$
 ^--path-cov-certify: the box is a PUNCHED interval \(Definition 5\) — 1 value\(s\) are removed across 1 coordinate\(s\)
-assumed 1 input bound\(s\) \(1 hole\(s\) punched\) at entry
+1 input bound\(s\) \(1 hole\(s\) punched\) at entry

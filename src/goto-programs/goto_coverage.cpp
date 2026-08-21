@@ -1782,7 +1782,27 @@ static bool path_cov_bytes_static_to_uint_expr(
   const type2tc u256 = get_uint_type(256);
   const type2tc elem_t = to_array_type(data->type).subtype;
   expr2tc raw = constant_int2tc(u256, BigInt(0));
-  const unsigned n = fixed_len == 0 ? 32 : std::min(fixed_len, 32u);
+
+  // A CONSTANT length is a fixed length. `bytesN` carries one, and taking the
+  // dynamic branch for it was not merely wasteful: the guarded form repeats
+  // `raw` in BOTH arms of every `if`, so the shared DAG the builder returns
+  // expands to 2^32 nodes the moment anything walks it as a tree -- printing
+  // the goto program (`from_expr`) or symex's `replace_nondet`. MEASURED: a
+  // one-line `bytes32 responseHash` contract took the whole machine's memory
+  // in both places (regression solidity_path_cov_assert_bytes32_state_component
+  // and its two siblings), which is also how a `--memlimit`-less run brought
+  // the host down. The value is identical either way; only the shape differs.
+  unsigned n = fixed_len == 0 ? 32 : std::min(fixed_len, 32u);
+  bool constant_length = fixed_len != 0;
+  if (fixed_len == 0 && is_constant_int2t(length))
+  {
+    const BigInt &lv = to_constant_int2t(length).value;
+    if (lv >= 0 && lv <= 32)
+    {
+      n = static_cast<unsigned>(lv.to_uint64());
+      constant_length = true;
+    }
+  }
   for (unsigned i = 0; i < n; ++i)
   {
     const expr2tc idx = constant_int2tc(length->type, BigInt(i));
@@ -1790,8 +1810,8 @@ static bool path_cov_bytes_static_to_uint_expr(
     byte = typecast2tc(u256, byte);
     const expr2tc shifted = shl2tc(u256, raw, constant_int2tc(u256, BigInt(8)));
     const expr2tc next = bitor2tc(u256, shifted, byte);
-    raw = fixed_len == 0 ? if2tc(u256, greaterthan2tc(length, idx), next, raw)
-                         : next;
+    raw = constant_length ? next
+                          : if2tc(u256, greaterthan2tc(length, idx), next, raw);
   }
 
   if (mapping_key)
@@ -7313,9 +7333,11 @@ void goto_coveraget::solidity_path_coverage()
     // uses ASSUME for many ordinary constraints: bytesN parameter length,
     // hash-model injectivity, calldata-slice bounds, Foundry `vm.assume`,
     // address freshness, and modeled-library side conditions. Those are path
-    // constraints, not missing revert siblings. The frontend tags only the
-    // legacy require/revert fallback that still represents a hidden source
-    // decision, and the coverage pass treats that tag as the obstacle.
+    // constraints, not missing revert siblings. The frontend tags exactly two
+    // shapes -- the legacy require/revert fallback that still represents a
+    // hidden source decision, and an `__ESBMC_assume(...)` the user wrote in
+    // the contract source -- and the coverage pass treats that tag as the
+    // obstacle.
     auto is_lost_decision = [&](goto_programt::const_targett i) -> bool {
       if (!i->is_assume())
         return false;
@@ -10141,7 +10163,7 @@ void goto_coveraget::solidity_path_coverage()
       ++certify_units_matched;
       log_status(
         "--path-cov-certify: unit '{}' — established {} relation-backed entry "
-        "assignment(s), FREED {} entry-state coordinate(s), assumed {} "
+        "assignment(s), {}assumed {} "
         "materialized path guard(s) and {} input "
         "bound(s) ({} hole(s) punched) at "
         "entry "
@@ -10152,7 +10174,9 @@ void goto_coveraget::solidity_path_coverage()
         "path's own exit",
         uid,
         establish_emitted,
-        free_emitted,
+        free_emitted ? fmt::format("FREED {} entry-state coordinate(s), ",
+                                   free_emitted)
+                     : std::string(),
         resolved_certify_guards.size(),
         bounds_emitted,
         holes_emitted,
@@ -12264,7 +12288,7 @@ void goto_coveraget::solidity_path_coverage()
 
       log_status(
         "--path-cov-assert: unit '{}' -- established {} relation-backed entry "
-        "assignment(s), FREED {} entry-state coordinate(s), assumed {} region "
+        "assignment(s), {}assumed {} region "
         "bound(s) ({} hole(s) punched) at "
         "entry and emitted {} candidate assertion(s), {} of them over the "
         "unit's own RETURN VALUE and the rest over {} state variable(s), at "
@@ -12274,7 +12298,12 @@ void goto_coveraget::solidity_path_coverage()
         "be judged in ONE run instead of one query per candidate",
         uid,
         establish_emitted,
-        free_emitted,
+        // Named only when it fired: a run that freed nothing behaves exactly as
+        // before --free-entry-state existed, and printing "FREED 0" there broke
+        // every regression expectation written against the older line.
+        free_emitted ? fmt::format("FREED {} entry-state coordinate(s), ",
+                                   free_emitted)
+                     : std::string(),
         bounds_emitted,
         holes_emitted,
         emitted,

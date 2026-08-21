@@ -1420,7 +1420,16 @@ bool solidity_convertert::get_expr(
   }
   }
 
+  // A user-written `__ESBMC_assume(...)` is lowered to a tagged `code_assumet`
+  // above so the path-coverage decision-set census can name its unit a NAMED
+  // OBSTACLE. This blanket overwrite replaces the whole location object and
+  // would silently drop the tag, so carry it across. The same carry sits at
+  // the ends of get_block and get_statement, which overwrite again.
+  const bool keep_user_assume_tag =
+    new_expr.location().get_bool("sol_legacy_revert_assume");
   new_expr.location() = location;
+  if (keep_user_assume_tag)
+    new_expr.location().set("sol_legacy_revert_assume", true);
 
   log_debug(
     "solidity",
@@ -2534,6 +2543,7 @@ bool solidity_convertert::get_call_expr(
       call.function() = new_expr;
       call.type() = to_code_type(new_expr.type()).return_type();
       call.location().set("sol_legacy_revert_assume", true);
+      call.function().location().set("sol_legacy_revert_assume", true);
       call.arguments().resize(1);
       call.arguments().at(0) = false_exprt();
     }
@@ -2561,6 +2571,7 @@ bool solidity_convertert::get_call_expr(
       call.function() = new_expr;
       call.type() = to_code_type(new_expr.type()).return_type();
       call.location().set("sol_legacy_revert_assume", true);
+      call.function().location().set("sol_legacy_revert_assume", true);
       call.arguments().resize(1);
       call.arguments().at(0) = single_arg;
     }
@@ -3239,6 +3250,52 @@ bool solidity_convertert::get_call_expr(
         new_expr = pack_call;
         return false;
       }
+    }
+
+    // A user-written `__ESBMC_assume(...)` in the contract source deletes
+    // executions with NO control flow: the excluded inputs are not a sibling
+    // path, so nothing downstream can subtract them from a certified region,
+    // and a box certified over them is a false certificate. That is the same
+    // failure as the legacy require/revert fallback, so it carries the same
+    // tag and the path-coverage decision-set census names the unit a NAMED
+    // OBSTACLE. Frontend-synthesised assumes (bytesN parameter length, hash
+    // injectivity, calldata-slice bounds, address freshness, modeled-library
+    // side conditions) are emitted through get_library_function_call_no_args
+    // and never reach this branch, so this matches only what the user wrote.
+    // The tag must sit on the CALLEE operand's location, because
+    // goto_convertt::do_function_call_symbol builds the ASSUME instruction
+    // with `t->location = function.location()` -- the call expression's own
+    // location is dropped there. Stamped on both so either reader finds it.
+    // A user-written `__ESBMC_assume(...)` in the contract source deletes
+    // executions with NO control flow: the excluded inputs are not a sibling
+    // path, so nothing downstream can subtract them from a certified region,
+    // and a box certified over them is a false certificate. That is the same
+    // failure as the legacy require/revert fallback, so it carries the same
+    // tag and the path-coverage decision-set census names the unit a NAMED
+    // OBSTACLE. Frontend-synthesised assumes (bytesN parameter length, hash
+    // injectivity, calldata-slice bounds, address freshness, modeled-library
+    // side conditions) are emitted through get_library_function_call_no_args
+    // and never reach this tail, so this matches only what the user wrote.
+    //
+    // Lowered here as a `code_assumet` rather than left as a call to the
+    // intrinsic, because goto_convertt::do_function_call_symbol rebuilds the
+    // ASSUME with a location of its own choosing and the tag would be lost;
+    // convert_assume copies `code.location()` verbatim. Same guard, same
+    // instruction -- only the location survives.
+    if (
+      call.function().identifier() == "c:@F@__ESBMC_assume" &&
+      call.arguments().size() == 1)
+    {
+      exprt cond = call.arguments().front();
+      if (!cond.type().is_bool())
+        solidity_gen_typecast(ns, cond, bool_t);
+      code_assumet assume_stmt(cond);
+      locationt assume_loc;
+      get_start_location_from_stmt(expr, assume_loc);
+      assume_stmt.location() = assume_loc;
+      assume_stmt.location().set("sol_legacy_revert_assume", true);
+      new_expr = assume_stmt;
+      return false;
     }
 
     new_expr = call;

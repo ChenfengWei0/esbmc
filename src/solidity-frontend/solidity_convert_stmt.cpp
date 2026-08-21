@@ -371,6 +371,12 @@ bool solidity_convertert::get_block(
       // worse than no marker at all.
       if (statement.location().get_bool("sol_source_return"))
         cl.set("sol_source_return", true);
+      // Same carry for a user-written `__ESBMC_assume(...)`: it is lowered to a
+      // tagged assume in get_call_expr, and the decision-set census reads that
+      // tag to name the unit a NAMED OBSTACLE. Dropping it here would leave the
+      // census green forever, which is indistinguishable from a working one.
+      if (statement.location().get_bool("sol_legacy_revert_assume"))
+        cl.set("sol_legacy_revert_assume", true);
       statement.location() = cl;
       convert_expression_to_code(statement);
       _block.operands().push_back(statement);
@@ -447,7 +453,14 @@ bool solidity_convertert::get_block(
   }
   }
 
+  // Same tag-preserving overwrite as at the end of get_statement: a bare
+  // expression statement inside a block is lowered here, and a user-written
+  // `__ESBMC_assume(...)` must keep the tag the decision-set census reads.
+  const bool keep_user_assume_tag =
+    new_expr.location().get_bool("sol_legacy_revert_assume");
   new_expr.location() = location;
+  if (keep_user_assume_tag)
+    new_expr.location().set("sol_legacy_revert_assume", true);
   return false;
 }
 
@@ -1962,7 +1975,15 @@ bool solidity_convertert::get_statement(
 
   log_debug(
     "solidity", "finish statement {}", SolidityGrammar::statement_to_str(type));
+  // A user-written `__ESBMC_assume(...)` is lowered and tagged in
+  // get_call_expr so the path-coverage decision-set census can name its unit a
+  // NAMED OBSTACLE. The blanket overwrite below replaces the whole location
+  // object and would silently drop that tag, so carry it across.
+  const bool keep_user_assume_tag =
+    new_expr.location().get_bool("sol_legacy_revert_assume");
   new_expr.location() = loc;
+  if (keep_user_assume_tag)
+    new_expr.location().set("sol_legacy_revert_assume", true);
   return false;
 }
 

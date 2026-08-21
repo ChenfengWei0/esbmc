@@ -1,10 +1,10 @@
 CORE
 contract.sol
 --solidity-path-coverage --contract Gate3 --path-cov-outer-box outer.json --solidity-max-tx 1
-^✓ PASSED: 'send:path:2#ub_to_777 at'$
-^✗ FAILED: 'send:path:2#lb_to_777 at'$
-^✓ PASSED: 'send:path:2#ub_to_888 at'$
-^✗ FAILED: 'send:path:2#lb_to_888 at'$
+^✓ PASSED: 'send:path:2#ub_to_777 at file .*contract\.sol line [0-9]+ function \w+'
+^✗ FAILED: 'send:path:2#lb_to_777 at file .*contract\.sol line [0-9]+ function \w+'
+^✓ PASSED: 'send:path:2#ub_to_888 at file .*contract\.sol line [0-9]+ function \w+'
+^✗ FAILED: 'send:path:2#lb_to_888 at file .*contract\.sol line [0-9]+ function \w+'
 ^✗ FAILED: 'send:path:3#ub_to_100 at
 ^--path-cov-outer-box: unit '[^']*' — emitted 6 ladder probe\(s\) as ONE batch
 ^--path-cov-outer-box: unit '[^']*' — 1 \(path, coordinate\) pair\(s\) used a PER-PATH ladder from the spec instead of the shared one; the spec carried 1 such override\(s\) in total
