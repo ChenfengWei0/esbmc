@@ -16524,6 +16524,30 @@ def claim_concrete_ce(claim, params=None):
         for raw_name, raw_value in values.items():
             name = prefix + str(raw_name)
             value = _normalized_concrete_ce_value(raw_value)
+            # ---- DYNAMIC BYTES BEFORE THE STRUCT-LITERAL EXPANSION ----
+            #
+            # ESBMC renders a `bytes` argument as `{ .offset=0, .length=0,
+            # .capacity=0, .initialized=1 }`, which _struct_literal_members()
+            # happily parses. Expanding it published FOUR coordinates
+            # (`data.offset`, `data.length`, `data.capacity`,
+            # `data.initialized`) where the certified CE carries exactly one,
+            # `data.length`, so the binder answered
+            #   extra=data.capacity,data.initialized,data.offset
+            # and the row was refused as "emitted claim contains a non-scalar
+            # or malformed coordinate". The memory LAYOUT of the argument is
+            # not a certified coordinate; only its length is. This branch used
+            # to exist below and was unreachable, because the struct-literal
+            # arm `continue`s first.
+            if value is None and not prefix and param_types.get(name) in ("bytes", "bytes memory",
+                                                                          "bytes calldata"):
+                match = re.search(r"\.length\s*=\s*(0x[0-9A-Fa-f]+|[0-9]+)", str(raw_value))
+                if match is None or int(match.group(1), 0) != 0:
+                    # A NONEMPTY bytes argument still has no exact content
+                    # evidence here, so it stays refused rather than binding on
+                    # its length alone.
+                    return None
+                name = name + ".length"
+                value = 0
             if value is None:
                 members = _struct_literal_members(raw_value)
                 if members is not None:
@@ -16533,13 +16557,6 @@ def claim_concrete_ce(claim, params=None):
                             return None
                         out[member_name] = member_value
                     continue
-            if value is None and not prefix and param_types.get(name) in ("bytes", "bytes memory",
-                                                                          "bytes calldata"):
-                match = re.search(r"\.length\s*=\s*(0x[0-9A-Fa-f]+|[0-9]+)", str(raw_value))
-                if match is None or int(match.group(1), 0) != 0:
-                    return None
-                name = name + ".length"
-                value = 0
             if value is None:
                 return None
             if name in out and out[name] != value:
@@ -20166,7 +20183,19 @@ def assemble_put_source(emitted,
         for mock_spec in mock_spec_group:
             for mock_type in (mock_spec.get("returns", []) +
                               mock_spec.get("runtime_return_types", [])):
-                symbol = _source_custom_type_symbol(mock_type)
+                # THE OWNER, when the type is a struct declared INSIDE an
+                # interface. MEASURED, pop_046_CVXStaker: `poolInfo(uint256)`
+                # returns `PoolInfo`, declared inside `interface ICVXBooster`,
+                # and importing the bare name is
+                #   Error (2904): Declaration "PoolInfo" not found in
+                #   "src/flat.sol"
+                # which fails the WHOLE Foundry project, so every row of that
+                # project -- including a PUT that had already passed gates 1,
+                # 2, 3 and 5 -- came back UNKNOWN rather than green. The body
+                # already writes `ICVXBooster.PoolInfo({...})`; only the import
+                # line named the type wrongly.
+                symbol = (_source_custom_type_import_symbol(mock_type, flat_source or "")
+                          or _source_custom_type_symbol(mock_type))
                 if symbol:
                     mock_return_symbols.add(symbol)
     lines = add_flat_import_symbols(lines, sorted(mock_return_symbols))
@@ -20303,7 +20332,19 @@ def assemble_concrete_source(emitted,
         for mock_spec in mock_spec_group:
             for mock_type in (mock_spec.get("returns", []) +
                               mock_spec.get("runtime_return_types", [])):
-                symbol = _source_custom_type_symbol(mock_type)
+                # THE OWNER, when the type is a struct declared INSIDE an
+                # interface. MEASURED, pop_046_CVXStaker: `poolInfo(uint256)`
+                # returns `PoolInfo`, declared inside `interface ICVXBooster`,
+                # and importing the bare name is
+                #   Error (2904): Declaration "PoolInfo" not found in
+                #   "src/flat.sol"
+                # which fails the WHOLE Foundry project, so every row of that
+                # project -- including a PUT that had already passed gates 1,
+                # 2, 3 and 5 -- came back UNKNOWN rather than green. The body
+                # already writes `ICVXBooster.PoolInfo({...})`; only the import
+                # line named the type wrongly.
+                symbol = (_source_custom_type_import_symbol(mock_type, flat_source or "")
+                          or _source_custom_type_symbol(mock_type))
                 if symbol:
                     mock_return_symbols.add(symbol)
     lines = add_flat_import_symbols(lines, sorted(mock_return_symbols))

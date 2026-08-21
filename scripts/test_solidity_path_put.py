@@ -427,9 +427,16 @@ def make_case_precompile_ctor():
 
 
 def check(cond, msg):
+    """Assert, and say what was checked.
+
+    ⛔ IT RAISES. It used to print `FAIL:` and return 1 into a `bad` counter
+    that every test then RETURNED -- and pytest does not read a return value
+    (it warns `PytestReturnNotNoneWarning` and passes anyway). MEASURED
+    2026-08-22: 1475 checks in this file, one of them failing, and the suite
+    reported `512 passed`. A check that cannot fail is not a check.
+    """
     if not cond:
-        print(f"FAIL: {msg}")
-        return 1
+        raise AssertionError(msg)
     print(f"ok: {msg}")
     return 0
 
@@ -1139,8 +1146,9 @@ def test_empty_bytes_claim_binds_to_its_certified_length_coordinate():
                                                                    params=[("callee", "address"),
                                                                            ("data", "bytes memory")
                                                                            ])
-    bad += check(rejected is None and "non-scalar" in (rejected_reason or ""),
-                 "nonempty bytes remain refused without exact content evidence")
+    bad += check(
+        rejected is None and "non-scalar" in (rejected_reason or ""),
+        f"nonempty bytes remain refused without exact content evidence: {rejected_reason}")
     body = ['    c0.forward(address(uint160(0)), hex"");']
     digest, source_reason = bind_emitted_source_to_certified_ce(body, 0, "forward",
                                                                 [("callee", "address"),
@@ -24413,6 +24421,25 @@ def test_source_level_dynamic_defaults_are_nonempty_for_constructors():
     bad += check(
         _source_custom_type_import_symbol("enum Enum.Operation") == "Enum",
         "qualified enum parameters import their declaring library")
+    # MEASURED, pop_046_CVXStaker: an interface mock returning `PoolInfo` --
+    # declared INSIDE `interface ICVXBooster` -- had the BARE name added to the
+    # test's import list, and solc answered `Error (2904): Declaration
+    # "PoolInfo" not found in "src/flat.sol"`. That fails the whole Foundry
+    # project, so every row in it, including a PUT that had already passed
+    # gates 1, 2, 3 and 5, was reported UNKNOWN instead of green.
+    nested_struct_source = ("interface ICVXBooster { struct PoolInfo { address lptoken; "
+                            "bool shutdown; } function poolInfo(uint256) external view "
+                            "returns (PoolInfo memory); }")
+    bad += check(
+        _source_custom_type_import_symbol("PoolInfo", nested_struct_source) == "ICVXBooster",
+        "a struct declared inside an interface imports the interface, not the bare name")
+    bad += check(
+        _source_custom_type_import_symbol("PoolInfo[]", nested_struct_source) == "ICVXBooster",
+        "an array of an interface-nested struct imports the interface too")
+    bad += check(
+        _source_custom_type_import_symbol("ICVXBooster.PoolInfo",
+                                          nested_struct_source) == "ICVXBooster",
+        "an already-qualified nested struct keeps its owner")
     source = "type UD60x18 is uint256; library Bob { enum Status { Open, Closed } }"
     bad += check(
         _source_type_default_expr("UD60x18", 42, source) == "UD60x18.wrap(0)",
