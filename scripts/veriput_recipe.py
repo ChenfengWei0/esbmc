@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Versioned VeriPUT recipe fragments shared by POC and benchmark runners."""
 
-STRONG_RECIPE_VERSION = "veriput-strong/28-checked-proofs"
+STRONG_RECIPE_VERSION = "veriput-strong/29-extcall-nondet"
 STRONG_PROBE_WITNESSES = 16
 STRONG_PROBE_LADDER_BUDGET = 8
 STRONG_MAX_HOLES = 3
@@ -47,6 +47,20 @@ STRONG_CERTIFY_ARGS = [
     "--esbmc-arg=--path-cov-arith-resolve",
     "--esbmc-arg=--unwindsetname",
     "--esbmc-arg=_ESBMC_alloc_nested_2d:0:16,nondet_string:0:33",
+    # v29: external calls are modelled as a nondet return value of the call's
+    # own type, not as a re-entrant dispatch into the contract (TODO 20, the
+    # motivation runs' recipe, and what Stage 4's extcall pin materialisation
+    # already assumes). Under the default re-entry model every unit that makes
+    # an external call is an unbounded recursion: the certification query's
+    # forward condition can never close and its base case grows with k until
+    # the unit budget kills it (MEASURED, TODO 42: MStable.balanceOfToken
+    # k=12 at 57 s and still climbing; every MStable unit KILLED in v29), and
+    # the enumeration's path set is re-entry combinations (approveMax 514
+    # claims). Reentrancy is therefore NOT modelled by any certificate or PUT
+    # of this recipe; that is the stated limit. The flag is not in the
+    # k-induction strip lists, so it reaches enumeration, certification and
+    # (through the Stage-2 row's esbmc_args) the Stage-4 proofs alike.
+    "--esbmc-arg=--extcall-nondet",
     # v28: the arithmetic checks reach the CERTIFICATION queries too. The
     # driver's k-induction proof strategy strips --overflow-check /
     # --div-by-zero-check / --path-cov-arith-resolve from --esbmc-arg (they are
