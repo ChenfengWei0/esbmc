@@ -143,6 +143,15 @@ STRICT_STAGE4_MIN_UNIT_BUDGET_S = 120
 # The gate test is hollow under item 2 anyway; the last unit of a case is
 # never skipped, so a gate-only case still leaves a Valid test.
 STRUCTURAL_ONLY_STAGE4_SKIP = True
+# ...and when a case keeps producing NOTHING BUT those gates, stop the case
+# instead of spending the rest of its 600 s. Measured 2026-08-22:
+# acfix_fixlink_Product / Product2 spent 564 s each on 15 units of which every
+# one certified only the ABI gate, and published 0 Valid; DnGmxBatchingManager
+# had 6 consecutive gate-only units BEFORE the first real region (usdcBalance),
+# so the threshold must stay above 6. 8 keeps DnGmx and cuts the gate-only
+# cases roughly in half. The per-case budget is unchanged -- this only stops
+# spending a budget that is provably producing nothing.
+STRUCTURAL_ONLY_CASE_STOP_N = 8
 STRICT_CASE_FINALIZATION_RESERVE_MAX_S = 30.0
 STRICT_PROCESS_TERMINATION_RESERVE_S = 2.0
 DATASET_LABEL = {
@@ -8893,6 +8902,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     stage4_candidate_units_attempted = 0
     low_budget_concrete_only_stage4_skips = []
     structural_only_stage4_skips = []
+    consecutive_structural_only_units = 0
     low_budget_timeout_only_stage4_skips = []
     put_saturated_concrete_only_stage4_skips = []
     valid_saturated_concrete_only_stage4_skips = []
@@ -9817,12 +9827,18 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 skip_reason,
             })
             continue
+        structural_only_unit = (
+            n_certified > 0
+            and (n_cleared_fallback + n_timeout_fallback + n_complete_witness_fallback
+                 + n_partial_journal_fallback) == 0
+            and _nonstructural_certified_count(cert_path, subject.benchmark_key, unit,
+                                               path_function) == 0)
+        if structural_only_unit:
+            consecutive_structural_only_units += 1
+        else:
+            consecutive_structural_only_units = 0
         if (STRUCTURAL_ONLY_STAGE4_SKIP and strict_case_wall_budget
-                and pending_units_after_this > 0 and n_certified > 0
-                and (n_cleared_fallback + n_timeout_fallback + n_complete_witness_fallback
-                     + n_partial_journal_fallback) == 0
-                and _nonstructural_certified_count(cert_path, subject.benchmark_key, unit,
-                                                   path_function) == 0):
+                and pending_units_after_this > 0 and structural_only_unit):
             structural_only_stage4_skips.append({
                 "unit": unit,
                 "job_id": job.get("job_id"),
@@ -9835,6 +9851,16 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             })
             print(f"[rq1]   stage4 skipped for {unit}: structural-only certificates, "
                   f"{pending_units_after_this} unit(s) pending", flush=True)
+            if (consecutive_structural_only_units >= STRUCTURAL_ONLY_CASE_STOP_N
+                    and int(summarize_put_artifacts(case_dir / "put").get("put_valid") or 0) == 0):
+                result_status = "early-stop-no-output"
+                failure_reason = (
+                    f"{consecutive_structural_only_units} consecutive unit(s) certified only the "
+                    f"compiler's ABI/getter value gate and no method PUT was published; the "
+                    f"remaining {pending_units_after_this} unit(s) were not attempted (the case "
+                    f"budget is unchanged, it was simply producing nothing)")
+                print(f"[rq1]   STOP case: {failure_reason}", flush=True)
+                break
             continue
         if _remaining(deadline) < args.min_remaining_s:
             result_status = "budget-exhausted"
