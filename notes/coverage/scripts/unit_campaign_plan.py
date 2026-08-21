@@ -1292,8 +1292,21 @@ def _ordered_selected_jobs(jobs: list[dict], selection_strategy: str,
             int(job.get("ordinal") or 0),
         )
 
-    ordered = sorted(unit_schedule._select_jobs(list(jobs), selection_strategy),
-                     key=quality_key)
+    # THE SELECTION STRATEGY HAS TO SURVIVE THE QUALITY SORT. `_select_jobs`
+    # interleaves the benchmarks for `round-robin-*`, and this sort then used
+    # the schedule ORDINAL as its last tie-break, which put the original order
+    # straight back: with five equal-quality jobs, `round-robin-benchmark`
+    # with --limit 3 returned two peer182 jobs and one bugfix124 instead of one
+    # per benchmark. Rank by the position the strategy chose, and keep the
+    # ordinal after it so `priority` (where the strategy returns the jobs
+    # unchanged) behaves exactly as before.
+    selected_jobs = unit_schedule._select_jobs(list(jobs), selection_strategy)
+    selection_index = {id(job): pos for pos, job in enumerate(selected_jobs)}
+    # The ordinal is quality_key's LAST element, so it has to be replaced --
+    # appending the selection position after it changes nothing.
+    ordered = sorted(selected_jobs,
+                     key=lambda job:
+                     (quality_key(job)[:-1] + (selection_index[id(job)], quality_key(job)[-1])))
     before_limit = len(ordered)
     if limit:
         ordered = ordered[:limit]

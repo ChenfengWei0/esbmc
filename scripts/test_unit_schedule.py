@@ -1098,7 +1098,13 @@ def test_schedule_includes_fallback_and_receive_units():
     units = [job["unit"] for job in doc["jobs"]]
     skipped = doc["skipped_units"]
     bad = 0
-    bad += check(units == ["fallback", "receive", "setX"],
+    # ORDER IS NOT THE PROPERTY HERE. All three units are target-hinted, so the
+    # cheap-first tie-break inside a priority bucket decides their order and it
+    # now puts `setX` first -- which the third check below already assumes,
+    # while this one still demanded the pre-tie-break order and failed
+    # invisibly. What this test exists for is that a fallback/receive entry is
+    # SCHEDULED rather than skipped.
+    bad += check(sorted(units) == ["fallback", "receive", "setX"],
                  f"fallback/receive are scheduled as external entries: {units}")
     bad += check(skipped == [], f"external entries are not skipped: {skipped}")
     bad += check("--unit" in doc["jobs"][0]["certify_argv"]

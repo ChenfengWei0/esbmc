@@ -640,6 +640,16 @@ def _ast_unit_infos(row: dict, subject: dict, unit: str, templates: list[dict]) 
                                   f"{declaration.get('id')}"),
                 "delegating_wrapper": _is_single_return_call(declaration),
             })
+            # PROVENANCE, when the declaration came from a base contract. The
+            # path function above is already rehomed onto the target, which is
+            # what the certifier needs; without this breadcrumb nothing in the
+            # schedule says the unit is inherited, and the other rehoming path
+            # (a prepared manifest whose unit_info names the base) does publish
+            # it -- so the same fact was recorded or lost depending on which
+            # route resolved the unit.
+            owner_name = str(owner.get("name") or "")
+            if owner_name and owner_name != str(subject.get("contract") or ""):
+                info["inherited_from_contract"] = owner_name
             resolved.append(info)
     return resolved or templates
 

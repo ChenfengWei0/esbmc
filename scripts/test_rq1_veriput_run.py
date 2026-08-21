@@ -6574,10 +6574,21 @@ def test_strict_stage4_uses_external_scratch_and_publishes_cleanly():
 def test_strict_stage4_budget_preserves_later_unit_opportunities():
     budget = rq1_veriput_run._strict_stage4_fair_budget_s
     bad = 0
-    bad += check(budget(535, 17) == 66,
-                 "large strict case gives the first Stage-4 unit one of eight fair shares")
-    bad += check(budget(100, 2) == 33,
-                 "small pending suffix receives one fair share per remaining unit")
+    # DEPTH OVER BREADTH, since 2026-08-22: the fair share is still computed
+    # over 8 slots, but STRICT_STAGE4_MIN_UNIT_BUDGET_S is a FLOOR under it --
+    # an 8-way split of a 600 s case handed each unit 24..51 s, at which size
+    # every real-region unit was refused "certified basis replay has not been
+    # fused yet" and the case published 0 method PUTs. These two expectations
+    # were written against the older floor (66 s and 33 s) and kept failing
+    # invisibly. They are expressed through the constant so that moving the
+    # floor moves them with it.
+    floor_s = rq1_veriput_run.STRICT_STAGE4_MIN_UNIT_BUDGET_S
+    bad += check(budget(535, 17) == floor_s,
+                 f"a large strict case floors the first Stage-4 unit at {floor_s}s "
+                 f"rather than an eighth of the case: {budget(535, 17)}")
+    bad += check(budget(100, 2) == 100,
+                 f"a pending suffix smaller than the floor keeps what is left: "
+                 f"{budget(100, 2)}")
     bad += check(budget(20, 5) == 20,
                  "fair cap never exceeds the remaining case budget")
     bad += check(budget(535, 0) == 535,
