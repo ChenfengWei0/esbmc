@@ -340,6 +340,32 @@ void goto_checkt::overflow_check(
     loc.get("#sol_unchecked") == "1")
     return;
 
+  // ---- NOT INSIDE ESBMC'S OWN SOLIDITY MODELS ----
+  //
+  // The rule shift_check and cast_overflow_check already apply: under
+  // Solidity these checks model what the CHAIN does, and arithmetic inside
+  // `src/c2goto/library/solidity/*.c` is this verifier's implementation of a
+  // built-in, not an operation the contract performs. `_min` computes
+  // type(int256).min as `-((int256_t)1 << 255)` -- an shl and a neg that
+  // both "overflow" in C and neither of which is a Panic. MEASURED
+  // (VeriPUT full-20260822-v31, Product.latestVersion certification): the
+  // two refuted claims of the query were exactly those, at
+  // solidity_misc.c:73, and they turned a certifiable region into an abort.
+  //
+  // The ONE exception is `sol_pow_uint` / `sol_pow_uint8`: the front end
+  // lowers `**` to them and their `result *= base` IS the checked
+  // multiplication the chain Panics on, so those keep their claims.
+  if (config.language.lid == language_idt::SOLIDITY)
+  {
+    const std::string &file = loc.get_file().as_string();
+    if (file.size() < 4 || file.compare(file.size() - 4, 4, ".sol") != 0)
+    {
+      const std::string fn = loc.get_function().as_string();
+      if (fn != "sol_pow_uint" && fn != "sol_pow_uint8")
+        return;
+    }
+  }
+
   // First, check type.
   const type2tc &type = ns.follow(expr->type);
   if (config.language.lid == language_idt::SOLIDITY)

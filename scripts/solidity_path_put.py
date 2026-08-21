@@ -22633,6 +22633,48 @@ def main():
         ] + a.esbmc_arg, emit_dir, a.max_tx, capped_emit_budget, a.memlimit, a.scope)
     produced = sorted(f for f in os.listdir(emit_dir) if f.endswith(".cov.t.sol"))
     print(f"[put]   exit={rc1} {w1:.1f}s  emitted={produced}")
+    # ---- A SUITE OF UNSUPPORTED SHELLS IS NO SUITE ---------------------------
+    #
+    # When the emitter could not deploy the contract in setUp it still writes
+    # the file, with every case an `// UNSUPPORTED: ...` shell and no unit
+    # call. MEASURED on MStableYieldSource.approveMax enc=6
+    # (full-20260822-v31): the PUT pass found the shell later, took the
+    # synthetic preamble and WROTE the PUT; the certified-basis replay pass
+    # of the SAME row (`--concrete-only`) reached the same shell, was refused
+    # there ("no emitted case names ...") because that later fallback is
+    # gated to certified-region rows, and the PUT was published as
+    # "certified basis replay has not been fused yet" -- 0 method PUTs for a
+    # unit whose real region was certified. The enc=2 row of the same unit,
+    # whose emitter run produced NO file, went through the no-file synthetic
+    # route in BOTH passes and counted. A shell suite is the no-file case:
+    # decide it HERE, once, so every pass takes the same route.
+    if produced and a.path_function:
+        shell_files = []
+        for name in produced:
+            try:
+                probe = EmittedFile(os.path.join(emit_dir, name))
+            except OSError:
+                continue
+            if not probe.cases:
+                continue
+            case0 = probe.case_for(a.path_function, a.enc)
+            cases = [case0] if case0 is not None else probe.cases
+            if all(emitted_case_body_and_call(probe, c, a.unit)[1] is None
+                   for c in cases):
+                shell_files.append(name)
+        if shell_files and len(shell_files) == len(produced):
+            notes.append("emitted suite is an UNSUPPORTED shell with no unit "
+                         "call (the instance was not deployed in setUp); treated "
+                         "as no emitted file: " + ", ".join(shell_files))
+            print("[put]   emitted suite is an UNSUPPORTED shell with no unit "
+                  "call; treated as no emitted file and routed to the "
+                  "synthetic preamble")
+            for name in shell_files:
+                try:
+                    os.remove(os.path.join(emit_dir, name))
+                except OSError:
+                    pass
+            produced = []
     synthetic_claim = None
     if not produced:
         if synthetic_possible:

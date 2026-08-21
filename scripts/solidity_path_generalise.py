@@ -58,6 +58,8 @@ import json
 import time as _time_mod
 DRIVER_T0 = _time_mod.monotonic()
 DRIVER_REFINE_SHARE = 0.5
+# The share of the unit budget the FIRST refine round must leave for certification.
+DRIVER_CERTIFY_RESERVE = 0.25
 DRIVER_PIECE_SHARE = 0.8
 
 
@@ -9464,7 +9466,26 @@ def main():
     # an accurate "NOT SETTABLE ... immutable/constant" line into a generic
     # "pinned" one. The classification would be lost with nothing on screen
     # saying so.
-    if args.pin_agreed_state:
+    if args.pin_agreed_state and args.free_entry_state:
+        # The flag's premise ("the entry state is never havoc'd, so a bound
+        # on a state variable constrains nothing and the emitter drops it")
+        # is FALSE under --free-entry-state: every state coordinate a query
+        # bounds is freed at the entry and the PUT establishes it with
+        # vm.store. Pinning it to the agreed witness value then collapses a
+        # real input dimension to a point. MEASURED on Product (v31, every
+        # unit a getter): `latestVersion()` returns
+        # `state._accumulator.latestVersion`, the ONE coordinate it reads;
+        # the single witness trivially "agreed" on 0, the coordinate was
+        # pinned, the body path became a no-coordinate structural point and
+        # the case published no method PUT. Left free, the ladder measures
+        # [0, 2^256-1] and the certificate carries `return == state`.
+        state_coords = [c for c in coords if c.startswith("state.")]
+        print("[coords] --pin-agreed-state is a no-op under --free-entry-state: "
+              f"{len(state_coords)} state coordinate(s) stay FREE (the query frees "
+              "them at the entry and the PUT establishes them), instead of being "
+              "pinned to the witnesses' agreed value: " +
+              (", ".join(sorted(state_coords)) or "(none)"))
+    elif args.pin_agreed_state:
         agreed_state, varying = {}, []
         relation_state = relation_establishable_state_targets(paths, path_decisions, pins, coords)
         relation_kept = []
@@ -10729,11 +10750,25 @@ def main():
     if structural_regions is None:
         spans = {c: _span(c) for c in coords}
         for r in range(args.refine_rounds):
-            if driver_elapsed() > DRIVER_REFINE_SHARE * args.timeout:
+            # The FIRST round is what turns the spans into regions; with none,
+            # "certification proceeds on the current spans" certifies nothing
+            # (MEASURED on Product.latestVersion at 60 s: enumeration took
+            # 30 s, round 1 was skipped at exactly the 50% mark, and the unit
+            # ended "no fully bounded region was measured" although the same
+            # round took 6 s and the certificate 5 s). Round 1 therefore runs
+            # whenever at least a quarter of the budget is left; the 50% share
+            # bounds the LATER rounds.
+            first_round_cutoff = (1.0 - DRIVER_CERTIFY_RESERVE) * args.timeout
+            cutoff = first_round_cutoff if r == 0 else DRIVER_REFINE_SHARE * args.timeout
+            if driver_elapsed() > cutoff:
                 print(f"[refine {r+1}] SKIPPED: {driver_elapsed():.0f}s of the {args.timeout}s "
-                      f"unit budget are spent and refine rounds may use at most "
-                      f"{int(DRIVER_REFINE_SHARE*100)}% of it; certification proceeds on the "
-                      f"current spans (TODO 30 #2)")
+                      f"unit budget are spent and "
+                      + (f"the first refine round needs at least "
+                         f"{int(DRIVER_CERTIFY_RESERVE*100)}% of it left for certification"
+                         if r == 0 else
+                         f"refine rounds may use at most "
+                         f"{int(DRIVER_REFINE_SHARE*100)}% of it")
+                      + "; certification proceeds on the current spans (TODO 30 #2)")
                 break
             (_, brackets, regions, warned, round_failure, region_holes, tr_new,
              unres) = outer_round(args.esbmc,

@@ -19,6 +19,7 @@
 #include <regex>
 #include <ac_config.h>
 #include <esbmc/bmc.h>
+#include <unordered_set>
 #include <esbmc/document_subgoals.h>
 #include <fstream>
 #include <goto-programs/goto_loops.h>
@@ -4246,6 +4247,142 @@ smt_convt::resultt bmct::multi_property_check(
     });
   }
 
+  // ---- BULK PRE-PASS: one query over every claim, then peel the violated ----
+  //
+  // The per-claim loop below copies the equation, slices it to ONE assert,
+  // re-encodes it into a fresh solver and solves -- once per claim. MEASURED
+  // on Product.latestVersion under --path-cov-certify (2041 claims: 3 path
+  // claims and 2038 --overflow-check claims the certificate must carry): ~70 ms
+  // per claim, 141 s before the first k-step could close, and a bad_alloc at
+  // claim 1575 of 2041 under --memlimit 5g -- the certification never
+  // returned a verdict. Only TWO of those claims were violable.
+  //
+  // A claim the combined query cannot violate holds. So: solve the WHOLE
+  // equation once (the standard BMC disjunction "some assert fails"); UNSAT
+  // means every eligible claim PASSES and the loop needs no solver for them;
+  // SAT names at least one violated claim in the model (its cond_ast, which
+  // already carries the assumptions, evaluates false) -- record it, drop its
+  // assert from the disjunction, and solve again. The loop ends UNSAT after
+  // |violated|+1 solves, and the per-claim loop then spends its solver only
+  // on the claims this pass could not clear. Semantics are unchanged: a
+  // sliced single-claim query is SAT exactly when the claim is violable in
+  // the combined one, and the loop's own verdicts, witnesses, journals and
+  // minimisation still come from the loop.
+  //
+  // Claims the loop would SKIP (result-only safety claims outside certify
+  // mode) are left out of the disjunction, otherwise an enumeration run over
+  // a contract with two thousand violable overflow claims would peel them one
+  // round at a time for nothing. Sequential path-coverage runs only; a round
+  // that does not answer SAT/UNSAT, a model naming no claim, or more peeled
+  // claims than a quarter of the eligible set hands everything back to the
+  // per-claim loop unchanged. ESBMC_PATH_COV_NO_BULK_PREPASS=1 disables it.
+  std::unordered_set<size_t> bulk_maybe_violated;
+  bool bulk_prepass_complete = false;
+  if (
+    is_path_cov && !options.get_bool_option("parallel-solving") &&
+    !options.get_bool_option("smt-during-symex") &&
+    !options.get_bool_option("smt-formula-only") &&
+    !options.get_bool_option("smt-formula-too") && remaining_claims >= 4 &&
+    !std::getenv("ESBMC_PATH_COV_NO_BULK_PREPASS"))
+  {
+    fine_timet pre_start = current_time();
+    symex_target_equationt pre_eq = eq;
+    std::vector<symex_target_equationt::SSA_stepst::iterator> pre_asserts;
+    std::vector<bool> pre_eligible;
+    size_t pre_counter = 0;
+    size_t n_eligible = 0;
+    for (auto it = pre_eq.SSA_steps.begin(); it != pre_eq.SSA_steps.end(); ++it)
+    {
+      if (!it->is_assert())
+        continue;
+      ++pre_counter;
+      if (pre_counter > remaining_claims)
+        break;
+      pre_asserts.push_back(it);
+      // Same skip predicate as the loop (see "Solidity complete-path coverage
+      // consumes overflow/div-by-zero assertions" below): a claim the loop
+      // never solves is not part of the disjunction.
+      const std::string prop = it->source.pc->location.property().as_string();
+      const std::string loc = it->source.pc->location.as_string();
+      const bool probe = goto_coveraget::path_probe_claims.count({it->comment, loc}) > 0;
+      const bool certify_safety =
+        goto_coveraget::path_cov_certify_mode &&
+        (prop == "overflow" || prop == "division-by-zero");
+      const bool skipped_by_loop =
+        options.get_bool_option("result-only") && !probe && !certify_safety &&
+        prop != "instrumented assertion";
+      // An assert already ignored in `eq` is un-ignored by claim_slicer when
+      // its job runs, so the loop solves it; this pass cannot speak for it.
+      const bool eligible = !it->ignore && !skipped_by_loop;
+      pre_eligible.push_back(eligible);
+      if (!eligible)
+        it->ignore = true;
+      else
+        ++n_eligible;
+    }
+    bool pre_ok = n_eligible >= 2;
+    size_t rounds = 0;
+    while (pre_ok)
+    {
+      ++rounds;
+      std::unique_ptr<smt_convt> pre_solver(create_solver("", ns, options));
+      log_status(
+        "--solidity-path-coverage: bulk pre-pass round {}: solving {} eligible "
+        "claim(s) in ONE query ({} peeled so far)",
+        rounds,
+        n_eligible - bulk_maybe_violated.size(),
+        bulk_maybe_violated.size());
+      smt_convt::resultt r = run_decision_procedure(*pre_solver, pre_eq);
+      if (r == smt_convt::P_UNSATISFIABLE)
+      {
+        bulk_prepass_complete = true;
+        break;
+      }
+      if (r != smt_convt::P_SATISFIABLE)
+      {
+        pre_ok = false;
+        break;
+      }
+      size_t found = 0;
+      for (size_t idx = 0; idx < pre_asserts.size(); ++idx)
+      {
+        auto &st = *pre_asserts[idx];
+        if (!pre_eligible[idx] || st.ignore)
+          continue;
+        if (pre_solver->l_get(st.cond_ast).is_false())
+        {
+          bulk_maybe_violated.insert(idx + 1);
+          st.ignore = true;
+          ++found;
+        }
+      }
+      if (found == 0 || bulk_maybe_violated.size() * 4 > n_eligible)
+        pre_ok = false;
+    }
+    if (!pre_ok)
+    {
+      bulk_prepass_complete = false;
+      log_status(
+        "--solidity-path-coverage: bulk pre-pass gave up after {} round(s) "
+        "({} claim(s) peeled, {} eligible): every claim goes through the "
+        "per-claim loop",
+        rounds,
+        bulk_maybe_violated.size(),
+        n_eligible);
+      bulk_maybe_violated.clear();
+    }
+    else
+      log_status(
+        "--solidity-path-coverage: bulk pre-pass PROVED {} of {} eligible "
+        "claim(s) in {} round(s) ({}s); the per-claim loop solves only the {} "
+        "it could not clear",
+        n_eligible - bulk_maybe_violated.size(),
+        n_eligible,
+        rounds,
+        time2string(current_time() - pre_start),
+        bulk_maybe_violated.size());
+  }
+
   /* This is a JOB that will:
    * 1. Generate a solver instance for a specific claim (@parameter i)
    * 2. Solve the instance
@@ -4325,6 +4462,8 @@ smt_convt::resultt bmct::multi_property_check(
                        &is,
                        &is_color,
                        &YELLOW,
+                       &bulk_maybe_violated,
+                       &bulk_prepass_complete,
                        &runtime_solver](const size_t &i) {
     // Fault injection (see the two constants above). Checked BEFORE this job
     // does anything, so the N claims already decided have completed every
@@ -4533,8 +4672,17 @@ smt_convt::resultt bmct::multi_property_check(
 
     // Save current instance with timing
     fine_timet solve_start = current_time();
-    smt_convt::resultt solver_result =
-      run_decision_procedure(*solver_ptr, local_eq);
+    smt_convt::resultt solver_result;
+    if (bulk_prepass_complete && !bulk_maybe_violated.count(i))
+    {
+      // Proven by the bulk pre-pass above: the combined query could not
+      // violate this claim, so its single-claim query is UNSAT.
+      solver_result = smt_convt::P_UNSATISFIABLE;
+      if (!is_cov_silent)
+        log_status("  (held in the bulk pre-pass; no per-claim solve)");
+    }
+    else
+      solver_result = run_decision_procedure(*solver_ptr, local_eq);
     fine_timet solve_stop = current_time();
 
     // Show colored result after solving

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Versioned VeriPUT recipe fragments shared by POC and benchmark runners."""
 
-STRONG_RECIPE_VERSION = "veriput-strong/29-extcall-nondet"
+STRONG_RECIPE_VERSION = "veriput-strong/30-free-state-coords"
 STRONG_PROBE_WITNESSES = 16
 STRONG_PROBE_LADDER_BUDGET = 8
 STRONG_MAX_HOLES = 3
@@ -35,6 +35,14 @@ STRONG_CERTIFY_ARGS = [
     "--skip-bracket",
     "--env-coord-disagreed",
     "--pin-agreed-establishable-env",
+    # v30: under --free-entry-state (always on in the batch driver) this flag
+    # no longer pins STATE coordinates -- the query frees them at the entry
+    # and the PUT establishes them, so a state variable the unit reads is a
+    # real input dimension (MEASURED, TODO 45: Product.latestVersion returns
+    # state._accumulator.latestVersion; pinned, the body path was a
+    # no-coordinate structural point and the case had no method PUT; free,
+    # the certificate is `return == state` over [0, 2^256-1]). The flag is
+    # kept so a run WITHOUT --free-entry-state keeps the old behaviour.
     "--pin-agreed-state",
     "--max-holes", str(STRONG_MAX_HOLES),
     "--max-region-pieces", str(STRONG_MAX_REGION_PIECES),
