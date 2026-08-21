@@ -5769,6 +5769,33 @@ smt_convt::resultt bmct::multi_property_check(
                 ret_flag = !is_false(st.value);
               continue;
             }
+            // Per-member return ghosts `__ESBMC_path_ret<k>$<n>` (tuple and
+            // named-return units, goto_coverage.cpp ret_member_ghosts). They are
+            // slice-protected, unlike the raw `tuple_instance$<id>.mem<k>`
+            // writes they copy -- MEASURED (pop_018 PrivatePool changeFeeQuote,
+            // FULL tag full-20260822-v28): `sliced=true`, `tuple_instance$5168`
+            // listed under state_written_unrendered, `return_value_known=false`,
+            // because only the raw member writes were looked for below. Read
+            // the ghost too; the member index is the digits after `_ret`.
+            if (is_symbol2t(st.lhs))
+            {
+              const std::string nm = to_symbol2t(st.lhs).thename.as_string();
+              const size_t rp = nm.find("__ESBMC_path_ret");
+              const size_t dp = rp == std::string::npos ? rp : rp + 16;
+              if (
+                dp != std::string::npos && dp < nm.size() &&
+                nm[dp] >= '0' && nm[dp] <= '9')
+              {
+                char *endp = nullptr;
+                const unsigned long k = strtoul(nm.c_str() + dp, &endp, 10);
+                if (endp != nullptr && *endp == '$')
+                {
+                  if (is_constant_expr(st.value))
+                    ret_members[k] = from_expr(ns, "", st.value);
+                  continue;
+                }
+              }
+            }
             if (
               is_symbol2t(st.lhs) &&
               to_symbol2t(st.lhs).thename.as_string().find(
