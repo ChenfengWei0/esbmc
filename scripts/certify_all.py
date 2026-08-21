@@ -1546,8 +1546,19 @@ def complete_journal_concrete_fallback_details(
         if enc_s is None:
             continue
         paths.append((str(pf), enc_s, path))
+    # ONE PATH SPACE PER enc. Two overloads of the same name have INDEPENDENT
+    # path numbering, so a journal that carries both has an `enc` that names
+    # two different paths. Keying the row by enc alone silently attributed the
+    # counterexample of one overload to the other; an ambiguous enc yields no
+    # row at all, which is what a fallback with no way to tell them apart is
+    # worth.
+    functions_per_enc = {}
+    for pf, enc_s, _path in paths:
+        functions_per_enc.setdefault(enc_s, set()).add(pf)
     out = {}
     for pf, enc_s, path in paths:
+        if len(functions_per_enc.get(enc_s) or ()) > 1:
+            continue
         claim = claims.get((pf, enc_s))
         if not claim:
             continue

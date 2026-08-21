@@ -345,9 +345,16 @@ def main():
         })
         certify_all.merge_certified_details(retry_lost_output)
         certify_all.merge_not_certified_details(retry_lost_output)
-        bad += check("2" in retry_lost_output["certified"],
-                     f"retry timeout does not erase prior certified rows: "
-                     f"{retry_lost_output}")
+        # WHERE A SURVIVING CERTIFIED ROW LIVES. `merge_certified_details` was
+        # made deliberately inert (A08: promoting sidecar detail into
+        # `certified` before `bucket()` changes the classification), so the row
+        # the initial run certified survives in the DETAIL sidecar and in
+        # `observed_certified`, not in `certified`. This check asked for the
+        # promoted spelling and had been failing invisibly ever since.
+        bad += check(
+            "2" in retry_lost_output["certified_details"]
+            and retry_lost_output["observed_certified"].get("2") == "amount in [1, 9]",
+            f"retry timeout does not erase prior certified rows: {retry_lost_output}")
         bad += check(
             retry_lost_output["not_certified_details"]["3"]
             ["concrete_fallback"] is True
@@ -373,11 +380,16 @@ def main():
                 },
             },
         }
+        before = json.dumps(conflict, sort_keys=True)
         certify_all.merge_certified_details(conflict)
-        bad += check(conflict["certified"]["5"] == "x in [0, 1]"
-                     and "5" not in conflict["not_certified"],
-                     f"machine certified detail wins over same-enc not row: "
-                     f"{conflict}")
+        # INERT BY DECISION, not by accident: the same A08 review that stopped
+        # the promotion is the reason a same-enc `not_certified` row must be
+        # left standing here. Assert the decision that is in force.
+        bad += check(
+            json.dumps(conflict, sort_keys=True) == before and "5" not in conflict["certified"]
+            and conflict["not_certified"]["5"] == "old failed retry text",
+            f"merge_certified_details does not promote sidecar detail into the "
+            f"classification: {conflict}")
 
         progress = workdir / "generalise-progress.json"
         progress.write_text(json.dumps({
@@ -547,9 +559,16 @@ def main():
         bad += check(truncated["loops"] == [
             "loop 19 at file string.c line 92 column 3 function strlen",
         ], f"truncated loop names are retained: {truncated}")
+        # THE BOUND AND THE BASELINE BOTH MOVED. The retry raises the named
+        # loop to 512 (a 16 left the same symbolic exponent truncated again),
+        # and it must first make path coverage's implicit global unwind of 4
+        # explicit, because a numeric --unwindset only takes effect after that.
+        # This expectation still asked for the pre-change `19:16` with no
+        # baseline and had been failing invisibly.
         bad += check(certify_all.unwindset_retry_args(truncated, []) == [
-            "--unwindset", "19:16",
-        ], f"named truncation becomes one unwindset retry: {truncated}")
+            "--unwind", "4", "--unwindset", "19:512",
+        ], f"named truncation becomes one unwindset retry: "
+           f"{certify_all.unwindset_retry_args(truncated, [])}")
         bad += check(certify_all.unwindset_retry_args(
             truncated, ["--unwindset", "19:256"]) == [],
                      "explicit caller unwindset is not duplicated")
