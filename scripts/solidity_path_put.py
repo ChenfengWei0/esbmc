@@ -16509,6 +16509,67 @@ def _struct_literal_members(raw):
     return out
 
 
+def flatten_rendered_aggregate(text, prefix=""):
+    """Scalar leaves of ESBMC's rendered aggregate, as {dotted-name: str}.
+
+    The rule Stage 2 applies to STATE aggregates (`struct_fields(nested=True)`
+    in solidity_path_generalise.py): descend into nested `{ ... }` values,
+    record every integer-spelled leaf under its dotted name, skip anything
+    else (an array literal such as a bytes32's `.data={255, ...}` has no
+    dotted leaf). The certified detail carries `state.X.length = 32` for a
+    bytes32 state variable whose journal value is `{ .data={...}, .length=32 }`;
+    this is the function that maps the second spelling onto the first.
+    """
+    out = {}
+    if not isinstance(text, str):
+        return out
+    t = text.strip()
+    if not t.startswith("{"):
+        return out
+    depth, i, n = 0, 0, len(t)
+    while i < n:
+        ch = t[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        elif ch == "." and depth == 1:
+            j = t.find("=", i)
+            if j < 0:
+                break
+            name = t[i + 1:j].strip()
+            k = j + 1
+            if t[k:].lstrip().startswith("{"):
+                # nested aggregate: find its matching brace
+                k = t.find("{", k)
+                d2, m = 0, k
+                while m < n:
+                    if t[m] == "{":
+                        d2 += 1
+                    elif t[m] == "}":
+                        d2 -= 1
+                        if d2 == 0:
+                            break
+                    m += 1
+                val = t[k:m + 1]
+                if name:
+                    out.update(flatten_rendered_aggregate(val, prefix + name + "."))
+                i = m + 1
+                continue
+            while k < n and t[k] not in ",}":
+                k += 1
+            val = t[j + 1:k].strip()
+            if name and val:
+                try:
+                    out[prefix + name] = str(int(val, 0))
+                except ValueError:
+                    pass
+            i = k
+            continue
+        i += 1
+    return out
+
+
 def claim_concrete_ce(claim, params=None):
     """Canonicalize the scalar coordinates carried by one emitted claim."""
 
@@ -16574,6 +16635,27 @@ def bind_emitted_claim_to_certified_ce(claim, expected, params=None):
         return None, "certified CE contains a non-scalar or malformed coordinate"
     if actual_ce is None:
         return None, "emitted claim contains a non-scalar or malformed coordinate"
+    # ---- ONE VALUE, TWO SPELLINGS: bytesN STATE ----
+    #
+    # A `bytesN` STATE variable reaches the fresh witness twice: as the
+    # frontend's struct printing `{ .data={...}, .length=32 }` (which
+    # `_bytesn_literal_value` folds to one integer, the spelling a certified
+    # CE uses for a bytesN ARGUMENT) and as its own `.length` scalar. Stage 2
+    # (`--state-struct-fields`) records the STATE aggregate by its scalar
+    # fields only, i.e. `state.X.length`, never `state.X`. MEASURED on
+    # Product (full-20260822-v32): every body-path PUT of `latestVersion`,
+    # `isLiquidating` and `pre` was written and then un-counted by the basis
+    # replay with "extra=state._closed,state._controller$8038,..." -- fifteen
+    # keccak-slot UDVT constants none of which the certificate bounds. When
+    # the certified CE carries `X.length` and not `X`, and the witness
+    # carries both with the SAME length, the integer spelling is the same
+    # observation under another name: drop it rather than refuse.
+    for name in [n for n in actual_ce if n.startswith("state.") and n not in expected_ce]:
+        sibling = name + ".length"
+        if (sibling in expected_ce and sibling in actual_ce
+                and expected_ce[sibling] == actual_ce[sibling]
+                and isinstance(actual_ce[name], int)):
+            del actual_ce[name]
     if expected_ce != actual_ce:
         missing = sorted(set(expected_ce) - set(actual_ce))
         extra = sorted(set(actual_ce) - set(expected_ce))
@@ -21074,6 +21156,16 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
         # demanded a slot oracle for the whole struct, which no layout has
         # (measured 2026-08-22: DnGmxBatchingManager.usdcBalance basis refused).
         if same_scalar(left, right):
+            return True
+        # The same rendered literal on both sides is the same value whatever
+        # its shape. MEASURED on Product.isLiquidating (full-20260822-v32):
+        # fifteen bytes32 UDVT constants render as `{ .data={...}, .length=32 }`
+        # at entry and at exit, byte for byte; _struct_literal_members() cannot
+        # flatten an array member and returned None for both, so every one
+        # counted as CHANGED and the view function's basis was refused for
+        # lacking a slot oracle on state it never touched.
+        if (isinstance(left, str) and isinstance(right, str)
+                and left.strip() == right.strip()):
             return True
         left_members = _struct_literal_members(left)
         right_members = _struct_literal_members(right)

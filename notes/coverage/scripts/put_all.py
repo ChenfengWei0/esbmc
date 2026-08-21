@@ -57,7 +57,7 @@ from solidity_ast_dependencies import (  # noqa: E402
 from solidity_path_put import (  # noqa: E402
     _concrete_return_literal, _public_state_getter_decl, _source_type_default_expr,
     authenticated_concrete_oracle_error, bind_return_lhs, find_unit_call,
-    public_state_getter_signature, split_top_level)
+    flatten_rendered_aggregate, public_state_getter_signature, split_top_level)
 from veriput_subjects import (
     SubjectError,
     enumerate_subject_units,  # noqa: E402
@@ -676,16 +676,34 @@ def stage2_witness_return(record, enc, path_function, certified_detail):
         ce = path.get("ce") or {}
         if not isinstance(ce, dict) or ce.get("return") is None:
             continue
+        # The journal carries a state aggregate as ONE rendered literal; the
+        # certified detail carries its scalar leaves (`state.X.length`,
+        # `state._accumulator.latestVersion`). Flatten the journal's
+        # aggregates the way Stage 2 did, and let a flattened aggregate stand
+        # for itself. MEASURED on Product.latestVersion (full-20260822-v32):
+        # the exact return witness `return: 0` was in the journal and this
+        # function returned None on sixteen such names, so the basis replay
+        # ran without --concrete-return-value and was refused.
+        flat_ce = dict(ce)
+        aggregate_names = set()
+        for name, value in ce.items():
+            if name == "return":
+                continue
+            leaves = flatten_rendered_aggregate(value, str(name) + ".")
+            if leaves:
+                aggregate_names.add(name)
+                for leaf, leaf_value in leaves.items():
+                    flat_ce.setdefault(leaf, leaf_value)
         required_detail_coords = {
             name: value
             for name, value in detail_ce.items() if name != "return"
         }
-        if any(name not in ce or str(ce[name]) != str(value)
+        if any(name not in flat_ce or str(flat_ce[name]) != str(value)
                for name, value in required_detail_coords.items()):
             continue
         point_matches = True
-        for name, value in ce.items():
-            if name == "return":
+        for name, value in flat_ce.items():
+            if name == "return" or name in aggregate_names:
                 continue
             if name not in detail_ce and name not in detail_region and name not in detail_pins:
                 point_matches = False
