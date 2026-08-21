@@ -54,7 +54,8 @@ from solidity_path_put import (  # noqa: E402
 from solidity_ast_dependencies import (  # noqa: E402
     contract_state_esbmc_store_names, unit_state_dependencies,
 )
-from veriput_recipe import STRONG_RECIPE_VERSION  # noqa: E402
+from veriput_recipe import (STRONG_RECIPE_VERSION,  # noqa: E402
+                            is_structural_certificate_row)
 from veriput_subjects import (  # noqa: E402
     PreparedSubject, SubjectError, enumerate_subject_units, resolve_subject,
 )
@@ -783,10 +784,17 @@ def _row_strength(row: dict | None) -> tuple[int, int, int, int, int]:
             test for test in valid_tests
             if isinstance(test, dict) and _is_valid_reference_test(test)
         ]
+        # ITEM 2: a structural ABI/getter value gate is the compiler's own
+        # region, not one this method computed, so it does not count toward
+        # the method's PUT output. It stays in `valid` -- the test exists and
+        # is green -- and is counted separately by the caller.
+        method_puts = [test for test in valid_tests
+                       if test.get("kind") == "put"
+                       and not (test.get("structural_certificate")
+                                or is_structural_certificate_row(test))]
         valid = len(valid_tests)
-        put_valid = sum(1 for test in valid_tests if test.get("kind") == "put")
-        r1r2 = sum(1 for test in valid_tests
-                   if test.get("kind") == "put" and _has_oracle_class(test, "R1", "R2"))
+        put_valid = len(method_puts)
+        r1r2 = sum(1 for test in method_puts if _has_oracle_class(test, "R1", "R2"))
     else:
         valid = int(row.get("valid") or 0)
         put_valid = int(row.get("put_valid") or 0)
@@ -873,6 +881,11 @@ def _merge_put_summary_into_row(row: dict, case_dir: Path) -> dict:
             "valid",
             "put_raw",
             "put_valid",
+            # ITEM 2: without these two on the whitelist the split is computed
+            # and then dropped on the way to result.json, so the report shows
+            # "0 structural" next to a PUT count that already excluded them.
+            "put_valid_structural",
+            "put_valid_including_structural",
             "concrete_raw",
             "concrete_valid",
             "valid_put_with_R1",
@@ -1086,7 +1099,17 @@ def _normalize_result_row(row: dict) -> dict:
             if isinstance(test, dict) and _is_valid_reference_test(test)
         ]
         row["valid_tests"] = valid_tests
-        valid_puts = [test for test in valid_tests if test.get("kind") == "put"]
+        all_valid_puts = [test for test in valid_tests if test.get("kind") == "put"]
+        # ITEM 2, and the split is deliberate: `put_valid` is what the method
+        # produced, `put_valid_structural` is what the compiler's value gate
+        # produced. Neither number is dropped, so a reader can always add them
+        # back to reproduce the old count.
+        def _is_structural(test):
+            return bool(test.get("structural_certificate")) or \
+                is_structural_certificate_row(test)
+
+        structural_puts = [test for test in all_valid_puts if _is_structural(test)]
+        valid_puts = [test for test in all_valid_puts if not _is_structural(test)]
         valid_puts_with_r1 = [test for test in valid_puts if _has_oracle_class(test, "R1")]
         valid_puts_with_r2 = [test for test in valid_puts if _has_oracle_class(test, "R2")]
         valid_puts_with_r1r2 = [test for test in valid_puts if _has_oracle_class(test, "R1", "R2")]
@@ -1094,6 +1117,8 @@ def _normalize_result_row(row: dict) -> dict:
                              if isinstance(test, dict) and test.get("kind") == "concrete")
         row["valid"] = len(valid_tests)
         row["put_valid"] = len(valid_puts)
+        row["put_valid_structural"] = len(structural_puts)
+        row["put_valid_including_structural"] = len(all_valid_puts)
         row["concrete_valid"] = valid_concrete
         row["valid_put_with_R1"] = len(valid_puts_with_r1)
         row["valid_put_with_R2"] = len(valid_puts_with_r2)
@@ -1129,6 +1154,11 @@ def _artifact_count_summary(row: dict) -> dict:
         "valid": valid,
         "put_raw": _row_count(row, "put_raw"),
         "put_valid": _row_count(row, "put_valid"),
+        # ITEM 2: carried alongside, never folded in. `put_valid` is the
+        # method's output; these two make the compiler's share and the old
+        # combined number recoverable without re-reading the artifacts.
+        "put_valid_structural": _row_count(row, "put_valid_structural"),
+        "put_valid_including_structural": _row_count(row, "put_valid_including_structural"),
         "concrete_raw": _row_count(row, "concrete_raw"),
         "concrete_valid": _row_count(row, "concrete_valid"),
         "valid_put_with_R1": _row_count(row, "valid_put_with_R1"),
@@ -1178,6 +1208,11 @@ def _row_needs_normalized_adoption(current: dict | None, candidate: dict) -> boo
             "valid",
             "put_raw",
             "put_valid",
+            # ITEM 2: without these two on the whitelist the split is computed
+            # and then dropped on the way to result.json, so the report shows
+            # "0 structural" next to a PUT count that already excluded them.
+            "put_valid_structural",
+            "put_valid_including_structural",
             "concrete_raw",
             "concrete_valid",
             "valid_put_with_R1",
@@ -1885,6 +1920,11 @@ def _adopt_stale_artifacts(row: dict, stale: dict | None) -> dict:
             "valid",
             "put_raw",
             "put_valid",
+            # ITEM 2: without these two on the whitelist the split is computed
+            # and then dropped on the way to result.json, so the report shows
+            # "0 structural" next to a PUT count that already excluded them.
+            "put_valid_structural",
+            "put_valid_including_structural",
             "concrete_raw",
             "concrete_valid",
             "valid_put_with_R1",
@@ -6016,6 +6056,14 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             "ce_anchor": (row.get("ce_anchor") or rec.get("ce_anchor")),
             "gates": (row.get("gates") or rec.get("gates")),
             "valid_reference_test": _is_valid_reference_test(merged_for_validity),
+            # ITEM 2: decided HERE, where both the emitted row and the put.json
+            # record are in hand. Downstream only sees this entry, so a
+            # consumer reading `certification_source` off it would find nothing
+            # and silently count the compiler's value gate as method output --
+            # which is exactly what happened before this line existed.
+            "structural_certificate": is_structural_certificate_row(row, rec),
+            "certification_source": (row.get("certification_source") or
+                                     rec.get("certification_source")),
             "b": bool(row.get("b")),
             "concrete_reason": (row.get("concrete_reason") or rec.get("concrete_reason")),
             "oracle_classes": oracle_classes,
@@ -6095,11 +6143,29 @@ def summarize_put_artifacts(put_root: Path) -> dict:
             enriched["put_json"] = rec.get("_put_json_path")
             assertion_oracles.append(enriched)
 
+    # ITEM 2: the structural ABI/getter value gate is the compiler's region,
+    # not one this method computed, so it is counted apart here -- at the point
+    # where `valid_tests` still carries the per-row provenance. `put_valid`
+    # below is overwritten from the same rows for the same reason: the counter
+    # it used to read (`valid["put"]`, summed out of put_all's own
+    # deliverable_b) cannot tell the two apart.
+    _structural_valid_puts = [
+        test for test in valid_tests
+        if isinstance(test, dict) and test.get("kind") == "put"
+        and (test.get("structural_certificate") or is_structural_certificate_row(test))
+    ]
+    _method_valid_puts = [
+        test for test in valid_tests
+        if isinstance(test, dict) and test.get("kind") == "put"
+        and not (test.get("structural_certificate") or is_structural_certificate_row(test))
+    ]
     summary = {
         "raw": int(emission["put"] + emission["concrete"]),
         "valid": int(valid["put"] + valid["concrete"]),
         "put_raw": int(emission["put"]),
-        "put_valid": int(valid["put"]),
+        "put_valid": len(_method_valid_puts),
+        "put_valid_structural": len(_structural_valid_puts),
+        "put_valid_including_structural": int(valid["put"]),
         "concrete_raw": int(emission["concrete"]),
         "concrete_valid": int(valid["concrete"]),
         "summary_paths": summary_paths,
