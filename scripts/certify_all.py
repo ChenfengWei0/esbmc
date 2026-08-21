@@ -602,6 +602,9 @@ def probe_goal_cap_retry_cmd(cmd, workdir, diagnostic=None):
     return out
 
 
+CHEAP_RETRY_MIN_BUDGET_S = 10
+
+
 def cheap_stage2_retry_cmd(cmd, workdir):
     """Retry a coverage/instrumentation miss with the cheapest proof ladder."""
     out = replace_driver_workdir(cmd, workdir)
@@ -4402,6 +4405,21 @@ def main():
                     and cheap_reason is None and bounded_holds_retry is None
                     and result_driver_diagnostic(out) is None):
                 cheap_reason = empty_witness_retry_reason(out, rc)
+            # A retry launched with a one-second budget cannot certify anything:
+            # MEASURED (FULL tag full-20260822-v28, 121 units) -- 35 cheap
+            # retries, every one `timeout_s=1`, every one exit 124. Under the
+            # floor the retry is recorded as skipped instead of launched.
+            if cheap_reason and int(args.timeout - wall) < CHEAP_RETRY_MIN_BUDGET_S:
+                cheap_stage2_retry = {
+                    "reason": cheap_reason,
+                    "skipped": "budget",
+                    "remaining_s": round(max(0.0, args.timeout - wall), 1),
+                    "min_budget_s": CHEAP_RETRY_MIN_BUDGET_S,
+                }
+                print(f"[driver] cheap-stage2-retry SKIPPED: {cheap_stage2_retry['remaining_s']}s "
+                      f"left is under the {CHEAP_RETRY_MIN_BUDGET_S}s floor ({cheap_reason})",
+                      flush=True)
+                cheap_reason = None
             if cheap_reason:
                 remaining = max(1, int(args.timeout - wall))
                 retry_initial_uwd = active_uwd
@@ -4549,8 +4567,12 @@ def main():
                     "counterexample")
             if concrete_fallback_reason is None and cheap_stage2_retry:
                 concrete_fallback_reason = (
-                    "coverage/no-witness cheap retry did not produce a "
-                    "certified region; emitting only concrete replay fallback "
+                    ("coverage/no-witness cheap retry was SKIPPED (under the "
+                     "budget floor) and no certified region exists; "
+                     if cheap_stage2_retry.get("skipped") else
+                     "coverage/no-witness cheap retry did not produce a "
+                     "certified region; ") +
+                    "emitting only concrete replay fallback "
                     "rows for paths that already have a usable witness journal "
                     "counterexample")
             if concrete_fallback_reason is None and ce_region_retry:
