@@ -103,3 +103,48 @@ def strong_put_args():
         "--fuzz-r2-prefilter-timeout", str(STRONG_PUT_FUZZ_R2_PREFILTER_TIMEOUT),
         "--min-r2-esbmc-budget", str(STRONG_PUT_MIN_R2_ESBMC_BUDGET),
     ] + [f"--proof-esbmc-arg={x}" for x in STRONG_PUT_PROOF_ESBMC_ARGS]
+
+
+# ---- ITEM 2: the hollow ABI tests are not method output ----
+#
+# `structural-abi-gate-no-coordinate` and `structural-abi-getter-no-coordinate`
+# are the COMPILER's own value gate, not a region this method computed: a
+# non-payable entry rejects every nonzero `msg.value` before the body runs, and
+# the EVM restores storage across that revert by definition. There is no
+# counterexample behind them and no coordinate in them, which is also why they
+# never retain a concrete basis.
+#
+# They are not invalid tests -- their R0 exit assertion does discriminate a
+# mutant that stops reverting -- so they stay emitted and stay counted, under
+# their own name. What they must not do is enter the PUT counts that the method
+# is judged by. Measured on the Full corpus they were 4573 of 5710 certified
+# regions (80.1%) and 2607 of 3270 valid PUTs (79.7%): counting them is the
+# difference between reporting 3270 PUTs and reporting 641.
+STRUCTURAL_CERTIFICATION_SOURCES = (
+    "structural-abi-gate-no-coordinate",
+    "structural-abi-getter-no-coordinate",
+)
+STRUCTURAL_STAGE4_KINDS = ("abi-value-gate", "getter-value-gate")
+
+
+def is_structural_certificate_row(row, record=None):
+    """True when this row rests on a structural certificate, not a solver CE.
+
+    Reads whichever of the two provenance fields the caller has: the emitted
+    summary row carries `certification_source`/`stage4_kind`, the put.json
+    record carries the same plus `certified_detail_stage4_kind`. Both are
+    accepted so the one predicate serves the runner, the statistics and the
+    RQ3 derivation instead of three copies drifting apart.
+    """
+    row = row if isinstance(row, dict) else {}
+    record = record if isinstance(record, dict) else {}
+    for source in (row.get("certification_source"), record.get("certification_source"),
+                   row.get("certified_detail_source"), record.get("certified_detail_source")):
+        if source in STRUCTURAL_CERTIFICATION_SOURCES:
+            return True
+    for kind in (row.get("stage4_kind"), record.get("stage4_kind"),
+                 row.get("certified_detail_stage4_kind"),
+                 record.get("certified_detail_stage4_kind")):
+        if kind in STRUCTURAL_STAGE4_KINDS:
+            return True
+    return False

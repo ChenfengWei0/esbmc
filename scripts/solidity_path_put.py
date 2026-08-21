@@ -16365,6 +16365,57 @@ def normalized_concrete_ce(raw):
     return out
 
 
+def _struct_literal_members(raw):
+    """Flatten ESBMC's pretty-printed struct value into member coordinates.
+
+    A storage struct reaches the emitted claim as one string such as
+    ``{ .currentRound = 0 }`` (nested: ``{ .a = { .b = 1 }, .c = 2 }``), while
+    the certified CE carries the same state flattened as
+    ``vaultBatchingState.currentRound = 0``. Returns ``{member: scalar}`` with
+    dotted member paths, or None when the text is not a struct literal or a
+    member is not an integer spelling. Measured 2026-08-22 on
+    DnGmxBatchingManager.usdcBalance: the whole basis replay was refused as
+    "emitted claim contains a non-scalar or malformed coordinate" for this.
+    """
+    if not isinstance(raw, str):
+        return None
+    text = raw.strip()
+    if not (text.startswith("{") and text.endswith("}")):
+        return None
+    body = text[1:-1].strip()
+    out = {}
+    if not body:
+        return out
+    depth = 0
+    start = 0
+    parts = []
+    for index, char in enumerate(body):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            parts.append(body[start:index])
+            start = index + 1
+    parts.append(body[start:])
+    for part in parts:
+        part = part.strip()
+        match = re.match(r"^\.([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(.+)$", part, re.S)
+        if match is None:
+            return None
+        member, value_text = match.group(1), match.group(2).strip()
+        nested = _struct_literal_members(value_text)
+        if nested is not None:
+            for sub_name, sub_value in nested.items():
+                out[member + "." + sub_name] = sub_value
+            continue
+        value = _normalized_concrete_ce_value(value_text)
+        if value is None:
+            return None
+        out[member] = value
+    return out
+
+
 def claim_concrete_ce(claim, params=None):
     """Canonicalize the scalar coordinates carried by one emitted claim."""
 
@@ -16380,6 +16431,15 @@ def claim_concrete_ce(claim, params=None):
         for raw_name, raw_value in values.items():
             name = prefix + str(raw_name)
             value = _normalized_concrete_ce_value(raw_value)
+            if value is None:
+                members = _struct_literal_members(raw_value)
+                if members is not None:
+                    for member, member_value in members.items():
+                        member_name = name + "." + member
+                        if member_name in out and out[member_name] != member_value:
+                            return None
+                        out[member_name] = member_value
+                    continue
             if value is None and not prefix and param_types.get(name) in ("bytes", "bytes memory",
                                                                           "bytes calldata"):
                 match = re.search(r"\.length\s*=\s*(0x[0-9A-Fa-f]+|[0-9]+)", str(raw_value))
@@ -20873,18 +20933,44 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
         right_ok, right_value = scalar(right)
         return left_ok and right_ok and left_value == right_value
 
+    def same_value(left, right):
+        # A storage struct is reported as one pretty-printed literal on both
+        # sides (`{ .currentRound = 0 }`); it is unchanged when its flattened
+        # members agree. Without this every struct counted as "changed" and
+        # demanded a slot oracle for the whole struct, which no layout has
+        # (measured 2026-08-22: DnGmxBatchingManager.usdcBalance basis refused).
+        if same_scalar(left, right):
+            return True
+        left_members = _struct_literal_members(left)
+        right_members = _struct_literal_members(right)
+        return (left_members is not None and right_members is not None
+                and left_members == right_members)
+
     changed_state = {
         str(name): value
         for name, value in final_state.items()
-        if not same_scalar(entry_state.get(name), value)
+        if not same_value(entry_state.get(name), value)
     }
     if changed_state:
         state_oracles = [
             oracle for oracle in oracles if oracle.get("kind") == "storage-slot-post-state"
         ]
         covered = {str(oracle.get("storage_variable") or "") for oracle in state_oracles}
-        if not set(changed_state).issubset(covered):
-            missing = sorted(set(changed_state) - covered)
+        # A changed struct is covered member by member (`s.m`) or as a whole.
+        required = set()
+        for name, value in changed_state.items():
+            members = _struct_literal_members(value)
+            entry_members = _struct_literal_members(entry_state.get(name)) or {}
+            if members is None:
+                required.add(name)
+                continue
+            changed_members = [m for m, v in members.items() if entry_members.get(m) != v] or list(members)
+            for member in changed_members:
+                if name in covered:
+                    continue
+                required.add(name + "." + member)
+        if not required.issubset(covered):
+            missing = sorted(required - covered)
             return ("retained final_state lacks exact storage-slot-post-state coverage: " +
                     ",".join(missing))
         for oracle in state_oracles:

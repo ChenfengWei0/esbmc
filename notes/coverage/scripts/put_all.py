@@ -74,7 +74,9 @@ from veriput_recipe import (
     STRONG_PUT_LIFT_UNCONSTRAINED_SENDER,
     STRONG_PUT_R2_CANDIDATE_BUDGET,
     STRONG_PUT_R2_DEPTH,
-    STRONG_PUT_R2_TERM_BUDGET)
+    STRONG_PUT_R2_TERM_BUDGET,
+    is_structural_certificate_row,
+)
 
 NOTES = os.path.abspath(os.path.join(HERE, "..", ".."))
 INPUTS = os.path.join(NOTES, "coverage", "inputs")
@@ -4013,13 +4015,26 @@ def main():
     def _stage2_priority(source):
         return 1 if is_concrete_only_stage2_source(source) else 0
 
+    def _structural_priority(stage4_kind, certification_source):
+        # ITEM 2: a structural ABI/getter value-gate row is not method output
+        # and never counts as a PUT, yet it used to be ordered FIRST inside its
+        # unit (lower enc, revert exit) and took the unit's whole Stage-4
+        # budget proving R1/R2 on the compiler's gate -- measured 2026-08-22 on
+        # DnGmxBatchingManager: six units, 107 s each, six gate tests with
+        # R1/R2 and every real-region row refused "not fused yet". Real rows
+        # go first; the gate rows get whatever is left.
+        return 1 if is_structural_certificate_row({
+            "stage4_kind": stage4_kind, "certification_source": certification_source}) else 0
+
     ordered_rows = [
         r for _i, r in sorted(enumerate(rows),
                               key=lambda ir:
-                              (_stage2_priority(ir[1][13]), _exit_priority(ir[1][10]), ir[0]))
+                              (_structural_priority(ir[1][18], ir[1][19]),
+                               _stage2_priority(ir[1][13]), _exit_priority(ir[1][10]), ir[0]))
     ]
     if ordered_rows != rows:
-        print("[order] certified/non-concrete Stage-2 region(s) are emitted "
+        print("[order] solver-certified region(s) are emitted before structural "
+              "ABI/getter gate rows, certified/non-concrete Stage-2 region(s) "
               "before concrete fallback rows, then normal exits before other "
               "exit kinds. This changes scheduling only; regions and "
               "certification are unchanged")

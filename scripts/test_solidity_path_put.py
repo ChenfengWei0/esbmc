@@ -27095,3 +27095,22 @@ def test_a_real_constructor_still_parses_past_a_commented_one():
               "}\n")
     assert solidity_path_put._source_constructor_params_from_source(source, "B") == [
         ("a", "address"), ("b", "uint256")]
+
+
+def test_struct_literal_entry_storage_flattens_to_certified_ce_members():
+    """ESBMC prints a storage struct as `{ .m = v }`; the certified CE is flat."""
+    from solidity_path_put import _struct_literal_members, claim_concrete_ce
+    assert _struct_literal_members("{ .currentRound = 0 }") == {"currentRound": 0}
+    assert _struct_literal_members("{ .a = { .b = 1, .c = 0x2 }, .d = 3 }") == {
+        "a.b": 1, "a.c": 2, "d": 3}
+    assert _struct_literal_members("{ }") == {}
+    assert _struct_literal_members("{ .a = foo }") is None
+    assert _struct_literal_members("not a struct") is None
+    claim = {"inputs": {"account": "0"}, "env": {},
+             "entry_storage": {"vaultBatchingState": "{ .currentRound = 0 }",
+                               "vaultBatchingState.currentRound": "0", "keeper": "0"}}
+    assert claim_concrete_ce(claim) == {"account": 0, "state.vaultBatchingState.currentRound": 0,
+                                        "state.keeper": 0}
+    conflicting = {"inputs": {}, "env": {},
+                   "entry_storage": {"s": "{ .x = 1 }", "s.x": "2"}}
+    assert claim_concrete_ce(conflicting) is None

@@ -122,7 +122,27 @@ ADAPTIVE_STAGE2_MANY_UNIT_THRESHOLD = 4
 ADAPTIVE_STAGE2_EXPENSIVE_TIER_THRESHOLD = 65
 ADAPTIVE_STAGE2_FAIR_SHARE_SLOTS = 8
 STRICT_STAGE4_FAIR_SHARE_SLOTS = 8
-STRICT_STAGE4_MIN_UNIT_BUDGET_S = 30
+# Measured 2026-08-22 on DnGmxBatchingManager (21 units): an 8-slot fair share
+# handed each unit 51..24 s of Stage 4; at that size the emit probe, ladder
+# probe and R2 prefilter caps leave nothing for fusion, so every real-region
+# unit was refused ("certified basis replay has not been fused yet") and the
+# case published 0 method PUTs. The same unit alone with 300 s emitted in
+# 3 s, ran the ladder in 11 s and proved R2 rungs. Depth over breadth: a unit
+# that gets Stage 4 gets at least this much, and later units simply wait for
+# the next case budget (the user's criterion is the R1/R2 conversion rate,
+# not the PUT count).
+STRICT_STAGE4_MIN_UNIT_BUDGET_S = 120
+# ITEM 2 follow-up (FULL round 1, 2026-08-22): a unit whose only certificates
+# are the compiler's ABI/getter value gates cannot yield a method PUT, yet it
+# was given the same fair Stage-4 share as a unit with a solver-certified
+# region -- on DnGmxBatchingManager six such getters took 55+53+46+39+34+31 s
+# of Stage 4 and the six units with real regions got 24 s and then nothing.
+# While other units are still pending, such a unit gets NO Stage 4 at all:
+# put_all needs >= 30 s to start one row, and a 15 s cap (measured) only
+# printed WALL DEADLINE and emitted nothing, so the budget is simply wasted.
+# The gate test is hollow under item 2 anyway; the last unit of a case is
+# never skipped, so a gate-only case still leaves a Valid test.
+STRUCTURAL_ONLY_STAGE4_SKIP = True
 STRICT_CASE_FINALIZATION_RESERVE_MAX_S = 30.0
 STRICT_PROCESS_TERMINATION_RESERVE_S = 2.0
 DATASET_LABEL = {
@@ -5172,6 +5192,39 @@ def _certified_count(cert_path: Path,
     return count
 
 
+def _nonstructural_certified_count(cert_path: Path,
+                                   benchmark_key: str,
+                                   unit: str,
+                                   path_function: str | None = None) -> int:
+    """Certified regions of this unit that do NOT rest on a structural gate.
+
+    Same selection as `_certified_count`; a detail without provenance counts
+    as non-structural so an older row can never be capped by mistake.
+    """
+    if not cert_path.exists():
+        return 0
+    count = 0
+    for line in cert_path.read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if row.get("bucket") != "CERTIFIED":
+            continue
+        if not _cert_row_matches(row, benchmark_key, unit, path_function):
+            continue
+        details = row.get("certified_details")
+        details = details if isinstance(details, dict) else {}
+        for path_id in (row.get("certified") or {}):
+            detail = details.get(str(path_id))
+            if isinstance(detail, dict) and is_structural_certificate_row(detail):
+                continue
+            count += 1
+    return count
+
+
 def _claim_path_id_int(raw) -> int | None:
     if raw is None:
         return None
@@ -8839,6 +8892,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     stage2_no_output_continuations = []
     stage4_candidate_units_attempted = 0
     low_budget_concrete_only_stage4_skips = []
+    structural_only_stage4_skips = []
     low_budget_timeout_only_stage4_skips = []
     put_saturated_concrete_only_stage4_skips = []
     valid_saturated_concrete_only_stage4_skips = []
@@ -9763,6 +9817,25 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 skip_reason,
             })
             continue
+        if (STRUCTURAL_ONLY_STAGE4_SKIP and strict_case_wall_budget
+                and pending_units_after_this > 0 and n_certified > 0
+                and (n_cleared_fallback + n_timeout_fallback + n_complete_witness_fallback
+                     + n_partial_journal_fallback) == 0
+                and _nonstructural_certified_count(cert_path, subject.benchmark_key, unit,
+                                                   path_function) == 0):
+            structural_only_stage4_skips.append({
+                "unit": unit,
+                "job_id": job.get("job_id"),
+                "remaining_s": round(_remaining(deadline), 3),
+                "pending_units_after_this": pending_units_after_this,
+                "certified_regions_for_unit": n_certified,
+                "reason": ("every certified region of this unit is a structural ABI/getter "
+                           "value gate (item 2: not method output); Stage 4 is left to the "
+                           "pending units"),
+            })
+            print(f"[rq1]   stage4 skipped for {unit}: structural-only certificates, "
+                  f"{pending_units_after_this} unit(s) pending", flush=True)
+            continue
         if _remaining(deadline) < args.min_remaining_s:
             result_status = "budget-exhausted"
             failure_reason = "case budget exhausted before Stage 4"
@@ -10209,6 +10282,10 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         low_budget_concrete_only_stage4_skips,
         "low_budget_concrete_only_stage4_skip_count":
         len(low_budget_concrete_only_stage4_skips),
+        "structural_only_stage4_skips":
+        structural_only_stage4_skips,
+        "structural_only_stage4_skip_count":
+        len(structural_only_stage4_skips),
         "low_budget_timeout_only_stage4_skips":
         low_budget_timeout_only_stage4_skips,
         "low_budget_timeout_only_stage4_skip_count":
@@ -10618,6 +10695,9 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                     getattr(args, "skip_concrete_only_after_any_valid", True),
                     "low_budget_concrete_only_stage4_skips": [],
                     "low_budget_concrete_only_stage4_skip_count":
+                    0,
+                    "structural_only_stage4_skips": [],
+                    "structural_only_stage4_skip_count":
                     0,
                     "low_budget_timeout_only_stage4_skips": [],
                     "low_budget_timeout_only_stage4_skip_count":
