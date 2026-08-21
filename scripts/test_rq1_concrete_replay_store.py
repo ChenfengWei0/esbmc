@@ -337,8 +337,61 @@ def test_constructor_revert_replay_needs_no_path_identity() -> int:
     return bad
 
 
+def test_fallback_storage_slot_basis_binds_low_level_call() -> int:
+    """A fallback/receive basis reaches its target through `address(c0).call(hex"..")`.
+
+    Measured on Phishable.fallback 1p1 (b15): the basis was valid, fused and
+    green but its post-state read was refused as "not bound to exactly one
+    selected target call", so it never reached the manifest and no-cer-reg
+    could not derive.
+    """
+    source = (
+        'pragma solidity >=0.8.0; import {Test} from "forge-std/Test.sol"; '
+        'import {Phishable} from "../src/flat.sol"; '
+        "contract PhishableCovTest is Test { Phishable c0; "
+        "function setUp() public { c0 = new Phishable(address(uint160(0))); } "
+        "function test_cov_0() public { "
+        "vm.prank(address(uint160(0)), address(uint160(0))); "
+        '(bool ok1, ) = address(c0).call(hex"deadbeef"); '
+        'assertTrue(ok1, "covered receive/fallback path must return normally"); '
+        "uint256 _veriput_fixed_state_owner_0 = (uint256(vm.load(address(c0), "
+        "bytes32(uint256(0)))) & 1461501637330902918203684832716283019655932542975); "
+        'assertEq(_veriput_fixed_state_owner_0, uint256(0), "fixed witness state"); } }\n')
+    oracles = [{
+        "assertion": 'assertEq(_veriput_fixed_state_owner_0, uint256(0), "fixed witness state");',
+        "class": "concrete-value",
+        "expected": "uint256(0)",
+        "kind": "storage-slot-post-state",
+        "observed": "_veriput_fixed_state_owner_0",
+        "provenance": "stage2-witness",
+        "source": "vm.load",
+        "storage_expression": "(uint256(vm.load(address(c0), bytes32(uint256(0)))) & "
+                              "1461501637330902918203684832716283019655932542975)",
+        "storage_offset_bytes": 0,
+        "storage_slot": 0,
+        "storage_variable": "owner",
+        "storage_width_bytes": 20,
+        "target_receiver": "c0",
+    }, {
+        "assertion": 'assertTrue(ok1, "covered receive/fallback path must return normally");',
+        "class": "R0",
+        "expected": True,
+        "kind": "call-status",
+        "observed": "ok1",
+        "provenance": "stage2-witness",
+        "target_receiver": "c0",
+    }]
+    bad = check(_oracle_binding_errors(source, "test_cov_0", "fallback", oracles) == [],
+                "fallback basis with a low-level target call must bind its post-state read")
+    # The same read is still refused for a named unit that the body never calls.
+    bad += check(bool(_oracle_binding_errors(source, "test_cov_0", "withdrawAll", oracles)),
+                 "a named unit absent from the body must not bind")
+    return bad
+
+
 def main() -> int:
     bad = test_structural_anchor_basis_is_strictly_authenticated()
+    bad += test_fallback_storage_slot_basis_binds_low_level_call()
     bad += test_constructor_revert_replay_needs_no_path_identity()
     covered_entry = {
         "origin": {

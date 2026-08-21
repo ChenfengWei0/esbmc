@@ -1500,8 +1500,17 @@ def _storage_slot_binding_errors(body: str,
         return ["storage-slot oracle is not an exact fixed assertEq"]
 
     semantic = re.sub(r"\s+", "", _semantic_solidity(body))
+    # A revert-path replay reaches its target through `try c0.unit(...) {...}
+    # catch {}`; after whitespace removal that reads `tryc0.unit(`, and a
+    # `\b` before the receiver no longer matches. The event binding above
+    # already accepts the `try` prefix; this one did not, so every revert-path
+    # basis carrying a post-state read was refused as "not bound to exactly one
+    # selected target call" and never persisted (measured: MyContract.sendTo
+    # 6p1, SimpleSuicide 6p1 -- valid, fused, green, absent from the manifest).
     calls = list(
-        re.finditer(r"\b" + re.escape(receiver) + r"\." + re.escape(unit) + r"\(", semantic))
+        re.finditer(
+            r"(?<![A-Za-z0-9_$])(?:(try))?" + re.escape(receiver) + r"\." + re.escape(unit) +
+            r"\(", semantic))
     raw_low_level_calls = list(
         re.finditer(
             r"address\s*\(\s*" + re.escape(receiver) +
@@ -1515,10 +1524,51 @@ def _storage_slot_binding_errors(body: str,
             r"\(", semantic))
     if len(raw_low_level_calls) == len(semantic_low_level_calls) == 1:
         calls.extend(semantic_low_level_calls)
+    if unit in ("fallback", "receive"):
+        # A fallback/receive path has no selector to name: the target call is
+        # `address(c0).call(hex"...")` (or `.call("")`), which the low-level
+        # status binding above already accepts for these units. Without this
+        # branch the post-state read of every fallback/receive basis was refused
+        # as "not bound to exactly one selected target call" and the basis was
+        # never persisted (measured: Phishable.fallback 1p1 -- valid, fused,
+        # green, absent from the manifest, so no-cer-reg could not derive).
+        calls.extend(
+            re.finditer(
+                r"address\(" + re.escape(receiver) + r"\)\.call(?:\{[^{}]*\})?\(", semantic))
     calls.sort(key=lambda match: match.start())
     if len(calls) != 1:
         return ["storage-slot oracle is not bound to exactly one selected target call"]
     call_end = semantic.find(";", calls[0].start())
+    if calls[0].lastindex and calls[0].group(1) == "try":
+        # The statement ends after the last `catch {...}`, not at the first
+        # `;` -- which sits INSIDE the success block when the exit oracle's
+        # completion marker (`_veriput_concrete_completed=true;`) is there.
+        # Only that marker assignment, or nothing, may occupy the success
+        # body; the catch bodies must be empty.
+        call_open = semantic.find("(", calls[0].start() + len("try"))
+        cursor = _matching_delimiter(semantic, call_open, "(", ")")
+        cursor = -1 if cursor is None else cursor + 1
+        if cursor >= 0 and semantic.startswith("returns(", cursor):
+            returns_close = _matching_delimiter(semantic, cursor + len("returns"), "(", ")")
+            cursor = -1 if returns_close is None else returns_close + 1
+        success_close = (_matching_delimiter(semantic, cursor, "{", "}") if cursor >= 0 else None)
+        if success_close is None:
+            return ["storage-slot oracle try statement is malformed"]
+        success_body = semantic[cursor + 1:success_close]
+        if success_body and not re.fullmatch(r"_veriput_concrete_completed=true;", success_body):
+            return ["storage-slot oracle try success body is not the completion marker"]
+        cursor = success_close + 1
+        catches = 0
+        while cursor >= 0 and semantic.startswith("catch", cursor):
+            brace = semantic.find("{", cursor + len("catch"))
+            catch_close = _matching_delimiter(semantic, brace, "{", "}")
+            if catch_close is None or semantic[brace + 1:catch_close]:
+                return ["storage-slot oracle catch body is not empty"]
+            cursor = catch_close + 1
+            catches += 1
+        if not catches:
+            return ["storage-slot oracle try statement has no catch"]
+        call_end = cursor - 1
     pair = declaration + assertion
     pair_pos = semantic.find(pair, call_end + 1) if call_end >= 0 else -1
     if pair_pos < 0 or semantic.find(pair, pair_pos + 1) >= 0:

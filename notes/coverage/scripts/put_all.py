@@ -1779,7 +1779,18 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail, representat
     if not re.search(r"\b" + re.escape(unit) + r"\s*(?:\{|\()", semantic_function):
         # Low-level calls spell the unit in ABI encoding rather than as a
         # Solidity member call.  The literal is checked in the raw source.
-        if not re.search(r"[\"']" + re.escape(unit) + r"\s*\(", function_source):
+        # `fallback` / `receive` have no name to spell at all: the emitter
+        # reaches them with `.call(hex"deadbeef")` / `.call(hex"")`, the same
+        # two shapes find_unit_call() already recognises. Without this branch
+        # every fallback/receive basis that fused, bound and ran green was
+        # refused here as "does not invoke its target unit" (measured:
+        # B.fallback, Phishable.fallback).
+        invoked = re.search(r"[\"']" + re.escape(unit) + r"\s*\(", function_source) is not None
+        if not invoked and unit in ("fallback", "receive"):
+            payload = r'hex"deadbeef"' if unit == "fallback" else r'hex""'
+            invoked = re.search(r'\.call(?:\s*\{[^{}]*\})?\s*\(\s*' + payload,
+                                function_source) is not None
+        if not invoked:
             return None, "certified basis replay does not invoke its target unit"
     for oracle in oracles:
         if oracle.get("provenance") != "stage2-witness":

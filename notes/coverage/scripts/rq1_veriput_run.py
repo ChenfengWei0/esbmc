@@ -5871,7 +5871,13 @@ def _strength_quality(put_summary: dict) -> dict:
     valid_tests = [
         test for test in (put_summary.get("valid_tests") or []) if _is_valid_reference_test(test)
     ]
-    valid_puts = [test for test in valid_tests if test.get("kind") == "put"]
+    # ITEM 2: the same method-only split as `_normalize_result_row`. This
+    # writer fed `artifact_counts` on the published row, so a structural gate
+    # carrying R1/R2 made `valid_put_with_R1_or_R2` exceed `put_valid`
+    # (measured on b15: SimpleSuicide 4 > 3, Proxy "without" 1 with 0 PUTs).
+    valid_puts = [test for test in valid_tests if test.get("kind") == "put"
+                  and not (test.get("structural_certificate")
+                           or is_structural_certificate_row(test))]
     valid_puts_with_r1 = [test for test in valid_puts if _has_oracle_class(test, "R1")]
     valid_puts_with_r2 = [test for test in valid_puts if _has_oracle_class(test, "R2")]
     valid_puts_with_r1r2 = [test for test in valid_puts if _has_oracle_class(test, "R1", "R2")]
@@ -6165,7 +6171,7 @@ def summarize_put_artifacts(put_root: Path) -> dict:
         "put_raw": int(emission["put"]),
         "put_valid": len(_method_valid_puts),
         "put_valid_structural": len(_structural_valid_puts),
-        "put_valid_including_structural": int(valid["put"]),
+        "put_valid_including_structural": len(_method_valid_puts) + len(_structural_valid_puts),
         "concrete_raw": int(emission["concrete"]),
         "concrete_valid": int(valid["concrete"]),
         "summary_paths": summary_paths,

@@ -20237,6 +20237,31 @@ def function_body_lines(source, name):
     return None
 
 
+
+def function_body_lines_in_contract_of(source, anchor_test, name):
+    """Body of `name` inside the contract that declares `anchor_test`.
+
+    A generated Foundry file can hold more than one test contract -- the
+    emitter's own fixture contract first, the retained basis replay second --
+    and each carries its own `setUp`. `function_body_lines(source, "setUp")`
+    returns the FIRST one, which is the wrong contract's whenever the basis
+    replay is not first; the fuse side (`put_all._solidity_exact_body_in_range`)
+    scopes to the contract enclosing the test, so the two hashed different
+    bodies and every such basis was refused with "setup hash differs from its
+    CE binding". Measured: SimpleSuicide 6p1, MyContract 6p1. Scope here too.
+    """
+    lines = source.splitlines()
+    anchor_rx = re.compile(r"^\s*function\s+" + re.escape(anchor_test) + r"\s*\(")
+    anchor = next((i for i, line in enumerate(lines) if anchor_rx.search(line)), None)
+    if anchor is None:
+        return function_body_lines(source, name)
+    span = _enclosing_contract_span(lines, anchor)
+    if span is None:
+        return function_body_lines(source, name)
+    cstart, cend = span
+    scoped = "\n".join(lines[cstart:cend + 1])
+    return function_body_lines(scoped, name)
+
 def certified_setup_render_error(certified_setup_body,
                                  rendered_setup_body,
                                  certified_projection_basis=False):
@@ -20472,12 +20497,38 @@ def add_concrete_normal_exit_oracle(source, test_name, unit, expected_exit="norm
             "target_receiver": receiver,
             "assertion": assertion,
         }]
-    semantic_body = _concrete_oracle_code_mask("\n".join(body))
+    # Only assertions AFTER the target call can encode an exit oracle. The
+    # entry-pin landing check (`assertEq(vm.load(...), pin, "entry pin ... did
+    # NOT land")`) sits BEFORE the call and says nothing about the exit; with
+    # the whole body masked it tripped this bail on every free-entry-state
+    # replay, so a revert-exit basis never received its call-status oracle and
+    # was refused as "retained revert exit lacks an exact revert or
+    # failed-status oracle" (measured: Phishable withdrawAll 6p1, B fallback).
+    # The structured oracles this same assembly already added (return, state,
+    # event: every one of them reads or asserts a `_veriput_fixed_*` local and
+    # is returned WITH its metadata) are not "an existing assertion we cannot
+    # identify" -- they are ours, and they run BEFORE this adder. Masking the
+    # whole post-call tail bailed on every replay that carried a state oracle,
+    # so a revert-exit basis with a post-state read never received its
+    # call-status oracle (measured: Phishable withdrawAll 6p1, SimpleSuicide
+    # 6p1 part, MyContract 6p1 part -- all "retained revert exit lacks ...").
+    # Only for a REVERT exit, where the call-status oracle is what the claim
+    # coverage check demands and can coexist with structured oracles. On a
+    # NORMAL exit the rule is the opposite -- "normal-exit cannot downgrade or
+    # accompany a structured observable" -- so there the original whole-tail
+    # bail stands (measured: relaxing it for normal exits refused every 7p1
+    # part basis of MyContract.sendTo on exactly that rule).
+    if expected_exit == "revert":
+        _foreign_tail = [line for line in body[statement_end + 1:]
+                         if "_veriput_fixed_" not in line]
+    else:
+        _foreign_tail = body[statement_end + 1:]
+    semantic_body = _concrete_oracle_code_mask("\n".join(_foreign_tail))
     if re.search(r"\b(?:assert|assertEq|assertTrue|assertFalse)\s*\(", semantic_body):
-        # An existing assertion may encode a return, state, tuple, status, or
-        # event oracle. Without authenticated structured metadata we cannot
-        # identify it exactly, and replacing it with completion would weaken
-        # the concrete replay.
+        # An existing post-call assertion may encode a return, state, tuple,
+        # status, or event oracle. Without authenticated structured metadata we
+        # cannot identify it exactly, and replacing it with completion would
+        # weaken the concrete replay.
         return source, []
     body_text = "\n".join(body)
     try_span = _try_target_statement_span(body_text, unit)
@@ -22543,9 +22594,60 @@ def main():
                 # observations must not be spliced onto the emitter's different
                 # witness.  The rendered source is rebound to this exact CE below.
                 claim = dict(supplied_concrete_claim)
+                # The PATH's exit kind is Stage 2's and comes in on the CLI; a
+                # refutation-side representative claim (the `_r` child of a
+                # part split) is harvested from an assertion query, where the
+                # modelled revert is a mark-and-return and the harvest labels
+                # the exit "normal". That label is about the model's control
+                # flow, not the chain's: on a reverting path the replay must
+                # assert the revert, and Foundry then decides whether the CE
+                # really does revert. Measured: MyContract.sendTo 6p1 and
+                # SimpleSuicide 6p1 `_r` bases carried exit_kind=normal under a
+                # revert path and were refused as "retained normal exit
+                # contradicts a failed call-status oracle".
+                _cli_exit = normalize_exit_kind(a.exit_kind)
+                _claim_exit = normalize_exit_kind(claim.get("exit_kind"))
+                if _cli_exit in ("normal", "revert") and _claim_exit not in (None, _cli_exit):
+                    print(f"[put]   certified-basis: representative claim says exit "
+                          f"{_claim_exit!r}; the path's exit is {_cli_exit!r} (Stage 2) "
+                          f"and the replay asserts that")
+                    notes.append(f"certified-basis representative claim exit {_claim_exit!r} "
+                                 f"overridden by the path's exit {_cli_exit!r}")
+                    claim["exit_kind"] = _cli_exit
+                    claim["representative_claim_exit_kind"] = _claim_exit
+            # A FREED entry-state coordinate the path never reads is absent from
+            # the fresh witness's `entry_storage` (ESBMC snapshots only what the
+            # path touched), while the certified CE names it, because the driver
+            # freed it for the whole unit. The replay PINS every `state.*`
+            # coordinate of the certified CE at entry (vm.store + the "did NOT
+            # land" assertion), so the executed point IS the certified CE on that
+            # coordinate whether or not the witness mentions it. Fill those, and
+            # only those, from the certified CE before binding, and record the
+            # fill on the binding so it reads as "pinned", not "witnessed".
+            # Measured: Phishable.fallback and B.fallback were refused as
+            # "fresh emitted witness is not the certified CE: missing=state.owner".
+            _ce_map = normalized_concrete_ce(certified_ce) or {}
+            _entry = dict(claim.get("entry_storage") or {}) \
+                if isinstance(claim.get("entry_storage"), dict) else {}
+            _filled = []
+            for _name, _value in _ce_map.items():
+                if not _name.startswith("state."):
+                    continue
+                _bare = _name[len("state."):]
+                if _bare in _entry or _name in _entry:
+                    continue
+                _entry[_bare] = _value
+                _filled.append(_name)
+            if _filled:
+                claim = dict(claim)
+                claim["entry_storage"] = _entry
+                print("[put]   certified-basis: entry state pinned from the certified CE "
+                      "(not in the fresh witness): " + ", ".join(sorted(_filled)))
             certified_ce_binding, reason = bind_emitted_claim_to_certified_ce(claim,
                                                                               certified_ce,
                                                                               params=basis_params)
+            if certified_ce_binding is not None and _filled:
+                certified_ce_binding["entry_state_pinned_from_certified_ce"] = sorted(_filled)
         if certified_ce_binding is None:
             print(f"[put] REFUSED: {reason}")
             write_put_refusal_record(a.workdir,
@@ -23050,7 +23152,7 @@ def main():
         emitted_source = "\n".join(emitted.lines) + "\n"
         certified_test_body = (function_body_lines(emitted_source, case[1])
                                if certified_ce_binding is not None else None)
-        certified_setup_body = (function_body_lines(emitted_source, "setUp")
+        certified_setup_body = (function_body_lines_in_contract_of(emitted_source, case[1], "setUp")
                                 if certified_ce_binding is not None else None)
         try:
             txt = assemble_concrete_source(
@@ -23062,7 +23164,7 @@ def main():
                 certified_env_basis=certified_env_basis)
             if certified_ce_binding is not None:
                 rendered_test_body = function_body_lines(txt, case[1])
-                rendered_setup_body = function_body_lines(txt, "setUp")
+                rendered_setup_body = function_body_lines_in_contract_of(txt, case[1], "setUp")
                 if (not certified_projection_basis and
                     (certified_test_body is None or rendered_test_body != certified_test_body)):
                     raise ValueError("certified CE target call body changed while rendering the "
@@ -23167,7 +23269,7 @@ def main():
                     raise ValueError(claim_error)
             if certified_ce_binding is not None:
                 final_test_body = function_body_lines(txt, case[1])
-                final_setup_body = function_body_lines(txt, "setUp")
+                final_setup_body = function_body_lines_in_contract_of(txt, case[1], "setUp")
                 if final_test_body is None or final_setup_body is None:
                     raise ValueError("certified CE final replay body or setup is missing")
                 certified_ce_binding["source_preserved"] = not certified_projection_basis
