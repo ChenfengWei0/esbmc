@@ -1,6 +1,26 @@
 # VeriPUT RQ1/RQ2/RQ3 Handoff
 
-Updated: 2026-08-19
+Updated: 2026-08-21
+
+## 2026-08-21 — motivation example closed (TODO item 4); what is next
+
+- One end-to-end VeriPUT run on the paper's FeeVault (recipe freeT): Stage 2 238 s
+  (enc=119 certified, refinement fired) + Stage 4 342 s under a 600 − 238 s wall
+  deadline = **580 s**. The driver-produced PUT is Forge-green on the reference
+  (10000 runs, fixed seed) and fails on M1 and M2; at a non-reverting region point
+  the PUT's own value assertion `return != 0` refutes both (the fuzz summary shows
+  the underflow revert because Foundry's run #0 is seed-independent and hits it first).
+- Deliverables, exact Stage-2/Stage-4 commands and forge repro commands:
+  `VeriPUT/Motivation_Examples/` (README). Tool output of every attempt:
+  `VeriPUT/Work/motivation-kill/` (commit 6172491392). ESBMC state: this repo 286efc18c0.
+- Fixed on the way (VeriPUT `Notes/TODO.md` item 30 #1–#13): extcall pins routed
+  to mock/funding; k-induction forward condition skips goto-check claims under
+  path-cov modes; constants/immutables no longer freed as entry state;
+  `put_all --wall-deadline`; certify witness minimisation; budget shares.
+- Next, in order, before any Full run: b6 control batch (5 subjects) with the
+  batch recipe carrying `--certify-esbmc-arg`, `--proof-esbmc-arg`,
+  `--wall-deadline`; ESBMC certify/assert/outer-box regressions; the standing
+  rules (rounds of 5, investigate before running) stay.
 
 This is the current handoff for the VeriPUT experiment pipeline.  Older notes
 mixed retry workdirs, JSON rows, concrete anchors, and physical Foundry tests;
