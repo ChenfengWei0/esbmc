@@ -2190,6 +2190,43 @@ contract Probe {
                                 env=env)
         bad += check("stage4-refuses-protected-out-root",
                      (cp.returncode != 0 and "--out-root must not be under" in cp.stderr), True)
+        # ---- one shape-level cleared-fallback refusal per unit ----
+        #
+        # full-20260822-v28: MStableYieldSource asked the same synthesized
+        # replay six times for approveMax and five times for supplyTokenTo
+        # (283 s together) and was refused for the same shape-level reason
+        # every time, emitting no file at all.
+        shape_reason = "concrete replay lacks structured witness oracle provenance"
+        bad += check(
+            "stage4-shape-refusal-arms-the-per-unit-memo",
+            put_all.shape_level_concrete_refusal_reason("cleared_not_certified_fallback",
+                                                        {"concrete_reason": shape_reason}),
+            shape_reason)
+        bad += check(
+            "stage4-shape-refusal-covers-no-coordinate-fallbacks",
+            put_all.shape_level_concrete_refusal_reason("no-coordinate-concrete-fallback",
+                                                        {"concrete_reason": shape_reason}),
+            shape_reason)
+        bad += check(
+            "stage4-shape-refusal-ignores-rows-that-emitted-a-file",
+            put_all.shape_level_concrete_refusal_reason("cleared_not_certified_fallback", {
+                "concrete_reason": shape_reason,
+                "file": "/tmp/x.t.sol"
+            }), None)
+        bad += check(
+            "stage4-shape-refusal-ignores-path-specific-reasons",
+            put_all.shape_level_concrete_refusal_reason(
+                "cleared_not_certified_fallback",
+                {"concrete_reason": "replay has no execution-result assertion or revert oracle"}),
+            None)
+        bad += check(
+            "stage4-shape-refusal-never-fires-on-a-certified-region",
+            put_all.shape_level_concrete_refusal_reason("certified-region",
+                                                        {"concrete_reason": shape_reason}), None)
+        bad += check(
+            "stage4-shape-refusal-needs-a-refusal",
+            put_all.shape_level_concrete_refusal_reason("cleared_not_certified_fallback", {}),
+            None)
         return bad
     finally:
         os.unlink(path)

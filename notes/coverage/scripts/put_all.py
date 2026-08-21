@@ -465,6 +465,47 @@ def ensure_row_subject_solast(row_subject, log=print):
     return False
 
 
+# ---- ONE SHAPE-LEVEL REFUSAL PER UNIT, NOT ONE PER PATH ----
+#
+# A cleared (never-certified) concrete fallback is synthesized from source
+# declarations alone: same deployment, same call, arguments filled with
+# deterministic placeholders. Nothing in that shape depends on the path id, so
+# a refusal that judges the SHAPE -- "the replay carries no oracle" -- is the
+# same verdict for every remaining path of the same unit.
+#
+# MEASURED, full-20260822-v28: MStableYieldSource paid 111.7 s over SIX
+# approveMax rows and 171.3 s over FIVE supplyTokenTo rows to be told "concrete
+# replay lacks structured witness oracle provenance" eleven times, emitting no
+# file at all; VaultAdapter paid 92.8 s over five setSlopes rows. The first row
+# of a unit always runs, and a row that is NOT refused never arms this, so a
+# unit whose fallback does carry an oracle keeps every path it had.
+SHAPE_LEVEL_CONCRETE_REFUSALS = (
+    "concrete replay lacks structured witness oracle provenance", )
+
+CLEARED_FALLBACK_SOURCES = (
+    "cleared-concrete-fallback",
+    "cleared_not_certified_fallback",
+    "no-coordinate-concrete-fallback",
+    "no_coordinate_concrete_fallback",
+)
+
+
+def shape_level_concrete_refusal_reason(stage2_source, rec):
+    """The reason to stop asking this unit's cleared fallbacks, or None.
+
+    Deliberately narrow: only a row that produced NO file and was refused for
+    one of the enumerated shape-level reasons arms it. A path-specific refusal,
+    a row that emitted a file, and any certified source must all be asked again
+    for the next path.
+    """
+    if stage2_source not in CLEARED_FALLBACK_SOURCES:
+        return None
+    if not isinstance(rec, dict) or rec.get("file"):
+        return None
+    reason = str(rec.get("concrete_reason") or "")
+    return reason if reason in SHAPE_LEVEL_CONCRETE_REFUSALS else None
+
+
 def cleared_concrete_fallback_rows(record):
     """Stage-2 NOT_CERTIFIED paths whose concrete replay is authenticated.
 
@@ -4039,6 +4080,10 @@ def main():
               "exit kinds. This changes scheduling only; regions and "
               "certification are unchanged")
     cleaned_projects = set()
+    # See shape_level_concrete_refusal_reason() for why one refusal per
+    # unit is enough for these rows.
+    shape_refused_units = {}
+    shape_refusal_skips = []
     for (bench, is_poc, unit, path_function, enc, piece, text, establish, pin_extcall, deriv,
          exit_kind, stage2_depth, row_subject, stage2_source, region_override, holes_override,
          pins_override, stage2_witness_check, stage4_kind, certification_source,
@@ -4058,6 +4103,23 @@ def main():
                       f"the pipeline's clock, not a per-row verdict)")
                 break
             row_timeout = int(min(args.timeout, _left))
+        shape_refusal = shape_refused_units.get((bench, unit))
+        if shape_refusal and stage2_source in CLEARED_FALLBACK_SOURCES:
+            print(f"  SKIP {bench}.{unit} enc={encs}: the cleared concrete "
+                  f"fallback of this unit was already refused at enc="
+                  f"{shape_refusal['enc']} for a reason that judges the "
+                  f"synthesized shape, which no other path of the same unit "
+                  f"changes: {shape_refusal['reason']}")
+            shape_refusal_skips.append({
+                "benchmark": bench,
+                "unit": unit,
+                "enc": enc,
+                "piece": piece,
+                "stage2_source": stage2_source,
+                "first_refused_enc": shape_refusal["enc"],
+                "reason": shape_refusal["reason"],
+            })
+            continue
         is_corpus = False
         if row_subject is not None:
             flat = row_subject.flat_sol
@@ -4331,6 +4393,12 @@ def main():
             certified_detail_by_put_record[id(rec)] = certified_detail
         results.append(
             (bench, unit, enc, piece, p.returncode, rec, proj, region, is_corpus, contract))
+        # Arm the per-unit memo ONLY on a refusal that judged the synthesized
+        # shape and produced no file: anything path-specific must be asked
+        # again for the next path.
+        _shape_reason = shape_level_concrete_refusal_reason(stage2_source, rec)
+        if _shape_reason and (bench, unit) not in shape_refused_units:
+            shape_refused_units[(bench, unit)] = {"enc": encs, "reason": _shape_reason}
         # Keep the exact Stage-1 CE as a separate, assertion-bearing artifact.
         # It is not part of Full's deliverable/test denominator; it is the
         # authenticated replacement used when RQ3 derives no-region-refinement
@@ -4419,6 +4487,17 @@ def main():
             if test_units:
                 rewrite_stage4_record(j, rec)
 
+    if shape_refusal_skips:
+        by_unit = {}
+        for skip in shape_refusal_skips:
+            by_unit.setdefault((skip["benchmark"], skip["unit"]), []).append(skip)
+        print(f"\n[skip] {len(shape_refusal_skips)} cleared concrete fallback row(s) "
+              f"across {len(by_unit)} unit(s) were not asked: the unit's first "
+              f"such row was refused for a reason that judges the synthesized "
+              f"shape, which no other path of the same unit changes")
+        for (bench_key, unit_key), skips in sorted(by_unit.items()):
+            print(f"  [skip] {bench_key}.{unit_key}: {len(skips)} row(s) after "
+                  f"enc={skips[0]['first_refused_enc']} -- {skips[0]['reason']}")
     print("\n" + "=" * 84)
     print("STAGE 4: certified region -> PUT with oracle")
     if stage4_recipe_version:
@@ -4635,6 +4714,9 @@ def main():
             {
                 "schema": "veriput-put-summary/1",
                 "cert_path": os.path.abspath(cert_path),
+                # Rows this run deliberately did NOT ask for, and why. A skip
+                # that is not printed reads as a row that was never available.
+                "cleared_fallback_shape_skips": shape_refusal_skips,
                 "only": args.only,
                 "scope": args.scope,
                 "max_tx": args.max_tx,
