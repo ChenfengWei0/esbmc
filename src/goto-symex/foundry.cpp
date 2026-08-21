@@ -3391,10 +3391,22 @@ size_t foundry_generator::write_foundry_file(
         const bool special_entry =
           call.method == "receive" || call.method == "fallback";
         if (!call.supported || (!is_lib && !built.count(call.contract)))
+        {
           // No `vm.deal` here: the call is not emitted, so an orphan deal would
           // be dead noise and would over-report the pinned-value count.
-          f << "    // UNSUPPORTED: " << call.contract << "." << call.method
-            << " has an argument type ESBMC cannot yet render as a literal\n";
+          // Say WHICH of the two it is: a downstream reader that trusts
+          // "argument type" on a zero-argument function looks in the wrong
+          // place (MEASURED: MStableYieldSource.approveMax(), whose instance
+          // was never deployed because the constructor takes interface-typed
+          // arguments -- the call was skipped for want of an instance).
+          if (!call.supported)
+            f << "    // UNSUPPORTED: " << call.contract << "." << call.method
+              << " has an argument type ESBMC cannot yet render as a literal\n";
+          else
+            f << "    // UNSUPPORTED: " << call.contract << "." << call.method
+              << " was not emitted because no instance of " << call.contract
+              << " was deployed in setUp (see the UNSUPPORTED line there)\n";
+        }
         else if (special_entry)
         {
           const std::string calldata =

@@ -13335,7 +13335,7 @@ def fixed_replay_state_ce_projection(expected, rendered_test_body):
 
 def target_instance_for_call(lines, call_i, unit):
     """Contract instance variable whose unit call is lifted, e.g. `c1`."""
-    if not (0 <= call_i < len(lines)):
+    if call_i is None or not (0 <= call_i < len(lines)):
         return None
     start = statement_start(lines, call_i)
     stmt = "\n".join(lines[start:call_i + 1])
@@ -22899,6 +22899,29 @@ def main():
             "piece": a.piece,
         })
     case = emitted.case_for(pf, a.enc)
+    # ---- AN EMITTED CASE WITH NO CALL IS A MISSING CASE ----------------------
+    #
+    # ESBMC writes the case as an `// UNSUPPORTED: ...` shell whenever the
+    # contract instance was not deployed in setUp (constructor arguments it
+    # cannot render, e.g. interface-typed ones), and the shell carries the
+    # claim comment, so `case_for` finds it. MEASURED on
+    # MStableYieldSource.approveMax enc=6 (full-20260822-v30): every body was
+    # the shell, `find_unit_call` returned None, and the driver died with a
+    # TypeError at target_instance_for_call -- a certified real region that
+    # left no PUT and no refusal record (`stage4-python-exception-no-put-json`).
+    # The enc=2 row of the same unit, whose emitter run produced NO file, took
+    # the synthetic-preamble path and went green. A shell is the same
+    # situation as no file: the proof is in Stage 2, the case is only the
+    # syntactic shell the lifter rewrites, so take the same path.
+    if case is not None:
+        _shell_body, _shell_call_i = emitted_case_body_and_call(emitted, case, a.unit)
+        if _shell_call_i is None:
+            notes.append("emitted case for this path has no liftable unit call "
+                         "(an UNSUPPORTED shell: the instance was not deployed "
+                         "in setUp); treated as a missing case")
+            print(f"[put]   emitted case {case[1]} is an UNSUPPORTED shell with "
+                  "no unit call; falling back to the synthetic preamble")
+            case = None
     if case is None:
         if (synthetic_possible and not getter_only and not a.concrete_only
                 and stage4_kind == "certified-region"):
@@ -22909,7 +22932,7 @@ def main():
                 emitted, case = synth, synth_case
                 notes.append("synthetic emitter fallback used: cov-report "
                              "contained the certified claim but ESBMC emitted "
-                             "no matching Foundry case")
+                             "no matching (or only an UNSUPPORTED-shell) Foundry case")
                 print("[put]   synthetic preamble: recovered missing emitted "
                       f"case for {pf}:path:{a.enc}")
         if case is None:

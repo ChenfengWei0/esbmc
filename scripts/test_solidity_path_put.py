@@ -27183,3 +27183,8 @@ def test_oracle_part_query_plan_names_every_r1_variable_once():
 def _oracle_part_fixture():
     from solidity_path_put import make_oracle_input_part
     return make_oracle_input_part("part0", {"a": (0, 10)}, {}, {"a": 3})
+
+# ---- an UNSUPPORTED-shell case must not crash the lifter (TODO 43) ----------
+check(target_instance_for_call(["    // UNSUPPORTED: X.f has an argument type"], None, "f") is None,
+      "target_instance_for_call tolerates a None call index (UNSUPPORTED shell)")
+
