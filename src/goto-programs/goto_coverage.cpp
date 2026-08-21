@@ -9932,6 +9932,15 @@ void goto_coveraget::solidity_path_coverage()
         // coordinate (MEASURED: block.number 2^256-2 in every refuting
         // witness, cut by the driver round after round). The ghost carries
         // the coordinate's renamed expression whatever the bound folds to.
+        // ONLY for a bit-vector or bool coordinate. A `bytes32` is a STRUCT in
+        // this frontend (`BytesStatic`), and a ghost symbol carrying that type
+        // makes `from_expr` on the ghost's own ASSIGN recurse until the process
+        // dies -- measured as `ERROR: Out of memory` under
+        // --goto-functions-only and as a glibc heap assertion inside BMC
+        // (regression solidity_path_cov_assert_bytes32_state_component).
+        // Nothing is lost by skipping it: the minimisation the ghost exists to
+        // feed only ever walks numeric coordinates.
+        if (is_bv_type(bt) || is_bool_type(bt))
         {
           const goto_programt::targett hanchor = bat_entry ? certify_entry : bat;
           symbolt hsym;
