@@ -27133,3 +27133,26 @@ def test_bytesn_literal_maps_to_the_certified_ce_scalar():
     claim = {"inputs": {"assertionId": "{ .data = { 0 } }", "who": "2001"},
              "env": {}, "entry_storage": {}}
     assert claim_concrete_ce(claim) == {"assertionId": 0, "who": 2001}
+
+
+def test_oracle_part_query_plan_names_every_r1_variable_once():
+    from solidity_path_put import oracle_part_query_plan, oracle_part_assert_spec
+    fams = [(("x", "post > pre"), "R1"), (("y", "post == pre"), "R1"),
+            (("x", "post < pre"), "R1"), (("z", "post in [0, 1]"), "R2.3")]
+    exact = {("z", "post in [0, 1]"): [{"name": "z", "abs": [{"id": "a0", "lo": "0", "hi": "1"}]}]}
+    sig, kw = oracle_part_query_plan(("x", "post < pre"), fams, exact, lambda n: "state." + n)
+    assert sig == ("state-exact", ("state.x", "state.y"))
+    assert kw == {"variables": ["state.x", "state.y"]}
+    # every R1 candidate of the row maps to the SAME signature -> one process per part
+    sig2, _ = oracle_part_query_plan(("y", "post == pre"), fams, exact, lambda n: "state." + n)
+    assert sig2 == sig
+    sigz, kwz = oracle_part_query_plan(("z", "post in [0, 1]"), fams, exact, lambda n: "state." + n)
+    assert sigz[0] == "exact" and kwz == {"exact_vars": exact[("z", "post in [0, 1]")]}
+    spec = oracle_part_assert_spec({"region": []}, _oracle_part_fixture(), **kw)
+    assert spec["vars_policy"] == "state-exact"
+    assert [v["name"] for v in spec["vars"]] == ["state.x", "state.y"]
+
+
+def _oracle_part_fixture():
+    from solidity_path_put import make_oracle_input_part
+    return make_oracle_input_part("part0", {"a": (0, 10)}, {}, {"a": 3})

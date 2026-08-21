@@ -403,12 +403,19 @@ def refine_oracle_parts(parts,
     return current_parts, all_queries
 
 
-def oracle_part_assert_spec(base_spec, part, variable=None, exact_vars=None):
+def oracle_part_assert_spec(base_spec, part, variable=None, exact_vars=None,
+                            variables=None):
     """Build the assertion query for one certified oracle input part.
 
     The path identity and establishment policy come from ``base_spec``.  Only
     the input region is narrowed.  Holes remain exclusions rather than being
     silently filled back into the child interval.
+
+    ``variables`` names EVERY state-exact variable the query should carry: one
+    ESBMC run evaluates the complete R1 ladder of each named variable, so the
+    part is asked about all of them at once instead of one process per
+    variable.  ``variable`` is the single-variable form kept for callers that
+    have exactly one.
     """
     if not isinstance(part, OracleInputPart):
         raise TypeError("oracle assertion query requires OracleInputPart")
@@ -431,10 +438,51 @@ def oracle_part_assert_spec(base_spec, part, variable=None, exact_vars=None):
     if exact_vars is not None:
         spec["candidate_policy"] = "exact"
         spec["vars"] = json.loads(json.dumps(exact_vars))
+    elif variables:
+        spec["vars_policy"] = "state-exact"
+        spec["vars"] = [{"name": str(name)} for name in variables]
     elif variable is not None:
         spec["vars_policy"] = "state-exact"
         spec["vars"] = [{"name": str(variable)}]
     return spec
+
+
+# The smallest ESBMC budget under which an oracle-part query is still worth
+# launching.  MEASURED (campaign-full-v2, acfix_llama3_017 getDrugsSinceLastCollect
+# pf529, 2026-08-20): once the PUT deadline had passed, `esbmc_budget` floored at
+# 1 s and the refinement loop launched 400+ one-second queries of the SAME spec,
+# every one killed before its ladder summary and every one answered UNDECIDED.
+ORACLE_PART_MIN_BUDGET_S = 10
+
+
+def oracle_part_query_plan(candidate, candidate_families, exact_vars, var_name_of):
+    """Decide the ONE query that answers ``candidate`` on a part -- and, with it,
+    every other candidate the same run decides for free.
+
+    Returns ``(signature, spec_kwargs)``.  ``signature`` identifies the query
+    independently of the candidate that triggered it, so a part whose query has
+    already run (or already failed) is never asked the identical question again:
+
+    * an R2 candidate is carried by its own exact var-set, which already lists
+      every candidate of that R2 spec -- signature = that var-set;
+    * an R1 candidate is answered by a state-exact query, and one such query
+      evaluates the full R1 ladder of EVERY named variable, so the plan names
+      all R1 variables of the row at once -- signature = that variable tuple.
+    """
+    exact = (exact_vars or {}).get(candidate)
+    if exact is not None:
+        return (("exact", json.dumps(exact, sort_keys=True)), {"exact_vars": exact})
+    names = []
+    for other, family in candidate_families or ():
+        if family != "R1" or (exact_vars or {}).get(other) is not None:
+            continue
+        name = str(var_name_of(other[0]))
+        if name not in names:
+            names.append(name)
+    own = str(var_name_of(candidate[0]))
+    if own not in names:
+        names.append(own)
+    return (("state-exact", tuple(names)), {"variables": names})
 
 
 def oracle_part_candidate_verdict(rows, summary, candidate, refutations=None):
@@ -24616,15 +24664,36 @@ def main():
             for candidate, _family in candidate_families
         }
         part_query_serial = [0]
+        # (part_id, query signature) of every query already LAUNCHED on a part.
+        # A query that ended without a ladder summary (killed, refused) decides
+        # nothing, and relaunching it for the next candidate of the same part
+        # would only fail again at the same budget -- so the second ask is
+        # answered UNDECIDED from here, without a process.
+        asked_part_queries = set()
+        budget_floor_noted = [False]
 
         def verify_oracle_part(part, candidate):
             cached = root_cache.get((part.part_id, candidate))
             if cached is not None:
                 return cached
+            signature, spec_kwargs = oracle_part_query_plan(
+                candidate, candidate_families, exact_vars,
+                lambda name: assert_query_var_name(name, layout, state_store_names))
+            asked_key = (part.part_id, signature)
+            if asked_key in asked_part_queries:
+                return ("UNDECIDED", None)
+            budget = esbmc_budget("oracle-part")
+            if budget < ORACLE_PART_MIN_BUDGET_S:
+                if not budget_floor_noted[0]:
+                    budget_floor_noted[0] = True
+                    print(f"[put]   oracle-part queries STOPPED: {budget}s left is "
+                          f"under the {ORACLE_PART_MIN_BUDGET_S}s floor; the remaining "
+                          f"candidates stay UNDECIDED on their parts (no process launched)")
+                asked_part_queries.add(asked_key)
+                return ("UNDECIDED", None)
+            asked_part_queries.add(asked_key)
             part_query_serial[0] += 1
-            variable = assert_query_var_name(candidate[0], layout, state_store_names)
-            part_spec = oracle_part_assert_spec(
-                spec, part, variable=variable, exact_vars=exact_vars.get(candidate))
+            part_spec = oracle_part_assert_spec(spec, part, **spec_kwargs)
             part_spec_path = os.path.join(
                 assert_dir, f"spec.oracle_part_{part_query_serial[0]}.json")
             with open(part_spec_path, "w") as stream:
@@ -24632,7 +24701,7 @@ def main():
             part_output, _part_rc, _part_wall = run_esbmc(
                 a.esbmc, a.sol, a.ast, a.contract, a.unit,
                 ["--path-cov-assert", part_spec_path, "--cov-report-json"] +
-                proof_esbmc_args, assert_dir, 1, esbmc_budget("oracle-part"),
+                proof_esbmc_args, assert_dir, 1, budget,
                 a.memlimit, a.scope)
             part_rows, part_summary, _part_refusal, _part_blocker = parse_ladder(part_output)
             part_rows = restore_ladder_row_names(part_rows, state_store_names)
@@ -24644,6 +24713,11 @@ def main():
             for proved_candidate, proved_verdict in oracle_part_verdict_cache(
                     part_rows, part_summary, part_refutations).items():
                 root_cache[(part.part_id, proved_candidate)] = proved_verdict
+            if part_summary is None:
+                print(f"[put]   oracle-part query {part_query_serial[0]} on "
+                      f"{part.part_id} ended without a ladder summary; its "
+                      f"candidates stay UNDECIDED on this part and the query is "
+                      f"not relaunched")
             return root_cache.get((part.part_id, candidate), verdict)
 
         oracle_parts, oracle_part_queries = refine_oracle_parts(
