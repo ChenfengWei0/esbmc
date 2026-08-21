@@ -616,6 +616,27 @@ void goto_checkt::shift_check(
     !enable_unsigned_overflow_check)
     return;
 
+  // ---- NOT INSIDE ESBMC'S OWN SOLIDITY MODELS ----
+  //
+  // Same rule cast_overflow_check already applies, for the same reason: under
+  // --contract/Solidity the checks exist to model what the CHAIN does, and a
+  // shift inside `src/c2goto/library/solidity/*.c` is this verifier's
+  // implementation of a Solidity built-in, not an operation the contract
+  // performs. Those helpers are `__ESBMC_HIDE` and their shift distances are
+  // guarded by construction, so every such claim is discharged and none of
+  // them can ever correspond to a Panic revert.
+  //
+  // MEASURED (VeriPUT full-20260822-v28, Product.utilizationBuffer): in the
+  // 35 s that run had, 677 of the 678 claims it solved were these -- 672 from
+  // `bytes_static_from_uint` alone -- and exactly ONE was the instrumented
+  // path goal the run existed to decide. Symex itself took 0.092 s.
+  if (config.language.lid == language_idt::SOLIDITY)
+  {
+    const std::string &file = loc.get_file().as_string();
+    if (file.size() < 4 || file.compare(file.size() - 4, 4, ".sol") != 0)
+      return;
+  }
+
   assert(is_lshr2t(expr) || is_ashr2t(expr) || is_shl2t(expr));
 
   auto right_op = (*expr->get_sub_expr(1));

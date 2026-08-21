@@ -21687,6 +21687,13 @@ def run_forge_r2_prefilter(project,
         str(fuzz_runs),
     ]
     stdout, stderr, timed_out, returncode = "", "", False, None
+    # WHAT THE ACCELERATOR COSTS, not only what it refuted. The prefilter is
+    # given `min(--fuzz-r2-prefilter-timeout, what is left before the ESBMC R2
+    # proof reserve)` out of the SAME PUT deadline the proof runs on, so a
+    # refutation count with no seconds beside it cannot answer whether the
+    # prefilter paid for itself. Recorded here, next to the counts, because
+    # nothing downstream can reconstruct it.
+    prefilter_started = time.monotonic()
     try:
         proc = subprocess.Popen(command,
                                 cwd=project,
@@ -21755,6 +21762,8 @@ def run_forge_r2_prefilter(project,
         "timed_out": timed_out,
         "returncode": returncode,
         "fuzz_runs": fuzz_runs,
+        "wall_s": round(time.monotonic() - prefilter_started, 3),
+        "timeout_s": int(timeout),
         "command": command,
         "candidates": [evidence[candidate["key"]] for candidate in candidates],
     }
