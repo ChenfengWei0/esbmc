@@ -4,6 +4,7 @@
 #include <goto-symex/goto_symex_state.h>
 #include <goto-symex/reachability_tree.h>
 #include <goto-symex/symex_target_equation.h>
+#include <goto-programs/goto_coverage.h>
 
 #include <langapi/language_util.h>
 
@@ -540,6 +541,21 @@ void goto_symext::symex_assert()
       "instrumented assertion")
     return;
 
+  // Forward condition under the path-coverage modes (--path-cov-assert ladder,
+  // --path-cov-certify, --path-cov-outer-box): the forward condition asks ONE
+  // question -- can every loop be fully unwound at this k -- and that is
+  // answered by the unwinding assertions, which reach the equation through
+  // claim() and not through this function. Every instruction assert left here
+  // is a goto-check claim (--overflow-check, --div-by-zero-check: not
+  // user-provided, so --no-assertions keeps them). In the base case those
+  // claims are solved and reported as rungs; re-solving them in the forward
+  // condition only makes it SAT whenever one is refutable, after which the
+  // k-loop climbs k forever without ever printing the ladder's final table
+  // (motivation freeS: 463s, every HOLDS rung read as "solver unknown").
+  if (forward_condition && goto_coveraget::path_cov_active.load(
+                             std::memory_order_relaxed))
+    return;
+
   const goto_programt::instructiont &instruction = *cur_state->source.pc;
 
   std::string msg = cur_state->source.pc->location.comment().as_string();
@@ -653,6 +669,12 @@ void goto_symext::run_intrinsic(
   if (symname == "c:@F@__ESBMC_memset")
   {
     intrinsic_memset(art, func_call);
+    return;
+  }
+
+  if (symname == "c:@F@__ESBMC_calloc")
+  {
+    intrinsic_calloc(func_call, art);
     return;
   }
 

@@ -422,7 +422,8 @@ bool clang_c_maint::clang_main()
 
   init_code.move_to_operands(thread_start_call);
   init_code.move_to_operands(call);
-  init_code.move_to_operands(atexit_call);
+  if (call_atexit_handler)
+    init_code.move_to_operands(atexit_call);
   init_code.move_to_operands(thread_end_call);
 
   // add "main"

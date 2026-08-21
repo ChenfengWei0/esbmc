@@ -221,6 +221,29 @@ bool solidity_convertert::get_unbound_expr(
   }
   // it's not a member access, as it can only jump within current contract
   assert(!c_name.empty());
+
+  // ---- --extcall-nondet: NO CALLEE RUNS ------------------------------------
+  //
+  // The default lowering emits `_ESBMC_Nondet_Extcall_<C>()` here, which
+  // re-enters the contract's own public surface -- that is what makes an
+  // external call a RECURSIVE call, and the recursion has no bound.  Every
+  // caller of this function already produces the call's return value
+  // separately as a fresh nondet of the call's own type (the `(bool, bytes)`
+  // tuple from get_llc_ret_tuple for a low-level call,
+  // synthesize_nondet_member_return for a typed one), so suppressing the
+  // dispatcher leaves the VALUE fully nondeterministic and removes only the
+  // callee's EFFECTS.
+  //
+  // new_expr becomes a skip rather than being left untouched: one caller
+  // (the statement-position external call) uses this result directly as a
+  // statement instead of overwriting it, and an unset new_expr there would
+  // be a nil expression in a code block.
+  if (is_extcall_nondet)
+  {
+    new_expr = code_skipt();
+    return false;
+  }
+
   code_function_callt func_call;
   if (get_unbound_funccall(c_name, func_call))
     return true;

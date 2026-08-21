@@ -580,7 +580,64 @@ bool solidity_convertert::get_expr(
         // call, staticcall ...
         symbolt dump;
         get_llc_ret_tuple(dump);
-        new_expr = symbol_expr(dump);
+        exprt dump_expr = symbol_expr(dump);
+
+        // Even on the legacy unbound low-level-call model, EVM dispatch has
+        // one source-level fact that must not be discarded: a calldata
+        // payload shorter than four bytes has no function selector and the
+        // call cannot succeed. Keep this as an assumption on the returned
+        // tuple rather than replacing the nondeterministic result, so opaque
+        // targets remain over-approximated for payloads with a selector.
+        if (mem_name == "staticcall")
+        {
+          const nlohmann::json &parent =
+            find_last_parent(src_ast_json["nodes"], expr);
+          exprt payload;
+          bool payload_failed = true;
+          if (
+            parent.is_object() && parent.value("nodeType", "") == "FunctionCall" &&
+            parent.contains("arguments") && parent["arguments"].is_array() &&
+            !parent["arguments"].empty())
+            payload_failed = get_expr(parent["arguments"][0], payload);
+          if (
+            parent.is_object() && parent.value("nodeType", "") == "FunctionCall" &&
+            parent.contains("arguments") && parent["arguments"].is_array() &&
+            !parent["arguments"].empty() &&
+            !payload_failed &&
+            ns.follow(payload.type()).is_struct())
+          {
+            const struct_typet &tuple_type =
+              to_struct_type(ns.follow(dump_expr.type()));
+            if (!tuple_type.components().empty())
+            {
+              exprt success = member_exprt(
+                dump_expr, "x", tuple_type.components().front().type());
+              exprt data_len = member_exprt(payload, "length", size_type());
+              exprt has_no_success = binary_relation_exprt(
+                success,
+                "=",
+                from_integer(BigInt(0), success.type()));
+              exprt has_selector = binary_relation_exprt(
+                data_len, ">=", from_integer(BigInt(4), size_type()));
+              exprt valid_result = exprt("or", bool_t);
+              valid_result.operands().push_back(has_no_success);
+              valid_result.operands().push_back(has_selector);
+
+              side_effect_expr_function_callt assume_call;
+              get_library_function_call_no_args(
+                "__ESBMC_assume",
+                "c:@F@__ESBMC_assume",
+                empty_typet(),
+                location,
+                assume_call);
+              assume_call.arguments().push_back(valid_result);
+              convert_expression_to_code(assume_call);
+              move_to_back_block(assume_call);
+            }
+          }
+        }
+
+        new_expr = dump_expr;
       }
       else
       {
@@ -3475,6 +3532,7 @@ bool solidity_convertert::get_contract_member_call_expr(
 {
   locationt location;
   get_start_location_from_stmt(expr, location);
+  const std::size_t pre_call_front_size = expr_frontBlockDecl.operands().size();
 
   std::string current_contractName;
   get_current_contract_name(expr, current_contractName);
@@ -3670,14 +3728,16 @@ bool solidity_convertert::get_contract_member_call_expr(
     uses_revert_observation && !cast_target_cname.empty() &&
     !resolved_caller.contains("referencedDeclaration") &&
     resolved_caller.value("name", "") != "this";
+  const bool tracked_cast_target =
+    !cast_target_cname.empty() && structureTypingMap.count(cast_target_cname) &&
+    context.find_symbol(prefix + cast_target_cname) != nullptr;
   side_effect_expr_function_callt call;
   int contract_var_id = -1;
   exprt base;
   std::string base_cname = "";
+  bool opaque_contract_cast = false;
 
-  if (
-    !resolved_caller.contains("referencedDeclaration") &&
-    !cast_target_cname.empty() && structureTypingMap.count(cast_target_cname))
+  if (!resolved_caller.contains("referencedDeclaration") && tracked_cast_target)
   {
     // The cast operand is not a persistent contract variable — e.g.
     // `ICallback(msg.sender).cb()`.  The operand is an address-valued
@@ -3720,7 +3780,19 @@ bool solidity_convertert::get_contract_member_call_expr(
     // of the member's declared type; if the member is later called, the
     // call site will be handled by the opaque fn-ptr path. This mirrors
     // the `(new C()).x` fallback above.
-    return synthesize_nondet_member_return();
+    // Keep the raw address alive until the zero-target guard below. A
+    // high-level call to address(0) still reverts through empty returndata,
+    // even when the interface type itself cannot be materialised.
+    if (!explicit_contract_cast)
+      return synthesize_nondet_member_return();
+    if (get_expr(
+          cast_address_expr,
+          cast_address_expr.contains("typeDescriptions")
+            ? cast_address_expr["typeDescriptions"]
+            : nlohmann::json(nullptr),
+          base))
+      return true;
+    opaque_contract_cast = true;
   }
   else
   {
@@ -3773,16 +3845,17 @@ bool solidity_convertert::get_contract_member_call_expr(
       // that case the cast's target type is the correct scope.
       if (base_cname.empty() && !cast_target_cname.empty())
       {
-        if (!structureTypingMap.count(cast_target_cname))
+        if (!tracked_cast_target)
         {
           log_debug(
             "solidity",
             "\t\t@@@ got member call through untracked contract/interface "
             "cast {}, synthesizing nondet return",
             cast_target_cname);
-          return synthesize_nondet_member_return();
+          opaque_contract_cast = true;
         }
-        base_cname = cast_target_cname;
+        else
+          base_cname = cast_target_cname;
 
         // Re-wrap `base` so its type is CONTRACT (pointer to the
         // target singleton) instead of the raw address.  Without this
@@ -3805,7 +3878,9 @@ bool solidity_convertert::get_contract_member_call_expr(
         //   - --unbound: routes through _ESBMC_Nondet_Extcall_<C>,
         //     which havocs state regardless of the concrete address
         //     (correct over-approximation for opaque externals).
-        if (get_sol_type(base.type()) != SolidityGrammar::SolType::CONTRACT)
+        if (
+          !opaque_contract_cast &&
+          get_sol_type(base.type()) != SolidityGrammar::SolType::CONTRACT)
         {
           typet target_type = symbol_typet(prefix + cast_target_cname);
           target_type.set("#sol_contract", cast_target_cname);
@@ -3819,7 +3894,7 @@ bool solidity_convertert::get_contract_member_call_expr(
           base.type().set("#sol_contract", cast_target_cname);
         }
       }
-      if (base_cname.empty())
+      if (base_cname.empty() && !opaque_contract_cast)
       {
         log_debug(
           "solidity",
@@ -3846,6 +3921,36 @@ bool solidity_convertert::get_contract_member_call_expr(
     // restore the function-entry snapshot for this case.
     if (initializer_has_side_effect(cast_address_expr))
       current_function_seen_mutation = true;
+
+    if (opaque_contract_cast && func_call_json.contains("arguments"))
+    {
+      // The callee body is unavailable, but Solidity still evaluates every
+      // argument before attempting the external call.  Preserve those effects
+      // (and any revert they cause) even though the argument values themselves
+      // are consumed by the opaque boundary.
+      for (const auto &arg : func_call_json["arguments"])
+      {
+        exprt evaluated_arg;
+        if (get_expr(
+              arg,
+              arg.contains("typeDescriptions") ? arg["typeDescriptions"]
+                                               : nlohmann::json(nullptr),
+              evaluated_arg))
+          return true;
+        convert_expression_to_code(evaluated_arg);
+        move_to_front_block(evaluated_arg);
+        if (initializer_has_side_effect(arg))
+          current_function_seen_mutation = true;
+      }
+    }
+
+    // Guards emitted while evaluating the target or arguments belong to that
+    // evaluation, not to this external call.  In particular, Solidity
+    // try/catch does not catch a failure raised before the call begins.
+    auto &front_operands = expr_frontBlockDecl.operands();
+    for (std::size_t index = pre_call_front_size; index < front_operands.size();
+         ++index)
+      front_operands[index].remove("#sol_extcall_target_guard");
 
     auto emit_call_guard = [&](const exprt &condition) {
       exprt rollback;
@@ -3880,11 +3985,23 @@ bool solidity_convertert::get_contract_member_call_expr(
         binary_relation_exprt(base, "notequal", gen_zero(base.type()));
       emit_call_guard(target_exists);
     }
-    exprt target_address = member_exprt(base, "$address", addr_t);
+    exprt target_address =
+      opaque_contract_cast ? base : member_exprt(base, "$address", addr_t);
     exprt target_address_nonzero = binary_relation_exprt(
       target_address, "notequal", from_integer(0, target_address.type()));
-    emit_call_guard(target_address_nonzero);
+    // A nonzero opaque address may contain a successful implementation or
+    // may have no code / revert.  Retain both outcomes; address zero always
+    // fails.  The tagged guard lets try/catch correlate only this call's
+    // failure with its catch arm.
+    exprt call_succeeds =
+      opaque_contract_cast
+        ? exprt(and_exprt(target_address_nonzero, nondet_bool_expr))
+        : target_address_nonzero;
+    emit_call_guard(call_succeeds);
   }
+
+  if (opaque_contract_cast)
+    return synthesize_nondet_member_return();
 
   if (path_cov_unknown_address_cast)
   {
@@ -4340,6 +4457,18 @@ bool solidity_convertert::get_contract_member_call_expr(
     {
       // Truly unbound: the variable was NOT created via `new`, so we
       // have no concrete implementation to call — return nondet.
+      //
+      // This is already the arm a contract-instance value takes when it came
+      // in from outside -- a function parameter, a stored address -- which is
+      // exactly the case whose callee is arbitrary code.  A `new C()` instance
+      // keeps dispatching to the concrete implementation below: its identity
+      // is known at construction, so it is not a reentrancy source.
+      //
+      // The reentrancy on this arm is not the return value, which is already
+      // nondet via synthesize_nondet_member_return().  It is the dispatcher
+      // that get_unbound_expr() emits, and --extcall-nondet suppresses it
+      // there -- so both a low-level `.call` and a high-level `token.f()` on
+      // an instance stop re-entering, with no change needed here.
       if (get_unbound_expr(func_call_json, current_contractName, new_expr))
         return true;
       return synthesize_nondet_member_return();

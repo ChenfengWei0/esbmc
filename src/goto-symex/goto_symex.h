@@ -450,6 +450,9 @@ protected:
     reachability_treet &art);
   /** Terminate the monitor thread */
   void intrinsic_kill_monitor(reachability_treet &art);
+  /** Allocate a zero-initialized dynamic byte object for calloc. */
+  void
+  intrinsic_calloc(const code_function_call2t &call, reachability_treet &art);
   /**
    * @brief Intrinsic call for C memset function call
    * 

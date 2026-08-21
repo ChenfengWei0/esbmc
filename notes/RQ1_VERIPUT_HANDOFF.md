@@ -2461,3 +2461,123 @@ exchange (`kex_exchange_identification: Connection closed by remote host`) and
 does not answer ping. That is the remote sshd refusing before authentication,
 not a credential problem on this side, so there is nothing to fix from here.
 The no-selection remainder runs on the local box alone.
+
+## 2026-08-21 03:30 — motivation: the tool's own PUT kills M1; M2 is one family away
+
+Read with `VeriPUT/Notes/TODO.md` items 24–26, which carry the measurements.
+This section is the execution state and the order of work.
+
+### Where it stands
+
+| step | state | evidence |
+|---|---|---|
+| Stage 2 certifies the ground-truth region | **DONE**, 0.55 s, non-vacuity witnessed | `Work/motivation-kill/esbmc_direct/…`, TODO 25.3 |
+| Stage 4 emits a PUT from it | **DONE** (2 fuzz params, 195 asserts) | `Work/motivation-kill/stage4_GTB/…/test/*.t.sol` |
+| PUT green on original, 10000 runs | DONE **with two hand-added lines** | `Work/motivation-kill/MOTIVATION_PUT_kills_M1.t.sol` |
+| kills M1 | **DONE** (arithmetic underflow) | same |
+| kills M2 | **NOT YET** — oracle lower bound on `net` is 0 | TODO 26 |
+| the two hand-added lines emitted by the tool | IN FLIGHT — `stage4_GTC` running as this is written | `Work/motivation-kill/stage4_GTC.log` |
+
+The certified path is **enc=119**, not 123. 123 is the fee-capped branch; both
+mutants are invisible there. A day was lost to that mix-up; it is written down
+in TODO 26 so it is not repeated.
+
+### Why M2 survives — read off the candidate generator, not guessed
+
+Every R2 `abs` candidate for a numeric target is one of two shapes,
+`[term, term]` or `[0, term]` (`propose_r2_batch`, the `a{i}` / `ac{i}` lists).
+**There is no lower-bound family.** `net >= 9751` cannot be proposed there.
+
+The family that SHOULD produce it is R2.2, the boundary observation: execute at
+the region corners, observe `net`, propose `return in [m, M]`, prove with ESBMC.
+At L=(10000, 21239, 1) and U=(21239, 200000, 100) the observed values are 9751
+and 20921 — the exact tight bound, verified by hand on 2026-08-20, and it kills
+M2. In `stage4_GTB` the observation ran for `feeReceiver` only; **no `return`
+probe was built and no line said why** ("this procedure can only omit a
+proposal"). Diagnostics were added to `run_forge_boundary_observations` so the
+next run names the reason per (observable, point).
+
+### Tool changes today, and their blast radius
+
+ESBMC (`src/goto-programs/goto_coverage.cpp`), both `--path-cov-certify` and
+`--path-cov-assert`:
+- establish source `*` = FREE the entry-state coordinate (nondet). Separate
+  `FREED n` counter in the log line. Regression tests
+  `solidity_path_cov_certify_free_state{,_vacuous,_target_refused}`, all OK.
+- **pre-existing bug fixed**: entry-anchored region bounds were assumed at
+  `instructions.begin()`, i.e. BEFORE the establish assignments inserted in
+  front of `certify_entry`, so with any establish entry present every
+  entry-state bound bound nothing. Now anchored at `certify_entry`.
+- Blast radius: zero unless the spec carries `establish`. The driver does not
+  emit `"source": "*"` yet, so FULL is unaffected by these two.
+
+`Tools/VeriPUT/solidity_path_put.py`:
+- free establish source is not rendered and does not suppress the region
+  write loop.
+- a width>1 mapping-slot bound is WRITTEN (`vm.store`) when the coordinate was
+  freed at certification; the refusal it lifts rests on "the entry state is
+  not havoc'd", which a free source makes false. Check-after-write kept.
+- extcall success-pin renderer: admits `msg.sender` and contract-scope address
+  state variables as targets; emits `VERIPUT_EXTCALL_DEAL_CONTRACT` for a
+  value-carrying success pin (→ `vm.deal(address(<inst>), 1<<128)` after
+  deployment) and `VERIPUT_EXTCALL_SENDER_EOA` for a success pin on
+  `msg.sender` (→ `assumeNotPrecompile` + `code.length == 0` before the prank
+  of a LIFTED sender; a concrete sender leaves it a no-op). Failure pins on
+  these targets are still refused.
+- Blast radius: the first two fire only for freed coordinates (none in FULL
+  today). **The pin renderer change fires for every subject that certified an
+  `extcall.*` pin** — previously those rows were REFUSED as
+  `extcall-pin-unrenderable`, so the effect is "refused → emitted", never
+  "emitted → changed". Not yet measured on the corpus.
+
+### Measured, corpus-wide, and it bears on FULL (TODO 25.1)
+
+Of 7258 coordinates in 4294 `outer.json` files on disk, 68.9% start at the
+declared type range and 22.3% have a ≥8-octave gap between consecutive probe
+candidates (median 127 octaves). Log-domain candidate placement took the
+provable lower bound on the motivation from 2^1 to 2^61 in one invocation at
+3.1x the claim count. **Not adopted** — it would change Stage 2 for every
+subject; decide with a 5-subject round, not here.
+
+### Order of work from here
+
+1. Read `stage4_GTC.log`: (a) the `boundary probe NOT BUILT/NOT RUN` lines for
+   `return`; (b) whether the PUT is green without hand edits; (c) the kill
+   matrix (`Work/motivation-kill/killmatrix.sh <PUT>`).
+2. Fix whatever (a) names so the `return` observation runs; M2 should then
+   fall to `return in [9751, 20921]`.
+3. Only then: 5-subject Stage-4 round to measure the pin-renderer change
+   before FULL.
+
+### Housekeeping
+
+- 43.7 GB of untracked Foundry build output (`out/`, `cache/`, `artifacts/`)
+  under `Results/` and `scripts/Results/` was deleted, plus pip/yarn caches.
+  No tracked file touched. The WSL `ext4.vhdx` is 468 GB and does not shrink
+  on its own; `wsl --manage Ubuntu-24.04 --set-sparse true` from Windows is
+  the fix. `Ubuntu-22.04` holds another 63.7 GB vhdx.
+- `forge-std` was restored to `~/.cache/yarn/v6/npm-forge-std-1.11.0/…` from
+  `esbmc/regression/foundry-harness/lib/forge-std` (the yarn purge removed it).
+
+## 2026-08-21 03:45 — motivation RESOLVED: one tool-emitted PUT kills M1 and M2
+
+`stage4_GTF`: B = 1 of 1, all five gates, no hand edits. Kill matrix at 10000
+runs: original PASS, M1 FAIL (underflow), M2 FAIL (`return >= 9751` violated
+at 9472). Published: `VeriPUT/Motivation_Examples/VeriPUT_Generated/`
+(PUT, Stage-2 record, Stage-4 log, `killmatrix.sh`, README with provenance).
+It is ONE test function; M1 dies on the region (R0), M2 on the R2.2 return
+bound.
+
+Changes since 03:30, all in `Tools/VeriPUT/solidity_path_put.py`:
+- boundary-observation probes now receive `exit_kind` and
+  `lift_unconstrained_sender` (else no return binding / no entry state);
+- R2.2 refinement is a monotone bound search (gallop + bisection, one-sided
+  halves searched independently, combined interval when both proved) — TODO
+  12.2, now implemented; `BOUNDARY_OBSERVATION_REFINEMENT_ROUNDS` 4 -> 5;
+- probe-skip diagnostics in `run_forge_boundary_observations`.
+
+**Blast radius for FULL**: the R2.2 change fires for every subject whose
+boundary observation produces a candidate (item 12 counted 84 records across
+the corpus); the probe change fires for every normal-exit path with a return
+value. Both are "more rows, never changed rows", but neither is measured on a
+round of 5 yet. Do that before the overnight FULL, per TODO 0.

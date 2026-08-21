@@ -2040,7 +2040,10 @@ bool solidity_convertert::get_low_level_member_accsss(
   }
   else if (mem_name == "staticcall")
   {
-    // staticcall(this, addr) — read-only call, same dispatch as call#0
+    // staticcall(this, addr, data.length) — read-only call, same dispatch
+    // as call#0.  Keep the calldata length in the helper call: without it,
+    // the generated dispatch could report success for a payload shorter than
+    // the EVM's four-byte selector prefix.
     exprt addr = base;
     set_sol_type(addr.type(), SolidityGrammar::SolType::ADDRESS);
 
@@ -2049,6 +2052,12 @@ bool solidity_convertert::get_low_level_member_accsss(
     get_library_function_call_no_args(func_name, func_id, bool_t, loc, call);
     call.arguments().push_back(this_object);
     call.arguments().push_back(addr);
+    exprt data_len;
+    if (!arg.is_nil() && arg.type().is_struct())
+      data_len = member_exprt(arg, "length", size_type());
+    else
+      data_len = from_integer(BigInt(0), size_type());
+    call.arguments().push_back(data_len);
 
     // Wire the dispatch return into the tuple's success slot (see
     // call case above for rationale).
@@ -4924,7 +4933,7 @@ bool solidity_convertert::get_send_definition(
   return false;
 }
 
-// add `staticcall(address _addr)` to the contract
+// add `staticcall(address _addr, uint256 _data_len)` to the contract
 // Semantically identical to call#0: dispatches to target's public functions.
 // The EVM read-only enforcement is not modeled (state writes would revert
 // at runtime but are not checked by ESBMC).
@@ -4959,6 +4968,28 @@ bool solidity_convertert::get_staticcall_definition(
   param.cmt_identifier(addr_id);
   t.arguments().push_back(param);
 
+  // EVM dispatch cannot select a function without its four-byte selector.
+  // Keep this fact at the helper boundary so callers passing bytes/string
+  // payloads do not lose the observable `data.length` condition.
+  std::string data_len_name = "_data_len";
+  std::string data_len_id =
+    "sol:@C@" + cname + "@F@staticcall@" + data_len_name + "#" +
+    std::to_string(aux_counter++);
+  symbolt data_len_s;
+  get_default_symbol(
+    data_len_s,
+    debug_modulename,
+    size_type(),
+    data_len_name,
+    data_len_id,
+    locationt());
+  auto data_len_added_symbol = *move_symbol_to_context(data_len_s);
+  code_typet::argumentt data_len_param = code_typet::argumentt();
+  data_len_param.type() = size_type();
+  data_len_param.cmt_base_name(data_len_name);
+  data_len_param.cmt_identifier(data_len_id);
+  t.arguments().push_back(data_len_param);
+
   added_symbol.type = t;
 
   // body: same as call#0
@@ -4970,6 +5001,10 @@ bool solidity_convertert::get_staticcall_definition(
   func_body.move_to_operands(label);
 
   exprt addr_expr = symbol_expr(addr_added_symbol);
+  exprt data_len_expr = symbol_expr(data_len_added_symbol);
+  exprt min_selector_len = from_integer(BigInt(4), size_type());
+  exprt has_selector = binary_relation_exprt(
+    data_len_expr, ">=", min_selector_len);
 
   // Library mode: keep the static-call semantics (snapshot target +
   // Nondet_Extcall + restore) but drop the msg.sender swap and the
@@ -5025,6 +5060,10 @@ bool solidity_convertert::get_staticcall_definition(
       exprt _equal = exprt("=", bool_t);
       _equal.operands().push_back(addr_expr);
       _equal.operands().push_back(mem_addr);
+      _equal = exprt("and", bool_t);
+      _equal.operands().push_back(has_selector);
+      _equal.operands().push_back(
+        binary_relation_exprt(addr_expr, "=", mem_addr));
       codet if_expr("ifthenelse");
       if_expr.copy_to_operands(_equal, then);
       func_body.move_to_operands(if_expr);
@@ -5141,8 +5180,10 @@ bool solidity_convertert::get_staticcall_definition(
     // _addr == _ESBMC_Object_str.$address
     exprt mem_addr = member_exprt(static_ins, "$address", addr_t);
     exprt _equal = exprt("=", bool_t);
-    _equal.operands().push_back(addr_expr);
-    _equal.operands().push_back(mem_addr);
+    _equal = exprt("and", bool_t);
+    _equal.operands().push_back(has_selector);
+    _equal.operands().push_back(
+      binary_relation_exprt(addr_expr, "=", mem_addr));
 
     codet if_expr("ifthenelse");
     if_expr.copy_to_operands(_equal, then);

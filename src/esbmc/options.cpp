@@ -174,6 +174,23 @@ const struct group_opt_templ all_cmd_options[] = {
     {"bound",
      NULL,
      "Model inter-contract function calls within a bounded system"},
+    {"extcall-nondet",
+     NULL,
+     "Model an external call as a NONDETERMINISTIC RETURN VALUE instead of a "
+     "reentrant dispatch into the known contract objects.  The default "
+     "(--unbound) lowers `addr.call(...)` and a typed external call into "
+     "`_ESBMC_Nondet_Extcall_<C>`, which may call back into the caller; that "
+     "recursion has no bound, so k-induction cannot converge on any unit that "
+     "makes an external call -- MEASURED on FeeVault.withdraw with a "
+     "trivially reachable assertion after the call: 44 recursion unwindings "
+     "at --k-step 2, 380 at --k-step 5.  Under this option the call site "
+     "yields a fresh nondet of the call's OWN return type (bool for a "
+     "low-level call, the declared return type for a typed one) and no "
+     "callee runs.  That is strictly more behaviour for the returned VALUE "
+     "and strictly less for the callee's EFFECTS: reentrancy is no longer "
+     "modelled, so a reentrancy bug cannot be found under it.  Do not "
+     "combine it with --reentry-check or --reentry-balance-drain-check, "
+     "whose whole subject is the behaviour this removes."},
     {"reentry-check",
      NULL,
      "Detect reentrancy behavior during contract execution"},
@@ -914,6 +931,12 @@ const struct group_opt_templ all_cmd_options[] = {
       "the dropped paths are reported as an absolute count — never silently. "
       "Truncation is the last-resort backstop; it firing at all is reported as "
       "a signal that degradation was not aggressive enough"},
+     {"path-cov-no-selection-strategy",
+      NULL,
+      "Disable call-site selection/degradation for Solidity path coverage. "
+      "Every internal call remains expanded in the path identity; the normal "
+      "goal cap remains the resource backstop. Intended only for the RQ3 "
+      "no-selection-strategy ablation."},
      {"path-cov-census-json",
       boost::program_options::value<std::string>()->value_name("file"),
       "Write the complete-path target census immediately after instrumentation, "

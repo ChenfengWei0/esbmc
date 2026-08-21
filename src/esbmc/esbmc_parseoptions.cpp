@@ -119,6 +119,7 @@ struct resultt
 {
   PROCESS_TYPE type;
   uint64_t k;
+  bool error = false;
 };
 
 #ifndef _WIN32
@@ -959,6 +960,15 @@ void esbmc_parseoptionst::get_command_line_options(optionst &options)
   // suite and, unlike --bound, does not change external-call modelling.
   if (cmdline.isset("solidity-path-coverage"))
     options.set_option("solidity-path-coverage-enabled", true);
+
+  // Enumeration keeps constructor custom-error exits observable so they can
+  // be counted as paths.  Certification and assertion queries are proofs over
+  // successfully deployed contracts, however, so a reverting constructor
+  // must prune that deployment instead of continuing with partially
+  // initialised state.  Publish this distinction before the Solidity frontend
+  // runs; the coverage pass itself is constructed much later.
+  if (cmdline.isset("path-cov-certify") || cmdline.isset("path-cov-assert"))
+    options.set_option("path-cov-proof-query", true);
 
   if (cmdline.isset("path-cov-probe"))
   {
@@ -1853,6 +1863,34 @@ int esbmc_parseoptionst::doit()
   //   --tod-balance-check  -> balance-TOD: pair shares address(this).balance
   //   --tod-race-check     -> storage-race TOD: pair shares a non-balance var
   // Each flag takes "auto" (discover pairs) or "f1,f2" (specific pair).
+  // --extcall-nondet removes the callee entirely: an external call becomes a
+  // fresh nondet of its own return type and nothing runs on the other side.
+  // Every flag below exists to observe what the callee DOES, so combining them
+  // would silently report "no reentrancy" about a model that cannot express
+  // any.  Refused rather than warned: a vacuous SUCCESSFUL here is worse than
+  // no answer.
+  if (cmdline.isset("extcall-nondet"))
+  {
+    const char *incompatible = nullptr;
+    if (cmdline.isset("reentry-check"))
+      incompatible = "--reentry-check";
+    else if (cmdline.isset("reentry-balance-drain-check"))
+      incompatible = "--reentry-balance-drain-check";
+    else if (cmdline.isset("tod-balance-check"))
+      incompatible = "--tod-balance-check";
+    else if (cmdline.isset("tod-race-check"))
+      incompatible = "--tod-race-check";
+    if (incompatible != nullptr)
+    {
+      log_error(
+        "--extcall-nondet models external calls as a nondet return value with "
+        "no callee, so reentrancy is not modelled at all; {} is a check on "
+        "callee behaviour and cannot be combined with it",
+        incompatible);
+      return 1;
+    }
+  }
+
   if (cmdline.isset("tod-balance-check") || cmdline.isset("tod-race-check"))
   {
     if (cmdline.isset("tod-balance-check") && cmdline.isset("tod-race-check"))
@@ -2445,6 +2483,19 @@ int esbmc_parseoptionst::doit_k_induction_parallel()
         abort();
       }
 
+      if (a_result.error)
+      {
+        log_warning(
+          "The parallel k-induction {} was inconclusive at k = {:d}; "
+          "stopping the strategy.",
+          process_name[a_result.type],
+          a_result.k);
+        for (int i : children_pid)
+          kill(i, SIGKILL);
+        log_fail("\nVERIFICATION UNKNOWN");
+        return false;
+      }
+
       // If either the base case found a bug or the forward condition
       // finds a solution, present the result
       if (
@@ -2584,20 +2635,33 @@ int esbmc_parseoptionst::doit_k_induction_parallel()
     for (uint64_t k_step = k_step_base; k_step <= max_k_step;
          k_step += k_step_inc)
     {
-      bmct bmc(goto_functions, options, context);
-      bmc.options.set_option("unwind", integer2string(k_step));
-
       log_progress("Checking base case, k = {:d}\n", k_step);
 
-      // If an exception was thrown, we should abort the process
       int res = smt_convt::P_ERROR;
       try
       {
+        bmct bmc(goto_functions, options, context);
+        bmc.options.set_option("unwind", integer2string(k_step));
         res = do_bmc(bmc);
       }
       catch (...)
       {
-        break;
+        r.k = k_step;
+        r.error = true;
+        auto const len = write(forward_pipe[1], &r, sizeof(r));
+        assert(len == sizeof(r) && "short write");
+        (void)len; // ndebug
+        return false;
+      }
+
+      if (res == smt_convt::P_ERROR || res == smt_convt::P_SMTLIB)
+      {
+        r.k = k_step;
+        r.error = true;
+        auto const len = write(forward_pipe[1], &r, sizeof(r));
+        assert(len == sizeof(r) && "short write");
+        (void)len; // ndebug
+        return false;
       }
 
       // Send information to parent if no bug was found
@@ -2683,30 +2747,51 @@ int esbmc_parseoptionst::doit_k_induction_parallel()
     // Struct to keep the result
     struct resultt r = {process_type, 0};
 
+    if (options.get_bool_option("disable-forward-condition"))
+    {
+      auto const len = write(forward_pipe[1], &r, sizeof(r));
+      assert(len == sizeof(r) && "short write");
+      (void)len; // ndebug
+      return true;
+    }
+
     // Run bmc and only send results in two occasions:
     // 1. A proof was found, we send the step where it was found
     // 2. It couldn't find a proof
     for (uint64_t k_step = k_step_base + 1; k_step <= max_k_step;
          k_step += k_step_inc)
     {
-      bmct bmc(goto_functions, options, context);
-      bmc.options.set_option("unwind", integer2string(k_step));
-
       log_status("Checking forward condition, k = {:d}", k_step);
 
-      // If an exception was thrown, we should abort the process
       int res = smt_convt::P_ERROR;
       try
       {
+        bmct bmc(goto_functions, options, context);
+        bmc.options.set_option("unwind", integer2string(k_step));
         res = do_bmc(bmc);
       }
       catch (...)
       {
-        break;
+        r.k = k_step;
+        r.error = true;
+        auto const len = write(forward_pipe[1], &r, sizeof(r));
+        assert(len == sizeof(r) && "short write");
+        (void)len; // ndebug
+        return false;
       }
 
       if (options.get_bool_option("disable-forward-condition"))
         break;
+
+      if (res == smt_convt::P_ERROR || res == smt_convt::P_SMTLIB)
+      {
+        r.k = k_step;
+        r.error = true;
+        auto const len = write(forward_pipe[1], &r, sizeof(r));
+        assert(len == sizeof(r) && "short write");
+        (void)len; // ndebug
+        return false;
+      }
 
       // Send information to parent if no bug was found
       if (res == smt_convt::P_UNSATISFIABLE)
@@ -2751,31 +2836,51 @@ int esbmc_parseoptionst::doit_k_induction_parallel()
     // Struct to keep the result
     struct resultt r = {process_type, 0};
 
+    if (options.get_bool_option("disable-inductive-step"))
+    {
+      auto const len = write(forward_pipe[1], &r, sizeof(r));
+      assert(len == sizeof(r) && "short write");
+      (void)len; // ndebug
+      return true;
+    }
+
     // Run bmc and only send results in two occasions:
     // 1. A proof was found, we send the step where it was found
     // 2. It couldn't find a proof
     for (uint64_t k_step = k_step_base + 1; k_step <= max_k_step;
          k_step += k_step_inc)
     {
-      bmct bmc(goto_functions, options, context);
-
-      bmc.options.set_option("unwind", integer2string(k_step));
-
       log_status("Checking inductive step, k = {:d}", k_step);
 
-      // If an exception was thrown, we should abort the process
       int res = smt_convt::P_ERROR;
       try
       {
+        bmct bmc(goto_functions, options, context);
+        bmc.options.set_option("unwind", integer2string(k_step));
         res = do_bmc(bmc);
       }
       catch (...)
       {
-        break;
+        r.k = k_step;
+        r.error = true;
+        auto const len = write(forward_pipe[1], &r, sizeof(r));
+        assert(len == sizeof(r) && "short write");
+        (void)len; // ndebug
+        return false;
       }
 
       if (options.get_bool_option("disable-inductive-step"))
         break;
+
+      if (res == smt_convt::P_ERROR || res == smt_convt::P_SMTLIB)
+      {
+        r.k = k_step;
+        r.error = true;
+        auto const len = write(forward_pipe[1], &r, sizeof(r));
+        assert(len == sizeof(r) && "short write");
+        (void)len; // ndebug
+        return false;
+      }
 
       // Send information to parent if no bug was found
       if (res == smt_convt::P_UNSATISFIABLE)
@@ -2901,6 +3006,27 @@ int esbmc_parseoptionst::do_bmc_strategy(
     return 0;
   };
 
+  // Repeating an inconclusive solver result at larger bounds is expensive and
+  // can exhaust the strategy's resources without adding evidence.  Treat this
+  // conservatively as a fail-closed strategy result: stop at the first phase
+  // without SAT/UNSAT and leave coverage claims undecided.
+  auto conclude_unknown = [&](const char *phase, const uint64_t k_step) -> int {
+    log_status(
+      "The {} was inconclusive at k = {:d}; stopping k-induction.",
+      phase,
+      k_step);
+    log_fail("VERIFICATION UNKNOWN");
+    if (is_coverage)
+      report_coverage(
+        options,
+        goto_functions.reached_claims,
+        goto_functions.reached_mul_claims,
+        pytest_gen,
+        ctest_gen,
+        foundry_gen);
+    return 0;
+  };
+
   // Under --multi-property, when FC or IS succeed, the remaining
   // assertions are GLOBALLY safe (FC: no paths longer than k exist;
   // IS: inductive invariant holds on the remaining claims).  Marking
@@ -2946,9 +3072,12 @@ int esbmc_parseoptionst::do_bmc_strategy(
     // k-induction
     if (options.get_bool_option("k-induction"))
     {
-      bool is_bcv =
-        is_base_case_violated(options, goto_functions, k_step, &foundry_gen)
-          .is_true();
+      const tvt base_case_result =
+        is_base_case_violated(options, goto_functions, k_step, &foundry_gen);
+      if (base_case_result.is_unknown())
+        return conclude_unknown("base case", k_step);
+
+      const bool is_bcv = base_case_result.is_true();
       if (is_bcv)
       {
         any_violation_found = true;
@@ -2957,8 +3086,12 @@ int esbmc_parseoptionst::do_bmc_strategy(
         options.set_option("kind-violation-found", true);
       }
 
-      if (is_bcv && !mp_active)
-        return 1;
+      if (is_bcv && !is_coverage)
+      {
+        if (!mp_active)
+          return 1;
+        return conclude();
+      }
 
       // Multi-property short-circuit: if all assertions have been decided
       // (violated-and-cleared by multi_property_check, or otherwise
@@ -2986,10 +3119,16 @@ int esbmc_parseoptionst::do_bmc_strategy(
       // claims as GLOBALLY safe — marking them via mark_all_asserts_safe
       // so the next iteration sees zero active asserts and terminates
       // cleanly.
-      if (!is_bcv || mp_active)
+      if (
+        (!is_bcv || mp_active) &&
+        !options.get_bool_option("disable-forward-condition"))
       {
-        if (does_forward_condition_hold(options, goto_functions, k_step)
-              .is_false())
+        const tvt forward_condition_result =
+          does_forward_condition_hold(options, goto_functions, k_step);
+        if (forward_condition_result.is_unknown())
+          return conclude_unknown("forward condition", k_step);
+
+        if (forward_condition_result.is_false())
         {
           if (is_coverage)
             goto_coveraget::path_cov_k_induction_proved = true;
@@ -3009,10 +3148,17 @@ int esbmc_parseoptionst::do_bmc_strategy(
 
       // Inductive step.  Same rationale as FC under MP: discharge safe
       // remaining claims.  Skipped at k=1 (no induction premise).
-      if (k_step > 1 && (!is_bcv || mp_active))
+      if (
+        k_step > 1 && (!is_bcv || mp_active) &&
+        !options.get_bool_option("disable-inductive-step") &&
+        strtoul(cmdline.getval("max-inductive-step"), nullptr, 10) >= k_step)
       {
-        if (is_inductive_step_violated(options, goto_functions, k_step)
-              .is_false())
+        const tvt inductive_step_result =
+          is_inductive_step_violated(options, goto_functions, k_step);
+        if (inductive_step_result.is_unknown())
+          return conclude_unknown("inductive step", k_step);
+
+        if (inductive_step_result.is_false())
         {
           if (is_coverage)
             goto_coveraget::path_cov_k_induction_proved = true;
@@ -3054,8 +3200,12 @@ int esbmc_parseoptionst::do_bmc_strategy(
         options.set_option("kind-violation-found", true);
       }
 
-      if (is_bcv && !mp_active)
-        return 1;
+      if (is_bcv && !is_coverage)
+      {
+        if (!mp_active)
+          return 1;
+        return conclude();
+      }
 
       if (mp_active && count_active_asserts(goto_functions) == 0)
       {
@@ -3363,8 +3513,14 @@ int esbmc_parseoptionst::do_bmc(bmct &bmc)
   // not name one) retry the query once with CVC5, whose array engine
   // handles the shape. `bmct::options` is a reference to the caller's
   // option set, so the switch also sticks for the remaining k steps.
+  // Multi-property solving mutates the shared claims as individual jobs
+  // finish, so retrying the same bmct after one job errors would solve a
+  // different, partially-cleared problem and could discard an earlier SAT.
+  // Let its aggregate P_ERROR reach the strategy instead.
   static bool solver_fallback_attempted = false;
-  if (res == smt_convt::P_ERROR && !solver_fallback_attempted)
+  if (
+    res == smt_convt::P_ERROR && !solver_fallback_attempted &&
+    !bmc.options.get_bool_option("multi-property"))
   {
     const bool user_picked_solver =
       cmdline.isset("z3") || cmdline.isset("cvc5") || cmdline.isset("cvc4") ||
@@ -3395,8 +3551,8 @@ int esbmc_parseoptionst::do_bmc(bmct &bmc)
   if (res == smt_convt::P_ERROR)
     log_warning(
       "The solver could not decide this query; treating it as inconclusive "
-      "and continuing. Retry with a different backend (--cvc5 / --z3 / "
-      "--bitwuzla) if this repeats on every step.");
+      "and returning it to the verification strategy. Retry with a different "
+      "backend (--cvc5 / --z3 / --bitwuzla).");
 
 #ifdef HAVE_SENDFILE_ESBMC
   if (bmc.options.get_bool_option("memstats"))
@@ -4456,6 +4612,8 @@ bool esbmc_parseoptionst::process_goto_program(
         tmp.emit_decision_sites = true;
       }
       tmp.path_cov_probe = cmdline.isset("path-cov-probe");
+      tmp.path_cov_no_selection_strategy =
+        cmdline.isset("path-cov-no-selection-strategy");
       // Per-unit path budget. Read BEFORE solidity_path_coverage() because the
       // pass uses it twice and in a fixed order: first as the target that
       // degradation withdraws call points to reach, then as the goal cap that

@@ -371,7 +371,9 @@ void solidity_languaget::show_parse(std::ostream &)
 bool solidity_languaget::final(contextt &context)
 {
   add_cprover_library(context);
-  clang_cpp_maint c_main(context);
+  // Solidity has no atexit registration mechanism. Injecting the C runtime
+  // handler leaves an unreachable function-pointer loop in its proof harness.
+  clang_cpp_maint c_main(context, false);
   if (c_main.clang_main())
     return true;
 

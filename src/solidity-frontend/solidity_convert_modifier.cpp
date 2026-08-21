@@ -12,6 +12,7 @@
 #include <util/bitvector.h>
 #include <util/c_types.h>
 #include <util/expr_util.h>
+#include <util/focus_function.h>
 #include <util/i2string.h>
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
@@ -1002,14 +1003,20 @@ bool solidity_convertert::build_revert_rollback_block(
 
   // Without a snapshot (constructor / library / free / event-error /
   // internal-private helper), the legacy lowering prunes the path via
-  // `__ESBMC_assume`.  Under the revert-observation gate, an *observable*
-  // scope (contract fn / internal helper — current_function_revert_observable)
+  // `__ESBMC_assume`. Under the revert-observation gate, an observable scope
   // instead lowers to `mark + return` so the revert is visible to
-  // `__ESBMC_reverted()`; non-observable scopes (ctor / library / free /
-  // event-error) keep pruning.  See docs/claude/solidity/revert-observation.md.
+  // `__ESBMC_reverted()`. A constructor gets the same lowering only when it is
+  // itself the explicitly focused path-coverage unit: its failed deployment is
+  // then a real unit outcome, and there is no deployed state to restore.
+  const bool is_focused_constructor =
+    uses_revert_observation &&
+    config.options.get_bool_option("solidity-path-coverage-enabled") &&
+    (*current_functionDecl).value("kind", std::string()) == "constructor" &&
+    focus_function_selects(focus_func, current_functionId);
   if (
     !have_snapshot &&
-    !(uses_revert_observation && current_function_revert_observable))
+    !(uses_revert_observation && current_function_revert_observable) &&
+    !is_focused_constructor)
     return true;
 
   locationt rollback_loc;

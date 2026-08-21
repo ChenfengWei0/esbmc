@@ -4637,6 +4637,42 @@ def filter_schedule_units(schedule: dict, units: list[str]) -> dict:
     return filtered
 
 
+def apply_stage2_free_entry_state(schedule: dict, enabled: bool) -> dict:
+    """Pass --free-entry-state to every Stage-2 certify_all job (see its help)."""
+    if not enabled:
+        return schedule
+    updated = dict(schedule)
+    jobs = []
+    for current in schedule.get("jobs") or []:
+        job = dict(current)
+        argv = [str(arg) for arg in job.get("certify_argv") or []]
+        if "--free-entry-state" not in argv:
+            argv.append("--free-entry-state")
+        job["certify_argv"] = argv
+        jobs.append(job)
+    updated["jobs"] = jobs
+    updated["free_entry_state"] = True
+    return updated
+
+
+def apply_stage2_flag(schedule: dict, enabled: bool, flag: str, key: str) -> dict:
+    """Append one boolean certify_all flag to every Stage-2 job."""
+    if not enabled:
+        return schedule
+    updated = dict(schedule)
+    jobs = []
+    for current in schedule.get("jobs") or []:
+        job = dict(current)
+        argv = [str(arg) for arg in job.get("certify_argv") or []]
+        if flag not in argv:
+            argv.append(flag)
+        job["certify_argv"] = argv
+        jobs.append(job)
+    updated["jobs"] = jobs
+    updated[key] = True
+    return updated
+
+
 def apply_stage2_extcall_pins(schedule: dict, enabled: bool) -> dict:
     if not enabled:
         return schedule
@@ -8753,6 +8789,10 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         schedule = filter_schedule_units(schedule, getattr(args, "unit", []))
         schedule = apply_source_stage2_fixtures(schedule, subject, case_dir)
         schedule = apply_stage2_extcall_pins(schedule, bool(getattr(args, "pin_extcall", False)))
+        schedule = apply_stage2_free_entry_state(
+            schedule, bool(getattr(args, "free_entry_state", False)))
+        schedule = apply_stage2_flag(schedule, bool(getattr(args, "log_ladder", False)),
+                                     "--log-ladder", "log_ladder")
         annotate_stage2_runtime_policy(schedule, args)
     except Exception as exc:  # Fail-soft at subject granularity.
         result_status = "error"
@@ -10819,6 +10859,18 @@ def main(argv=None) -> int:
                     help="per ESBMC invocation budget inside certification, "
                     "seconds. The whole subject still gets --timeout")
     ap.add_argument("--esbmc", default="", help="ESBMC binary to pass through to Stage 2")
+    ap.add_argument(
+        "--log-ladder",
+        action="store_true",
+        help="Stage 2: refine rounds lay scale-free rungs (lo+2^j / hi-2^j) instead of "
+             "uniform ones, same rung count")
+    ap.add_argument(
+        "--free-entry-state",
+        action="store_true",
+        help="Stage 2: free every state.* coordinate a query measures, bounds or pins at "
+             "the query entry, so the bound-finding rounds and the certification quantify "
+             "over every entry value inside the bound (the slice a PUT writes) rather than "
+             "over the transaction prefix's own entry value")
     ap.add_argument(
         "--pin-extcall",
         action="store_true",

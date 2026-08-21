@@ -83,6 +83,9 @@ from solidity_path_generalise import (
     state_coord_source_name,
     _pin_source_name,
     filter_unreferenced_state_coords,
+    state_pin_agreement,
+    normalise_sender_keyed_slot,
+    normalise_sender_keyed_payloads,
     add_esbmc_mapping_aliases,
     prefer_esbmc_mapping_aliases,
     state_coord_type_ranges,
@@ -5571,7 +5574,7 @@ check("pin-source-name-does-not-split-inside-a-mapping-key",
 check("pin-source-name-resolves-a-mapping-entry",
       _pin_source_name("state.deposits[msg.sender]"), "deposits")
 
-_fusc_kept, _fusc_dropped = filter_unreferenced_state_coords(
+_fusc_kept, _fusc_dropped, _fusc_reasons = filter_unreferenced_state_coords(
     ["amount", "msg.sender", "state.deposits[0]", "state.deposits[msg.sender]",
      "state.discountBps$23[msg.sender]", "state.feeBps", "state.owner"],
     ["deposits", "discountBps", "feeBps", "feeReceiver", "maxFee"])
@@ -5585,7 +5588,7 @@ check("a-state-field-outside-the-closure-is-still-dropped",
 
 # The budget caps SUBSCRIPTED coordinates only, and names what it cut. Keeping
 # every closure match OOM'd ETHRegistrarController at 12 GiB and cost the case.
-_bud_kept, _bud_dropped = filter_unreferenced_state_coords(
+_bud_kept, _bud_dropped, _bud_reasons = filter_unreferenced_state_coords(
     ["state.s"] + [f"state.m[{i}]" for i in range(10)], ["s", "m"], budget=3)
 check("a-plain-scalar-is-never-capped", "state.s" in _bud_kept, True)
 check("subscripted-coordinates-are-capped-at-the-budget",
@@ -5593,7 +5596,15 @@ check("subscripted-coordinates-are-capped-at-the-budget",
 check("what-the-budget-cut-is-named-not-dropped-silently",
       len(_bud_dropped), 7)
 check("the-budget-names-its-reason",
-      all("retention budget" in d for d in _bud_dropped), True)
+      all("retention budget" in _bud_reasons[d] for d in _bud_dropped), True)
+# C5 coordinate accounting tests payload names by EQUALITY, so a dropped name
+# must stay BARE. Folding the reason into the string made the payload name match
+# no bucket and the driver refused to measure the whole subject.
+check("a-dropped-name-carries-no-reason-inside-it",
+      all(d == d.strip() and "(" not in d for d in _bud_dropped), True)
+check("the-budget-reason-travels-beside-the-name",
+      sorted(_bud_reasons) == sorted(d for d in _bud_dropped if d in _bud_reasons),
+      True)
 # Deterministic order: shortest first, then lexicographic, so two runs of one
 # configuration cannot disagree about which coordinates the budget bought.
 check("budget-selection-is-deterministic",
@@ -5601,9 +5612,73 @@ check("budget-selection-is-deterministic",
           ["state.m[10]", "state.m[2]", "state.m[1]"], ["m"], budget=2)[0],
       ["state.m[1]", "state.m[2]"])
 
+# --pin-agreed-state must not read one path's silence as consent. Measured on
+# motivation_FeeVault at max-tx 3: state.deposits[2147483647] appeared in 2 of
+# 10 paths, agreed among those two, was pinned to that witness's own value, and
+# enc=123's region came back EMPTY (lo > hi) because it needs that slot inside
+# [21239, 200000].
+# One mapping must be ONE coordinate. A counterexample names a mapping entry by
+# the concrete key the solver picked, and every witness picks its own; the entry
+# a path's guards read is the one at THAT path's msg.sender. Measured on
+# motivation_FeeVault at max-tx 3: state.deposits arrived as [0], [2147483647]
+# and [4294967295] -- three free coordinates for one mapping.
+check("the-witness-own-sender-key-folds-onto-the-symbolic-slot",
+      normalise_sender_keyed_slot("state.deposits[2147483647]", "2147483647"),
+      "state.deposits[msg.sender]")
+check("another-accounts-entry-keeps-its-own-name",
+      normalise_sender_keyed_slot("state.deposits[4294967295]", "2147483647"), None)
+check("the-alias-spelling-the-proposer-uses-is-honoured",
+      normalise_sender_keyed_slot("state.discountBps[42]", "42",
+                                  {"discountBps": "discountBps$23"}),
+      "state.discountBps$23[msg.sender]")
+check("a-struct-tail-survives-the-fold",
+      normalise_sender_keyed_slot("state.voters[9].weight", "9"),
+      "state.voters[msg.sender].weight")
+check("only-the-first-key-is-folded",
+      normalise_sender_keyed_slot("state.m[7][8]", "7"),
+      "state.m[msg.sender][8]")
+check("a-symbolic-key-is-left-alone",
+      normalise_sender_keyed_slot("state.deposits[msg.sender]", "7"), None)
+check("a-plain-scalar-is-left-alone",
+      normalise_sender_keyed_slot("state.owner", "7"), None)
+check("no-sender-value-means-no-fold",
+      normalise_sender_keyed_slot("state.deposits[7]", None), None)
+
+_nsk_paths, _nsk_ev = normalise_sender_keyed_payloads([
+    (123, 6, {"msg.sender": "2147483647", "state.deposits[2147483647]": "50",
+              "state.deposits[4294967295]": "1"}),
+    (60, 5, {"msg.sender": "4294967295", "state.deposits[4294967295]": "9"}),
+    (2, 1, {"state.deposits[7]": "3"}),          # no msg.sender -> untouched
+])
+check("each-path-folds-its-own-sender-key",
+      sorted(_nsk_paths[0][2]),
+      sorted(["msg.sender", "state.deposits[msg.sender]", "state.deposits[4294967295]"]))
+check("the-folded-entry-keeps-its-value",
+      _nsk_paths[0][2]["state.deposits[msg.sender]"], "50")
+check("a-different-path-folds-a-different-key",
+      _nsk_paths[1][2]["state.deposits[msg.sender]"], "9")
+check("a-payload-without-msg-sender-is-untouched",
+      _nsk_paths[2][2], {"state.deposits[7]": "3"})
+check("the-fold-is-named-per-path", len(_nsk_ev), 2)
+
+check("every-path-agreeing-is-a-pin",
+      state_pin_agreement([{"7"}, {"7"}, {"7"}], 3), True)
+check("a-path-with-no-opinion-blocks-the-pin",
+      state_pin_agreement([{"7"}, set(), {"7"}], 3), False)
+check("the-motivation-shape-2-of-10-is-not-agreement",
+      state_pin_agreement([{"5"}, {"5"}] + [set()] * 8, 10), False)
+check("disagreement-is-not-a-pin",
+      state_pin_agreement([{"7"}, {"8"}, {"7"}], 3), False)
+check("a-path-carrying-two-values-is-not-agreement",
+      state_pin_agreement([{"7", "8"}, {"7"}], 2), False)
+check("a-missing-observation-row-blocks-the-pin",
+      state_pin_agreement([{"7"}, {"7"}], 3), False)
+check("an-unknown-value-is-never-pinned",
+      state_pin_agreement([{None}, {None}], 2), False)
+
 check("a-null-closure-drops-nothing",
       filter_unreferenced_state_coords(["state.deposits[0]"], None),
-      (["state.deposits[0]"], []))
+      (["state.deposits[0]"], [], {}))
 
 
 if FAILURES:

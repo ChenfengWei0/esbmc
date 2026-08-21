@@ -1643,7 +1643,7 @@ def certified_source_projection_error(binding,
             return "certified extcall projection target region is unavailable"
         if (target_record.get("lo"), target_record.get("hi")) != (box_lo, box_hi):
             return "certified extcall projection target region differs from Stage2"
-        extcall_pins = (certified_detail or {}).get("extcall_pins") or {}
+        extcall_pins = merged_extcall_pins(certified_detail, (certified_detail or {}).get("pins"))
         pin_name = "extcall." + str(proof.get("success_var") or "")
         try:
             pin_value = int(str(extcall_pins.get(pin_name)), 0)
@@ -2390,13 +2390,33 @@ def append_stage4_driver_options(cmd, args, path_function, exit_kind, stage2_sou
             ]
     for extra in args.esbmc_arg:
         cmd.append(f"--esbmc-arg={extra}")
+    for extra in getattr(args, "proof_esbmc_arg", None) or []:
+        cmd.append(f"--proof-esbmc-arg={extra}")
     # ONLY when this row IS a piece, so an unsplit region's command line is
     # byte-identical to every one already recorded.
     if piece:
         cmd += ["--piece", str(piece)]
     for n, v in pins.items():
+        # `extcall.*` pins are NOT query coordinates for the assertion ladder
+        # (ESBMC's --path-cov-assert cannot express them and REFUSES the whole
+        # ladder); they travel as --extcall-pins, where the renderer realises
+        # them as mocks and funds the contract (TODO 30, motivation freeS: the
+        # recipe's explicit `--pin extcall.ok1=1` reached here, the ladder was
+        # refused, no `return` oracle, and the PUT was RED on the reference for
+        # want of balance).
+        if str(n).startswith("extcall."):
+            continue
         cmd += ["--pin", f"{n}={v}"]
     return cmd
+
+
+def merged_extcall_pins(certified_detail, pins):
+    """Stage-2 `extcall_pins` plus any `extcall.*` entry of the record's pins."""
+    out = dict((certified_detail or {}).get("extcall_pins") or {})
+    for n, v in (pins or {}).items():
+        if str(n).startswith("extcall.") and n not in out:
+            out[n] = v
+    return out
 
 
 def append_row_esbmc_args(cmd, row_args, cli_args):
@@ -3491,6 +3511,14 @@ def main():
                     help="passed to the driver: lift sender absent from the "
                     "certified region and pins over Foundry's executable "
                     "nonzero address domain")
+    ap.add_argument("--wall-deadline",
+                    type=float,
+                    default=0.0,
+                    help="whole-run wall-clock budget in seconds (0 = none): no new "
+                    "row is started after it, and a row started before it gets "
+                    "min(--timeout, what is left) as its generation budget. This "
+                    "is how a pipeline hands Stage 4 the time Stage 2 left over "
+                    "instead of every row assuming it owns the full --timeout")
     ap.add_argument("--timeout",
                     type=int,
                     default=600,
@@ -3519,6 +3547,10 @@ def main():
                     default=None,
                     help="pass an original retained Stage-2 emit directory to "
                     "the PUT driver for exact concrete replay recovery")
+    ap.add_argument("--proof-esbmc-arg", action="append", default=[], metavar="ARG",
+                    help="passed to the PUT driver's k-induction proof queries only "
+                    "(R1/R2), appended after its strategy strip; meant for the "
+                    "arithmetic checks. See solidity_path_put.py --proof-esbmc-arg.")
     ap.add_argument("--esbmc-arg",
                     action="append",
                     default=[],
@@ -3985,6 +4017,16 @@ def main():
         # the gate below comes to look up a function the emitted file does not
         # contain.
         encs = f"{enc}#{piece}" if piece else str(enc)
+        row_timeout = args.timeout
+        if args.wall_deadline and args.wall_deadline > 0:
+            _left = args.wall_deadline - (time.monotonic() - main_start)
+            if _left < 30:
+                print(f"[stage4] WALL DEADLINE: {args.wall_deadline:.0f}s budget, "
+                      f"{max(0.0, _left):.0f}s left -- {bench}.{unit} enc={encs} and every "
+                      f"later row NOT STARTED (the rows already written stand; this is "
+                      f"the pipeline's clock, not a per-row verdict)")
+                break
+            row_timeout = int(min(args.timeout, _left))
         is_corpus = False
         if row_subject is not None:
             flat = row_subject.flat_sol
@@ -4114,13 +4156,13 @@ def main():
             "--extcall-length-coordinates",
             json.dumps((certified_detail or {}).get("extcall_length_coordinates") or []),
             "--extcall-pins",
-            json.dumps((certified_detail or {}).get("extcall_pins") or {}),
+            json.dumps(merged_extcall_pins(certified_detail, pins)),
             "--forge-project",
             proj,
             "--workdir",
             wd,
             "--timeout",
-            str(args.timeout),
+            str(row_timeout),
             "--memlimit",
             f"{args.memlimit_gib}g",
             # The CELL is a property of the measurement, not a default of

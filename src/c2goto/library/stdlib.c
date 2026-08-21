@@ -87,12 +87,8 @@ void *calloc(size_t nmemb, size_t size)
 __ESBMC_HIDE:;
   if (!nmemb)
     return NULL;
-
-  size_t total_size = nmemb * size;
-  void *res = malloc(total_size);
-  if (res)
-    memset(res, 0, total_size);
-  return res;
+  extern void *__ESBMC_calloc(size_t, size_t);
+  return __ESBMC_calloc(nmemb, size);
 }
 
 long int strtol(const char *str, char **endptr, int base)

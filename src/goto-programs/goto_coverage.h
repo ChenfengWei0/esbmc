@@ -1096,6 +1096,11 @@ public:
   // whole contract's expansion and degradation cost.
   std::string focus_function = "";
 
+  // RQ3 ablation: retain every expanded internal call in the path identity.
+  // The ordinary goal cap still bounds instrumentation; only the greedy
+  // call-site selection/degradation policy is disabled.
+  bool path_cov_no_selection_strategy = false;
+
   // ---- --path-cov-instrument-only: DISPATCH WIDE, INSTRUMENT NARROW ----
   //
   // Set from --path-cov-instrument-only; empty when unset, and then this
@@ -1210,6 +1215,9 @@ public:
   // True only when the strategy-level forward condition or inductive step
   // closed. Base-case UNSAT rows alone are never an inductive proof.
   static bool path_cov_k_induction_proved;
+  // Set when any path-coverage property solve returns no SAT/UNSAT answer.
+  // Prevents unscheduled exit claims from being mistaken for unreachable ones.
+  static std::atomic<bool> path_cov_solver_inconclusive;
 
   // ---- STAGE 2: THE CERTIFICATION QUERY (--path-cov-certify <json>) ----
   //
@@ -1269,6 +1277,11 @@ public:
   // The coordinate names the box bounds. Kept because the witness audit below
   // needs to know what a refutation is obliged to report.
   static std::vector<std::string> path_cov_certify_box_names;
+  // Ghost handle symbol -> coordinate name, for the solve-time witness
+  // minimisation (bmc.cpp): a type-wide bound simplifies to `true` in the
+  // SSA and leaves no expression to constrain, so every bound also gets a
+  // `__ESBMC_certify_coord$N := <coord>` assignment the minimiser can read.
+  static std::map<std::string, std::string> path_cov_certify_coord_handles;
   // The box being certified, and the path's own counterexample if the driver
   // supplied it. Kept so that a REFUTATION can be turned into the next box to
   // try instead of just a verdict: the witness is the input inside the box that

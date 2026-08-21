@@ -419,6 +419,9 @@ def _killpg(proc):
             pass
 
 
+PARTIAL_RESULT_GRACE_S = 20
+
+
 def run_driver_subprocess(cmd, timeout_s):
     """Run one stage-2 driver command, killing the whole process group."""
     t0 = time.time()
@@ -429,11 +432,24 @@ def run_driver_subprocess(cmd, timeout_s):
         out, _ = proc.communicate(timeout=timeout_s)
         rc = proc.returncode
     except subprocess.TimeoutExpired:
-        _killpg(proc)
+        # SIGTERM FIRST, to the driver only: it ends its certification loop and
+        # writes the regions certified so far as a partial result (TODO 30
+        # #2). Its ESBMC children get the SIGKILL below with the rest of the
+        # group after the grace period.
         try:
-            out, _ = proc.communicate(timeout=30)
+            os.kill(proc.pid, signal.SIGTERM)
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            out, _ = proc.communicate(timeout=PARTIAL_RESULT_GRACE_S)
         except subprocess.TimeoutExpired:
             out = ""
+        _killpg(proc)
+        try:
+            out2, _ = proc.communicate(timeout=30)
+            out = (out or "") + (out2 or "")
+        except (subprocess.TimeoutExpired, ValueError):
+            pass
         out = (out or "") + f"\n[run] TIMEOUT after {timeout_s}s\n"
         rc = 124
     except BaseException:
@@ -1274,6 +1290,19 @@ def certified_artifact_gap(rec):
     if orphaned:
         gap["orphaned"] = orphaned
     return gap
+
+
+def result_partial_after_signal(workdir, since_mtime=None):
+    """The driver's own `partial_after_signal` flag (TODO 30 #2)."""
+    path = os.path.join(workdir, "generalise-result.json")
+    try:
+        if since_mtime is not None and os.stat(path).st_mtime < since_mtime:
+            return None
+        with open(path) as stream:
+            flag = json.load(stream).get("partial_after_signal")
+    except (OSError, ValueError):
+        return None
+    return bool(flag) if flag is not None else None
 
 
 def result_pins(workdir, since_mtime=None):
@@ -2601,6 +2630,13 @@ def bucket(rec, rc, out):
     search result. Same rule the driver's own round_failure_reason follows.
     """
     if "[run] TIMEOUT after" in out or rc == 124:
+        # A run that was stopped at the budget but HAD certified regions by
+        # then is a certified unit with a partial search, not a budget
+        # outcome: the regions are real certificates (TODO 30 #2). Recorded
+        # so a table can still tell the two apart.
+        if rec.get("certified") and rec.get("partial_after_signal"):
+            rec["partial_after_kill"] = True
+            return "CERTIFIED"
         return "KILLED"
     diag = rec.get("driver_diagnostic") or {}
     if (
@@ -3406,6 +3442,25 @@ def main():
     ap.add_argument("--enumeration-report", default=None,
                     help="stage-1 unit report to reuse instead of paying for a "
                          "second path-enumeration ESBMC process.")
+    ap.add_argument("--certify-esbmc-arg", action="append", default=[], metavar="ARG",
+                    help="passed to the driver: an ESBMC argument for the certification "
+                         "queries only (see the driver's help). Recorded on every row.")
+    ap.add_argument("--log-ladder", action="store_true",
+                    help="passed to the driver: scale-free refine-round rungs "
+                         "(same count as the uniform ones). Recorded on every row.")
+    ap.add_argument("--query-max-tx", type=int, default=0,
+                    help="passed to the driver: transaction bound for the outer-box "
+                         "rounds and certification queries (0 = --max-tx). Use with "
+                         "--free-entry-state; see the driver's help.")
+    ap.add_argument("--free-entry-state", action="store_true",
+                    help="passed to the driver: FREE every `state.*` coordinate a "
+                         "query measures, bounds or pins at the query entry "
+                         "(`establish` source `*`), in the outer-box rounds and "
+                         "in certification alike, so the verdict quantifies over "
+                         "every entry value inside the bound -- the slice a PUT "
+                         "exercises, since Stage 4 writes every state coordinate "
+                         "it renders before the call. Recorded on every row, "
+                         "because it changes what a region is a statement about.")
     ap.add_argument("--pin-extcall", action="store_true",
                     help="passed to the driver: fix every quantity the HARNESS "
                          "chose inside the execution -- an external call's "
@@ -3962,6 +4017,10 @@ def main():
                             "enumeration_report": args.enumeration_report,
                             "pin_requested": list(args.pin),
                             "pin_extcall": bool(args.pin_extcall),
+                            "free_entry_state": bool(args.free_entry_state),
+                            "query_max_tx": int(args.query_max_tx or 0),
+                            "log_ladder": bool(args.log_ladder),
+                            "certify_esbmc_args": list(args.certify_esbmc_arg),
                             "static_extcall_inseparable":
                                 bool(args.static_extcall_inseparable),
                             "static_uncontrolled_inseparable":
@@ -4077,6 +4136,14 @@ def main():
                 cmd.append("--no-auto-pin-value")
             if args.pin_extcall:
                 cmd.append("--pin-extcall")
+            if args.free_entry_state:
+                cmd.append("--free-entry-state")
+            if args.query_max_tx:
+                cmd += ["--query-max-tx", str(args.query_max_tx)]
+            if args.log_ladder:
+                cmd.append("--log-ladder")
+            for extra in args.certify_esbmc_arg:
+                cmd.append(f"--certify-esbmc-arg={extra}")
             if args.static_extcall_inseparable:
                 cmd.append("--static-extcall-inseparable")
             if args.static_uncontrolled_inseparable:
@@ -4423,6 +4490,7 @@ def main():
             generalise_progress = first_available_sidecar(
                 result_generalise_progress, artifact_runs)
             machine_pins = first_available_sidecar(result_pins, artifact_runs)
+            machine_partial = first_available_sidecar(result_partial_after_signal, artifact_runs)
             partial_witness_journal = result_partial_witness_journal(
                 active_uwd, artifact_runs[-1][2], progress=generalise_progress)
             if partial_witness_journal is None:
@@ -4631,6 +4699,11 @@ def main():
                         # are two measurements wearing one name. An absent key
                         # means the row predates the flag, i.e. `false`.
                         "pin_extcall": bool(args.pin_extcall),
+                        # Every state coordinate freed at the query entry. A
+                        # region certified so is a statement about every entry
+                        # value inside its bound; one certified without it is
+                        # about the transaction prefix's entry value only.
+                        "free_entry_state": bool(args.free_entry_state),
                         # Static, refutation-only attribution for gate cells
                         # whose witnessed siblings differ only in extcall.*
                         # values no generated test can set. Default false; a
@@ -4684,6 +4757,8 @@ def main():
                         "binary": ident})
             if rec.get("pins") is None and machine_pins is not None:
                 rec["pins"] = machine_pins
+            if machine_partial:
+                rec["partial_after_signal"] = True
             merge_not_certified_details(rec)
             rec["certification_artifact_gap"] = certified_artifact_gap(rec)
             rec["bucket"] = bucket(rec, rc, out)

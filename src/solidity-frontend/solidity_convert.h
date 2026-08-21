@@ -1672,6 +1672,19 @@ protected:
   // `declarations`).  Walks src_ast_json to find the parent statement.
   bool is_new_created_decl(int decl_id) const;
 
+  // --extcall-nondet: model an external call as a nondet return value of the
+  // call's OWN return type instead of dispatching into the reentrant
+  // `_ESBMC_Nondet_Extcall_<C>` helper.  The default lowering makes every
+  // external call a potentially-reentrant recursive call, which has no bound,
+  // so k-induction cannot converge on any unit that makes one.  Measured on
+  // FeeVault.withdraw with a trivially reachable assertion after the call:
+  // 44 recursion unwindings at --k-step 2, 380 at --k-step 5.
+  //
+  // The trade is explicit: MORE behaviour for the returned value (a fresh
+  // nondet each time), NONE for the callee's effects (no callee runs, so
+  // reentrancy is not modelled and a reentrancy bug cannot be found).
+  bool is_extcall_nondet;
+
   // reentry-check setting
   bool is_reentry_check;
 

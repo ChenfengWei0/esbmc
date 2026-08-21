@@ -8,7 +8,8 @@
 class clang_c_maint
 {
 public:
-  clang_c_maint(contextt &_context) : context(_context)
+  clang_c_maint(contextt &_context, bool _call_atexit_handler = true)
+    : context(_context), call_atexit_handler(_call_atexit_handler)
   {
   }
 
@@ -19,6 +20,7 @@ public:
 
 protected:
   contextt &context;
+  bool call_atexit_handler;
 };
 
 #endif /* CLANG_C_FRONTEND_CLANG_C_MAIN_H_ */

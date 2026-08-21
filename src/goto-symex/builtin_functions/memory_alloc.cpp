@@ -1,5 +1,7 @@
 #include <cassert>
+#include <goto-symex/execution_state.h>
 #include <goto-symex/goto_symex.h>
+#include <goto-symex/reachability_tree.h>
 #include <string>
 #include <util/arith_tools.h>
 #include <util/c_types.h>
@@ -25,6 +27,56 @@ expr2tc goto_symext::symex_alloca(
   const guardt &guard)
 {
   return symex_mem(false, lhs, code, guard);
+}
+
+void goto_symext::intrinsic_calloc(
+  const code_function_call2t &call,
+  reachability_treet &art)
+{
+  assert(call.operands.size() == 2 && "Wrong calloc signature");
+  const execution_statet &ex_state = art.get_cur_state();
+  if (ex_state.cur_state->guard.is_false())
+    return;
+
+  expr2tc nmemb = call.operands[0];
+  expr2tc elem_size = call.operands[1];
+  cur_state->rename(nmemb);
+  cur_state->rename(elem_size);
+  expr2tc total_size = mul2tc(nmemb->type, nmemb, elem_size);
+  do_simplify(total_size);
+
+  const type2tc byte_type = get_uint8_type();
+  const sideeffect2t allocation(
+    pointer_type2tc(byte_type),
+    expr2tc(),
+    total_size,
+    std::vector<expr2tc>(),
+    byte_type,
+    sideeffect2t::malloc);
+
+  expr2tc allocation_lhs = call.ret;
+  if (is_nil_expr(allocation_lhs))
+  {
+    unsigned int &dynamic_counter = get_dynamic_counter();
+    dynamic_counter++;
+
+    symbolt result_symbol;
+    result_symbol.name = "calloc_unused_result_" + i2string(dynamic_counter);
+    result_symbol.id = "symex_calloc::" + id2string(result_symbol.name);
+    result_symbol.type = migrate_type_back(pointer_type2tc(byte_type));
+    result_symbol.lvalue = true;
+    result_symbol.mode = "C";
+    new_context.add(result_symbol);
+    allocation_lhs = symbol2tc(pointer_type2tc(byte_type), result_symbol.id);
+  }
+
+  expr2tc object =
+    symex_malloc(allocation_lhs, allocation, ex_state.cur_state->guard);
+  if (is_index2t(object))
+    object = to_index2t(object).source_value;
+
+  const expr2tc zero = gen_zero(object->type, true);
+  symex_assign(code_assign2tc(object, zero), false, ex_state.cur_state->guard);
 }
 
 expr2tc goto_symext::create_dynamic_memory_symbol(

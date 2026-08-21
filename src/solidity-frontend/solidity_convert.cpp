@@ -58,6 +58,7 @@ solidity_convertert::solidity_convertert(
     initializers(code_blockt()),
     aux_counter(0),
     is_bound(false),
+    is_extcall_nondet(false),
     is_reentry_check(false),
     is_reentry_balance_drain_check(false),
     outbound_drain_site_count(),
@@ -75,6 +76,11 @@ solidity_convertert::solidity_convertert(
   const std::string bound = config.options.get_option("bound");
   if (!bound.empty())
     is_bound = true;
+
+  const std::string extcall_nondet =
+    config.options.get_option("extcall-nondet");
+  if (!extcall_nondet.empty())
+    is_extcall_nondet = true;
 
   const std::string reentry_check = config.options.get_option("reentry-check");
   if (!reentry_check.empty())
@@ -315,8 +321,34 @@ bool solidity_convertert::convert()
     for (const auto &want : focus_names)
     {
       bool found = false;
+      if (
+        config.options.get_bool_option("solidity-path-coverage-enabled") &&
+        want == focus_cnt)
+      {
+        for (const auto &top : src_ast_json["nodes"])
+        {
+          if (
+            top.value("nodeType", std::string()) != "ContractDefinition" ||
+            top.value("name", std::string()) != focus_cnt)
+            continue;
+          for (const auto &member : top.value("nodes", nlohmann::json::array()))
+          {
+            if (
+              member.value("nodeType", std::string()) == "FunctionDefinition" &&
+              member.value("kind", std::string()) == "constructor" &&
+              !member["parameters"]
+                 .value("parameters", nlohmann::json::array())
+                 .empty())
+            {
+              found = true;
+              break;
+            }
+          }
+          break;
+        }
+      }
       auto it = funcSignatures.find(focus_cnt);
-      if (it != funcSignatures.end())
+      if (!found && it != funcSignatures.end())
       {
         for (const auto &m : it->second)
         {

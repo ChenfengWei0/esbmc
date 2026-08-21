@@ -60,6 +60,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 import solidity_path_put  # noqa: E402
 from solidity_path_put import (
+    _r22_abs_rung_text, UINT256_MAX,
     ConcreteFallback,
     EmittedFile,  # noqa: E402
     _abi_mock_expr_for_type,
@@ -1075,8 +1076,14 @@ contract B {
         bad_shape, err_bad = runtime_low_level_success_mock_lines(project, "B", "go",
                                                                   {"extcall.missing": "1"}, "    ")
     bad = 0
-    bad += check(err is None and len(yes) == 1 and "vm.mockCall(address(" in yes[0],
+    bad += check(err is None and any("vm.mockCall(address(" in line for line in yes),
                  "a true low-level success pin becomes vm.mockCall")
+    # The call carries `{value: msg.value}`: a success pin on it is realised
+    # only if the contract can PAY, so the renderer also marks the deployment
+    # for a vm.deal (item 26.1). One marker line, one mock line.
+    bad += check(err is None and len(yes) == 2 and any("VERIPUT_EXTCALL_DEAL_CONTRACT" in line
+                                                         for line in yes),
+                 "a value-carrying success pin also marks the contract for vm.deal")
     bad += check(err_no is None and len(no) == 1 and "vm.mockCallRevert(address(" in no[0],
                  "a false low-level success pin becomes vm.mockCallRevert")
     bad += check(not bad_shape and "no uniquely renderable" in (err_bad or ""),
@@ -9298,8 +9305,13 @@ def test_boundary_observations_propose_unproved_absolute_and_delta_bounds():
                  f"observed increasing deltas propose [1,40]: {y_delta}")
     bad += check((ret_abs["lo"]["value"], ret_abs["hi"]["value"]) == ("7", "19"),
                  f"return extrema are proposed independently: {ret_abs}")
-    bad += check(specs[0]["candidate_count"] == 3,
-                 "the batch records two state candidates and one return candidate")
+    # Each numeric observable proposes the two-sided interval AND its two
+    # one-sided halves (`[lo, MAX]`, `[0, hi]`) so that the monotone search
+    # can prove each side independently (item 12.2): 3 + 3 abs, plus the one
+    # delta candidate.
+    bad += check(specs[0]["candidate_count"] == 7,
+                 f"the batch records three abs candidates per observable and one delta: "
+                 f"{specs[0]['candidate_count']}")
     return bad
 
 
@@ -9350,6 +9362,15 @@ def test_boundary_probe_reads_only_its_labeled_uint_assertion():
 
 
 def test_boundary_observation_refinement_uses_counterexample_value():
+    """R2.2 refinement is a MONOTONE SEARCH per side, not CE absorption.
+
+    Observations 5 and 50 propose [5, 50] plus the one-sided halves. A
+    refutation of the upper side with a counterexample at 73 makes every next
+    upper candidate a one-sided `[0, H]` with H >= 73, galloping away from the
+    witness; once some H HOLDS the next round bisects between the largest
+    refuted and the smallest proved H and proposes nothing above the proved
+    one; when both sides are proved the two-sided interval is added.
+    """
     specs = boundary_observation_r2_spec([
         {
             "values": {
@@ -9366,26 +9387,65 @@ def test_boundary_observation_refinement_uses_counterexample_value():
             }
         },
     ],
-                                         refinement_rounds=2)
+                                         refinement_rounds=3)
     initial = specs[0]
     candidates = initial["vars"][0]["abs"]
+
+    def bounds(c):
+        return int(c["lo"]["value"]), int(c["hi"]["value"])
+
+    def text(c):
+        lo, hi = bounds(c)
+        return _r22_abs_rung_text("state.y", lo, hi)
+
     bad = 0
-    bad += check(len(candidates) == 1,
-                 f"only the observed initial bound is proposed before verification: {candidates}")
+    bad += check(
+        sorted(bounds(c) for c in candidates) == sorted([(5, 50), (5, UINT256_MAX), (0, 50)]),
+        f"the observed bound and its two one-sided halves are proposed before verification: "
+        f"{[bounds(c) for c in candidates]}")
+    # Round 1: the two-sided and the upper half are refuted at 73; the lower
+    # half holds.
+    two_sided = next(c for c in candidates if bounds(c) == (5, 50))
+    upper = next(c for c in candidates if bounds(c) == (0, 50))
+    lower = next(c for c in candidates if bounds(c) == (5, UINT256_MAX))
     refined, changed = refine_boundary_observation_r2_spec(
-        initial, {("state.y", "post in [5, 50]"): {"post": 73}})
-    interval = refined["vars"][0]["abs"][0]
-    bad += check(changed and (interval["lo"]["value"], interval["hi"]["value"]) == ("5", "73"),
-                 f"the verifier CE expands exactly one endpoint: {interval}")
+        initial, {("state.y", text(two_sided)): {"post": 73},
+                  ("state.y", text(upper)): {"post": 73}},
+        verdicts=[("state.y", text(two_sided), "REFUTED"), ("state.y", text(upper), "REFUTED"),
+                  ("state.y", text(lower), "HOLDS")])
+    r1 = refined["vars"][0]["abs"]
+    his = [bounds(c)[1] for c in r1]
+    bad += check(changed and r1 and all(bounds(c)[0] == 0 for c in r1),
+                 f"after an upper-side refutation only one-sided upper candidates are proposed: "
+                 f"{[bounds(c) for c in r1][:4]}")
+    bad += check(his and his[0] == 73 and his == sorted(his) and len(set(his)) == len(his),
+                 f"the upper candidates start AT the counterexample and gallop upward: {his[:6]}")
+    bad += check(refined["vars"][0]["search"]["down"]["proved"] == "5",
+                 f"the proved lower half is remembered: {refined['vars'][0]['search']}")
+    # Round 2: everything below 100 is refuted at 100, everything at or above
+    # holds -> bisect strictly inside (largest refuted, smallest proved], and
+    # add the two-sided interval from the two proved sides.
+    refuted = [c for c in r1 if bounds(c)[1] < 100]
+    proved = [c for c in r1 if bounds(c)[1] >= 100]
     refined2, changed2 = refine_boundary_observation_r2_spec(
-        refined, {("state.y", "post in [5, 73]"): {"post": 2}})
-    interval2 = refined2["vars"][0]["abs"][0]
-    bad += check(changed2 and (interval2["lo"]["value"], interval2["hi"]["value"]) == ("2", "73"),
-                 f"the second verifier CE expands the lower endpoint: {interval2}")
+        refined, {("state.y", text(c)): {"post": 100} for c in refuted},
+        verdicts=[("state.y", text(c), "REFUTED") for c in refuted] +
+                 [("state.y", text(c), "HOLDS") for c in proved])
+    r2 = refined2["vars"][0]["abs"]
+    smallest_proved = min(bounds(c)[1] for c in proved)
+    one_sided = [bounds(c) for c in r2 if bounds(c)[0] == 0]
+    bad += check(changed2 and one_sided and all(100 <= hi < smallest_proved for _lo, hi in one_sided),
+                 f"the second round bisects between the witness (100) and the smallest proved "
+                 f"bound ({smallest_proved}): {one_sided[:6]}")
+    bad += check(any(bounds(c) == (5, smallest_proved) for c in r2),
+                 f"both sides proved -> the two-sided interval is proposed: {[bounds(c) for c in r2][-2:]}")
+    bad += check(int(refined2["refinement_round"]) == 2, "two rounds were spent")
     exhausted, changed3 = refine_boundary_observation_r2_spec(
-        refined2, {("state.y", "post in [2, 73]"): {"post": 100}})
-    bad += check(not changed3 and exhausted == refined2,
-                 "the configured refinement budget stops further widening")
+        refined2, {}, verdicts=[("state.y", text(c), "HOLDS") for c in r2])
+    _ = exhausted
+    refined3, changed4 = refine_boundary_observation_r2_spec(
+        exhausted, {}, verdicts=[])
+    bad += check(not changed4, "the budget of three rounds is respected")
     return bad
 
 
@@ -18928,8 +18988,10 @@ def test_R2_2_refutation_schedules_counterexample_bound_retry():
     bad = 0
     bad += check(len(written) == 2, f"one verifier CE schedules one retry: {written}")
     retried = written[1][1]["vars"][0]["abs"][0] if len(written) > 1 else {}
+    # The monotone search's first upper rung sits AT the counterexample
+    # (`[0, 73]`, one-sided): the retry uses the CE value, not a geometric span.
     bad += check((retried.get("lo", {}).get("value"), retried.get("hi", {}).get("value")) ==
-                 ("5", "73"), f"the retry uses the CE value rather than geometric span: {retried}")
+                 ("0", "73"), f"the retry uses the CE value rather than geometric span: {retried}")
     bad += check(rows[-1] == ("state.y", "post in [5, 73]", "HOLDS"),
                  f"the proved refined R2.2 row is retained: {rows}")
     bad += check(any("R2.2 counterexample refinement" in line for line in said),

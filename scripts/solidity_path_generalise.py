@@ -50,6 +50,27 @@ through the independent certification query before it is reported as certified.
 import argparse
 import copy
 import json
+
+# THE UNIT'S OWN CLOCK, started at import. Phase time shares (TODO 30 #2) are
+# measured against it: a refine round is skipped once half the unit budget is
+# gone, discarded-side pieces past 80%, so certification -- the phase that
+# actually produces regions -- is never left the crumbs.
+import time as _time_mod
+DRIVER_T0 = _time_mod.monotonic()
+DRIVER_REFINE_SHARE = 0.5
+DRIVER_PIECE_SHARE = 0.8
+
+
+def driver_elapsed():
+    return _time_mod.monotonic() - DRIVER_T0
+
+
+class BudgetStop(Exception):
+    """Raised by the SIGTERM handler: the caller is taking the budget away. The
+    certification loop ends where it is and the result file is written with
+    what was certified so far (`partial_after_signal`), instead of the
+    process dying with the regions in memory (MEASURED, freeO)."""
+import math
 import os
 import re
 import selectors
@@ -589,14 +610,24 @@ def live_witness_vectors(paths, members, pins):
     return live_by_enc, n_violate, n_missing
 
 
-def pinned_slice_exclusions(paths, pins):
-    """Return witnessed paths whose own CE is outside the pinned slice."""
+def pinned_slice_exclusions(paths, pins, extras=None):
+    """Return witnessed paths whose own CE is outside the pinned slice.
+
+    `extras` is the per-path payload-extras map (`extcall.*` success bits and
+    nondet locals). A pin on `extcall.ok1` lives there, not in the CE, and
+    without reading it the four ok-false siblings of motivation_FeeVault went
+    to certification, got no verdict, and counted as four "not certified"
+    rows per run (TODO 30 #3).
+    """
     excluded = {}
     for enc, _depth, ce in paths:
         violations = []
+        merged = dict(ce)
+        for k, v in ((extras or {}).get(enc) or {}).items():
+            merged.setdefault(k, v)
         for name, value in sorted((pins or {}).items()):
-            if name in ce and ce[name] != value:
-                violations.append(f"{name}: CE {ce[name]} outside [{value}, {value}]")
+            if name in merged and str(merged[name]) != str(value):
+                violations.append(f"{name}: CE {merged[name]} outside [{value}, {value}]")
         if violations:
             excluded[enc] = ("EXCLUDED FROM THE SLICE by the pins (" + "; ".join(violations) +
                              "), so this path is not an input to region search")
@@ -2662,11 +2693,11 @@ def uncontrolled_decision_splits(paths,
     # compared. An out-of-slice witness cannot make an in-slice path
     # statically inseparable, and must not participate in this refutation-only
     # filter.
-    excluded = pinned_slice_exclusions(paths, pins)
+    path_extras = path_extras or {}
+    excluded = pinned_slice_exclusions(paths, pins, path_extras)
     paths = [path for path in paths if path[0] not in excluded]
     failed = {}
     by_enc = {enc: (depth, ce) for enc, depth, ce in paths}
-    path_extras = path_extras or {}
     encs = sorted(by_enc)
     for i, enc_a in enumerate(encs):
         _depth_a, ce_a = by_enc[enc_a]
@@ -3755,6 +3786,81 @@ def _state_slot_tail(coord):
     return name, rest[i:]
 
 
+SENDER_KEYED_SLOT = re.compile(
+    r"^state\.([A-Za-z_$][A-Za-z0-9_$]*)\[(\d+)\](.*)$")
+
+
+def normalise_sender_keyed_slot(coord, sender_value, alias=None):
+    """`state.m[<sender>]tail` -> `state.m[msg.sender]tail`, or None.
+
+    A counterexample reports a mapping entry under the CONCRETE key the solver
+    happened to pick, and every witness picks its own. The entry a path's guards
+    actually read is the one at THAT path's `msg.sender`, and the witness
+    carries its own `msg_sender` in the same payload -- so the two names denote
+    one coordinate and deciding that needs nothing the payload does not hold.
+
+    Left un-normalised, one mapping becomes several free coordinates, one per
+    address some witness picked, and entries belonging to accounts a path never
+    touches are searched as if the path depended on them. Measured on
+    motivation_FeeVault at max-tx 3: `state.deposits` arrived as three separate
+    coordinates (`[0]`, `[2147483647]`, `[4294967295]`) across 10 paths.
+
+    `alias` maps a source mapping name to the spelling the slot proposer uses
+    (ESBMC gives some stores a `$N` lowering suffix). Without it the rewrite
+    would produce `state.discountBps[msg.sender]` while the proposer offers
+    `state.discountBps$23[msg.sender]` -- one slot under two names again, which
+    is the defect this exists to remove rather than re-spell.
+
+    Only the FIRST key is rewritten, and only when it is all digits and equals
+    the sender: a deeper key is a different quantity, and a key that is not the
+    sender belongs to another account and must keep its own name so the C5
+    accounting still sees it.
+    """
+    if not coord or sender_value in (None, ""):
+        return None
+    m = SENDER_KEYED_SLOT.match(str(coord))
+    if not m:
+        return None
+    name, key, tail = m.group(1), m.group(2), m.group(3)
+    try:
+        if int(key) != int(str(sender_value)):
+            return None
+    except (TypeError, ValueError):
+        return None
+    return "state." + (alias or {}).get(name, name) + "[msg.sender]" + tail
+
+
+def normalise_sender_keyed_payloads(paths, alias=None):
+    """Rewrite every path's payload in place of its sender-keyed slot names.
+
+    Returns (paths, evidence). A path whose payload carries no `msg.sender` is
+    left alone -- there is nothing to compare the key against, and guessing
+    would silently retarget the region at a different storage slot.
+
+    If a payload already carries the symbolic name too, the concrete entry's
+    value wins: it is the one the solver actually produced for this path.
+    """
+    out, evidence = [], []
+    for entry in paths or ():
+        enc, depth, ce = entry[0], entry[1], entry[2]
+        sender = (ce or {}).get("msg.sender")
+        if not ce or sender in (None, ""):
+            out.append(entry)
+            continue
+        renamed, fresh = [], dict(ce)
+        for coord in list(ce):
+            target = normalise_sender_keyed_slot(coord, sender, alias)
+            if target is None or target == coord:
+                continue
+            fresh[target] = ce[coord]
+            fresh.pop(coord, None)
+            renamed.append(f"{coord} -> {target}")
+        if renamed:
+            evidence.append(f"enc={enc}: " + ", ".join(sorted(renamed)))
+        out.append((enc, depth) + (fresh, ) + tuple(entry[3:]))
+    return out, evidence
+
+
 def mapping_slot_type_ranges(maps, coords):
     """Type ranges for proposed mapping slot coordinates from source AST types."""
     ranges = {}
@@ -3932,11 +4038,23 @@ def filter_unreferenced_state_coords(coords, dependencies, budget=STATE_SLOT_COO
     Hence the BUDGET. Subscripted state coordinates are the ones that multiply,
     so only they are capped; plain scalars are all kept. What the budget cuts is
     NAMED in `dropped` exactly like a closure miss, never dropped silently.
+
+    `dropped` carries BARE COORDINATE NAMES. It feeds two consumers with
+    different needs -- the printed line, which wants a reason, and the C5
+    coordinate-accounting bucket, which tests payload names by equality -- and
+    an earlier version folded the budget reason into the string itself. A
+    payload name then matched nothing, C5 reported it as reaching no bucket, and
+    the driver REFUSED TO MEASURE the subject outright. Measured on
+    motivation_FeeVault at max-tx 3: `state.discountBps[4294967295]` was dropped
+    by the budget, annotated, and stage 2 aborted before a single region query,
+    while `state.owner` -- dropped by the closure path, unannotated -- passed.
+    Reasons therefore travel BESIDE the names, never inside them.
     """
     if dependencies is None:
-        return list(coords or []), []
+        return list(coords or []), [], {}
     live = {str(name) for name in dependencies}
     kept, dropped, subscripted = [], [], []
+    reasons = {}
     for coord in coords or []:
         source_name = state_coord_source_name(coord)
         if source_name is None:
@@ -3956,10 +4074,11 @@ def filter_unreferenced_state_coords(coords, dependencies, budget=STATE_SLOT_COO
     subscripted.sort(key=lambda c: (len(str(c)), str(c)))
     kept.extend(subscripted[:budget])
     for coord in subscripted[budget:]:
-        dropped.append(f"{coord} (subscripted state coordinate beyond the "
-                       f"retention budget of {budget}; the region is widened "
-                       f"over it)")
-    return kept, sorted(dropped)
+        dropped.append(str(coord))
+        reasons[str(coord)] = (f"subscripted state coordinate beyond the "
+                               f"retention budget of {budget}; the region is "
+                               f"widened over it")
+    return kept, sorted(dropped), reasons
 
 def unit_params(ast_path, contract, unit, declaration_id=None):
     """This unit's parameters, as [(name, typeString)] in declaration order.
@@ -4018,6 +4137,40 @@ def unit_params(ast_path, contract, unit, declaration_id=None):
     # passed here.  Keep the last-match behavior for callers that provide an
     # explicit declaration id or a legacy whole-AST input.
     return found[-1] if found else []
+
+
+def state_pin_agreement(observations, path_count):
+    """Pin a state coordinate only when EVERY path's witness has an opinion.
+
+    `observations` is one set of observed values per path -- EMPTY for a path
+    whose witness never carries the coordinate at all. Returns True only if
+    every path carried it and they all agree.
+
+    THE DISTINCTION THIS EXISTS FOR: "all paths agree" and "only some paths have
+    an opinion" are not the same fact, and testing `len(values) == 1` over the
+    union conflates them. A mapping entry is the case that makes it bite,
+    because each witness picks its own concrete key: on motivation_FeeVault at
+    max-tx 3, `state.deposits[2147483647]` appeared in 2 of 10 paths' witnesses,
+    agreed trivially among those two, and was pinned to that witness's own
+    counterexample value (2**256-1). The region for enc=123 needs that same slot
+    inside [21239, 200000], so the box came back lo > hi -- EMPTY -- and the
+    path could not be certified at all. No key in that run appeared in all ten
+    paths, so under the old rule every one of them was pinnable.
+
+    Pinning a slot to the value from the very counterexample whose region is
+    being searched collapses that path's domain to a point it is not allowed to
+    leave. Silence from a path is not consent.
+    """
+    if path_count <= 0:
+        return False
+    if len(observations) != path_count:
+        return False
+    values = set()
+    for obs in observations:
+        if not obs:
+            return False
+        values.update(obs)
+    return len(values) == 1 and None not in values
 
 
 def propose_slot_coords(maps,
@@ -4926,6 +5079,79 @@ def parse_outer_round_output(log):
     return boxes, brackets, regions, warned, region_holes, type_ranges
 
 
+def log_ladder_values(lo, hi, probes):
+    """Scale-free rungs over [lo, hi] for a refine round, SAME COUNT as the
+    uniform subdivision they replace (probes + 2).
+
+    Half of the rungs sit at `lo + 2^j`, half at `hi - 2^j`, with `j` spread
+    evenly over the span's bit width: within a factor of two of a boundary of
+    ANY magnitude, measured from either end, in one round. Uniform rungs
+    resolve (hi-lo)/(probes+1): on a type-wide span that is 2^252 per rung,
+    which is how two refine rounds at ~190s each left `amount` at
+    [0, 2^256-1] on motivation_FeeVault (TODO 29) while the boundary sits
+    near 2^56. The argument is the one of TODO 25.1/27 -- program constants
+    are scale-free and 2^256 is a word-size artefact -- and its corpus
+    measurement: 68.9% of 7258 coordinates start at the type range and 22.3%
+    have >= 8-octave gaps between consecutive candidates (median 127). The
+    next round's span is the bracketed octave band, so the descent is a
+    bisection in the log domain: ~bits/(probes/2) per round.
+    """
+    lo, hi = int(lo), int(hi)
+    width = hi - lo
+    if width < 2:
+        return []
+    n = max(2, int(probes) + 2)
+    half = max(1, n // 2)
+    vals = set()
+    # Low side: GEOMETRIC interpolation between max(lo, 1) and hi, interior
+    # points only -- `lo + 2^j` would bunch every rung at `lo` once the span
+    # is an octave band [2^51, 2^102] and resolve nothing; the multiplicative
+    # grid keeps the same number of octaves between consecutive rungs at every
+    # round, which is what makes the descent a log-domain bisection.
+    L = math.log2(max(lo, 1))
+    H = math.log2(hi)
+    for i in range(1, half + 1):
+        vals.add(int(round(2 ** (L + i * (H - L) / (half + 1)))))
+    # High side: `hi - 2^j`, j spread over the bit width, for boundaries that
+    # sit a small distance below the type maximum.
+    bits = width.bit_length() - 1
+    js = sorted({round(i * bits / max(1, half - 1)) for i in range(half)}) if half > 1 else [0]
+    for j in js:
+        vals.add(hi - (1 << j))
+    return sorted(v for v in vals if lo < v < hi)
+
+
+LOG_LADDER_MIN_WIDTH = 1 << 16
+
+
+def free_entry_state_establish(names, existing=None):
+    """Entry-state coordinates FREED at the query entry (`establish` source `*`).
+
+    Every `state.*` name in `names` that is not already the target of a
+    relation establishment is returned as `target -> "*"`. Stage 4 writes
+    every state coordinate it renders into storage before the call, so the
+    executions a PUT exercises are "any entry state inside the bound" -- and
+    that is the set a query must quantify over for its verdict to be about the
+    test. Without freeing, the query reads the coordinate against whatever the
+    transaction prefix left: at --solidity-max-tx 1 the constructor's value,
+    which is why a mapping-slot bound certified VACUOUSLY there (TODO 25.2) and
+    why the bound-finding round reported both sides "proved" at the type limit.
+    Freeing quantifies over a SUPERSET of the reachable entry states, a strictly
+    stronger claim whose only risk is a false negative; reachability is what the
+    enumeration witness established and is not weakened here.
+    """
+    out = dict(existing or {})
+    # A relation's SOURCE stays as it is, too: the tool applies the entries in
+    # target order, so freeing `state.b` after `state.a := state.b` was
+    # assigned would leave the relation established on a value that is then
+    # thrown away.
+    keep = set(out) | {v for v in out.values() if isinstance(v, str)}
+    for n in names:
+        if isinstance(n, str) and n.startswith("state.") and n not in keep:
+            out[n] = "*"
+    return out
+
+
 def outer_round(esbmc,
                 sol,
                 contract,
@@ -4948,7 +5174,9 @@ def outer_round(esbmc,
                 claim_budget=0,
                 esbmc_args=(),
                 prune_inside=None,
-                path_values=None):
+                path_values=None,
+                establish=None,
+                log_ladder=False):
     """Steps 2-4: one batch. Returns (boxes, brackets, regions, warned).
 
     `values_by_coord` overrides the ladder for the coordinates it names, which
@@ -5045,6 +5273,33 @@ def outer_round(esbmc,
                                  f"that it did; guessing a range here would measure a "
                                  f"coordinate nobody asked about")
             lo, hi = spans[c]
+            if log_ladder and int(hi) - int(lo) > LOG_LADDER_MIN_WIDTH:
+                # REPLACES the uniform subdivision (no lo/hi in the spec: the
+                # tool unions `values` with a subdivided span, and a union
+                # would double the round's cost). Same rung count.
+                rungs = [str(v) for v in log_ladder_values(lo, hi, probes)]
+                # RUNGS PLUS THE PATHS' OWN MEMBER VALUES, not the whole
+                # sibling-CE `extra` pool. The pool put ~82 probes per
+                # direction on motivation_FeeVault (TODO 30 #1); the members
+                # are at most one value per path and they are what anchors the
+                # box at x_pi -- MEASURED (freeR): without them the hull of
+                # passing rungs started at 0 for `amount`/`deposits`, the
+                # relation `amount <= deposits` then needed two extra cut rounds
+                # and the shrink budget ran out one round short.
+                member_vals = set()
+                for _enc, _d, _ce in paths:
+                    v = _ce.get(c)
+                    if v is None:
+                        continue
+                    try:
+                        iv = int(str(v), 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if int(lo) <= iv <= int(hi):
+                        member_vals.add(str(iv))
+                spec = {"name": c, "values": sorted(set(rungs) | member_vals, key=int)}
+                spec_coords.append(spec)
+                continue
             spec = {"name": c, "lo": str(lo), "hi": str(hi)}
             if extra:
                 spec["values"] = extra
@@ -5069,6 +5324,13 @@ def outer_round(esbmc,
             }
         } for e, d, ce in paths]
     }
+    if establish:
+        # Same shape as the certify spec's. The tool applies it BEFORE the
+        # entry snapshot, so every probe measures the established slice.
+        spec["establish"] = [{
+            "target": target,
+            "source": source
+        } for target, source in sorted(establish.items())]
     # ---- PER-PATH LADDERS, WHICH ONE SHARED `coords` LIST CANNOT EXPRESS ----
     #
     # A rung is worth laying for a path only OUTSIDE that path's known domain,
@@ -5221,9 +5483,42 @@ def outer_round(esbmc,
             print(f"[round] outer-box coordinate shard {shard_index}/"
                   f"{len(round_specs)}: "
                   f"{round_specs[shard_index - 1][1]['coords'][0]['name']}")
+        # ---- MULTI-PROPERTY, AND ONLY HERE -------------------------------
+        #
+        # An outer-box round asks one boundary question per (coordinate,
+        # direction, candidate) and needs EVERY answer; the default mode stops
+        # at the first refuted claim and returns a single verdict, which is not
+        # enough to place a boundary. `--multi-property` is what decides them
+        # all, and it is the plain flag rather than either mode that implies it.
+        #
+        # MEASURED on a hand-written ladder of the same shape -- 602
+        # `assert(net >= K)` candidates over the motivation region, which is one
+        # round's real size (7 coordinates x 2 directions x 43 candidates);
+        # Work/motivation-kill/esbmc_direct/MP602.sol:
+        #
+        #     --multi-property    16.0s   602 claims decided
+        #     --all-witnesses     34.3s   602 claims decided
+        #     --parallel-solving  14.2s   but ABORTS on the real round
+        #
+        # The three are not interchangeable:
+        #
+        #   * --all-witnesses also enumerates up to --max-witnesses further
+        #     inputs per REFUTED property. A boundary question needs the
+        #     verdict, not more witnesses for it, so that is pure overhead --
+        #     and it is where the 2x goes.
+        #   * --parallel-solving holds a solver context per VCC. On the
+        #     standalone ladder it is marginally the fastest; on the real
+        #     outer-box round it died with `terminate called after throwing an
+        #     instance of 'std::bad_alloc'` at 12 GiB. Same failure mode already
+        #     measured for enumeration on this subject (OOM in about 50s).
+        #
+        # Equivalence checked rather than assumed: --multi-property and
+        # --all-witnesses decide the IDENTICAL 602-claim set and return the same
+        # verdict.
         shard_log = run(esbmc,
                         sol,
-                        contract, ["--path-cov-outer-box", shard_path],
+                        contract,
+                        ["--path-cov-outer-box", shard_path, "--multi-property"],
                         max_tx,
                         remaining,
                         cwd,
@@ -5915,7 +6210,8 @@ def witness_values(cwd,
                    state_structs=False,
                    param_types=None,
                    state_types=None,
-                   extcall_coord_specs=None):
+                   extcall_coord_specs=None,
+                   slot_alias=None):
     """The REFUTING input's payload, harvested from the certification run.
 
     ⛔ `state_structs` MUST BE THREADED IN FROM THE SAME FLAG THAT DECOMPOSED THE
@@ -5955,6 +6251,18 @@ def witness_values(cwd,
     def same_unit(c):
         return claim_unit(c) == unit or same_path_function(c.get("path_function"), unit)
 
+    def _fold(ce):
+        # THE SAME FOLD THE ENUMERATION PAYLOADS GET. A refuting witness
+        # reports a mapping entry under the concrete key the solver picked
+        # (`state.deposits[0]` with `msg.sender = 0`); the box names the slot
+        # `state.deposits$19[msg.sender]`. Left unfolded, the comparison
+        # against x_pi reported the slot as "only in this path's payload" and
+        # the cut could never land on it -- MEASURED on motivation_FeeVault
+        # freeG, where the refuter was `amount > deposits[msg.sender]` and the
+        # driver cut `amount` and `block.number` instead.
+        folded, _ev = normalise_sender_keyed_payloads([(0, 0, ce)], slot_alias)
+        return folded[0][2] if folded else ce
+
     for c in rep.get("certify_safety_refutations", []):
         if c.get("status") == "F" and same_unit(c):
             ce, _ = coord_values(c,
@@ -5963,7 +6271,7 @@ def witness_values(cwd,
                                  state_types=state_types,
                                  extcall_coord_specs=extcall_coord_specs)
             ce.update(payload_extras(c))
-            return ce
+            return _fold(ce)
     for c in rep.get("claims", []):
         if c.get("status") == "F" and same_unit(c):
             ce, _ = coord_values(c,
@@ -5972,8 +6280,236 @@ def witness_values(cwd,
                                  state_types=state_types,
                                  extcall_coord_specs=extcall_coord_specs)
             ce.update(payload_extras(c))
-            return ce
+            return _fold(ce)
     return {}
+
+
+def safety_witness_list(cwd,
+                        unit,
+                        state_structs=False,
+                        param_types=None,
+                        state_types=None,
+                        extcall_coord_specs=None,
+                        slot_alias=None):
+    """EVERY refuted checked-arithmetic claim of this unit, as [(line, payload)].
+
+    `witness_values` returns the first one; a certification query with the
+    checks on can refute several operations in one run (MEASURED: `feeBps -
+    discountBps` at one line and `amount - fee` at another, with different
+    discountBps values), and each is its own sound cut. Carried as a list so
+    the caller can apply what every witness says rather than spend a round
+    per witness. `line` is the violated operation's source line, which is what
+    names its dependence cone.
+    """
+    report = os.path.join(cwd, "cov-report.json")
+    if not os.path.exists(report):
+        return []
+    try:
+        with open(report) as f:
+            rep = json.load(f)
+    except (OSError, ValueError):
+        return []
+    out = []
+    for c in rep.get("certify_safety_refutations", []):
+        if c.get("status") != "F":
+            continue
+        if not (claim_unit(c) == unit or same_path_function(c.get("path_function"), unit)):
+            continue
+        ce, _ = coord_values(c,
+                             state_structs=state_structs,
+                             param_types=param_types,
+                             state_types=state_types,
+                             extcall_coord_specs=extcall_coord_specs)
+        ce.update(payload_extras(c))
+        folded, _ev = normalise_sender_keyed_payloads([(0, 0, ce)], slot_alias)
+        ce = folded[0][2] if folded else ce
+        try:
+            line = int(c.get("line"))
+        except (TypeError, ValueError):
+            line = None
+        out.append((line, ce))
+    return out
+
+
+_DEP_AST_CACHE = {}
+
+
+def _dep_ast_root(ast_path):
+    if ast_path in _DEP_AST_CACHE:
+        return _DEP_AST_CACHE[ast_path]
+    try:
+        with open(ast_path) as f:
+            txt = f.read()
+        # solc's `--ast-compact-json` output carries a text banner before the
+        # JSON object; every other loader in this file skips to the first brace.
+        root = json.loads(txt[txt.index("{"):])
+    except (OSError, ValueError, TypeError):
+        root = None
+    _DEP_AST_CACHE[ast_path] = root
+    return root
+
+
+def _dep_src_line_starts(sol_path):
+    key = ("__lines__", sol_path)
+    if key in _DEP_AST_CACHE:
+        return _DEP_AST_CACHE[key]
+    try:
+        with open(sol_path, "rb") as f:
+            data = f.read()
+    except (OSError, TypeError):
+        data = b""
+    starts = [0]
+    for i, b in enumerate(data):
+        if b == 0x0A:
+            starts.append(i + 1)
+    _DEP_AST_CACHE[key] = starts
+    return starts
+
+
+def _dep_line_of(src, starts):
+    try:
+        off = int(str(src).split(":", 1)[0])
+    except (TypeError, ValueError):
+        return None
+    import bisect
+    return bisect.bisect_right(starts, off)
+
+
+def _dep_idents(node):
+    """Base identifiers an expression reads. Index expressions of an
+    IndexAccess are NOT descended: the sender-keyed slot coordinate
+    (`state.m$N[msg.sender]`) already names the key, and listing the key as a
+    separate dependence would put `msg.sender` into every mapping's cone."""
+    out = set()
+    if isinstance(node, dict):
+        nt = node.get("nodeType")
+        if nt == "Identifier":
+            out.add(node.get("name"))
+            return out
+        if nt == "MemberAccess":
+            base = node.get("expression") or {}
+            if base.get("nodeType") == "Identifier" and base.get("name") in ("msg", "block", "tx"):
+                out.add(f"{base.get('name')}.{node.get('memberName')}")
+                return out
+            out |= _dep_idents(base)
+            return out
+        if nt == "IndexAccess":
+            out |= _dep_idents(node.get("baseExpression"))
+            return out
+        for k, v in node.items():
+            if k in ("typeDescriptions", "src", "id", "nodeType", "name", "referencedDeclaration"):
+                continue
+            out |= _dep_idents(v)
+    elif isinstance(node, list):
+        for v in node:
+            out |= _dep_idents(v)
+    out.discard(None)
+    return out
+
+
+def unit_dependence_cone(ast_path, sol_path, contract, unit, line):
+    """Flow-insensitive backward data dependence of the statement(s) at `line`
+    in `unit`, as a set of base identifiers (state variable / parameter /
+    local / `msg.x` names). Over-approximate by construction (every assignment
+    to a local counts, whatever the path), which is the right direction: the
+    set is used to CHOOSE among sound cuts, never to license one. Empty when
+    the unit or the line cannot be found."""
+    root = _dep_ast_root(ast_path)
+    starts = _dep_src_line_starts(sol_path)
+    if root is None or line is None or not starts:
+        return set()
+    fn = None
+    chain = _chain_nodes(root, contract) if contract else None
+    for cn in (chain or [root]):
+        for node in _walk_ast(cn):
+            if node.get("nodeType") == "FunctionDefinition" and node.get("name") == unit:
+                fn = node
+                break
+        if fn is not None:
+            break
+    if fn is None:
+        return set()
+    defs = {}
+    seeds = set()
+    for node in _walk_ast(fn.get("body") or {}):
+        nt = node.get("nodeType")
+        if nt == "Assignment":
+            rhs = _dep_idents(node.get("rightHandSide"))
+            for tgt in _dep_idents(node.get("leftHandSide")):
+                defs.setdefault(tgt, set()).update(rhs)
+        elif nt == "VariableDeclarationStatement":
+            rhs = _dep_idents(node.get("initialValue"))
+            for d in node.get("declarations") or []:
+                if isinstance(d, dict) and d.get("name"):
+                    defs.setdefault(d["name"], set()).update(rhs)
+        if nt in ("ExpressionStatement", "VariableDeclarationStatement", "Return",
+                  "IfStatement", "Assignment"):
+            if _dep_line_of(node.get("src"), starts) == line:
+                if nt == "IfStatement":
+                    seeds |= _dep_idents(node.get("condition"))
+                else:
+                    seeds |= _dep_idents(node)
+    cone = set()
+    stack = list(seeds)
+    while stack:
+        n = stack.pop()
+        if n in cone:
+            continue
+        cone.add(n)
+        stack.extend(defs.get(n, ()))
+    return cone
+
+
+def coord_base_name(coord):
+    """`state.discountBps$23[msg.sender]` -> `discountBps`; `state.x.f` -> `x`;
+    `amount` -> `amount`; `msg.sender` -> `msg.sender`."""
+    c = str(coord)
+    if c.startswith("state."):
+        c = c[6:]
+    if c.startswith(("msg.", "block.", "tx.")):
+        return c
+    c = c.split("[", 1)[0]
+    c = c.split("$", 1)[0]
+    c = c.split(".", 1)[0]
+    return c
+
+
+def safety_cut_from_witnesses(box, holes, ce, pins, ranges, assumed_hs, safety_wits,
+                              ast_path, sol_path, contract, unit):
+    """One cut that answers EVERY refuting checked-arithmetic witness of the
+    query, each read on its own dependence cone. Returns (coord, lo, hi,
+    removed, lines) or None. Cuts on the same coordinate are intersected --
+    every witness has to leave the region eventually, and each cut keeps x_pi,
+    so the intersection is the round's honest answer rather than a choice.
+    When the witnesses' cuts fall on different coordinates only the first by
+    name is applied (the shrink bookkeeping splits on ONE coordinate); the
+    others are re-found by the next query."""
+    per_coord = {}
+    for line, wit in safety_wits:
+        cone = unit_dependence_cone(ast_path, sol_path, contract, unit, line)
+        restrict = {c for c in box if coord_base_name(c) in cone} if cone else None
+        kind, payload = refutation_response(box, holes, ce, wit, pins, ranges, assumed_hs,
+                                            restrict=restrict)
+        if kind != "cut":
+            continue
+        c, lo, hi, _removed = payload
+        if c in per_coord:
+            plo, phi, lines = per_coord[c]
+            per_coord[c] = (max(plo, lo), min(phi, hi), lines + [line])
+        else:
+            per_coord[c] = (lo, hi, [line])
+    if not per_coord:
+        return None
+    c = sorted(per_coord)[0]
+    lo, hi, lines = per_coord[c]
+    blo, bhi = box[c]
+    hs = tuple(holes.get(c, ()))
+    if lo > hi or coord_kept(lo, hi, hs) <= 0:
+        return None
+    removed = coord_kept(blo, bhi, hs) - coord_kept(lo, hi, hs)
+    if removed <= 0:
+        return None
+    return c, lo, hi, removed, lines
 
 
 def payload_extras(c):
@@ -6552,7 +7088,7 @@ def multi_difference_retreat(box, holes, ce, usable, pins):
     return {item["name"]: item["value"] for item in retreatable}
 
 
-def refutation_response(box, holes, ce, wit, pins, ranges=None, assumed_hs=None):
+def refutation_response(box, holes, ce, wit, pins, ranges=None, assumed_hs=None, restrict=None):
     """What §Certification prescribes for THIS refutation. (kind, payload).
 
     ⛔ THIS REPLACES READING THE TOOL'S SUGGESTION, and the two are not
@@ -6611,6 +7147,22 @@ def refutation_response(box, holes, ce, wit, pins, ranges=None, assumed_hs=None)
     usable, untrusted, only_path, _only_wit = divergence_pairs(ce, wit, ranges, assumed_hs)
     if not wit:
         return "no-payload", None
+    if restrict:
+        # THE COORDINATES THE REFUTATION POINTS AT, read literally. For a
+        # checked-arithmetic refutation the tool names the violated operation,
+        # and the operands' backward data dependence is known from the source;
+        # a coordinate outside that cone differs from x_pi only because the
+        # solver had to pick SOME value for it. Cutting it is sound and removes
+        # the witness, but the next witness repeats the same violation at
+        # another such value, and the fewest-values rule then chases one-value
+        # cuts on unrelated coordinates until the budget is gone. MEASURED on
+        # motivation_FeeVault enc=119: `feeBps - discountBps` refuted with
+        # discountBps=65535 AND block.number=2^256-2, deposits=2^256-1,
+        # msg.sender=0 -- three one-value cuts on offer, none on discountBps.
+        # Falls back to the whole divergence when nothing in the cone differs.
+        narrowed = [t for t in usable if t[0] in restrict]
+        if narrowed:
+            usable = narrowed
     if not usable:
         fallback = {
             n: ce[n]
@@ -6922,8 +7474,18 @@ def certify(esbmc,
             establish=None,
             param_types=None,
             state_types=None,
-            extcall_coord_specs=None):
+            extcall_coord_specs=None,
+            slot_alias=None,
+            certify_extra=()):
     """Step 5. Returns (verdict, suggested_box_or_None, witness).
+
+    `certify_extra` is appended AFTER `k_induction_proof_args` has built the
+    proof strategy, so it is the one way to put `--overflow-check` & co. on a
+    certification query: the strip exists to drop the ENUMERATION's bounded
+    flags, and it would otherwise eat the checks the operator asked for
+    explicitly via --certify-esbmc-arg (MEASURED: the flag reached the driver,
+    the argv ESBMC saw lacked it, and `discountBps in [1, 65535]` was
+    certified for a uint16 subtraction that reverts above 250).
 
     `holes` is Definition 5's punched set, and it must reach the query or the
     box certified is WIDER than the region reported. The subtraction now
@@ -6987,7 +7549,7 @@ def certify(esbmc,
         want_property=want_property,
     )
     _t0 = time.time()
-    proof_esbmc_args = k_induction_proof_args(esbmc_args)
+    proof_esbmc_args = k_induction_proof_args(esbmc_args) + [str(a) for a in (certify_extra or ())]
     log = run(esbmc,
               sol,
               contract, ["--path-cov-certify", path, "--cov-report-json"],
@@ -7068,7 +7630,7 @@ def certify(esbmc,
                    if m else "the tool did not name the truncated loop(s), which it "
                    "normally does -- read the run log rather than trusting "
                    "this line")
-        return v, None, {}, [], unexp, why
+        return v, None, {}, [], unexp, why, []
     if want_property:
         # ---- THE WHOLE LOG, ON DISK, NAMED BY THE PATH IT BELONGS TO ----
         #
@@ -7107,7 +7669,15 @@ def certify(esbmc,
                          state_structs=state_structs,
                          param_types=param_types,
                          state_types=state_types,
-                         extcall_coord_specs=extcall_coord_specs)
+                         extcall_coord_specs=extcall_coord_specs,
+                         slot_alias=slot_alias)
+    safety_wits = safety_witness_list(cwd,
+                                      unit,
+                                      state_structs=state_structs,
+                                      param_types=param_types,
+                                      state_types=state_types,
+                                      extcall_coord_specs=extcall_coord_specs,
+                                      slot_alias=slot_alias) if why == "UNSAFE" else []
     # BOTH suggestions are returned; WHICH to apply is the caller's policy. The
     # tool prints both and says outright that neither is strictly better --
     # punching converges only where the excluded set is a few points, a side cut
@@ -7117,11 +7687,11 @@ def certify(esbmc,
     punches = punch_targets(log, pins, box)
     cut = shrink_target(log, pins)
     if cut is None:
-        return v, None, wit, punches, unexp, why
+        return v, None, wit, punches, unexp, why, safety_wits
     coord, lo, hi = cut
     nb = dict(box)
     nb[coord] = (lo, hi)
-    return v, nb, wit, punches, unexp, why
+    return v, nb, wit, punches, unexp, why, safety_wits
 
 
 def resolve_scope(scope, focus_flag, unit):
@@ -8091,6 +8661,49 @@ def main():
                     help="coord=value, e.g. state.bal=50. Pinned coordinates "
                     "are NOT generalised; every region reported is a "
                     "statement about that slice and carries the pin.")
+    ap.add_argument("--certify-esbmc-arg", action="append", default=[], metavar="ARG",
+                    help="an ESBMC argument passed to the CERTIFICATION queries "
+                    "(and the single-point witness check) ONLY, on top of "
+                    "--esbmc-arg. Meant for the arithmetic checks: the outer-box "
+                    "rounds only PROPOSE a candidate box and every candidate is "
+                    "re-verified by a certification query, so the checks buy "
+                    "nothing there and cost ~6x per probe (MEASURED on "
+                    "motivation_FeeVault: level-0 28s -> 188s), while a "
+                    "certificate issued without them is about wrapped "
+                    "arithmetic, not Solidity 0.8 (TODO 29). A witness that "
+                    "only exists under wrapping is caught by the single-point "
+                    "check, which carries these arguments too.")
+    ap.add_argument("--log-ladder", action="store_true",
+                    help="refine rounds lay their rungs scale-free (half at "
+                    "lo+2^j, half at hi-2^j, j spread over the span's bit "
+                    "width) instead of uniformly, SAME rung count, on any "
+                    "span wider than 2^16. See log_ladder_values. Off by "
+                    "default; it changes what every region is measured with.")
+    ap.add_argument("--query-max-tx", type=int, default=0,
+                    help="transaction bound for the outer-box rounds and the "
+                    "certification queries (0 = same as --max-tx). Meant to be "
+                    "used with --free-entry-state, which replaces the setup "
+                    "transactions by freeing every bounded/pinned state "
+                    "coordinate at the query entry; the enumeration keeps "
+                    "--max-tx because it needs the setup transactions to "
+                    "WITNESS a path.")
+    ap.add_argument("--free-entry-state",
+                    action="store_true",
+                    help="FREE every `state.*` coordinate that a query measures, "
+                    "bounds or pins at the query entry (`establish` source `*`), "
+                    "in the outer-box rounds and in certification alike. The "
+                    "query then quantifies over every entry value inside the "
+                    "bound instead of reading the coordinate against whatever "
+                    "the transaction prefix left -- which at --max-tx 1 is the "
+                    "constructor's value, so a mapping-slot bound certified "
+                    "vacuously and the bound-finding round reported both sides "
+                    "proved at the type limit (TODO 25). Stage 4 writes every "
+                    "state coordinate it renders before the call, so this is "
+                    "the slice a PUT actually exercises. Sound in one direction "
+                    "only: a superset of the reachable entry states is "
+                    "certified, so the risk is a false negative, never a false "
+                    "positive. A coordinate already the target of a relation "
+                    "establishment is left to the relation.")
     ap.add_argument("--pin-extcall",
                     action="store_true",
                     help="fix every quantity the HARNESS chose inside the "
@@ -8207,6 +8820,28 @@ def main():
                     "flattened wrappers shaped as `return f(args...)`.")
     ap.add_argument("--workdir", default=None)
     args = ap.parse_args()
+    # THE TRANSACTION BOUND OF THE QUERIES, which may be shorter than the
+    # enumeration's. Enumeration needs the setup transactions to WITNESS a
+    # path; a query that FREES every entry-state coordinate it bounds or pins
+    # (--free-entry-state) does not need them to construct the entry state,
+    # and every other state coordinate is the constructor's in the query AND
+    # in the PUT, which deploys fresh. MEASURED on motivation_FeeVault (TODO
+    # 25.3): the same verdict at --solidity-max-tx 1 with the state freed as
+    # at 3, with 3x fewer VCCs and 4x less solving; the region-search round
+    # that took 311s at 3 is what --query-max-tx exists to shorten. Default
+    # 0 = the enumeration's bound, i.e. exactly the previous behaviour.
+    query_max_tx = int(args.query_max_tx or 0) or args.max_tx
+    if query_max_tx != args.max_tx:
+        print(f"[query] --query-max-tx {query_max_tx}: outer-box rounds and certification "
+              f"queries run at --solidity-max-tx {query_max_tx}; the enumeration ran at "
+              f"{args.max_tx}. " + ("Every state coordinate a query bounds or pins is FREED "
+                                     "at its entry (--free-entry-state), which is what makes "
+                                     "the shorter bound answer the same question."
+                                     if args.free_entry_state else
+                                     "WARNING: --free-entry-state is OFF, so a query at the "
+                                     "shorter bound reads entry state the setup transactions "
+                                     "never wrote; expect VACUOUS on state-dependent paths."))
+
 
     if bool(args.enumeration_index) != bool(args.enumeration_report):
         raise SystemExit("--enumeration-index and --enumeration-report must be "
@@ -8339,6 +8974,37 @@ def main():
                                                state_types=enumeration_state_types,
                                                extcall_coord_specs=extcall_length_specs)
     args.path_function = resolved_path_function
+
+    # ---- ONE MAPPING IS ONE COORDINATE, NOT ONE PER WITNESSED ADDRESS -------
+    #
+    # Done here, before any coordinate is derived from a payload, because every
+    # later stage reads these names: the coordinate set, the pins, and the C5
+    # accounting. Rewriting afterwards would leave the three views disagreeing.
+    sender_key_alias = {}
+    if args.ast:
+        try:
+            alias_maps, _alias_refused = mapping_state_vars(args.ast, args.contract)
+            alias_store_names, _alias_evidence = \
+                contract_state_esbmc_store_names(args.ast, args.contract)
+            alias_maps = prefer_esbmc_mapping_aliases(
+                add_esbmc_mapping_aliases(alias_maps, alias_store_names))
+            sender_key_alias = {
+                mapping_source_key(name, spec): name
+                for name, spec in alias_maps.items()
+                if mapping_source_key(name, spec) != name
+            }
+        except (OSError, ValueError):
+            sender_key_alias = {}
+    paths, sender_key_evidence = normalise_sender_keyed_payloads(paths, sender_key_alias)
+    if sender_key_evidence:
+        print("[coords] MAPPING ENTRY AT THE WITNESS'S OWN msg.sender folded "
+              "onto the symbolic slot, so one mapping is one coordinate rather "
+              "than one per address some counterexample happened to pick: " +
+              "; ".join(sender_key_evidence) +
+              ". An entry at any OTHER key keeps its own name: it belongs to an "
+              "account this path does not act as, and renaming it would point "
+              "the region at a different storage slot")
+
     all_paths = list(paths)
     write_generalise_progress(
         cwd,
@@ -8518,7 +9184,7 @@ def main():
     # Apply the first slice pin before deriving agreed state pins. Otherwise an
     # ABI-reject witness can contribute an impossible state value to the body
     # slice merely because its counterexample was enumerated first.
-    initial_pin_excluded = pinned_slice_exclusions(paths, pins)
+    initial_pin_excluded = pinned_slice_exclusions(paths, pins, path_extras)
     paths = [path for path in paths if path[0] not in initial_pin_excluded]
     # ---- THE PARTITION THIS FILE ALREADY COMPUTES, APPLIED ------------------
     #
@@ -8656,7 +9322,8 @@ def main():
                                                                     args.unit,
                                                                     declaration_id=declaration_id)
     if state_deps is not None and not has_assembly:
-        coords, dropped_state_coords = filter_unreferenced_state_coords(coords, state_deps)
+        coords, dropped_state_coords, dropped_state_reasons = (
+            filter_unreferenced_state_coords(coords, state_deps))
         state_dependency_filter = {
             "mode": "source-closure-no-inline-assembly",
             "live": sorted(str(name) for name in state_deps),
@@ -8665,7 +9332,10 @@ def main():
         }
         if dropped_state_coords:
             print("[coords] DROPPED unrelated state coordinate(s) outside "
-                  "the target dependency closure: " + ", ".join(dropped_state_coords) +
+                  "the target dependency closure: " +
+                  ", ".join(f"{name} ({dropped_state_reasons[name]})"
+                            if name in dropped_state_reasons else name
+                            for name in dropped_state_coords) +
                   ". The certified region is widened over these fields; "
                   "the source closure contains no inline assembly")
     else:
@@ -8755,11 +9425,13 @@ def main():
             if c in relation_state:
                 relation_kept.append(c)
                 continue
-            vals = set()
+            observations, vals = [], set()
             for enc, _depth, ce in paths:
                 live = live_by_enc.get(enc) or [ce]
-                vals.update(v[c] for v in live if c in v)
-            if len(vals) == 1 and None not in vals:
+                seen = {v[c] for v in live if c in v}
+                observations.append(seen)
+                vals.update(seen)
+            if state_pin_agreement(observations, len(paths)):
                 agreed_state[c] = next(iter(vals))
             else:
                 varying.append(c)
@@ -9099,6 +9771,9 @@ def main():
                     "unit": args.unit,
                     "path_function": args.path_function,
                     "max_tx": args.max_tx,
+                    "query_max_tx": query_max_tx,
+                    "log_ladder": bool(args.log_ladder),
+                    "certify_esbmc_args": list(args.certify_esbmc_arg),
                     "scope": scope_label,
                     "extcall_length_coordinates": extcall_length_specs,
                     "enumeration_source": {
@@ -9213,6 +9888,39 @@ def main():
 
     def query_pins():
         return certification_query_pins(pins, omit=nonquery_pins)
+
+    def outer_pins():
+        """Pins for an OUTER-BOX round: the certification pins minus
+        `extcall.*`. The outer-box side has no resolver for a harness-chosen
+        quantity and refuses the name, after which the driver used to drop
+        the pin from EVERY later query -- including certification, which CAN
+        express it (`resolve_nondet_local`). MEASURED on motivation_FeeVault
+        freeA: `extcall.ok1`, `extcall.ok2` PRE-DROPPED at level 0 and the
+        region lost the only constraint that separates enc=119 from its
+        uncontrolled sibling. Kept out of the outer rounds, kept in certify."""
+        return {n: v for n, v in query_pins().items() if not str(n).startswith("extcall.")}
+
+    def outer_establish(round_coords):
+        """`establish` for an outer-box round: free every state coordinate
+        the round measures or pins, when --free-entry-state is on."""
+        if not args.free_entry_state:
+            return None
+        return free_entry_state_establish(
+            [n for n in list(round_coords) + list(query_pins()) if n not in unsettable]) or None
+
+    def certify_establish(relation_establishes, box_names):
+        """`establish` for a certification query: the path's relation
+        establishments, plus every state coordinate of the box and the pins
+        freed at the entry when --free-entry-state is on."""
+        est = dict(relation_establishes or {})
+        if args.free_entry_state:
+            # A constant/immutable is NOT entry state: it was pinned above at the
+            # witness value, and freeing it here would hand the query a rate no
+            # contract can have (motivation freeS: `feeBps`/`maxFee` freed ->
+            # `return == amount` REFUTED -> no return oracle in the PUT).
+            est = free_entry_state_establish(
+                [n for n in list(box_names) + list(query_pins()) if n not in unsettable], est)
+        return est
 
     pre_failed = {}
     if args.static_extcall_inseparable:
@@ -9466,16 +10174,17 @@ def main():
             query_unit,
             paths,
             l0_coords,
-            query_pins(),
+            outer_pins(),
             args.probes,
-            args.max_tx,
+            query_max_tx,
             args.timeout,
             cwd,
             values_by_coord=cand,
             ast=args.ast,
             focus=focus,
             memlimit=args.memlimit,
-            esbmc_args=args.esbmc_arg) if l0_coords else (
+            esbmc_args=args.esbmc_arg,
+            establish=outer_establish(l0_coords)) if l0_coords else (
                 {}, {}, {}, set(),
                 "every coordinate was left out of level 0 (no counterexample names "
                 "any of them), so no level-0 round was issued at all", {}, {}, [])
@@ -9633,16 +10342,18 @@ def main():
                                                                 query_unit,
                                                                 paths,
                                                                 [c for c in coords if c in cand2],
-                                                                query_pins(),
+                                                                outer_pins(),
                                                                 args.probes,
-                                                                args.max_tx,
+                                                                query_max_tx,
                                                                 args.timeout,
                                                                 cwd,
                                                                 values_by_coord=cand2,
                                                                 ast=args.ast,
                                                                 focus=focus,
                                                                 memlimit=args.memlimit,
-                                                                esbmc_args=args.esbmc_arg)
+                                                                esbmc_args=args.esbmc_arg,
+                                                                establish=outer_establish(
+                                                                    [c for c in coords if c in cand2]))
                 merge_type_ranges(tr2)
                 unresolvable.update(unres2)
                 drop_unresolvable_query_pins("level0b", unres2)
@@ -9919,9 +10630,9 @@ def main():
                                   query_unit,
                                   paths,
                                   coords,
-                                  query_pins(),
+                                  outer_pins(),
                                   args.probes,
-                                  args.max_tx,
+                                  query_max_tx,
                                   args.timeout,
                                   cwd,
                                   geometric=True,
@@ -9934,7 +10645,8 @@ def main():
                                   claim_budget=args.claim_budget,
                                   esbmc_args=args.esbmc_arg,
                                   prune_inside=prune if args.probe_witnesses else None,
-                                  path_values=path_ladders)
+                                  path_values=path_ladders,
+                                  establish=outer_establish(coords))
             merge_type_ranges(tr_new)
             unresolvable.update(unres)
             drop_unresolvable_query_pins("bracket", unres)
@@ -9965,6 +10677,12 @@ def main():
     if structural_regions is None:
         spans = {c: _span(c) for c in coords}
         for r in range(args.refine_rounds):
+            if driver_elapsed() > DRIVER_REFINE_SHARE * args.timeout:
+                print(f"[refine {r+1}] SKIPPED: {driver_elapsed():.0f}s of the {args.timeout}s "
+                      f"unit budget are spent and refine rounds may use at most "
+                      f"{int(DRIVER_REFINE_SHARE*100)}% of it; certification proceeds on the "
+                      f"current spans (TODO 30 #2)")
+                break
             (_, brackets, regions, warned, round_failure, region_holes, tr_new,
              unres) = outer_round(args.esbmc,
                                   args.sol,
@@ -9972,9 +10690,9 @@ def main():
                                   query_unit,
                                   paths,
                                   coords,
-                                  query_pins(),
+                                  outer_pins(),
                                   args.probes,
-                                  args.max_tx,
+                                  query_max_tx,
                                   args.timeout,
                                   cwd,
                                   spans=spans,
@@ -9984,7 +10702,9 @@ def main():
                                   values_by_coord=eq_values,
                                   extra_values=probe_extra,
                                   type_ranges=type_ranges,
-                                  esbmc_args=args.esbmc_arg)
+                                  esbmc_args=args.esbmc_arg,
+                                  establish=outer_establish(coords),
+                                  log_ladder=args.log_ladder)
             merge_type_ranges(tr_new)
             unresolvable.update(unres)
             drop_unresolvable_query_pins(f"refine {r + 1}", unres)
@@ -10064,7 +10784,7 @@ def main():
                     "value, so there is no point to fix. Whether its witness trips "
                     "a compiler-inserted check is therefore UNKNOWN, not clear")
 
-        wv, _wnb, _ww, _wp, _wunexp, wwhy = certify(args.esbmc,
+        wv, _wnb, _ww, _wp, _wunexp, wwhy, _wsafe = certify(args.esbmc,
                                                     args.sol,
                                                     args.contract,
                                                     query_unit,
@@ -10073,19 +10793,21 @@ def main():
                                                     point,
                                                     ce,
                                                     dict(query_pins(), **xpins),
-                                                    args.max_tx,
+                                                    query_max_tx,
                                                     args.timeout,
                                                     cwd,
                                                     ast=args.ast,
                                                     focus=focus,
                                                     memlimit=args.memlimit,
                                                     holes={},
-                                                    esbmc_args=args.esbmc_arg,
+                                                    esbmc_args=tuple(args.esbmc_arg),
+                    certify_extra=tuple(args.certify_esbmc_arg),
                                                     want_property=True,
-                                                    establish=dict(establishes or {}),
+                                                    establish=certify_establish(establishes, point),
                                                     param_types=enumeration_param_types,
                                                     state_types=enumeration_state_types,
-                                                    extcall_coord_specs=extcall_length_specs)
+                                                    extcall_coord_specs=extcall_length_specs,
+                                                    slot_alias=sender_key_alias)
         witness_check[enc] = wv
         if wv == "SUCCESSFUL":
             print(f"[witness enc={enc}] the single point survives the inserted "
@@ -10144,7 +10866,16 @@ def main():
         print(f"[certify enc={enc}] STRUCTURAL simple decision region: "
               f"{pre_structural_source[enc]}. No ESBMC certification query "
               "is started for this path.")
-    for enc, depth, ce in paths:
+    partial_after_signal = False
+
+    def _on_sigterm(signum, frame):
+        raise BudgetStop()
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError):
+        pass
+    try:
+      for enc, depth, ce in paths:
         box = regions.get(enc)
         if enc in structural_seed_regions:
             box = structural_seed_regions[enc]
@@ -10316,8 +11047,14 @@ def main():
         while queue:
             box, holes, has_ce, refinement_used = queue.pop(0)
             piece_no += 1
+            if piece_no > 1 and driver_elapsed() > DRIVER_PIECE_SHARE * args.timeout:
+                print(f"[certify enc={enc} piece {piece_no}] SKIPPED: {driver_elapsed():.0f}s of "
+                      f"the {args.timeout}s unit budget are spent; discarded-side pieces are "
+                      f"tried only inside the first {int(DRIVER_PIECE_SHARE*100)}% (TODO 30 #2)")
+                continue
             tag = (f"enc={enc}" if args.max_region_pieces <= 1 else f"enc={enc} piece {piece_no}")
             last_wit, last_wit_box = {}, dict(box)
+            last_safety_wits = []
             # C3: |R| may only ever get NARROWER across shrink rounds. Seeded
             # with the piece as measured, then compared after every accepted
             # cut. Per piece: a sibling piece is a different set and comparing
@@ -10331,12 +11068,12 @@ def main():
             # sets and may retreat on different coordinates.
             retreated = dict(
                 structural_seed_retreats.get(enc) or structural_region_retreats.get(enc) or {})
-            established = dict(
+            established = certify_establish(
                 structural_seed_establishes.get(enc) or structural_region_establishes.get(enc)
-                or {})
+                or {}, box)
             tiny_safety_cut_coord, tiny_safety_cut_streak = None, 0
             for _ in range(args.shrink_rounds):
-                v, nb, wit, punches, unexp, unknown_why = certify(
+                v, nb, wit, punches, unexp, unknown_why, safety_wits = certify(
                     args.esbmc,
                     args.sol,
                     args.contract,
@@ -10346,19 +11083,21 @@ def main():
                     box,
                     ce,
                     dict(query_pins(), **xpins),
-                    args.max_tx,
+                    query_max_tx,
                     args.timeout,
                     cwd,
                     ast=args.ast,
                     focus=focus,
                     memlimit=args.memlimit,
                     holes=holes,
-                    esbmc_args=args.esbmc_arg,
+                    esbmc_args=tuple(args.esbmc_arg),
+                    certify_extra=tuple(args.certify_esbmc_arg),
                     state_structs=args.state_struct_fields,
                     establish=established,
                     param_types=enumeration_param_types,
                     state_types=enumeration_state_types,
-                    extcall_coord_specs=extcall_length_specs)
+                    extcall_coord_specs=extcall_length_specs,
+                    slot_alias=sender_key_alias)
                 # ---- A COORDINATE THE QUERY CANNOT EXPRESS: DROP AND RETRY ----
                 #
                 # Not a shrink round. The tool declined to ATTEMPT the query, so
@@ -10402,6 +11141,11 @@ def main():
                         xpins.pop(n, None)
                         box.pop(n, None)
                         holes.pop(n, None)
+                        # A FREED coordinate travels with its bound: a name the
+                        # query cannot express cannot be freed either, and the
+                        # tool refuses the free under the same wording.
+                        if established.get(n) == "*":
+                            established.pop(n, None)
                     # RECORDED, because `pins` is GLOBAL across paths: only the
                     # first path that hits the refusal prints this line, and
                     # every later path's region silently no longer carries the
@@ -10422,7 +11166,7 @@ def main():
                           "which is a STRONGER statement than the slice that "
                           "was asked for. Re-querying")
                     prev_size = region_size(box, holes)
-                    v, nb, wit, punches, unexp, unknown_why = certify(
+                    v, nb, wit, punches, unexp, unknown_why, safety_wits = certify(
                         args.esbmc,
                         args.sol,
                         args.contract,
@@ -10432,7 +11176,7 @@ def main():
                         box,
                         ce,
                         dict(query_pins(), **xpins),
-                        args.max_tx,
+                        query_max_tx,
                         args.timeout,
                         cwd,
                         ast=args.ast,
@@ -10450,12 +11194,14 @@ def main():
                         # threading state_structs through the same two call
                         # sites; fixed here rather than left in a line this
                         # commit already touches.
-                        esbmc_args=args.esbmc_arg,
+                        esbmc_args=tuple(args.esbmc_arg),
+                    certify_extra=tuple(args.certify_esbmc_arg),
                         state_structs=args.state_struct_fields,
                         establish=established,
                         param_types=enumeration_param_types,
                         state_types=enumeration_state_types,
-                        extcall_coord_specs=extcall_length_specs)
+                        extcall_coord_specs=extcall_length_specs,
+                        slot_alias=sender_key_alias)
                 if reason is not None:
                     # Set only by the un-droppable-refusal branch above. Leaving
                     # the for-loop here is what keeps a refused query out of the
@@ -10464,6 +11210,7 @@ def main():
                 if wit:
                     last_wit = wit
                     last_wit_box = dict(box)
+                    last_safety_wits = list(safety_wits or [])
                 if v == "SUCCESSFUL":
                     # C2, BEFORE the region is recorded as certified. A region
                     # that excludes this path's own counterexample is certified
@@ -10543,7 +11290,9 @@ def main():
                     ok_retreated[(enc, piece_no)] = dict(retreated)
                     ok_refinement_used[(enc, piece_no)] = bool(refinement_used)
                     ok_established[(enc, piece_no)] = dict(established)
-                    ok_extcall[(enc, piece_no)] = dict(xpins)
+                    ok_extcall[(enc, piece_no)] = dict(
+                        {n: v for n, v in pins.items() if str(n).startswith("extcall.")},
+                        **xpins)
                     if retreated:
                         print(f"[certify {tag}] certified with "
                               f"{len(retreated)} coordinate(s) PINNED at x_pi "
@@ -10639,7 +11388,37 @@ def main():
                 # Applied ONLY when the tool actually suggested one, so a log
                 # carrying only a SHRINK line drives exactly the path it did
                 # before this existed -- which is what the must-flip test pins.
+                # ---- PUNCH ONLY A KNOWN SIBLING POINT ----
+                #
+                # Definition 5's punch removes the witness ITSELF. That is the
+                # right answer when the refuter is a point -- a sibling whose
+                # domain on this box is one value (`to == 255`), which is the
+                # shape the punch was built for and is recognisable: the
+                # witness coincides with a sibling's own known member. It is
+                # the WRONG answer when the refuter is a set of positive
+                # measure (`amount > deposits[msg.sender]`, `msg.sender !=
+                # owner`): every punch removes one point of it, the next query
+                # returns another, and each punch costs a shrink round. MEASURED
+                # on motivation_FeeVault freeC/freeF: three punches on
+                # `amount != 2`, `!= 3`, ... spent three of the four shrink
+                # rounds and the retreat that would have certified the path
+                # came one round too late; corpus-wide, 961 of the recorded
+                # punches/retreats landed on `msg.sender` alone. A witness that
+                # matches no sibling's known member goes to the cut/retreat
+                # rule below instead, which removes a SIDE.
+                _sib_members = [sce for _se, _sd, sce in paths if _se != enc]
+                _cmp = [c for c in box if c in last_wit]
+                _known_sibling_point = bool(_cmp) and any(
+                    all(str(sce.get(c)) == str(last_wit.get(c)) for c in _cmp if c in sce)
+                    and any(c in sce for c in _cmp)
+                    for sce in _sib_members)
                 usable = [(c, val) for c, val in punches if len(holes.get(c, ())) < args.max_holes]
+                if usable and not _known_sibling_point:
+                    print(f"[punch {tag}] NOT punched: the refuting witness is not a known "
+                          f"member of any sibling path on this box's coordinates, so it "
+                          f"is read as one point of a refuting SET and answered by a cut "
+                          f"or a retreat, not by a hole")
+                    usable = []
                 if usable:
                     refinement_used = True
                     tiny_safety_cut_coord, tiny_safety_cut_streak = None, 0
@@ -10667,7 +11446,20 @@ def main():
                 if args.cut_policy == "spec":
                     _rng = assumed_ranges(last_wit_box, pins)
                     _ahs = assumed_holes(holes, pins)
-                    kind, payload = refutation_response(box, holes, ce, last_wit, pins, _rng, _ahs)
+                    kind, payload = None, None
+                    if unknown_why == "UNSAFE" and last_safety_wits and args.ast:
+                        _sc = safety_cut_from_witnesses(box, holes, ce, pins, _rng, _ahs,
+                                                        last_safety_wits, args.ast, args.sol,
+                                                        args.contract, args.unit)
+                        if _sc is not None:
+                            kind, payload = "cut", _sc[:4]
+                            print(f"[cut {tag}] checked-arithmetic refutation(s) at source "
+                                  f"line(s) {sorted(set(l for l in _sc[4] if l is not None))}: "
+                                  f"{len(last_safety_wits)} refuting witness(es) read on the "
+                                  f"violated operation's dependence cone, cuts on the same "
+                                  f"coordinate intersected")
+                    if kind is None:
+                        kind, payload = refutation_response(box, holes, ce, last_wit, pins, _rng, _ahs)
                     if kind == "coords-gate":
                         # NOT another round. The method routes this to the
                         # coordinate gate and names the responsible quantity;
@@ -10923,6 +11715,11 @@ def main():
     # splitting, exactly the kind this function exists to catch, and skipping
     # them would leave the new code as the only part of the loop with no
     # partition check on it.
+    except BudgetStop:
+        partial_after_signal = True
+        print(f"[certify] BUDGET SIGNAL (SIGTERM) at {driver_elapsed():.0f}s: the certification "
+              f"loop ends here; {len(ok)} certified region(s) so far are written as a PARTIAL "
+              f"result (TODO 30 #2)")
     overlap = certified_overlap(ok, ok_holes, ok_established, ok_extcall)
     if overlap:
         print("\n=== INVARIANT VIOLATED: certified regions intersect ===")
@@ -11043,6 +11840,12 @@ def main():
         args.path_function,
         "max_tx":
         args.max_tx,
+        "query_max_tx":
+        query_max_tx,
+        "log_ladder":
+        bool(args.log_ladder),
+        "certify_esbmc_args":
+        list(args.certify_esbmc_arg),
         # THE ALPHABET TRAVELS WITH THE LENGTH. A region measured under one
         # scope may not be quoted into another's table, and until this field
         # existed the artefact recorded only half of the configuration -- so
@@ -11075,6 +11878,8 @@ def main():
         },
         "dropped_by_certify":
         sorted(dropped_by_certify),
+        "partial_after_signal":
+        partial_after_signal,
         "certified": [
             {
                 "enc":

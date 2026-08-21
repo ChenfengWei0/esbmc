@@ -6,7 +6,7 @@
 class clang_cpp_maint : public clang_c_maint
 {
 public:
-  clang_cpp_maint(contextt &_context);
+  clang_cpp_maint(contextt &_context, bool call_atexit_handler = true);
 
   // code adjustment for C++, e.g. adding implicit this in ctor when
   // adjusting the object initialization

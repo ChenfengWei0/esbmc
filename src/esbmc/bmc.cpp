@@ -189,6 +189,305 @@ bmct::bmct(
   }
 }
 
+
+// ---- WITNESS MINIMISATION FOR A REFUTED CERTIFICATION SAFETY CLAIM --------
+//
+// A checked-arithmetic refutation under --path-cov-certify is answered by the
+// driver with a CUT at the witness on the coordinate the refutation points at
+// (method §Certification). The solver's model is any violating point, and on a
+// threshold-shaped violation (`feeBps - discountBps` reverts for discountBps >
+// 250) it is typically an extreme one (65535): the cut then removes a sliver
+// and the next witness is the next extreme, so a 4-round shrink budget halves
+// the interval at best. MEASURED on motivation_FeeVault enc=119 (freeM):
+// 65535 -> 33017 -> 32766 -> 16382, budget exhausted, not certified.
+//
+// The method says nothing about WHICH violating point the tool returns, and a
+// witness closer to x_pi leaves "the region as wide as the refutation allows"
+// (the method's own criterion for a cut). So, per bounded coordinate on which
+// the model differs from x_pi: (1) if the claim is still violable with the
+// coordinate AT x_pi's value, pin it there in the model (the coordinate is not
+// what this violation is about, and the driver then sees no difference on it);
+// (2) otherwise search the least distance from x_pi at which a violation
+// exists -- geometric doubling then bisection, each step one incremental
+// re-solve under a pushed constraint, SAT steps kept and UNSAT steps popped --
+// and leave the tightest constraint in place so the trace harvested below is
+// that point. Sound by construction: every kept constraint is satisfied by a
+// genuine violating execution, so the reported witness is one. Bounded by a
+// solve budget; on budget exhaustion whatever was tightened stands.
+static void path_cov_minimise_certify_witness(
+  symex_target_equationt &eq,
+  smt_convt &solver,
+  const std::string &claim_txt)
+{
+  static const std::string tag = "path-cov-certify-bound:";
+  // Per claim; a 256-bit coordinate needs up to 2*256 re-solves for a full
+  // gallop+bisect, so the per-coordinate cap is 2*bits+4 and the claim cap
+  // covers two such coordinates (TODO 30 #5).
+  const size_t solve_cap = 640;
+  size_t solves = 0;
+  bool changed = false;
+  size_t n_assume = 0, n_tagged = 0, n_ignored = 0, n_shape = 0, n_unnamed = 0,
+         n_noval = 0, n_equal = 0;
+  // The solver must be in a SAT state before `get` is asked for a model value;
+  // a popped UNSAT probe leaves it in an UNSAT state (Bitwuzla aborts on
+  // get_value there), so the last verdict is tracked and the model refreshed.
+  bool last_sat = true;
+  auto parse_big = [](const std::string &s) -> BigInt {
+    return (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X'))
+             ? BigInt(s.c_str() + 2, 16)
+             : string2integer(s);
+  };
+  // (name, coordinate expression) pairs. Handles first -- the ghost
+  // `__ESBMC_certify_coord$N := bs` assignments carry the renamed coordinate
+  // whatever the bound folded to -- then the bound ASSUME steps for any
+  // coordinate without a handle. `state.*` coordinates go before the rest:
+  // for a two-coordinate relation (`amount > deposits`, x_pi = (1,1)) pinning
+  // the parameter first leaves the state coordinate as the difference and
+  // costs the driver an extra round, where pinning the state coordinate
+  // first leaves `amount = 2` and the cut lands on the parameter at once.
+  std::vector<std::pair<std::string, expr2tc>> targets;
+  std::set<std::string> have;
+  for (auto &st : eq.SSA_steps)
+  {
+    if (!st.is_assignment() || st.ignore || is_nil_expr(st.lhs) ||
+        !is_symbol2t(st.lhs))
+      continue;
+    const std::string ln = to_symbol2t(st.lhs).get_symbol_name();
+    if (ln.find("__ESBMC_certify_coord$") == std::string::npos)
+      continue;
+    std::string cname;
+    for (const auto &[hid, coord] :
+         goto_coveraget::path_cov_certify_coord_handles)
+      if (ln.rfind(hid, 0) == 0)
+      {
+        cname = coord;
+        break;
+      }
+    if (cname.empty() || have.count(cname) || is_nil_expr(st.rhs))
+      continue;
+    have.insert(cname);
+    targets.emplace_back(cname, st.rhs);
+  }
+  std::stable_sort(
+    targets.begin(), targets.end(), [](const auto &a, const auto &b) {
+      const bool sa = a.first.rfind("state.", 0) == 0;
+      const bool sb = b.first.rfind("state.", 0) == 0;
+      return sa && !sb;
+    });
+  for (auto &st : eq.SSA_steps)
+  {
+    if (!st.is_assume() || !st.source.is_set)
+      continue;
+    ++n_assume;
+    const std::string cm = st.source.pc->location.comment().as_string();
+    if (cm.rfind(tag, 0) != 0)
+      continue;
+    ++n_tagged;
+    if (st.ignore)
+    {
+      ++n_ignored;
+      continue;
+    }
+    const std::string name = cm.substr(tag.size());
+    if (have.count(name))
+      continue;
+    // The bound was emitted as `and(ge(bs, lo), le(bs, hi))` but symex and
+    // the simplifier rewrite it (a `ge(x, 0)` on an unsigned is folded away,
+    // the guard may be an implication), so the coordinate expression is
+    // recovered as "the non-constant side of the first comparison found".
+    expr2tc bs;
+    {
+      std::vector<expr2tc> stack{st.cond};
+      while (!stack.empty() && is_nil_expr(bs))
+      {
+        expr2tc e = stack.back();
+        stack.pop_back();
+        if (is_nil_expr(e))
+          continue;
+        if (is_and2t(e))
+        {
+          stack.push_back(to_and2t(e).side_2);
+          stack.push_back(to_and2t(e).side_1);
+        }
+        else if (is_implies2t(e))
+          stack.push_back(to_implies2t(e).side_2);
+        else if (is_not2t(e))
+          stack.push_back(to_not2t(e).value);
+        else if (
+          is_greaterthanequal2t(e) || is_lessthanequal2t(e) ||
+          is_greaterthan2t(e) || is_lessthan2t(e) || is_equality2t(e) ||
+          is_notequal2t(e))
+        {
+          const expr2tc &a = *e->get_sub_expr(0);
+          const expr2tc &b = *e->get_sub_expr(1);
+          if (is_constant_int2t(b) && !is_constant_int2t(a))
+            bs = a;
+          else if (is_constant_int2t(a) && !is_constant_int2t(b))
+            bs = b;
+        }
+      }
+    }
+    if (is_nil_expr(bs))
+    {
+      ++n_shape;
+      continue;
+    }
+    have.insert(name);
+    targets.emplace_back(name, bs);
+  }
+  for (const auto &[name, bs] : targets)
+  {
+    const type2tc &bt = bs->type;
+    if (!is_unsignedbv_type(bt) && !is_signedbv_type(bt))
+      continue;
+    const auto xit = goto_coveraget::path_cov_certify_ce.find(name);
+    if (xit == goto_coveraget::path_cov_certify_ce.end())
+    {
+      ++n_unnamed;
+      continue;
+    }
+    BigInt c;
+    try
+    {
+      c = parse_big(xit->second);
+    }
+    catch (...)
+    {
+      continue;
+    }
+    if (!last_sat)
+    {
+      if (solver.dec_solve() != smt_convt::P_SATISFIABLE)
+        break;
+      last_sat = true;
+    }
+    expr2tc wv = solver.get(bs);
+    if (is_nil_expr(wv) || !is_constant_int2t(wv))
+    {
+      ++n_noval;
+      continue;
+    }
+    const BigInt w = to_constant_int2t(wv).value;
+    // A coordinate ALREADY at x_pi is pinned there all the same (one cheap
+    // re-solve): a later move of another coordinate may change what this one
+    // denotes -- MEASURED: `discountBps[msg.sender]` read 1 at sender 0, was
+    // skipped as equal, then `msg.sender` moved to x_pi's own value and the
+    // payload reported the new sender's slot, unconstrained, as 127.
+    auto sat_with = [&](const expr2tc &cons) -> bool {
+      if (solves >= solve_cap)
+        return false;
+      ++solves;
+      solver.push_ctx();
+      solver.assert_ast(solver.convert_ast(cons));
+      const smt_convt::resultt r = solver.dec_solve();
+      last_sat = (r == smt_convt::P_SATISFIABLE);
+      if (last_sat)
+        return true;
+      solver.pop_ctx();
+      return false;
+    };
+    auto between = [&](const BigInt &a, const BigInt &b) -> expr2tc {
+      const BigInt lo = a < b ? a : b, hi = a < b ? b : a;
+      return and2tc(
+        greaterthanequal2tc(bs, constant_int2tc(bt, lo)),
+        lessthanequal2tc(bs, constant_int2tc(bt, hi)));
+    };
+    // (1) the violation does not need this coordinate to move at all
+    if (sat_with(equality2tc(bs, constant_int2tc(bt, c))))
+    {
+      changed = true;
+      if (w == c)
+        ++n_equal;
+      else
+        log_status(
+          "--path-cov-certify: witness for '{}' on coordinate '{}' moved from "
+          "{} to x_pi's own {} -- the violation does not depend on it",
+          claim_txt,
+          name,
+          integer2string(w),
+          integer2string(c));
+      continue;
+    }
+    if (w == c)
+    {
+      // equal in the model yet not pinnable together with the constraints
+      // already pushed: leave it, the search below would find nothing closer
+      ++n_equal;
+      continue;
+    }
+    // (2) least distance from x_pi at which the violation exists
+    const bool up = w > c;
+    const BigInt dist = up ? w - c : c - w;
+    BigInt lo_d = 0, hi_d = dist, k = 1;
+    bool bracketed = false;
+    const size_t coord_cap = std::min(
+      solve_cap, solves + 2 * (size_t)bt->get_width() + 4);
+    while (k < dist && solves < coord_cap)
+    {
+      const BigInt probe = up ? c + k : c - k;
+      if (sat_with(between(c, probe)))
+      {
+        hi_d = k;
+        bracketed = true;
+        break;
+      }
+      lo_d = k;
+      k = k * 2;
+    }
+    if (!bracketed)
+    {
+      // the known witness itself is the bracket's far end
+      if (!sat_with(between(c, w)))
+        continue;
+      hi_d = dist;
+    }
+    while (hi_d - lo_d > 1 && solves < coord_cap)
+    {
+      const BigInt mid = (lo_d + hi_d) / 2;
+      const BigInt probe = up ? c + mid : c - mid;
+      if (sat_with(between(c, probe)))
+        hi_d = mid;
+      else
+        lo_d = mid;
+    }
+    changed = true;
+    log_status(
+      "--path-cov-certify: witness for '{}' on coordinate '{}' minimised from "
+      "{} toward x_pi={} to {} ({} re-solve(s) so far{})",
+      claim_txt,
+      name,
+      integer2string(w),
+      integer2string(c),
+      integer2string(up ? c + hi_d : c - hi_d),
+      solves,
+      solves >= solve_cap ? ", budget exhausted" : "");
+  }
+  log_status(
+    "--path-cov-certify: witness minimisation for '{}': {} assume step(s), {} "
+    "box-bound step(s), {} sliced, {} of unexpected shape, {} not in x_pi, {} "
+    "without a model value, {} already at x_pi, {} re-solve(s)",
+    claim_txt,
+    n_assume,
+    n_tagged,
+    n_ignored,
+    n_shape,
+    n_unnamed,
+    n_noval,
+    n_equal,
+    solves);
+  if (changed || !last_sat)
+  {
+    // Refresh the model under the constraints left pushed: the last re-solve
+    // may have been a popped UNSAT probe, and the harvest below reads `get`.
+    if (solver.dec_solve() != smt_convt::P_SATISFIABLE)
+      log_warning(
+        "--path-cov-certify: witness minimisation for '{}' ended in a "
+        "non-SAT state; the harvested witness is whatever the solver holds",
+        claim_txt);
+  }
+}
+
+
 void bmct::successful_trace(const symex_target_equationt &eq [[maybe_unused]])
 {
   if (options.get_bool_option("result-only"))
@@ -3688,6 +3987,11 @@ smt_convt::resultt bmct::multi_property_check(
   //   * the PARTIAL report's `claims_decided` / `claims_total`;
   //   * the signal-safe snapshot the kill handler reads.
   std::atomic<size_t> decided_claims{0};
+  // A solver non-answer is not a decided property and dominates the aggregate
+  // result even if another parallel job later obtains SAT or UNSAT. P_SMTLIB
+  // stays distinct so formula-output mode can emit every property.
+  std::atomic<bool> solver_error_seen{false};
+  std::atomic<bool> smtlib_seen{false};
   // Sequential default consumes `jobs` in iteration order; using a sorted
   // vector lets us solve user-source claims before c2goto/library claims so
   // multi-property doesn't burn the budget on spurious library-side dereference
@@ -3992,6 +4296,8 @@ smt_convt::resultt bmct::multi_property_check(
                        &eq,
                        &ce_counter,
                        &decided_claims,
+                       &solver_error_seen,
+                       &smtlib_seen,
                        &remaining_claims,
                        &fault_after,
                        &fault_sigterm,
@@ -4045,6 +4351,8 @@ smt_convt::resultt bmct::multi_property_check(
 
     //"multi-fail-fast n": stop after first n SATs found.
     if (is_fail_fast && fail_fast_cnt >= fail_fast_limit)
+      return;
+    if (solver_error_seen.load(std::memory_order_relaxed))
       return;
 
     // Since this is just a copy, we probably don't need a lock
@@ -4148,9 +4456,25 @@ smt_convt::resultt bmct::multi_property_check(
     // runs keep the historical behaviour because the safety claim itself may
     // be user-visible there. Probe claims are still solved: they are the
     // explicit --path-cov-probe witness source.
+    //
+    // CERTIFICATION IS THE EXCEPTION, for the checks it was asked to carry.
+    // In --path-cov-certify mode an overflow/division claim is not a side
+    // goal: a refuted one IS the `RESULT: UNSAFE` verdict (the only way a
+    // checked-arithmetic revert inside the box can be reported), and the
+    // driver always passes --result-only. MEASURED on motivation_FeeVault
+    // (discountBps in [1, 65535], feeBps - discountBps): with the skip in
+    // force the per-claim pass never solved the overflow claims, the forward
+    // condition then failed on them at every k, the run idled to
+    // --max-k-step and reported UNDECIDED; the same query without
+    // --result-only reported UNSAFE in one k-step with the refuting witness.
+    const bool certify_safety_claim =
+      goto_coveraget::path_cov_certify_mode &&
+      (claim.claim_property == "overflow" ||
+       claim.claim_property == "division-by-zero");
     if (
       is_path_cov && options.get_bool_option("result-only") &&
-      !is_probe_claim && claim.claim_property != "instrumented assertion")
+      !is_probe_claim && !certify_safety_claim &&
+      claim.claim_property != "instrumented assertion")
     {
       ++summary.skipped_properties;
       return;
@@ -4481,13 +4805,6 @@ smt_convt::resultt bmct::multi_property_check(
       }
     }
 
-    // This claim now HAS a verdict. Counted here rather than at the bottom of
-    // the job so that a job which throws while building its counterexample
-    // still counts the decision it genuinely made -- the whole quarrel with the
-    // old behaviour is that decided work was thrown away.
-    const size_t decided_now = ++decided_claims;
-    goto_coveraget::live_decided.store(decided_now, std::memory_order_relaxed);
-
     double solve_time_s = (solve_stop - solve_start);
 
     // Atomically update summary with timing and results
@@ -4498,6 +4815,27 @@ smt_convt::resultt bmct::multi_property_check(
       new_total_time_s = old_total_time_s + solve_time_s;
     } while (!summary.total_time_s.compare_exchange_weak(
       old_total_time_s, new_total_time_s));
+
+    if (!answered)
+    {
+      summary.unknown_properties++;
+      if (is_path_cov)
+        goto_coveraget::path_cov_solver_inconclusive.store(
+          true, std::memory_order_relaxed);
+      if (solver_result == smt_convt::P_ERROR)
+        solver_error_seen.store(true, std::memory_order_relaxed);
+      else
+        smtlib_seen.store(true, std::memory_order_relaxed);
+      std::lock_guard lock(result_mutex);
+      final_result = solver_result;
+      return;
+    }
+
+    // This claim now has a decided SAT/UNSAT verdict. P_ERROR/P_SMTLIB return
+    // above, so fault-injection and partial-report counts cannot call them
+    // decided work.
+    const size_t decided_now = ++decided_claims;
+    goto_coveraget::live_decided.store(decided_now, std::memory_order_relaxed);
 
     if (solver_result == smt_convt::P_SATISFIABLE)
     {
@@ -4711,6 +5049,24 @@ smt_convt::resultt bmct::multi_property_check(
               prettify_solidity_expr(claim.claim_msg));
         }
       }
+
+      // Every REFUTING witness of a certification query is minimised -- the
+      // checked-arithmetic claims and the exit asserts alike; only the
+      // non-vacuity witness is left as solved, because it is not a refutation
+      // (it is expected to FAIL and its model is a member of the path). The
+      // exit-assert case matters as much as the safety case: MEASURED (freeN),
+      // the relation refuter `amount > deposits` came back with arbitrary
+      // `discountBps`/`block.*`, and the driver's multi-coordinate retreat
+      // pinned all of them, certifying a point where the sliver was available.
+      if (
+        goto_coveraget::path_cov_certify_mode &&
+        solver_result == smt_convt::P_SATISFIABLE && !is_probe_claim &&
+        claim.claim_msg.find("#nonvacuous") == std::string::npos &&
+        (claim.claim_property == "overflow" ||
+         claim.claim_property == "division-by-zero" ||
+         claim.claim_msg.find(":path:") != std::string::npos))
+        path_cov_minimise_certify_witness(
+          local_eq, *solver_ptr, prettify_solidity_expr(claim.claim_msg));
 
       bool is_compact_trace = true;
       if (
@@ -5040,6 +5396,13 @@ smt_convt::resultt bmct::multi_property_check(
           // `input_seen` on purpose: sharing one set lets an environment name
           // and a parameter name suppress each other.
           std::map<std::string, std::string> last_env;
+          // The environment AT THE UNIT'S ENTRY, taken at the entry mark the
+          // certify/assert queries insert. The box bounds an ENTRY box; the
+          // last-write `last_env` can report a later reseed (MEASURED:
+          // block.number 2^256-2 in the payload while the bound's own symbol
+          // sat at x_pi's 0), and the driver then cuts a coordinate that
+          // never moved (TODO 30 #4). Empty outside those modes.
+          std::map<std::string, std::string> entry_env;
           std::set<std::string> input_seen;
           // FIRST WRITE WINS, its own set, for the same reason `last_env` has
           // its own map: a local's name may collide with a parameter's and one
@@ -5286,6 +5649,24 @@ smt_convt::resultt bmct::multi_property_check(
               continue;
             if (is_nil_expr(st.lhs) || is_nil_expr(st.value))
               continue;
+            // ---- ENTRY MARK: re-take the entry snapshot ----
+            //
+            // `--path-cov-certify` / `--path-cov-assert` insert their
+            // establish assignments (a relation-backed entry state, or a
+            // FREED coordinate) as the unit body's first instructions and
+            // follow them with an assignment to `__ESBMC_*_entry_mark$N`.
+            // The snapshot taken above, at the frame push, predates those
+            // assignments; the entry state the QUERY was about is the one in
+            // force here. Same depth bookkeeping as the push-time snapshot.
+            if (is_symbol2t(st.lhs) &&
+                to_symbol2t(st.lhs).thename.as_string().find("_entry_mark$") !=
+                  std::string::npos)
+            {
+              if (!st.stack_trace.empty())
+                entry_by_depth[count_target_frames(st.stack_trace)] = last_state;
+              entry_env = last_env;
+              continue;
+            }
             // Diagnostic for the classification below: `--verbosity
             // coverage:9` prints every assignment the harvest sees, with the
             // things the classification keys on. Without it, an empty
@@ -5876,7 +6257,12 @@ smt_convt::resultt bmct::multi_property_check(
           // value that belongs in the report is the one in force when the unit
           // ran, and that is only known once the walk has stopped at this path's
           // own assert.
-          for (const auto &[n, v] : last_env)
+          for (const auto &[n, v] :
+               ((goto_coveraget::path_cov_certify_mode ||
+                 goto_coveraget::path_cov_assert_mode) &&
+                    !entry_env.empty()
+                  ? entry_env
+                  : last_env))
             ce.env.emplace_back(n, v);
           if (assert_depth_known)
           {
@@ -6319,6 +6705,12 @@ smt_convt::resultt bmct::multi_property_check(
       ctest_gen,
       foundry_gen);
 
+  if (solver_error_seen.load(std::memory_order_relaxed))
+    return smt_convt::P_ERROR;
+  if (smtlib_seen.load(std::memory_order_relaxed))
+    return smt_convt::P_SMTLIB;
+  if (bs && !is_path_cov && final_result == smt_convt::P_SATISFIABLE)
+    return final_result;
   return final_result;
 }
 

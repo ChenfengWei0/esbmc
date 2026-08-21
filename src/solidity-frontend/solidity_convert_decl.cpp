@@ -2004,8 +2004,8 @@ bool solidity_convertert::get_error_definition(const nlohmann::json &ast_node)
 
   // Custom error body: `__ESBMC_assume(false)` to prune the revert path
   // at the SMT level (matches real-EVM revert-aborts-construction
-  // semantics). Coverage-mode exception (--branch-coverage-claims and
-  // --solidity-path-coverage):
+  // semantics). Enumeration-only coverage exception
+  // (--branch-coverage-claims and plain --solidity-path-coverage):
   // a custom error inside a constructor invariant pruning the
   // construction path means EVERY post-constructor path is proven
   // unreachable when SAT cannot satisfy the invariant's PASS direction
@@ -2016,13 +2016,13 @@ bool solidity_convertert::get_error_definition(const nlohmann::json &ast_node)
   // must NOT prune those paths.  Emit `code_skipt()` so the revert
   // "continues" — sound for the coverage-measurement methodology
   // (every reach reported is a real reach in some execution model);
-  // unsound for safety verification on the same run (so this flip is
-  // gated on `--branch-coverage-claims`, which already converts
-  // assertions to guards via goto_coverage.cpp:438-441 for the same
-  // reason — the mode is for coverage, not safety).
+  // unsound for safety verification on the same run. Certification and
+  // assertion queries therefore publish `path-cov-proof-query` and retain the
+  // pruning body: they quantify only over successfully deployed contracts.
   const bool coverage_mode =
-    !config.options.get_option("branch-coverage-claims").empty() ||
-    config.options.get_bool_option("solidity-path-coverage-enabled");
+    (!config.options.get_option("branch-coverage-claims").empty() ||
+     config.options.get_bool_option("solidity-path-coverage-enabled")) &&
+    !config.options.get_bool_option("path-cov-proof-query");
   code_blockt body;
   if (coverage_mode)
   {

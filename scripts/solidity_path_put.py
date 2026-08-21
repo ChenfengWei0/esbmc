@@ -3633,7 +3633,7 @@ def boundary_observation_points(region, params, witness=None, max_points=None):
 # short on real units (DateTime.getHour walked [0,10] -> [0,14] -> [0,20] and
 # ran out before the true [0,23]); four lets those converge while the
 # type-wide-interval guard still drops an unbounded observable immediately.
-BOUNDARY_OBSERVATION_REFINEMENT_ROUNDS = 4
+BOUNDARY_OBSERVATION_REFINEMENT_ROUNDS = 5
 
 
 def boundary_observation_r2_spec(observations, directions=None, refinement_rounds=0):
@@ -3670,22 +3670,31 @@ def boundary_observation_r2_spec(observations, directions=None, refinement_round
     for name, samples in sorted(grouped.items()):
         posts = [post for _pre, post in samples]
         lo, hi = min(posts), max(posts)
-        absolute_candidates = [{
-            "id": "boundary_abs",
-            "lo": {
-                "kind": "literal",
-                "value": str(lo)
-            },
-            "hi": {
-                "kind": "literal",
-                "value": str(hi)
-            },
-        }]
+        # THREE candidates, not one. The two-sided [lo, hi] is what the paper
+        # names; the two ONE-SIDED halves are what let a proved side survive a
+        # refuted one. MEASURED on FeeVault.withdraw: observed [9751, 20711],
+        # the true upper bound is 20921, and the single two-sided candidate was
+        # refuted four rounds running while its lower bound -- the half that
+        # kills mutant M2 -- was correct from the first query and never reached
+        # the PUT. A side is a monotone one-dimensional claim on its own; it
+        # should be proved on its own.
+        absolute_candidates = [_r22_abs_candidate("boundary_abs", lo, hi)]
+        if lo > 0:
+            absolute_candidates.append(_r22_abs_candidate("boundary_abs_lo", lo, UINT256_MAX))
+        if hi < UINT256_MAX:
+            absolute_candidates.append(_r22_abs_candidate("boundary_abs_hi", 0, hi))
         entry = {
             "name": name,
             "equals": [],
             "abs": absolute_candidates,
             "deltas": [],
+            # State of the two independent bound searches (see
+            # refine_boundary_observation_r2_spec). `lo_obs`/`hi_obs` are
+            # values KNOWN TO OCCUR -- observations and counterexamples -- and
+            # bracket every admissible bound from the inside.
+            "search": {"lo_obs": str(lo), "hi_obs": str(hi),
+                       "up": {"refuted": None, "proved": None},
+                       "down": {"refuted": None, "proved": None}},
         }
         direction = directions.get(name)
         if direction in ("inc", "dec") and all(pre is not None for pre, _post in samples):
@@ -3728,14 +3737,94 @@ def boundary_observation_r2_spec(observations, directions=None, refinement_round
     }]
 
 
-def refine_boundary_observation_r2_spec(spec, refutations):
-    """Expand one R2.2 bound with verifier counterexample observations.
+# Rungs per side per round when no proved bound brackets the search yet
+# (exponential gallop up/down from the last value known to occur), and when one
+# does (uniform probes strictly between the refuted and the proved bound).
+R22_GALLOP_RUNGS = 24
+R22_BISECT_RUNGS = 15
 
-    ``refutations`` maps ``(var, canonical_rung_text)`` to a ``post`` value and
-    optionally a ``pre`` value.  The certified input part is deliberately not
-    changed here: R2.2's refinement variable is the proposed output bound.
-    Return ``(refined_spec, changed)``.  A type-wide uint256 bound is dropped
-    rather than emitted as a tautological oracle.
+
+def _r22_abs_candidate(cid, lo, hi):
+    return {"id": cid,
+            "lo": {"kind": "literal", "value": str(int(lo))},
+            "hi": {"kind": "literal", "value": str(int(hi))}}
+
+
+def _r22_abs_rung_text(name, lo, hi):
+    prefix = "return" if name == RETURN_VAR else "post"
+    return canonical_oracle_rung_text(f"{prefix} in [{lo}, {hi}]")
+
+
+def _r22_next_upper(hi_obs, refuted, proved):
+    """Next-round candidate values for an upper bound H (`x <= H`).
+
+    Provability of `x <= H` is upward closed in H, and every value known to
+    occur is a lower limit on H. With no proved H yet: gallop H = base + 2^j - 1
+    from the smallest H not known to fail. With a proved H: uniform probes
+    strictly between the largest refuted H and the smallest proved H. Empty
+    when the search is exact (the proved H is a value that occurs, or sits one
+    above a refuted one).
+    """
+    if proved is not None and proved <= hi_obs:
+        return []
+    if proved is None:
+        base = hi_obs if refuted is None else max(hi_obs, refuted + 1)
+        return sorted({min(UINT256_MAX, base + (1 << j) - 1) for j in range(R22_GALLOP_RUNGS)})
+    r = hi_obs - 1 if refuted is None else max(hi_obs - 1, refuted)
+    if proved - r <= 1:
+        return []
+    n = min(R22_BISECT_RUNGS, proved - r - 1)
+    return sorted({r + ((proved - r) * i) // (n + 1) for i in range(1, n + 1)} - {r, proved})
+
+
+def _r22_next_lower(lo_obs, refuted, proved):
+    """Mirror of `_r22_next_upper` for a lower bound L (`x >= L`), floored at 0."""
+    if proved is not None and proved >= lo_obs:
+        return []
+    if proved is None:
+        base = lo_obs if refuted is None else min(lo_obs, refuted - 1)
+        return sorted({max(0, base - ((1 << j) - 1)) for j in range(R22_GALLOP_RUNGS)})
+    r = lo_obs + 1 if refuted is None else min(lo_obs + 1, refuted)
+    if r - proved <= 1:
+        return []
+    n = min(R22_BISECT_RUNGS, r - proved - 1)
+    return sorted({proved + ((r - proved) * i) // (n + 1) for i in range(1, n + 1)} - {r, proved})
+
+
+def refine_boundary_observation_r2_spec(spec, refutations, verdicts=None):
+    """Refine R2.2 bounds by MONOTONE SEARCH, one side at a time, batched.
+
+    ``refutations`` maps ``(var, canonical_rung_text)`` to the counterexample's
+    ``post`` (and optionally ``pre``); ``verdicts`` is the list of
+    ``(var, text, verdict)`` rows the pass returned. The certified input part
+    is deliberately not changed here: R2.2's refinement variable is the
+    proposed output bound.
+
+    WHY NOT "ABSORB THE COUNTEREXAMPLE". The previous rule widened the one
+    candidate to include the one value the refutation reported, one value per
+    round, against a budget of four rounds. The paper's own margin note says
+    what that does -- "widening may need astronomically many rounds" -- and it
+    did: MEASURED on FeeVault.withdraw, [9751, 20711] -> 20842 -> 20863 ->
+    20864 -> 20874, budget exhausted, true bound 20921, nothing emitted. The
+    solver does not return the extreme value, so each round bought one
+    arbitrary step.
+
+    WHAT REPLACES IT. `x <= H` is provable for every H above the true maximum
+    and for none below it: a monotone predicate in H. Likewise `x >= L` in L.
+    Each side is therefore a one-dimensional search that a batch of probes
+    answers in one query -- gallop when nothing is proved yet, bisect between
+    the last refuted and the first proved value after that. The two sides are
+    searched INDEPENDENTLY as one-sided candidates (`[0, H]`, `[L, MAX]`), so a
+    side that is already right is not held hostage by the other, and the
+    two-sided `[L*, H*]` is added once both have a proved value. Values KNOWN
+    TO OCCUR (observations, counterexamples) bound every admissible H from
+    below and L from above, which is what makes the bisection exact.
+
+    Deltas keep the single-candidate absorption rule; they were not the
+    measured failure and are left alone.
+
+    Return ``(refined_spec, changed)``. A type-wide uint256 bound is never
+    proposed.
     """
     refined = json.loads(json.dumps(spec or {}))
     if refined.get("r2_subfamily") != "R2.2":
@@ -3744,57 +3833,151 @@ def refine_boundary_observation_r2_spec(spec, refutations):
     budget = int(refined.get("refinement_budget") or 0)
     if round_index >= budget:
         return refined, False
+    verdict_of = {}
+    for row in verdicts or []:
+        try:
+            v, t, d = row[0], row[1], row[2]
+        except (TypeError, IndexError):
+            continue
+        verdict_of[(v, canonical_oracle_rung_text(t))] = d
     changed = False
     for entry in refined.get("vars", []):
         name = entry.get("name")
-        for kind in ("abs", "deltas"):
-            candidates = entry.get(kind) or []
-            if len(candidates) != 1:
-                continue
+        # ---- abs: two independent monotone searches -------------------------
+        cands = entry.get("abs") or []
+        if cands:
+            search = entry.get("search") or {}
+            try:
+                lo_obs = int(str(search.get("lo_obs")), 0)
+                hi_obs = int(str(search.get("hi_obs")), 0)
+            except (TypeError, ValueError):
+                vals = []
+                for c in cands:
+                    try:
+                        vals += [int(str(c["lo"]["value"]), 0), int(str(c["hi"]["value"]), 0)]
+                    except (KeyError, TypeError, ValueError):
+                        pass
+                lo_obs, hi_obs = (min(vals), max(vals)) if vals else (0, 0)
+            up = dict(search.get("up") or {"refuted": None, "proved": None})
+            down = dict(search.get("down") or {"refuted": None, "proved": None})
+
+            def _int_or_none(x):
+                try:
+                    return None if x is None else int(str(x), 0)
+                except (TypeError, ValueError):
+                    return None
+            up_ref, up_prv = _int_or_none(up.get("refuted")), _int_or_none(up.get("proved"))
+            dn_ref, dn_prv = _int_or_none(down.get("refuted")), _int_or_none(down.get("proved"))
+            proved_pairs = set()
+            for c in cands:
+                try:
+                    lo = int(str(c["lo"]["value"]), 0)
+                    hi = int(str(c["hi"]["value"]), 0)
+                except (KeyError, TypeError, ValueError):
+                    continue
+                text = _r22_abs_rung_text(name, lo, hi)
+                d = verdict_of.get((name, text))
+                obs = (refutations or {}).get((name, text))
+                if d == "HOLDS":
+                    proved_pairs.add((lo, hi))
+                    # A one-sided candidate's TRIVIAL side proves nothing:
+                    # `[L, MAX]` says nothing about an upper bound, `[0, H]`
+                    # nothing about a lower one. Reading MAX as "proved H"
+                    # turned the upper search into a bisection of 2^256.
+                    if hi < UINT256_MAX:
+                        up_prv = hi if up_prv is None else min(up_prv, hi)
+                    if lo > 0:
+                        dn_prv = lo if dn_prv is None else max(dn_prv, lo)
+                    continue
+                if d != "REFUTED" and obs is None:
+                    continue
+                y = None
+                if isinstance(obs, dict):
+                    try:
+                        y = int(str(obs["post"]), 0)
+                    except (KeyError, TypeError, ValueError):
+                        y = None
+                if y is not None and 0 <= y <= UINT256_MAX:
+                    lo_obs, hi_obs = min(lo_obs, y), max(hi_obs, y)
+                    if y > hi:
+                        up_ref = hi if up_ref is None else max(up_ref, hi)
+                    elif y < lo:
+                        dn_ref = lo if dn_ref is None else min(dn_ref, lo)
+                    continue
+                # Refuted without a usable value: only a ONE-SIDED candidate
+                # says which side failed.
+                if lo == 0 and hi < UINT256_MAX:
+                    up_ref = hi if up_ref is None else max(up_ref, hi)
+                elif hi == UINT256_MAX and lo > 0:
+                    dn_ref = lo if dn_ref is None else min(dn_ref, lo)
+            # A proved bound below something known to occur is impossible;
+            # if the bookkeeping ever says so, trust the occurrence.
+            if up_prv is not None and up_prv < hi_obs:
+                up_prv = None
+            if dn_prv is not None and dn_prv > lo_obs:
+                dn_prv = None
+            new_cands = []
+            for H in _r22_next_upper(hi_obs, up_ref, up_prv):
+                if 0 < H < UINT256_MAX or (H == UINT256_MAX and False):
+                    new_cands.append(_r22_abs_candidate(f"r22_up_{round_index + 1}_{H}", 0, H))
+            for L in _r22_next_lower(lo_obs, dn_ref, dn_prv):
+                if 0 < L:
+                    new_cands.append(_r22_abs_candidate(f"r22_dn_{round_index + 1}_{L}", L, UINT256_MAX))
+            if (up_prv is not None and dn_prv is not None
+                    and (dn_prv, up_prv) not in proved_pairs
+                    and not (dn_prv == 0 and up_prv == UINT256_MAX)):
+                new_cands.append(_r22_abs_candidate(f"r22_both_{round_index + 1}", dn_prv, up_prv))
+            entry["abs"] = new_cands
+            entry["search"] = {"lo_obs": str(lo_obs), "hi_obs": str(hi_obs),
+                               "up": {"refuted": None if up_ref is None else str(up_ref),
+                                      "proved": None if up_prv is None else str(up_prv)},
+                               "down": {"refuted": None if dn_ref is None else str(dn_ref),
+                                        "proved": None if dn_prv is None else str(dn_prv)}}
+            if new_cands:
+                changed = True
+        # ---- deltas: the single-candidate absorption rule, unchanged --------
+        candidates = entry.get("deltas") or []
+        if len(candidates) == 1:
             candidate = candidates[0]
-            if kind == "abs":
-                prefix = "return" if name == RETURN_VAR else "post"
-                rung = f"{prefix} in [{r2_term_text(candidate['lo'])}, " \
-                       f"{r2_term_text(candidate['hi'])}]"
-            else:
-                increasing = candidate.get("dir") == "inc"
-                prefix = "post - pre" if increasing else "pre - post"
-                relation = "post >= pre" if increasing else "pre >= post"
-                rung = f"{prefix} in [{r2_term_text(candidate['lo'])}, " \
-                       f"{r2_term_text(candidate['hi'])}] with {relation}"
+            increasing = candidate.get("dir") == "inc"
+            prefix = "post - pre" if increasing else "pre - post"
+            relation = "post >= pre" if increasing else "pre >= post"
+            rung = f"{prefix} in [{r2_term_text(candidate['lo'])}, " \
+                   f"{r2_term_text(candidate['hi'])}] with {relation}"
             observation = (refutations or {}).get((name, canonical_oracle_rung_text(rung)))
             if not isinstance(observation, dict):
-                entry[kind] = []
-                continue
-            try:
-                post = int(str(observation["post"]), 0)
-                pre = observation.get("pre")
-                pre = None if pre is None else int(str(pre), 0)
-                old_lo = int(str(candidate["lo"]["value"]), 0)
-                old_hi = int(str(candidate["hi"]["value"]), 0)
-            except (KeyError, TypeError, ValueError):
-                entry[kind] = []
-                continue
-            value = post
-            if kind == "deltas":
-                if pre is None:
-                    entry[kind] = []
-                    continue
-                value = post - pre if candidate.get("dir") == "inc" else pre - post
-                if value < 0:
-                    entry[kind] = []
-                    continue
-            new_lo, new_hi = min(old_lo, value), max(old_hi, value)
-            if new_lo == old_lo and new_hi == old_hi:
-                continue
-            if new_lo == 0 and new_hi == UINT256_MAX:
-                entry[kind] = []
-                changed = True
-                continue
-            candidate["id"] = f"boundary_{kind}_refine_{round_index + 1}"
-            candidate["lo"] = {"kind": "literal", "value": str(new_lo)}
-            candidate["hi"] = {"kind": "literal", "value": str(new_hi)}
-            changed = True
+                entry["deltas"] = []
+            else:
+                try:
+                    post = int(str(observation["post"]), 0)
+                    pre = observation.get("pre")
+                    pre = None if pre is None else int(str(pre), 0)
+                    old_lo = int(str(candidate["lo"]["value"]), 0)
+                    old_hi = int(str(candidate["hi"]["value"]), 0)
+                except (KeyError, TypeError, ValueError):
+                    entry["deltas"] = []
+                    post = pre = old_lo = old_hi = None
+                if post is not None:
+                    if pre is None:
+                        entry["deltas"] = []
+                    else:
+                        value = post - pre if increasing else pre - post
+                        if value < 0:
+                            entry["deltas"] = []
+                        else:
+                            new_lo, new_hi = min(old_lo, value), max(old_hi, value)
+                            if new_lo == old_lo and new_hi == old_hi:
+                                pass
+                            elif new_lo == 0 and new_hi == UINT256_MAX:
+                                entry["deltas"] = []
+                                changed = True
+                            else:
+                                candidate["id"] = f"boundary_deltas_refine_{round_index + 1}"
+                                candidate["lo"] = {"kind": "literal", "value": str(new_lo)}
+                                candidate["hi"] = {"kind": "literal", "value": str(new_hi)}
+                                changed = True
+        elif candidates:
+            entry["deltas"] = []
     if changed:
         refined["refinement_round"] = round_index + 1
         refined["vars"] = [
@@ -4548,7 +4731,7 @@ def run_r2_passes(specs, base_spec, write_spec, runner, parse, log=print, proven
             log(f"[put]     {v}: {t}  {d}")
         out += fresh
         if kind == "boundary-observation" and any(d == "REFUTED" for _v, _t, d in fresh):
-            refined, changed = refine_boundary_observation_r2_spec(queried, refutations)
+            refined, changed = refine_boundary_observation_r2_spec(queried, refutations, fresh)
             if changed and refined.get("vars"):
                 pending_specs.insert(i + 1, refined)
                 log(f"[put]     R2.2 counterexample refinement scheduled round "
@@ -6821,6 +7004,10 @@ def assert_query_pins(pins, layout, maps, params=None):
     """Pins that the ESBMC assertion query can resolve, plus skipped reasons."""
     keep, skipped = {}, []
     for name, value in sorted((pins or {}).items()):
+        if name.startswith("extcall."):
+            skipped.append(f"{name} (not passed to --path-cov-assert: an external-call "
+                           "success pin is realised by the PUT's mock, not by the ladder)")
+            continue
         if not name.startswith("state."):
             keep[name] = value
             continue
@@ -13164,6 +13351,26 @@ def bound_lines(pname, kind, width, lo, hi, holes):
     return out
 
 
+def freed_state_fuzz_param(name, bits, lo, hi, coord_holes, used, sig, rendered_width):
+    """Declare one fuzz parameter for a FREED width>1 entry-state coordinate.
+
+    Returns (variable, bound lines). The variable is `uint<bits>`, bound()
+    into `[lo, hi]` minus the punched values, and `rendered_width[name]` is
+    set so the floor test counts this axis as parameterized, exactly as it
+    does for a call argument of the same width.
+    """
+    bits = max(8, min(256, int(bits)))
+    var = "s_" + _slot_ident(name[6:] if name.startswith("state.") else name)
+    while var in used:
+        var += "_"
+    used.add(var)
+    sig.append((f"uint{bits}", var))
+    hs = sorted(int(h) for h in coord_holes if lo <= int(h) <= hi)
+    lines = bound_lines(var, "uint", bits, lo, hi, hs)
+    rendered_width[name] = (hi - lo + 1) - len(set(hs))
+    return var, lines
+
+
 def dynamic_length_assume_lines(var, sol_type, lo, hi, holes):
     """Constrain a dynamic calldata value by the certified length region.
 
@@ -14341,6 +14548,11 @@ def build_put(contract,
     store_lines, stored, state_skipped = [], [], []
     established_relations = []
     established_state_targets = set()
+    # Coordinates the certification query FREED at entry (`state.<c> := *`).
+    # They are what licenses a WRITE of a width>1 bound below; see the comment
+    # on that branch, whose stated premise -- "the entry state is not havoc'd"
+    # -- is exactly what a free source removes.
+    freed_state_targets = set()
     for rel in establish or []:
         if not isinstance(rel, dict):
             notes.append(f"REFUSED: malformed establish entry {rel!r}")
@@ -14354,6 +14566,57 @@ def build_put(contract,
             notes.append(f"REFUSED: establish target `{target}` is not an entry-state "
                          "coordinate")
             return None, None
+        # A FREED SOURCE IS A PROOF DEVICE, NOT A TEST INPUT.
+        #
+        # `state.<c> := *` sets the coordinate loose at the certification query's
+        # entry so that the region bound on `<c>` binds something instead of
+        # being read against whatever the constructor happened to leave. There is
+        # no value to render: the certified statement is about the REGION, and
+        # what the test has to reproduce is the region bound, which the emitter's
+        # preamble already constructs by calling the setup units.
+        #
+        # THE ANTECEDENT IS NOT OPTIONAL. Skipping the establish is sound ONLY
+        # when the freed target is itself a bounded coordinate of the certified
+        # region. If it is not, the query was answered over a coordinate the test
+        # never constrains, and a test built from it would be evidence about a
+        # slice nobody certified -- the same failure the pin/layout channel above
+        # exists to make visible. So an unbounded free target is still REFUSED.
+        if source == "*":
+            # A PIN is a bound of width one, and it is written by the pin
+            # loop below exactly as a region bound is written by the region
+            # loop: a freed coordinate that is pinned (by a query pin or by a
+            # per-piece retreat to x_pi) is therefore constrained by the
+            # certified statement and reproduced by the test. MEASURED on
+            # batch b3: without this clause every subject whose only freed
+            # coordinate was a pinned/retreated `state.owner` lost its PUT to
+            # "FREED but carries no region bound".
+            canonical_target = canonical_state_coord_name(target, state_store_names)
+            if (target in (region or {}) or target in (pins or {})
+                    or canonical_target in (region or {}) or canonical_target in (pins or {})):
+                freed_state_targets.add(target)
+                freed_state_targets.add(canonical_target)
+                # NOT added to `established_state_targets`. That set suppresses
+                # the region loop below, which is the code that actually WRITES
+                # the coordinate into storage from its region bound -- and that
+                # write is the whole reason the freed target can be skipped
+                # here. Marking it established would drop the establishment
+                # instead of relocating it: MEASURED, the PUT then reached
+                # `withdraw` with deposits == 0 and failed its own entry-slice
+                # check, `0 < 21239`.
+                continue
+            # Neither a region bound nor a pin of THIS build names the freed
+            # coordinate. That is not a defect of the certificate: the query
+            # this build renders carries no bound on it, so whatever it proved
+            # holds for EVERY value of the coordinate -- a stronger statement,
+            # and one with nothing to establish. MEASURED on batch b3: the
+            # oracle input part of simple_suicide dropped `state.smartfix_owner$8`
+            # from its region (the `$8`-suffixed name is not in solc's layout
+            # listing, so the assert query never bounded it) and the former
+            # REFUSED here cost the subject its PUT. Said, not refused.
+            notes.append(f"freed entry-state coordinate `{target}` is not bounded by this "
+                         "build's region or pins: the statement holds for all its "
+                         "values, nothing is established for it")
+            continue
         source_expr = coord_ident_abs.get(source)
         if source_expr is None:
             notes.append(f"REFUSED: establish source `{source}` was not rendered as a "
@@ -14439,6 +14702,44 @@ def build_put(contract,
                 chk = ([] if kerr2 is not None else slot_inside_region_check_at(
                     target_addr, map_value_slot_expr(kx, _mspec), voff2, vnb2, lo, hi, name))
                 if chk:
+                    # THE WRITE IS LICENSED ONLY BY A FREE SOURCE. The refusal
+                    # above rests on one premise -- the entry state is not
+                    # havoc'd, so a wide bound constrained nothing and the rungs
+                    # were proved about a single entry value. A certification
+                    # query carrying `state.<c> := *` for this coordinate breaks
+                    # that premise: the coordinate WAS havoc'd, the bound DID
+                    # constrain the query, and the rungs hold across the whole
+                    # interval -- so putting the contract at a value inside it
+                    # tests an entry state the proof did see.
+                    #
+                    # The CHECK is still emitted after the write, and it is not
+                    # ceremony: it is what catches a wrong key order or a
+                    # miscomputed slot, which would otherwise write a word the
+                    # contract never reads and leave the test green for the
+                    # wrong reason.
+                    if (name in freed_state_targets
+                            or canonical_name in freed_state_targets):
+                        # FUZZED over the interval, not pinned at `lo`. The
+                        # licence is the same either way -- the query havoc'd
+                        # this coordinate and the rungs hold across the whole
+                        # interval -- and a PUT that ranges over the entry
+                        # state the proof ranged over is the parameterized
+                        # test the method describes (`dep in [21239, 200000]`
+                        # is a fuzz parameter in the paper's own listing).
+                        # Writing `lo` instead silently turned every freed
+                        # coordinate into one point and the PUT into a
+                        # concrete test on that axis.
+                        _fv, _fpre = freed_state_fuzz_param(name, vnb2 * 8, lo, hi,
+                                                            holes.get(name, ()), used, sig,
+                                                            rendered_width)
+                        pre_lines += _fpre
+                        store_lines += slot_write_lines_at(
+                            target_addr, map_value_slot_expr(kx, _mspec),
+                            voff2, vnb2, f"uint256({_fv})")
+                        store_lines += chk
+                        stored.append(f"{name} := {_fv} in [{lo}, {hi}] "
+                                      "(SET and FUZZED: freed at the certification entry)")
+                        continue
                     store_lines += chk
                     stored.append(f"{name} in [{lo}, {hi}] (checked, not set)")
                     continue
@@ -14539,6 +14840,27 @@ def build_put(contract,
             # vacuous. See `slot_inside_region_check`.
             chk = slot_inside_region_check(target_addr, slot, off, nb, lo, hi, name)
             if chk:
+                # THE WRITE IS LICENSED ONLY BY A FREE SOURCE -- the scalar
+                # twin of the mapping-slot rule above. The premise of the
+                # refusal ("the entry state is not havoc'd") is false for a
+                # coordinate the certification query FREED at its entry: the
+                # bound then constrained the query and the rungs hold across
+                # the interval, so putting the contract at a value inside it
+                # tests an entry state the proof did see. The check after the
+                # write is kept for the same reason as there.
+                if (name in freed_state_targets
+                        or canonical_name in freed_state_targets):
+                    # FUZZED over the interval; see the mapping twin above.
+                    _fv, _fpre = freed_state_fuzz_param(name, nb * 8, lo, hi,
+                                                        holes.get(name, ()), used, sig,
+                                                        rendered_width)
+                    pre_lines += _fpre
+                    store_lines += slot_write_lines(target_addr, slot, off, nb, f"uint256({_fv})")
+                    store_lines += chk
+                    stored.append(f"{name} := {_fv} in [{lo}, {hi}] "
+                                  "(SET and FUZZED: freed at the certification entry)")
+                    established_state_targets.add(canonical_name)
+                    continue
                 store_lines += chk
                 stored.append(f"{name} in [{lo}, {hi}] (checked, not set)")
                 established_state_targets.add(canonical_name)
@@ -19242,8 +19564,8 @@ def runtime_low_level_success_mock_lines(forge_project, contract, unit, extcall_
 
     rx = re.compile(
         r"\(\s*bool\s+([A-Za-z_]\w*)\s*,[^)]*\)\s*=\s*"
-        r"([A-Za-z_]\w*|0x[0-9A-Fa-f]{40})\s*\.\s*"
-        r"(call|staticcall|delegatecall)\s*(?:\{[^}]*\})?\s*"
+        r"(msg\.sender|[A-Za-z_]\w*|0x[0-9A-Fa-f]{40})\s*\.\s*"
+        r"(call|staticcall|delegatecall)\s*(\{[^}]*\})?\s*"
         r"\(\s*(.*?)\s*\)\s*;", re.S)
     sites = {m.group(1): m for m in rx.finditer(body)}
     lines = []
@@ -19255,20 +19577,74 @@ def runtime_low_level_success_mock_lines(forge_project, contract, unit, extcall_
         if site is None:
             return [], (f"external-call pin `{full_name}` has no uniquely "
                         f"renderable `(bool {name}, ...) = target.call(...)` site")
-        target, _kind, calldata = site.group(2), site.group(3), site.group(4).strip()
+        target, _kind, calldata = site.group(2), site.group(3), site.group(5).strip()
+        carries_value = bool(site.group(4) and re.search(r"\bvalue\s*:", site.group(4)))
+        try:
+            pin_value = int(str(raw_value), 0)
+        except ValueError:
+            return [], f"external-call pin `{full_name}` is not numeric"
+        # ---- THE VALUE TRANSFER IS PART OF THE PIN --------------------------
+        #
+        # `extcall.ok == 1` was certified with the call modelled as a free
+        # boolean (`--extcall-nondet`), so the proof says nothing about the
+        # contract's ether balance -- every balance is inside the certified
+        # slice. Foundry is not so generous: `.call{value: v}` FAILS for want
+        # of balance, and the test then leaves the slice the pin describes
+        # without any assertion saying so. MEASURED on FeeVault.withdraw: the
+        # emitted PUT reverted at `require(ok1)` with deposits established by
+        # `vm.store` and the contract holding 1 wei. Funding the contract is
+        # the materialisation of "the transfer succeeds"; the amount is a
+        # marker resolved at injection, where the instance name is known.
+        if carries_value and pin_value == 1:
+            lines.append(f"{indent}// VERIPUT_EXTCALL_DEAL_CONTRACT")
         target_param = None
+        if target == "msg.sender":
+            # ---- A SUCCESS PIN ON THE CALLER CONSTRAINS THE CALLER ----------
+            #
+            # The PUT lifts `msg.sender` to a fuzz parameter. A pinned success
+            # on `msg.sender.call(...)` is then a statement about that
+            # parameter: the certified slice holds only senders that ACCEPT
+            # the call. Precompiles (0x01..0x11 under Prague) and contracts
+            # without a payable fallback do not. MEASURED: 983 of 10000 runs
+            # passed, then `address(11)` (a BLS precompile) reverted. The
+            # marker is resolved at injection against the lifted sender
+            # parameter; a concrete sender leaves it a no-op.
+            if pin_value != 1:
+                return [], ("external-call FAILURE pin on `msg.sender` is not "
+                            "renderable: a reverting caller cannot be chosen for "
+                            "a lifted sender without mocking the sender itself")
+            lines.append(f"{indent}// VERIPUT_EXTCALL_SENDER_EOA")
+            continue
         if re.fullmatch(r"[A-Za-z_]\w*", target):
             decl = re.search(
                 r"\baddress(?:\s+payable)?\s+" + re.escape(target) +
                 r"\s*=\s*(0x[0-9A-Fa-f]{40})\s*;", body)
             target_type = str(params.get(target) or "").strip()
+            # A STATE VARIABLE of address type, declared at contract scope.
+            # Its runtime value is whatever the constructor and the preamble
+            # left; the pin says the call to it SUCCEEDS. For success the
+            # harness has nothing to mock -- an externally owned receiver
+            # accepts a bare call -- and the value transfer is covered by the
+            # DEAL marker above. A receiver WITH code that rejects the call
+            # fails the test visibly, which is the right outcome: the test is
+            # then provably outside the certified slice, not silently so.
+            state_decl = re.search(
+                r"\baddress(?:\s+payable)?(?:\s+(?:public|private|internal|immutable))*\s+" +
+                re.escape(target) + r"\b", chunk)
             if decl is not None:
                 target = f"address({decl.group(1)})"
             elif target_type in ("address", "address payable"):
                 target_param = target
+            elif state_decl is not None:
+                if pin_value != 1:
+                    return [], (f"external-call FAILURE pin on state variable "
+                                f"`{target}` is not renderable without mocking the "
+                                "stored receiver")
+                continue
             else:
                 return [], (f"external-call target `{target}` is not a local "
-                            "address initialized from a literal or an address parameter")
+                            "address initialized from a literal, an address "
+                            "parameter, a state variable, or msg.sender")
         else:
             target = f"address({target})"
         target_expr = target
@@ -19337,11 +19713,17 @@ def apply_runtime_interface_mocks(lines, emitted, case, unit, contract, mock_lin
         return lines
     callsite_specs = []
     static_mock_lines = []
+    deal_contract = False
+    sender_eoa = False
     marker = re.compile(r"^\s*// VERIPUT_EXTCALL_CALLSITE ([A-Za-z_]\w*) ([A-Za-z_]\w*) ([01])\s*$")
     for line in mock_lines:
         match = marker.match(line)
         if match:
             callsite_specs.append((match.group(1), match.group(2), match.group(3) == "1"))
+        elif line.strip() == "// VERIPUT_EXTCALL_DEAL_CONTRACT":
+            deal_contract = True
+        elif line.strip() == "// VERIPUT_EXTCALL_SENDER_EOA":
+            sender_eoa = True
         else:
             static_mock_lines.append(line)
     body = emitted.lines[case[3][0] + 1:case[3][1]]
@@ -19373,11 +19755,41 @@ def apply_runtime_interface_mocks(lines, emitted, case, unit, contract, mock_lin
                 out.append(lines[next_i])
                 next_i += 1
             out += static_mock_lines
+            if deal_contract and inst is not None:
+                indent_ = m.group(1)
+                # Enough for any transfer the unit can make; the certified
+                # slice is balance-independent (see the renderer), so the
+                # amount is not a choice the proof cares about.
+                out.append(f"{indent_}// certified extcall success pin: the value "
+                           "transfer must not fail for want of balance")
+                out.append(f"{indent_}vm.deal(address({inst}), uint256(1) << 128);")
             replaced = True
             i = next_i
             continue
         out.append(lines[i])
         i += 1
+    if sender_eoa:
+        # Insert the caller constraint in front of the prank that sets the
+        # lifted sender for the unit call. A prank whose argument is not a
+        # bare identifier is a concrete sender, and the pin needs nothing.
+        call_idx = None
+        for idx, line in enumerate(out):
+            _rw, args = rewrite_call_args(line, unit, {})
+            if args is not None:
+                call_idx = idx
+                break
+        if call_idx is not None:
+            for k in range(call_idx - 1, max(-1, call_idx - 12), -1):
+                pm = re.match(r"^(\s*)vm\.(?:start)?[pP]rank\(\s*([A-Za-z_]\w*)\s*[,)]", out[k])
+                if pm:
+                    ind, ident = pm.group(1), pm.group(2)
+                    out[k:k] = [
+                        f"{ind}// certified extcall success pin on msg.sender: the "
+                        "lifted caller must accept a bare call",
+                        f"{ind}assumeNotPrecompile({ident});",
+                        f"{ind}vm.assume({ident}.code.length == 0);",
+                    ]
+                    break
     if not callsite_specs:
         return out
 
@@ -21107,6 +21519,8 @@ def run_forge_boundary_observations(project,
                                     state_store_names=None,
                                     flat_source=None,
                                     extcall_length_coordinates=None,
+                                    exit_kind=None,
+                                    lift_unconstrained_sender=False,
                                     log=print):
     """Observe uint post values at certified coordinate boundaries in Forge.
 
@@ -21149,6 +21563,30 @@ def run_forge_boundary_observations(project,
                                          piece_label=piece,
                                          derived_by=derived_by,
                                          rollback_exit=False,
+                                         # THE PROBE MUST BIND THE RETURN VALUE.
+                                         # On a normal-exit path the emitter's
+                                         # case wraps the call in a revert-
+                                         # tolerant try/catch, and a return
+                                         # cannot be bound through that. The
+                                         # real PUT unwraps it because it is
+                                         # told the exit kind; the probe was
+                                         # not, so every `return` observation
+                                         # died as "no oracle rendered" and the
+                                         # R2.2 family never saw the return
+                                         # value. MEASURED on FeeVault.withdraw.
+                                         exit_kind=exit_kind,
+                                         # SAME SENDER TREATMENT AS THE REAL PUT.
+                                         # With the sender left unlifted the
+                                         # probe has no spellable key for a
+                                         # `state.<m>[msg.sender]` slot, so the
+                                         # entry state the region names is
+                                         # DROPPED and the call reverts before
+                                         # anything is observed. MEASURED:
+                                         # 8 probes, 8 `EvmError: Revert`,
+                                         # 0 observations. The boundary point
+                                         # then fixes the lifted parameter to
+                                         # the authenticated witness value.
+                                         lift_unconstrained_sender=lift_unconstrained_sender,
                                          r2_terms={"0": {
                                              "kind": "literal",
                                              "value": "0"
@@ -21159,9 +21597,19 @@ def run_forge_boundary_observations(project,
                                          state_store_names=state_store_names,
                                          flat_source=flat_source,
                                          extcall_length_coordinates=extcall_length_coordinates)
-            except ConcreteFallback:
+            except ConcreteFallback as exc:
+                # SAY WHY. "This procedure can only omit a proposal" is true,
+                # and an omitted proposal that leaves no line is exactly how a
+                # missing R2.2 on the return value reads as "the family found
+                # nothing" instead of "the probe was never built".
+                log(f"[put]   boundary probe NOT BUILT for {var} at point "
+                    f"{point_index}: concrete fallback ({exc})")
                 continue
             if probe is None or not r2_probe_has_rendered_assertion(stats):
+                log(f"[put]   boundary probe NOT BUILT for {var} at point "
+                    f"{point_index}: "
+                    + ("build_put returned nothing" if probe is None
+                       else "no assertion was rendered"))
                 continue
             if var == RETURN_VAR:
                 probe = [
@@ -21170,6 +21618,8 @@ def run_forge_boundary_observations(project,
                 ]
             probe, error = fix_put_parameters_at_boundary(probe, values)
             if error is not None:
+                log(f"[put]   boundary probe NOT RUN for {var} at point "
+                    f"{point_index}: {error}")
                 continue
             test_name = f"test_put_{contract}_{unit}_path{enc}{piece}"
             puts.append(probe)
@@ -21572,6 +22022,17 @@ def main():
                     "on the emitted test and in put.json, because "
                     "INVOCATION_DECISIONS.md forbids quoting one cell's "
                     "run into the other's table.")
+    ap.add_argument("--proof-esbmc-arg",
+                    action="append",
+                    default=[],
+                    dest="proof_esbmc_arg",
+                    metavar="ARG",
+                    help="an ESBMC argument for the k-induction PROOF queries only "
+                    "(R1/R2 assertion ladder and R2 proofs), appended AFTER the "
+                    "strategy strip that removes the enumeration's bounded flags "
+                    "-- the one way to put --overflow-check / --div-by-zero-check "
+                    "/ --path-cov-arith-resolve on the proofs, which the strip "
+                    "otherwise drops silently. The emit run is NOT affected.")
     ap.add_argument("--esbmc-arg",
                     action="append",
                     default=[],
@@ -23015,6 +23476,26 @@ def main():
         print("[put]   repaired unsupported concrete skeleton with a "
               "source-synthesized deployment and target call")
     establish_spec = json.loads(a.establish or "[]")
+    # An establish target with NO storage slot (a constant/immutable) is not
+    # entry state: the ladder would free it, proving rungs over fee rates no
+    # deployed contract can have and losing every rung the real rate decides
+    # (motivation freeS: `feeBps`/`maxFee` freed -> `return == amount` REFUTED).
+    # The same rule already drops its pin and its entry-state line; the free
+    # must go with them.
+    _kept_est = []
+    for _e in establish_spec:
+        _t = str((_e or {}).get("target") or "")
+        _base = _t[len("state."):].split("[", 1)[0] if _t.startswith("state.") else ""
+        _known = (not _base or _base in (maps or {}) or _base.split("$", 1)[0] in (maps or {})
+                  or _base in set((state_store_names or {}).values())
+                  or layout_scalar_key(_base, layout, state_store_names) is not None)
+        if not _known:
+            print(f"[put]   establish dropped: {_t} (no storage slot: solc's layout does not "
+                  f"list it, so it is a constant/immutable; it is not entry state and the "
+                  f"ladder must not free it)")
+            continue
+        _kept_est.append(_e)
+    establish_spec = _kept_est
     if force_concrete_reason is not None:
         certified_region_fallback_reason = (force_concrete_fallback_reason or force_concrete_reason)
         certified_region_stage2_record = concrete_stage2_source_record(
@@ -23354,7 +23835,12 @@ def main():
         print("[put]   ESBMC ladder probe capped at "
               f"{capped_ladder_budget}s to reserve "
               f"{a.min_r2_esbmc_budget}s for verifier-backed R2 proof")
-    proof_esbmc_args = k_induction_proof_args(a.esbmc_arg)
+    # The explicit proof args are appended AFTER the strip: the strip exists
+    # to drop the enumeration's bounded flags from the k-induction strategy,
+    # and it was eating `--overflow-check` & co. too, so every R1/R2 proof
+    # (and every certificate, see the Stage-2 twin) was about wrapping
+    # arithmetic whatever the recipe said (TODO 30 #9).
+    proof_esbmc_args = k_induction_proof_args(a.esbmc_arg) + [str(x) for x in a.proof_esbmc_arg]
     out2, rc2, w2 = run_esbmc(
         a.esbmc, a.sol, a.ast, a.contract, a.unit,
         ["--path-cov-assert",
@@ -23579,11 +24065,21 @@ def main():
             _base_ce = claim_concrete_ce(claim, params=params)
             _boundary_points = boundary_observation_points(region, params, _base_ce, max_points=5)
             _boundary_observables = []
+            # A variable the R1 ladder PROVED unchanged has no R2.2 range to
+            # observe: its post equals its pre. MEASURED on the GT motivation
+            # run, `feeReceiver: post in [0, 2^31 + 2^k]` took ~50 of the R2
+            # queries for nothing (TODO 30 #6). `return` goes first: it is the
+            # observable the kill needs, and the slot budget is `[:4]`.
+            _unchanged = {v for v, t, d in rows if t == "post == pre" and d == "HOLDS"}
             for _spec in _typed_r2:
                 for _entry in _spec.get("vars", []):
                     _name = _entry.get("name")
-                    if (_name and _entry.get("abs") and _name not in _boundary_observables):
+                    if (_name and _entry.get("abs") and _name not in _boundary_observables
+                            and _name not in _unchanged):
                         _boundary_observables.append(_name)
+            if RETURN_VAR in _boundary_observables:
+                _boundary_observables.remove(RETURN_VAR)
+                _boundary_observables.insert(0, RETURN_VAR)
             _boundary_remaining = (put_deadline - time.monotonic() - postprocess_reserve_s -
                                    float(a.min_r2_esbmc_budget))
             if (_base_ce is not None and _boundary_points and _boundary_observables
@@ -23617,7 +24113,9 @@ def main():
                     unit_payable=(unit_mutability == "payable"),
                     state_store_names=state_store_names,
                     flat_source=flat_source,
-                    extcall_length_coordinates=extcall_length_coordinates)
+                    extcall_length_coordinates=extcall_length_coordinates,
+                    exit_kind=path_exit_kind,
+                    lift_unconstrained_sender=a.lift_unconstrained_sender)
                 _directions = _r2_direction(rows, print)[1]
                 _boundary_specs = boundary_observation_r2_spec(
                     _observations,

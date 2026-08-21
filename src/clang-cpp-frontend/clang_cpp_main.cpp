@@ -4,7 +4,8 @@
 #include <util/std_expr.h>
 #include <util/symbolic_types.h>
 
-clang_cpp_maint::clang_cpp_maint(contextt &_context) : clang_c_maint(_context)
+clang_cpp_maint::clang_cpp_maint(contextt &_context, bool call_atexit_handler)
+  : clang_c_maint(_context, call_atexit_handler)
 {
 }
 
