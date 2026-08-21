@@ -1,4 +1,5 @@
 #include <goto-programs/goto_coverage.h>
+#include <cstring>
 #include <util/focus_function.h>
 #include <goto-programs/goto_functions.h>
 #include <goto-programs/goto_inline.h>
@@ -5127,18 +5128,67 @@ void goto_coveraget::solidity_path_coverage()
   // allocator, the dispatcher plumbing — is still sliced away.
   if (protect_ce_symbols)
   {
-    size_t n_obj = 0, n_store = 0, n_param = 0, n_env = 0;
+    // ---- ONLY THE SCOPE THE HARVEST READS ---------------------------------
+    //
+    // bmc.cpp keys `entry_storage`/`final_state` on ONE contract scope: the
+    // unit's declaring contract (`sol:@C@<X>@`) and its instance object
+    // (`sol:@_ESBMC_Object_<X>`). Exempting every contract's object and
+    // every contract's stores kept 21 objects and 423 stores alive in a
+    // 22-contract flat (acfix_fixlink_Product), and building each witness's
+    // trace then asked the solver for the model of every one of them:
+    // MEASURED ~10 s of `smt_convt::get_by_type -> tuple_get -> get_array
+    // -> bitwuzla get_value` per witness, against 0.04 s of symex and
+    // <= 2.7 s of solving, for a 2-path getter. Restrict the exemption to the
+    // contracts the harvest can read from: the --contract scope and the
+    // declaring contract of the unit named by --path-cov-instrument-only.
+    // With neither known (plain whole-file runs) the old blanket exemption
+    // stands.
+    std::set<std::string> harvest_scopes;
+    if (!scope_contract.empty())
+      harvest_scopes.insert(scope_contract);
+    if (instrument_only.rfind("sol:@C@", 0) == 0)
+    {
+      const size_t at = instrument_only.find('@', 7);
+      if (at != std::string::npos)
+        harvest_scopes.insert(instrument_only.substr(7, at - 7));
+    }
+    auto in_harvest_scope = [&](const std::string &id, const char *prefix) {
+      if (harvest_scopes.empty())
+        return true;
+      const size_t plen = std::strlen(prefix);
+      for (const auto &c : harvest_scopes)
+      {
+        if (id.compare(plen, c.size(), c) != 0)
+          continue;
+        const size_t end = plen + c.size();
+        if (end == id.size() || id[end] == '@' || id[end] == '#' ||
+            id[end] == '$')
+          return true;
+      }
+      return false;
+    };
+    size_t n_obj = 0, n_store = 0, n_param = 0, n_env = 0, n_out = 0;
     cov_context->foreach_operand([&](const symbolt &s) {
       const std::string id = s.id.as_string();
       const std::string base = s.name.as_string();
       if (id.rfind("sol:@_ESBMC_Object_", 0) == 0)
       {
+        if (!in_harvest_scope(id, "sol:@_ESBMC_Object_"))
+        {
+          ++n_out;
+          return;
+        }
         config.no_slice_names.insert(id);
         ++n_obj;
       }
       else if (
         id.rfind("sol:@C@", 0) == 0 && id.find("@F@") == std::string::npos)
       {
+        if (!in_harvest_scope(id, "sol:@C@"))
+        {
+          ++n_out;
+          return;
+        }
         config.no_slice_names.insert(id);
         ++n_store;
       }
@@ -5161,13 +5211,15 @@ void goto_coveraget::solidity_path_coverage()
       "--solidity-path-coverage with --cov-report-json: exempting {} symbol(s) "
       "from slicing so each path's counterexample values survive into the "
       "report ({} contract object(s), {} contract-scope store(s), {} "
-      "function parameter(s), {} environment); slicing stays enabled for "
-      "everything else",
+      "function parameter(s), {} environment; {} object(s)/store(s) of other "
+      "contracts left to the slicer); slicing stays enabled for everything "
+      "else",
       n_obj + n_store + n_param + n_env,
       n_obj,
       n_store,
       n_param,
-      n_env);
+      n_env,
+      n_out);
   }
 
   // A function is a UNIT iff it is a public/external entry. The frontend

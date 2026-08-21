@@ -81,6 +81,12 @@ public:
   // original expression
   expr2tc original_lhs;
 
+  // the SSA-renamed lhs of an assignment, kept so a consumer that skipped
+  // model extraction at trace-build time (build_goto_trace_lazy_assignment_values)
+  // can ask the solver for exactly the value it needs, e.g. one member of a
+  // contract object instead of the whole object
+  expr2tc ssa_lhs;
+
   // for OUTPUT
   std::string format_string;
   std::list<expr2tc> output_args;

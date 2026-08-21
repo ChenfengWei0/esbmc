@@ -5145,6 +5145,16 @@ smt_convt::resultt bmct::multi_property_check(
       // (final_result, fail-fast counter, claim cleanup).
       smt_convt::resultt enum_result = solver_result;
       bool ctx_pushed = false;
+      // Lazy trace values: only the path-coverage harvest below reads this
+      // trace (no testcase generator, no printed counterexample), and it reads
+      // a handful of named symbol families. Building every assignment's value
+      // cost ~35 s of a 47 s Product enumeration run (build_goto_trace.h).
+      // ESBMC_TRACE_EAGER=1 restores the eager build (A/B control).
+      static const bool trace_eager_env = std::getenv("ESBMC_TRACE_EAGER");
+      const bool lazy_trace_values =
+        is_path_cov && !want_testcase && !trace_eager_env &&
+        options.get_bool_option("result-only");
+      build_goto_trace_lazy_assignment_values = lazy_trace_values;
       while (enum_result == smt_convt::P_SATISFIABLE)
       {
         witness_recordt w;
@@ -5600,7 +5610,7 @@ smt_convt::resultt bmct::multi_property_check(
           // path assertion belongs to a different `go` frame.
           std::map<size_t, std::map<std::string, std::string>>
             extcall_success_by_depth;
-          for (const auto &st : w.trace.steps)
+          for (auto &st : w.trace.steps)
           {
             // Stop at THIS path's own violated assert. The harness runs
             // --solidity-max-tx transactions (default 2) and the trace spans
@@ -5647,7 +5657,53 @@ smt_convt::resultt bmct::multi_property_check(
             }
             if (!st.is_assignment())
               continue;
-            if (is_nil_expr(st.lhs) || is_nil_expr(st.value))
+            if (is_nil_expr(st.lhs))
+              continue;
+            // ---- LAZY TRACE VALUES: fetch only what this walk reads ----
+            //
+            // Under build_goto_trace_lazy_assignment_values the step carries
+            // no value yet. Every branch below that reads `st.value` is keyed
+            // on one of these shapes, so anything else is left nil and falls
+            // through the `continue` that always followed a nil value.
+            if (is_nil_expr(st.value) && lazy_trace_values)
+            {
+              bool wanted = false;
+              const std::string sid =
+                is_symbol2t(st.lhs) ? to_symbol2t(st.lhs).thename.as_string()
+                                    : std::string();
+              const std::string bid0 = base_sym_id(st.lhs);
+              if (
+                sid.find("__ESBMC_path_ret") != std::string::npos ||
+                sid.find("_entry_mark$") != std::string::npos ||
+                sid.find("_ESBMC_Nondet_Extcall") != std::string::npos)
+                wanted = true;
+              else if (
+                observer_it != goto_coveraget::path_observer_symbols.end() &&
+                (sid == observer_it->second.first ||
+                 sid == observer_it->second.second))
+                wanted = true;
+              else if (!tuple_want.empty() && bid0 == tuple_want)
+                wanted = true;
+              else if (
+                !contract_scope.empty() && bid0.rfind(contract_scope, 0) == 0 &&
+                bid0.find("@F@") == std::string::npos)
+                wanted = true;
+              else if (st.pc->location.get_bool("sol_extcall_success"))
+                wanted = true;
+              else if (!is_nil_expr(symex_slicet::get_nondet_symbol(st.rhs)))
+                wanted = true;
+              else
+              {
+                const std::string nm0 = from_expr(ns, "", st.lhs);
+                if (
+                  nm0.rfind("*this", 0) == 0 ||
+                  nm0.find("this->") != std::string::npos)
+                  wanted = true;
+              }
+              if (wanted)
+                materialise_trace_step_value(*solver_ptr, st);
+            }
+            if (is_nil_expr(st.value))
               continue;
             // ---- ENTRY MARK: re-take the entry snapshot ----
             //
@@ -6380,6 +6436,7 @@ smt_convt::resultt bmct::multi_property_check(
         enum_result = solver_ptr->dec_solve();
       }
 
+      build_goto_trace_lazy_assignment_values = false;
       // dec_solve() can return P_ERROR / P_SMTLIB; in that case the witness
       // set is *not* exhaustive — flag it explicitly.
       if (
