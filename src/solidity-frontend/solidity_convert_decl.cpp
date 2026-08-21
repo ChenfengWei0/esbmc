@@ -2079,29 +2079,95 @@ void solidity_convertert::get_state_var_decl_name(
   bool duplicate_state_name = false;
   if (!name.empty())
   {
-    size_t matches = 0;
-    std::vector<const nlohmann::json *> stack;
-    stack.push_back(&src_ast_json);
-    while (!stack.empty() && matches < 2)
+    // Census of stateVariable VariableDeclarations per source name over
+    // the whole AST, built once and rebuilt when the AST's shape changes
+    // (see state_var_name_census in the header). The walk it replaces
+    // ran once per state-variable reference.
+    std::vector<size_t> fp;
+    fp.push_back(src_ast_json.is_structured() ? src_ast_json.size() : 0);
+    if (src_ast_json.is_object())
     {
-      const nlohmann::json *cur = stack.back();
-      stack.pop_back();
-      if (cur->is_object())
+      auto nit = src_ast_json.find("nodes");
+      if (nit != src_ast_json.end() && nit->is_array())
       {
-        if (
-          cur->value("nodeType", "") == "VariableDeclaration" &&
-          cur->value("stateVariable", false) && cur->value("name", "") == name)
-          ++matches;
-        for (const auto &it : cur->items())
-          stack.push_back(&it.value());
-      }
-      else if (cur->is_array())
-      {
-        for (const auto &it : *cur)
-          stack.push_back(&it);
+        fp.push_back(nit->size());
+        for (const auto &n : *nit)
+        {
+          size_t inner = 0;
+          if (n.is_object())
+          {
+            auto it = n.find("nodes");
+            if (it != n.end() && it->is_array())
+              inner = it->size();
+          }
+          fp.push_back(inner);
+        }
       }
     }
-    duplicate_state_name = matches > 1;
+    const char *fpc_off_env = std::getenv("ESBMC_FPC_OFF");
+    const bool census_off = fpc_off_env && (std::atol(fpc_off_env) & 8);
+    if (census_off || state_var_name_census.empty() || fp != state_var_census_fingerprint)
+    {
+      state_var_name_census.clear();
+      state_var_census_fingerprint = fp;
+      std::vector<const nlohmann::json *> stack;
+      stack.push_back(&src_ast_json);
+      while (!stack.empty())
+      {
+        const nlohmann::json *cur = stack.back();
+        stack.pop_back();
+        if (cur->is_object())
+        {
+          if (
+            cur->value("nodeType", "") == "VariableDeclaration" &&
+            cur->value("stateVariable", false))
+            ++state_var_name_census[cur->value("name", "")];
+          for (const auto &it : cur->items())
+            if (it.value().is_structured())
+              stack.push_back(&it.value());
+        }
+        else if (cur->is_array())
+        {
+          for (const auto &it : *cur)
+            if (it.is_structured())
+              stack.push_back(&it);
+        }
+      }
+    }
+    auto cit = state_var_name_census.find(name);
+    duplicate_state_name = cit != state_var_name_census.end() && cit->second > 1;
+    if (std::getenv("ESBMC_FPC_VERIFY"))
+    {
+      size_t matches = 0;
+      std::vector<const nlohmann::json *> stack;
+      stack.push_back(&src_ast_json);
+      while (!stack.empty() && matches < 2)
+      {
+        const nlohmann::json *cur = stack.back();
+        stack.pop_back();
+        if (cur->is_object())
+        {
+          if (
+            cur->value("nodeType", "") == "VariableDeclaration" &&
+            cur->value("stateVariable", false) && cur->value("name", "") == name)
+            ++matches;
+          for (const auto &it : cur->items())
+            stack.push_back(&it.value());
+        }
+        else if (cur->is_array())
+        {
+          for (const auto &it : *cur)
+            stack.push_back(&it);
+        }
+      }
+      if ((matches > 1) != duplicate_state_name)
+      {
+        log_error(
+          "get_state_var_decl_name: census answer differs from walk for '{}'",
+          name);
+        abort();
+      }
+    }
   }
   if (ast_node.contains("is_inherited") || duplicate_state_name)
   {

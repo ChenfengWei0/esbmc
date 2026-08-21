@@ -30,6 +30,15 @@ nlohmann::json solidity_convertert::src_ast_json = empty_json;
 std::unordered_map<std::string, typet> solidity_convertert::UserDefinedVarMap;
 std::unordered_map<std::string, const nlohmann::json *>
   solidity_convertert::fpc_memo;
+std::unordered_map<int, std::vector<solidity_convertert::fpc_index_entryt>>
+  solidity_convertert::fpc_id_index;
+std::vector<std::string> solidity_convertert::fpc_key_table;
+std::unordered_map<std::string, uint32_t> solidity_convertert::fpc_key_ids;
+std::vector<size_t> solidity_convertert::fpc_index_fingerprint;
+const nlohmann::json *solidity_convertert::fpc_index_root = nullptr;
+std::unordered_map<std::string, size_t>
+  solidity_convertert::state_var_name_census;
+std::vector<size_t> solidity_convertert::state_var_census_fingerprint;
 
 solidity_convertert::solidity_convertert(
   contextt &_context,
@@ -251,6 +260,11 @@ bool solidity_convertert::convert()
   // Fresh run: drop any find_parent_contract memo carried over from a
   // previous convert() (the map is static, may persist in-process).
   fpc_memo.clear();
+  fpc_id_index.clear();
+  fpc_index_fingerprint.clear();
+  fpc_index_root = nullptr;
+  state_var_name_census.clear();
+  state_var_census_fingerprint.clear();
 
   // --focus-function validation: must identify a single target contract.
   // If the source declares exactly one (non-library, non-interface) contract

@@ -1458,6 +1458,45 @@ protected:
   // pointers stay valid: top-level contract objects never relocate
   // (only their inner "nodes" arrays are ever push_back'd).
   static std::unordered_map<std::string, const nlohmann::json *> fpc_memo;
+  // Second-level accelerator for find_parent_contract: an index from a
+  // node's integer "id" to every node carrying that id, in the SAME
+  // pre-order DFS order the exhaustive walk uses, each with its enclosing
+  // ContractDefinition and the path from `root` to the node (stored as a
+  // compact key/index sequence, never as a deep pointer: the frontend
+  // push_back()s into "nodes" arrays during conversion and a deep pointer
+  // would dangle). A deep-== match of `target` requires an equal "id", so
+  // the first content-equal node overall IS the first content-equal
+  // candidate in this list -- the answer is bug-for-bug the exhaustive
+  // DFS's, at O(candidates) instead of O(AST) per miss of fpc_memo.
+  // MEASURED: acfix_fixlink_Product spent 13.6 s of a 14.1 s GOTO build
+  // (31.7 s under 5 concurrent jobs) inside that walk, one per expression.
+  // Rebuilt whenever the top-two-level shape of `root` changes (where all
+  // five structural insertion sites of the frontend land); a target that
+  // matches no indexed candidate falls back to the exhaustive DFS, so a
+  // node inserted deeper is still found, only slowly.
+  struct fpc_index_entryt
+  {
+    const nlohmann::json *contract;
+    std::vector<uint32_t> path; // high bit set => array index, else key id
+  };
+  static std::unordered_map<int, std::vector<fpc_index_entryt>> fpc_id_index;
+  static std::vector<std::string> fpc_key_table;
+  static std::unordered_map<std::string, uint32_t> fpc_key_ids;
+  static std::vector<size_t> fpc_index_fingerprint;
+  static const nlohmann::json *fpc_index_root;
+  static void fpc_build_index(const nlohmann::json &root);
+  static void fpc_ensure_index(const nlohmann::json &root);
+  // Same accelerator for get_state_var_decl_name's duplicate-name census
+  // (a full walk of src_ast_json per state-variable reference): the count
+  // of stateVariable VariableDeclarations per source name, rebuilt on the
+  // same shape fingerprint (the inherited-member merge that creates the
+  // duplicates is one of the insertion sites the fingerprint sees).
+  static std::unordered_map<std::string, size_t> state_var_name_census;
+  static std::vector<size_t> state_var_census_fingerprint;
+  static const nlohmann::json *
+  fpc_resolve_path(const nlohmann::json &root, const std::vector<uint32_t> &path);
+  static const nlohmann::json *
+  find_parent_contract_dfs(const nlohmann::json &root, const nlohmann::json &target);
   // store multiple exprt and flatten the block
   code_blockt expr_frontBlockDecl;
   code_blockt expr_backBlockDecl;

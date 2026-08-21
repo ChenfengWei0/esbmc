@@ -16,6 +16,22 @@
 #include <util/i2string.h>
 #include <util/mp_arith.h>
 #include <util/std_expr.h>
+#include <cstdlib>
+
+// Debug kill-switch: ESBMC_FPC_OFF is a bit mask disabling one accelerator
+// each (1 find_parent_contract, 2 find_node_by_id, 4 find_decl_ref,
+// 8 state-var census, 16 find_last_parent). Diagnostic only.
+static bool fpc_off(unsigned bit)
+{
+  static long mask = -1;
+  if (mask < 0)
+  {
+    const char *v = std::getenv("ESBMC_FPC_OFF");
+    mask = v ? std::atol(v) : 0;
+  }
+  return (mask & bit) != 0;
+}
+
 #include <util/message.h>
 #include <cctype>
 #include <cstring>
@@ -1248,6 +1264,164 @@ const nlohmann::json &solidity_convertert::find_last_parent(
   // `target` (as a direct field value, or as an element of one of its
   // array fields). Always returns an object, never an array — callers
   // expect to look up keys like `arguments`, `src`, etc. on the result.
+  //
+  // Indexed form first (see fpc_id_index): a content-equal value must carry
+  // the target's "id", so the candidates are the indexed nodes with that id;
+  // each one's parent object is read off its stored path, and the walk's
+  // answer is the candidate whose parent comes FIRST in pre-order (the walk
+  // matches while visiting the parent, so parent order decides, not node
+  // order). Only src_ast_json and src_ast_json["nodes"] are indexed roots.
+  {
+    const nlohmann::json *nodes_root = nullptr;
+    if (src_ast_json.is_object())
+    {
+      auto nit = src_ast_json.find("nodes");
+      if (nit != src_ast_json.end() && nit->is_array())
+        nodes_root = &(*nit);
+    }
+    const bool root_is_unit = nodes_root && &root == &src_ast_json;
+    if (!fpc_off(16) && nodes_root && (root_is_unit || &root == nodes_root) && target.is_object())
+    {
+      auto idit = target.find("id");
+      if (idit != target.end() && idit->is_number_integer())
+      {
+        fpc_ensure_index(*nodes_root);
+        auto cit = fpc_id_index.find(idit->get<int>());
+        if (cit != fpc_id_index.end())
+        {
+          // Visit order of the walk below: it pushes a node's children in
+          // forward order onto a LIFO, so among siblings the LAST one is
+          // visited first (larger array index / later key first), while an
+          // ancestor is still visited before anything inside it. `a` is
+          // visited before `b` iff, at the first differing segment, a's
+          // segment is the larger one; a proper prefix comes first.
+          auto path_less = [&](const std::vector<uint32_t> &a,
+                               const std::vector<uint32_t> &b) {
+            size_t n = std::min(a.size(), b.size());
+            for (size_t i = 0; i < n; ++i)
+            {
+              if (a[i] == b[i])
+                continue;
+              const bool ai = a[i] & 0x80000000u, bi = b[i] & 0x80000000u;
+              if (ai && bi)
+                return (a[i] & 0x7fffffffu) > (b[i] & 0x7fffffffu);
+              if (!ai && !bi)
+                return fpc_key_table[a[i]] > fpc_key_table[b[i]];
+              return ai < bi; // cannot happen under one parent
+            }
+            return a.size() < b.size();
+          };
+          std::vector<std::pair<std::vector<uint32_t>, const nlohmann::json *>>
+            matches;
+          for (const auto &entry : cit->second)
+          {
+            const nlohmann::json *cand = fpc_resolve_path(*nodes_root, entry.path);
+            if (!cand || !(cand == &target || *cand == target))
+              continue;
+            const auto &p = entry.path;
+            std::vector<uint32_t> ppath;
+            const nlohmann::json *parent = nullptr;
+            if (p.empty())
+              continue;
+            if (!(p.back() & 0x80000000u))
+            {
+              ppath.assign(p.begin(), p.end() - 1);
+              parent = fpc_resolve_path(*nodes_root, ppath);
+            }
+            else if (p.size() >= 2 && !(p[p.size() - 2] & 0x80000000u))
+            {
+              ppath.assign(p.begin(), p.end() - 2);
+              parent = fpc_resolve_path(*nodes_root, ppath);
+            }
+            else if (p.size() == 1 && root_is_unit)
+            {
+              // "nodes" is a field of the unit object, which is the walk's
+              // very first node: the empty path sorts before any other.
+              parent = &src_ast_json;
+              ppath.clear();
+            }
+            if (!parent || !parent->is_object())
+              continue;
+            matches.emplace_back(std::move(ppath), parent);
+          }
+          if (!matches.empty())
+          {
+            size_t bi = 0;
+            for (size_t i = 1; i < matches.size(); ++i)
+              if (path_less(matches[i].first, matches[bi].first))
+                bi = i;
+            const nlohmann::json *best = matches[bi].second;
+            if (std::getenv("ESBMC_FPC_VERIFY"))
+            {
+              using Frame = const nlohmann::json *;
+              std::stack<Frame> st;
+              st.push(&root);
+              const nlohmann::json *ref = nullptr;
+              while (!st.empty() && !ref)
+              {
+                const nlohmann::json *node = st.top();
+                st.pop();
+                if (node->is_object())
+                {
+                  for (auto it = node->begin(); it != node->end() && !ref; ++it)
+                  {
+                    const auto &value = it.value();
+                    if (value == target)
+                    {
+                      ref = node;
+                      break;
+                    }
+                    if (value.is_array())
+                      for (const auto &element : value)
+                        if (element == target)
+                        {
+                          ref = node;
+                          break;
+                        }
+                    if (!ref && value.is_structured())
+                      st.push(&value);
+                  }
+                }
+                else if (node->is_array())
+                  for (const auto &element : *node)
+                    if (element.is_structured())
+                      st.push(&element);
+              }
+              if (ref != best)
+              {
+                std::string detail;
+                for (const auto &m : matches)
+                {
+                  detail += " match parent=" +
+                            (m.second->contains("id") ? (*m.second)["id"].dump() : "?") +
+                            "/" + m.second->value("nodeType", "?") + " path=[";
+                  for (uint32_t seg : m.first)
+                    detail += (seg & 0x80000000u) ? std::to_string(seg & 0x7fffffffu) + ","
+                                                   : fpc_key_table[seg] + ",";
+                  detail += "]";
+                }
+                detail += " candidates=" + std::to_string(cit->second.size());
+                log_error(
+                  "find_last_parent: index answer differs from walk for id {} "
+                  "(index: {}/{}, walk: {}/{}){} target={}",
+                  idit->get<int>(),
+                  best->contains("id") ? (*best)["id"].dump() : "?",
+                  best->value("nodeType", "?"),
+                  ref ? (ref->contains("id") ? (*ref)["id"].dump() : "?") : "none",
+                  ref ? ref->value("nodeType", "?") : "none",
+                  detail,
+                  target.dump().substr(0, 300));
+                abort();
+              }
+            }
+            return *best;
+          }
+          // no indexed candidate matched: fall through to the walk
+        }
+      }
+    }
+  }
+
   using Frame = const nlohmann::json *; // Pointer to a node
   std::stack<Frame> stack;
   stack.push(&root);
@@ -1291,34 +1465,142 @@ const nlohmann::json &solidity_convertert::find_last_parent(
   return empty_json;
 }
 
-// return the parent contract definition node
-// return empty_json if the target_json is outside of any contract
-// this function dose not rely on current_baseContractName
-// so we assume that the target provided is no ambiguous
-const nlohmann::json &solidity_convertert::find_parent_contract(
+// ---- find_parent_contract: id-indexed fast path + exhaustive fallback ----
+//
+// The exhaustive walk below is the SPECIFICATION: pre-order DFS over `root`
+// (object members in std::map order, arrays in index order), returning the
+// enclosing ContractDefinition of the FIRST node that deep-== `target`.
+// The index in front of it only narrows the candidates to nodes with the
+// target's "id" -- a deep-== match needs an equal "id" -- so it returns the
+// same node the walk would. See the header comment on fpc_id_index.
+
+
+static std::vector<size_t> fpc_fingerprint_of(const nlohmann::json &root)
+{
+  std::vector<size_t> fp;
+  fp.push_back(root.is_structured() ? root.size() : 0);
+  if (root.is_array())
+    for (const auto &n : root)
+    {
+      size_t inner = 0;
+      if (n.is_object())
+      {
+        auto it = n.find("nodes");
+        if (it != n.end() && it->is_array())
+          inner = it->size();
+      }
+      fp.push_back(inner);
+    }
+  return fp;
+}
+
+void solidity_convertert::fpc_build_index(const nlohmann::json &root)
+{
+  fpc_id_index.clear();
+  fpc_index_root = &root;
+  fpc_index_fingerprint = fpc_fingerprint_of(root);
+
+  // Iterative pre-order DFS, same order as find_parent_contract_dfs.
+  struct Frame
+  {
+    const nlohmann::json *node;
+    const nlohmann::json *contract;
+    size_t depth;
+  };
+  std::vector<uint32_t> path;
+  std::stack<std::pair<Frame, uint32_t>> stack; // (frame, path segment)
+  stack.push({{&root, nullptr, 0}, 0});
+  const uint32_t ARRAY_BIT = 0x80000000u;
+  auto key_id = [&](const std::string &k) -> uint32_t {
+    auto it = fpc_key_ids.find(k);
+    if (it != fpc_key_ids.end())
+      return it->second;
+    uint32_t id = (uint32_t)fpc_key_table.size();
+    fpc_key_table.push_back(k);
+    fpc_key_ids.emplace(k, id);
+    return id;
+  };
+  bool first = true;
+  while (!stack.empty())
+  {
+    auto [fr, seg] = stack.top();
+    stack.pop();
+    const nlohmann::json *node = fr.node;
+    const nlohmann::json *contract = fr.contract;
+    if (!first)
+    {
+      path.resize(fr.depth - 1);
+      path.push_back(seg);
+    }
+    first = false;
+
+    if (node->is_object())
+    {
+      auto nt = node->find("nodeType");
+      if (nt != node->end() && *nt == "ContractDefinition")
+        contract = node;
+      auto idit = node->find("id");
+      if (idit != node->end() && idit->is_number_integer())
+        fpc_id_index[idit->get<int>()].push_back({contract, path});
+      for (auto it = node->rbegin(); it != node->rend(); ++it)
+      {
+        const auto &value = it.value();
+        if (value.is_structured())
+          stack.push({{&value, contract, fr.depth + 1}, key_id(it.key())});
+      }
+    }
+    else if (node->is_array())
+    {
+      size_t n = node->size();
+      for (size_t i = n; i-- > 0;)
+      {
+        const auto &value = (*node)[i];
+        if (value.is_structured())
+          stack.push({{&value, contract, fr.depth + 1}, ARRAY_BIT | (uint32_t)i});
+      }
+    }
+  }
+}
+
+void solidity_convertert::fpc_ensure_index(const nlohmann::json &root)
+{
+  if (
+    fpc_index_root != &root || fpc_id_index.empty() ||
+    fpc_index_fingerprint != fpc_fingerprint_of(root))
+    fpc_build_index(root);
+}
+
+const nlohmann::json *solidity_convertert::fpc_resolve_path(
+  const nlohmann::json &root,
+  const std::vector<uint32_t> &path)
+{
+  const nlohmann::json *node = &root;
+  for (uint32_t seg : path)
+  {
+    if (seg & 0x80000000u)
+    {
+      size_t i = seg & 0x7fffffffu;
+      if (!node->is_array() || i >= node->size())
+        return nullptr;
+      node = &(*node)[i];
+    }
+    else
+    {
+      if (!node->is_object() || seg >= fpc_key_table.size())
+        return nullptr;
+      auto it = node->find(fpc_key_table[seg]);
+      if (it == node->end())
+        return nullptr;
+      node = &(*it);
+    }
+  }
+  return node;
+}
+
+const nlohmann::json *solidity_convertert::find_parent_contract_dfs(
   const nlohmann::json &root,
   const nlohmann::json &target)
 {
-  // Lazy memo keyed by the node's exact serialised content. This
-  // function's result is a pure function of `target` CONTENT (the DFS
-  // returns the enclosing contract of the FIRST node that deep-`==`s
-  // target; `root` is invariant — every caller passes
-  // src_ast_json["nodes"]). The key MUST be the full content: the
-  // Solidity frontend mutates AST nodes in place during conversion
-  // (implicit-cast insertion, type annotation), so a node's (src,id)
-  // is NOT a stable content identity across calls — only the
-  // serialised value captures content-at-call-time. Two nodes with
-  // equal content have equal dumps and the DFS yields the same first
-  // match for both, so caching by dump is bug-for-bug identical to the
-  // uncached DFS, and robust to copies / sub-references / synthetic
-  // nodes. Cached ContractDefinition pointers stay valid for the run
-  // (top-level contract objects never relocate). Cleared per
-  // convert() run.
-  const std::string key = target.dump();
-  auto memo_it = fpc_memo.find(key);
-  if (memo_it != fpc_memo.end())
-    return memo_it->second ? *(memo_it->second) : empty_json;
-
   const nlohmann::json *result = nullptr; // enclosing contract, or none
 
   using Frame = std::pair<const nlohmann::json *, const nlohmann::json *>;
@@ -1374,7 +1656,79 @@ const nlohmann::json &solidity_convertert::find_parent_contract(
       }
     }
   }
+  return result;
+}
 
+// return the parent contract definition node
+// return empty_json if the target_json is outside of any contract
+// this function dose not rely on current_baseContractName
+// so we assume that the target provided is no ambiguous
+const nlohmann::json &solidity_convertert::find_parent_contract(
+  const nlohmann::json &root,
+  const nlohmann::json &target)
+{
+  // Lazy memo keyed by the node's exact serialised content. This
+  // function's result is a pure function of `target` CONTENT (the DFS
+  // returns the enclosing contract of the FIRST node that deep-`==`s
+  // target; `root` is invariant — every caller passes
+  // src_ast_json["nodes"]). The key MUST be the full content: the
+  // Solidity frontend mutates AST nodes in place during conversion
+  // (implicit-cast insertion, type annotation), so a node's (src,id)
+  // is NOT a stable content identity across calls — only the
+  // serialised value captures content-at-call-time. Two nodes with
+  // equal content have equal dumps and the DFS yields the same first
+  // match for both, so caching by dump is bug-for-bug identical to the
+  // uncached DFS, and robust to copies / sub-references / synthetic
+  // nodes. Cached ContractDefinition pointers stay valid for the run
+  // (top-level contract objects never relocate). Cleared per
+  // convert() run.
+  const nlohmann::json *result = nullptr; // enclosing contract, or none
+
+  // Fast path: candidates sharing the target's "id", in DFS order. A live
+  // AST node matches itself by address before any deep comparison runs.
+  if (!fpc_off(1) && target.is_object())
+  {
+    auto idit = target.find("id");
+    if (idit != target.end() && idit->is_number_integer())
+    {
+      fpc_ensure_index(root);
+      auto cit = fpc_id_index.find(idit->get<int>());
+      if (cit != fpc_id_index.end())
+        for (const auto &entry : cit->second)
+        {
+          const nlohmann::json *cand = fpc_resolve_path(root, entry.path);
+          if (cand && (cand == &target || *cand == target))
+          {
+            result = entry.contract;
+            if (std::getenv("ESBMC_FPC_VERIFY"))
+            {
+              // Self-check against the specification (debug aid).
+              const nlohmann::json *ref = find_parent_contract_dfs(root, target);
+              if (ref != result)
+              {
+                log_error(
+                  "find_parent_contract: index answer differs from exhaustive "
+                  "DFS for id {} (index: {}, dfs: {})",
+                  idit->get<int>(),
+                  result ? (*result)["name"].dump() : "none",
+                  ref ? (*ref)["name"].dump() : "none");
+                abort();
+              }
+            }
+            return result ? *result : empty_json;
+          }
+        }
+    }
+  }
+
+  // Slow path (targets without an id, or not matching any indexed node):
+  // memo keyed by the node's exact serialised content, then the walk.
+  const std::string key = target.dump();
+  auto memo_it = fpc_memo.find(key);
+  if (memo_it != fpc_memo.end())
+    return memo_it->second ? *(memo_it->second) : empty_json;
+
+  result = find_parent_contract_dfs(root, target);
   fpc_memo.emplace(key, result);
   return result ? *result : empty_json;
 }
@@ -1387,6 +1741,80 @@ solidity_convertert::find_node_by_id(const nlohmann::json &subtree, int ref_id)
 {
   if (!subtree.is_structured())
     return empty_json;
+
+  // Fast path for the two whole-AST roots every hot caller passes: the
+  // id index over src_ast_json["nodes"] lists every node with this id in
+  // the same pre-order, so the first resolvable entry IS the walk's answer.
+  // Anything not covered (a fresh id inserted below the fingerprint's
+  // horizon) falls through to the walk.
+  {
+    const nlohmann::json *nodes_root = nullptr;
+    if (src_ast_json.is_object())
+    {
+      auto nit = src_ast_json.find("nodes");
+      if (nit != src_ast_json.end())
+        nodes_root = &(*nit);
+    }
+    if (!fpc_off(2) && nodes_root && (&subtree == &src_ast_json || &subtree == nodes_root))
+    {
+      if (&subtree == &src_ast_json)
+      {
+        auto idit = subtree.find("id");
+        if (idit != subtree.end() && *idit == ref_id)
+          return subtree;
+      }
+      fpc_ensure_index(*nodes_root);
+      auto cit = fpc_id_index.find(ref_id);
+      if (cit != fpc_id_index.end())
+        for (const auto &entry : cit->second)
+        {
+          const nlohmann::json *cand = fpc_resolve_path(*nodes_root, entry.path);
+          if (!cand || !cand->is_object())
+            continue;
+          auto idit = cand->find("id");
+          if (idit != cand->end() && *idit == ref_id)
+          {
+            if (std::getenv("ESBMC_FPC_VERIFY"))
+            {
+              // walk the specification and compare addresses
+              using Frame = const nlohmann::json *;
+              std::stack<Frame> st;
+              st.push(&subtree);
+              const nlohmann::json *ref = nullptr;
+              while (!st.empty() && !ref)
+              {
+                const nlohmann::json *node = st.top();
+                st.pop();
+                if (node->is_object())
+                {
+                  if (node->contains("id") && (*node)["id"] == ref_id)
+                  {
+                    ref = node;
+                    break;
+                  }
+                  for (auto it = node->rbegin(); it != node->rend(); ++it)
+                    if (it.value().is_structured())
+                      st.push(&it.value());
+                }
+                else if (node->is_array())
+                  for (auto it = node->rbegin(); it != node->rend(); ++it)
+                    if (it->is_structured())
+                      st.push(&(*it));
+              }
+              if (ref != cand)
+              {
+                log_error(
+                  "find_node_by_id: index answer differs from exhaustive DFS "
+                  "for id {}",
+                  ref_id);
+                abort();
+              }
+            }
+            return *cand;
+          }
+        }
+    }
+  }
 
   using Frame = const nlohmann::json *;
   std::stack<Frame> stack;
@@ -1441,6 +1869,99 @@ const nlohmann::json &solidity_convertert::find_decl_ref(int ref_id)
     return empty_json;
 
   auto search_scoped = [&](int id) -> const nlohmann::json & {
+    // Indexed form of the loop below: the id index lists every node with
+    // this id in (top-level order, then pre-order within the top-level
+    // node), which is exactly the order the loop visits them; the same
+    // scope test is applied to each candidate's top-level node. Falls
+    // through to the loop only when the index knows no node with this id.
+    {
+      const nlohmann::json &nodes_root = src_ast_json["nodes"];
+      if (!fpc_off(4) && nodes_root.is_array())
+      {
+        fpc_ensure_index(nodes_root);
+        auto cit = fpc_id_index.find(id);
+        if (cit != fpc_id_index.end() && !cit->second.empty())
+        {
+          for (const auto &entry : cit->second)
+          {
+            if (entry.path.empty() || !(entry.path[0] & 0x80000000u))
+              continue;
+            size_t top = entry.path[0] & 0x7fffffffu;
+            if (top >= nodes_root.size())
+              continue;
+            const nlohmann::json &node = nodes_root[top];
+            if (!node.is_object())
+              continue;
+            const nlohmann::json *cand = fpc_resolve_path(nodes_root, entry.path);
+            if (!cand || !cand->is_object())
+              continue;
+            auto idit = cand->find("id");
+            if (idit == cand->end() || !(*idit == id))
+              continue;
+            bool is_contract = node.contains("nodeType") &&
+                               node["nodeType"] == "ContractDefinition";
+            if (is_contract)
+            {
+              if (cand == &node)
+                return node;
+              bool is_library = node.contains("contractKind") &&
+                                node["contractKind"] == "library";
+              bool is_interface = node.contains("contractKind") &&
+                                  node["contractKind"] == "interface";
+              bool is_base = !current_baseContractName.empty() &&
+                             node.contains("name") &&
+                             node["name"] == current_baseContractName;
+              if (!(is_base || is_library || is_interface))
+                continue;
+            }
+            if (std::getenv("ESBMC_FPC_VERIFY"))
+            {
+              const nlohmann::json *ref = nullptr;
+              for (const auto &n : nodes_root)
+              {
+                if (!n.is_object())
+                  continue;
+                bool c = n.contains("nodeType") &&
+                         n["nodeType"] == "ContractDefinition";
+                if (c)
+                {
+                  if (n.contains("id") && n["id"] == id)
+                  {
+                    ref = &n;
+                    break;
+                  }
+                  bool lib = n.contains("contractKind") &&
+                             n["contractKind"] == "library";
+                  bool itf = n.contains("contractKind") &&
+                             n["contractKind"] == "interface";
+                  bool base = !current_baseContractName.empty() &&
+                              n.contains("name") &&
+                              n["name"] == current_baseContractName;
+                  if (!(base || lib || itf))
+                    continue;
+                }
+                const auto &r = find_node_by_id(n, id);
+                if (!r.empty())
+                {
+                  ref = &r;
+                  break;
+                }
+              }
+              if (ref != cand)
+              {
+                log_error(
+                  "find_decl_ref: index answer differs from scoped walk for "
+                  "id {}",
+                  id);
+                abort();
+              }
+            }
+            return *cand;
+          }
+          return empty_json;
+        }
+      }
+    }
     for (const auto &node : src_ast_json["nodes"])
     {
       if (!node.is_object())
