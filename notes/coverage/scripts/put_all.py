@@ -68,6 +68,7 @@ from veriput_recipe import (
     STRONG_PUT_AUTO_UNWIND,  # noqa: E402
     STRONG_PUT_AUTO_PARTIAL_LOOPS,
     STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET,
+    STRONG_PUT_PROOF_ESBMC_ARGS,
     STRONG_PUT_FUZZ_RUNS,
     STRONG_PUT_LIFT_UNCONSTRAINED_CALLDATA,
     STRONG_PUT_LIFT_UNCONSTRAINED_SENDER,
@@ -2346,6 +2347,10 @@ def apply_strong_put_recipe(args):
     args.fuzz_r2_prefilter = True
     args.fuzz_runs = STRONG_PUT_FUZZ_RUNS
     args.fuzz_r2_candidate_budget = STRONG_PUT_FUZZ_R2_CANDIDATE_BUDGET
+    # v28: the recipe's arithmetic checks on the R1/R2 proof queries, unless the
+    # caller named its own --proof-esbmc-arg list.
+    if not getattr(args, "proof_esbmc_arg", None):
+        args.proof_esbmc_arg = list(STRONG_PUT_PROOF_ESBMC_ARGS)
     return STRONG_RECIPE_VERSION
 
 

@@ -8627,6 +8627,11 @@ def _put_argv(cert_path: Path,
         "--out-root",
         str(out_root),
         "--retain-certified-concrete-replays",
+        # The whole-run clock for this Stage-4 invocation is the case's
+        # remaining budget; put_all starts no row it cannot finish inside it
+        # (motivation freeT: Stage 4 = 600 - Stage 2, TODO 30 #13).
+        "--wall-deadline",
+        str(budget),
     ]
     if concrete_replay_only:
         argv.append("--certified-concrete-only")
