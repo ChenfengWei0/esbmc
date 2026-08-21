@@ -757,3 +757,98 @@ Per-case rerun prevention summary:
 - `bugfix124/pop_046_CVXStaker`: VALID_NO_PUT valid=6 put=0 r1r2=0 result=/home/samson/workspace/VeriPUT/Results/RQ1/VeriPUT/bugfix124/subjects/pop_046_CVXStaker/result.json
 
 <!-- RQ1_BATCH_SETTLEMENT_END manual-005-012-novalid-r3 -->
+
+## 021. full-20260822-v28 的 4 个 no-valid 复核（2026-08-22，未跑任何 ESBMC）
+
+campaign `full-20260822-v28`（12/509 已记录）里 `quality_bucket=no-valid` 的 4 个 case：
+`acfix_fixlink_Product`、`acfix_fixlink_Product2`、`pop_001_Multicall`、`pop_042_VaultAdapter`。
+条目 007/008/011/016 写的旧归因（Product 的 tuple 前端崩溃、VaultAdapter 的
+selector/modifier 类型不匹配）在当前二进制上已经不复现：三个 case 的失败点都变了。
+以下只用磁盘上已有的日志和 result.json，没有重跑。
+
+### 021.1 pop_001_Multicall — 结构性无 unit，不可救
+
+- `unit-schedule.json`: `jobs=[]`，`no_unit_rows[0].reason="target contract is a library,
+  so no external transaction unit is schedulable"`，唯一函数 `multicall` 是 `internal`。
+- `result.json`: `status=no-units`，`wall=5.3s`，Stage 2/Stage 4 都没有启动。
+
+归因：library + internal-only，标准 0b 的"结构性不可能"豁免正好是这一类。旧条目 011
+的结论不变，不需要新的代码修复；预算、调度、salvage 都改不了它。
+
+### 021.2 acfix_fixlink_Product / Product2 — 单元枚举本身跑不完
+
+- `unit-schedule.json`: 49 个 job；`result.json` 显示 600 s 里只轮到 17 个 unit，
+  `stage2_wall_s=504.2`，`stage4_wall_s=0`，`completion_status=budget-exhausted`。
+- `certification.driver_diagnostic_tags` 只有 `static-abi-value-gate-certified: 17`；
+  `path-coverage-partial-journal-only` 是 **0**（对照：出 PUT 的 case 每个都有十几个）。
+- `001-utilizationBuffer/.../driver.log`: `[enumerate]` 先把 `--path-cov-probe/--all-witnesses`
+  限制在 48 s 里的 12 s，判定 too expensive 后退回 basic enumeration；basic 那次
+  `--path-cov-instrument-only` 跑满剩下的 35 s 被 kill，只判定了 1 条 claim
+  （`utilizationBuffer:path:3`，而且被 `--path-cov-arith-resolve` 证明只能经 Panic revert
+  到达，不能当 normal-exit 测试）。最终 `bucket=KILLED`, `exit=124`,
+  `auto_cheap_stage2_retry.reason=esbmc-no-cov-report`。
+- 17 个 unit 全是这个形状，没有一个产出 cov-report.json。
+
+归因：不是调度顺序问题，也不是 Stage 4 问题。Product 这类合约在 `--solidity-max-tx 1`
+下**单个 unit 的路径枚举**就吃不下 30-48 s 的预算，而 49 个 unit 均摊后每个只有约 12 s。
+在 600 s 固定预算内，把预算重新分配（早停、上限 60 s、把 Stage 2 时间还给 Stage 4）都
+不会产生一个 certified region：唯一还能被计成 valid 的产物是 static ABI value gate，
+而那正是 TODO 2 要删掉的空测试。所以这两个 case 在当前预算下是诚实的 no-valid。
+
+还能修的地方（都需要跑才能验证，本轮没跑）：
+1. 枚举成本本身（TODO 18/19/24）：per-unit `--path-cov-instrument-only` 仍然重付一次
+   全量枚举，而 subject 级 `--goto-functions-only` 45 s 就能给出全部 path identity。
+2. `path_cov_probe_enum_timeout()` 的 12 s probe 子预算对这类 unit 是纯损耗：probe 一条
+   claim 都判定不了，却吃掉四分之一的 unit 预算。
+
+### 021.3 pop_042_VaultAdapter — Stage 2 只 salvage 出 witness，Stage 4 只能落到会 revert 的 concrete fallback
+
+- `002-setSlopes/driver.log`、`003-setLimits/driver.log`: probe too expensive 之后，basic
+  enumeration 从 partial `cov-ce-journal.json` salvage 出 5 条 / 4 条 witnessed path
+  （`18/1216`、`12/1204` claims decided），但没有一条被 certify。
+- `result.json`: `certification.bucket_counts={CERTIFIED:2, KILLED:5, NO-WITNESS-UNKNOWN:1}`，
+  两条 CERTIFIED 都是 `static-abi-value-gate-certified`；`not_certified_regions=10`；
+  另有 `outer-box-solver-oom: 1`（全 tag 唯一一个）。
+- Stage 4 拿到 207.5 s，11 行 put.json 全是 `stage4_kind=cleared-concrete-fallback`
+  （`stage2_source=cleared_not_certified_fallback`）。
+- 生成的测试确实存在，但全部被改名禁用：
+  `VaultAdapterCovTest_VaultAdapter_setSlopes_concrete7_fb.t.sol` 里是
+  `function disabled_test_cov_0`，注释写明 "RED on the unmodified contract"。
+  `forge-replay.log` 因此是 `No tests found in project!`，`raw=0, valid=0`。
+- 原因看源码即可确认：合成的用例是 `new VaultAdapter()` + `vm.prank(address(0))` +
+  `c0.setSlopes(...)`，而 `setSlopes` 带 `checkAccess(this.setSlopes.selector)`；witness 的
+  pins 里只有 4 个 ERC-7201 常量槽，没有任何能让 `checkAccess` 通过的授权状态——因为这条
+  路径**从来没有被 certify**，也就没有 establish 过入口状态。
+
+归因：`cleared-concrete-fallback` 对"入口状态未建立"的路径按定义只能产出 revert 的重放。
+全 tag 15 个 `*_fb.t.sol` 里 11 个是 `disabled_test`（RED），而这一类行在 Stage 4 花掉
+638.5 s（`certified-region` 行才 453.4 s）。pop_042 的 208 s 全花在这上面。
+
+应该修哪里：
+1. `solidity_path_put.py::synthesize_minimal_emitted_case`：合成用例硬编码
+   `vm.prank(address(uint160(0)))` 且不 establish 任何状态。对带 access-control modifier 的
+   unit，这个形状必然 RED，值得在生成前就按 modifier 判定拒绝，而不是生成后再禁用。
+2. `rq1_veriput_run.py` 的 Stage-4 预算：`_should_skip_low_budget_timeout_only_stage4` /
+   `_should_skip_concrete_only_after_puts` 已经存在，但门槛只看"剩余时间"和"已有 PUT 数"，
+   不看"这一行能不能绿"。需要先量一轮（要跑），本轮只记录数字。
+
+### 021.4 本轮实际改掉的一处：probe 的 journal 不再被删
+
+`solidity_path_generalise.py` 在 probe 太贵退回 basic enumeration 前，会
+`os.remove(cov-ce-journal.json)`。journal 是 ESBMC 每见到一个 witness 就原子写一次的文件
+（bmc.cpp: "written per witness and needs no allocation"），是被 kill 的运行**唯一**留下的证据。
+删掉它意味着：如果 basic enumeration 那次也没写出 journal，这个 unit 就完全没有 Stage 2 产物。
+
+full-20260822-v28 的计数：88 个 unit 触发了 probe 回退，其中 **40 个**最终
+`ESBMC produced no cov-report.json` 且没有 salvage；这 40 个里 **4 个**的回退原因是
+`path-cov-probe-early-stop`——即 probe 已经判定了 ≥128 条 claim 才被主动停下，它的 journal
+必然非空，却被删了：
+`pop_018_PrivatePool/sumWeightsAndValidateProof`、`acfix_fixlink_MStableYieldSource/redeemToken`、
+`pop_032_PuttyV2/encodeERC20Assets`、`acfix_real_FlashGovernanceArbiter/setGoverned`。
+另外 36 个的回退原因是 `path-cov-probe-timeout`，probe 是否已经写出 witness 需要跑才知道。
+
+改法（已实现）：回退前把 probe 的 journal **移**成 `cov-ce-journal.probe.json` 而不是删；
+salvage 时在"本次 journal"和"probe journal"里取判定路径更多的那一个，并把
+`veriput_salvage.from` 记成实际来源。新增 5 条断言，`test_solidity_path_generalise.py` 全绿。
+这一改动救不了上面三个 no-valid case（它们的 probe 都是 timeout 且 0 witness），只在
+上述 4 个 unit 上是确定的收益。

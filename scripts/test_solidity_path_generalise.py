@@ -120,6 +120,9 @@ from solidity_path_generalise import (
     witness_values,
     report_from_ce_journal,
     partial_journal_report,
+    preserve_probe_journal,
+    probe_journal_path,
+    PROBE_JOURNAL_NAME,
     live_witness_vectors,
     write_enumeration_salvage,
     read_enumeration_salvage,
@@ -3938,6 +3941,37 @@ with open(os.path.join(_journal_dir, "cov-ce-journal.json"), "w") as f:
     }, f)
 check("partial_journal_report reads cwd journal",
       partial_journal_report(_journal_dir)["claims"][0]["path_id"], "31")
+
+# The probe run's journal must survive the basic-enumeration retry: a retry that
+# times out before deciding anything used to delete the only witnesses the unit
+# had produced, which is what turned 40 of the 88 probe-fallback units in
+# full-20260822-v28 into units with no Stage-2 output at all.
+_probe_dir = tempfile.mkdtemp(prefix="journal-probe-")
+with open(os.path.join(_probe_dir, "cov-ce-journal.json"), "w") as f:
+    json.dump({
+        "kind": "solidity-complete-path-ce-journal",
+        "witnesses": {
+            "k": _journal_claim
+        },
+    }, f)
+_kept = preserve_probe_journal(_probe_dir)
+check("probe journal is moved aside, not deleted", os.path.basename(_kept),
+      PROBE_JOURNAL_NAME)
+check("probe journal move frees the retry's own journal name",
+      os.path.exists(os.path.join(_probe_dir, "cov-ce-journal.json")), False)
+check("a retry that wrote no journal still salvages the probe's witnesses",
+      partial_journal_report(_probe_dir)["claims"][0]["path_id"], "31")
+check("the salvage records which journal it came from",
+      partial_journal_report(_probe_dir)["veriput_salvage"]["from"], PROBE_JOURNAL_NAME)
+with open(os.path.join(_probe_dir, "cov-ce-journal.json"), "w") as f:
+    json.dump({
+        "kind": "solidity-complete-path-ce-journal",
+        "witnesses": {},
+    }, f)
+check("an empty retry journal does not shadow the probe's",
+      partial_journal_report(_probe_dir)["claims"][0]["path_id"], "31")
+check("preserving twice keeps the newer probe journal",
+      os.path.basename(preserve_probe_journal(_probe_dir) or ""), PROBE_JOURNAL_NAME)
 _salvage_meta = write_enumeration_salvage(_journal_dir, _journal_report)
 check("enumeration salvage sidecar records path count", _salvage_meta["path_count"], 1)
 check("enumeration salvage sidecar records witness count",

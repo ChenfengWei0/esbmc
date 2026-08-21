@@ -1326,13 +1326,59 @@ def report_from_ce_journal(journal):
     }
 
 
-def partial_journal_report(cwd):
-    path = os.path.join(cwd, "cov-ce-journal.json")
+PROBE_JOURNAL_NAME = "cov-ce-journal.probe.json"
+
+
+def probe_journal_path(cwd):
+    """Where the expensive probe run's journal is kept when it is retried.
+
+    The probe enumeration writes `cov-ce-journal.json` per witness, so a run
+    killed by the probe sub-budget still leaves every path it decided on disk.
+    The basic-enumeration retry needs a clean `cov-ce-journal.json` of its own,
+    so the probe's copy is MOVED here instead of deleted: if the retry also ends
+    without a `cov-report.json`, those witnesses are the only evidence the unit
+    produced, and deleting them turns a partially enumerated unit into a unit
+    with no Stage-2 output at all.
+    """
+    return os.path.join(cwd, PROBE_JOURNAL_NAME)
+
+
+def preserve_probe_journal(cwd):
+    """Move the probe run's journal aside; return its path if one was kept."""
+    journal = os.path.join(cwd, "cov-ce-journal.json")
+    kept = probe_journal_path(cwd)
+    if os.path.exists(kept):
+        os.remove(kept)
+    if not os.path.exists(journal):
+        return None
+    os.replace(journal, kept)
+    return kept
+
+
+def _journal_report_at(path):
     try:
         with open(path, encoding="utf-8") as stream:
             return report_from_ce_journal(json.load(stream))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def partial_journal_report(cwd):
+    """The best partial report from this run's journal or a preserved probe one.
+
+    "Best" is the one that witnessed more paths: a retry that timed out early
+    can have decided fewer claims than the probe run it replaced, and the point
+    of keeping the probe journal is that neither is allowed to shadow the other.
+    """
+    candidates = [(name, _journal_report_at(os.path.join(cwd, name)))
+                  for name in ("cov-ce-journal.json", PROBE_JOURNAL_NAME)]
+    found = [(name, report) for name, report in candidates if report]
+    if not found:
+        return None
+    name, best = max(found, key=lambda item: len(item[1].get("claims") or []))
+    if best.get("veriput_salvage"):
+        best["veriput_salvage"]["from"] = name
+    return best
 
 
 def enumeration_salvage_path(cwd):
@@ -1740,6 +1786,9 @@ def enumerate_paths(esbmc,
         journal = os.path.join(cwd, "cov-ce-journal.json")
         if os.path.exists(journal):
             os.remove(journal)
+        stale_probe_journal = probe_journal_path(cwd)
+        if os.path.exists(stale_probe_journal):
+            os.remove(stale_probe_journal)
         enum_args = ["--cov-report-json"]
         # --focus-function is intentionally name-level and therefore keeps all
         # overloads.  The schedule has already resolved this run to one AST
@@ -1782,8 +1831,11 @@ def enumerate_paths(esbmc,
                   f"as a driver refusal ({fallback_reason})")
             if os.path.exists(report):
                 os.remove(report)
-            if os.path.exists(journal):
-                os.remove(journal)
+            kept_probe_journal = preserve_probe_journal(cwd)
+            if kept_probe_journal:
+                print("[enumerate] the probe run's cov-ce-journal.json is kept as "
+                      f"{PROBE_JOURNAL_NAME}; if the retry also ends without a "
+                      "cov-report.json those witnesses are still salvaged")
             fallback_timeout = max(1, int(timeout - (time.monotonic() - enum_started)))
             fallback_args = (["--cov-report-json"] + path_function_instrument_args(path_function))
             log = run(esbmc,
