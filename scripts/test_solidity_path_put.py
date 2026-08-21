@@ -27114,3 +27114,22 @@ def test_struct_literal_entry_storage_flattens_to_certified_ce_members():
     conflicting = {"inputs": {}, "env": {},
                    "entry_storage": {"s": "{ .x = 1 }", "s.x": "2"}}
     assert claim_concrete_ce(conflicting) is None
+
+
+def test_bytesn_literal_maps_to_the_certified_ce_scalar():
+    """ESBMC prints bytesN as `{ .data={...}, .length=N }`; the CE is an int."""
+    from solidity_path_put import _bytesn_literal_value, claim_concrete_ce
+    assert _bytesn_literal_value("{ .data = { 0 } }") == 0
+    assert _bytesn_literal_value("{ .data={ 0, 0 }, .length=32 }") == 0
+    assert _bytesn_literal_value("{ .data={ 1 }, .length=32 }") == 1 << (31 * 8)
+    assert _bytesn_literal_value("{ .data={ 0, 1 }, .length=2 }") == 1
+    assert _bytesn_literal_value("{ .data={ 255, 255 }, .length=2 }") == 0xFFFF
+    # width unknown and non-zero: refuse rather than guess
+    assert _bytesn_literal_value("{ .data = { 1 } }") is None
+    # not a bytesN spelling
+    assert _bytesn_literal_value("{ .currentRound = 0 }") is None
+    assert _bytesn_literal_value("{ .data={ 300 }, .length=1 }") is None
+    assert _bytesn_literal_value("{ .data={ 1, 2 }, .length=1 }") is None
+    claim = {"inputs": {"assertionId": "{ .data = { 0 } }", "who": "2001"},
+             "env": {}, "entry_storage": {}}
+    assert claim_concrete_ce(claim) == {"assertionId": 0, "who": 2001}

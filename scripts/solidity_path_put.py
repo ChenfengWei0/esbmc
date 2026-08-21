@@ -16307,6 +16307,51 @@ def apply_foundry_fixture_target_call_mode(lines, fixture, inst, unit):
     return out
 
 
+def _bytesn_literal_value(raw):
+    """Scalar value of ESBMC's fixed-bytes spelling, or None.
+
+    A `bytesN` coordinate reaches an emitted claim as the frontend's struct
+    printing -- `{ .data={ 180, 19, ..., 0 }, .length=32 }`, or the C partial
+    initialiser `{ .data = { 0 } }` -- while the certified CE carries the same
+    coordinate as one decimal integer. Without this mapping the two spellings
+    never compare equal and the basis replay is refused as "non-scalar or
+    malformed coordinate" (measured 2026-08-22 on BaseEscalationManager:
+    3 solver-certified regions, 0 PUT published).
+
+    The bytes are big-endian (`data[0]` is the most significant), which is how
+    ERC-7201 slot constants read back on disk. A list shorter than `.length`
+    is a partial initialiser: the unlisted trailing bytes are zero. When no
+    `.length` is given, only an all-zero list can be resolved -- the width is
+    unknown, and guessing it could authenticate a different value.
+    """
+    if not isinstance(raw, str):
+        return None
+    match = re.fullmatch(
+        r"\s*\{\s*\.data\s*=\s*\{([^{}]*)\}\s*(?:,\s*\.length\s*=\s*(\d+)\s*)?\}\s*", raw)
+    if match is None:
+        return None
+    items = [item.strip() for item in match.group(1).split(",") if item.strip()]
+    values = []
+    for item in items:
+        try:
+            byte = int(item, 0)
+        except ValueError:
+            return None
+        if not 0 <= byte <= 0xFF:
+            return None
+        values.append(byte)
+    width = int(match.group(2)) if match.group(2) else None
+    if width is None:
+        return 0 if all(byte == 0 for byte in values) else None
+    if len(values) > width:
+        return None
+    values = values + [0] * (width - len(values))
+    result = 0
+    for byte in values:
+        result = (result << 8) | byte
+    return result
+
+
 def _normalized_concrete_ce_value(raw):
     """Canonical JSON value carried by a concrete counterexample.
 
@@ -16325,7 +16370,7 @@ def _normalized_concrete_ce_value(raw):
         try:
             return int(raw, 0)
         except ValueError:
-            return None
+            return _bytesn_literal_value(raw)
     if isinstance(raw, list):
         out = []
         for item in raw:
