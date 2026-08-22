@@ -13280,6 +13280,25 @@ def materialize_concrete_certified_state_point(source,
         if not isinstance(scalar_value, int):
             return source, 0, f"certified state coordinate {name} is not a scalar integer"
         raw_state_name = name[len("state."):]
+        # A dynamic array's LENGTH is a word at the array's own slot. ESBMC
+        # spells it as a store keyed by the contract's address
+        # (`rewardTokens_dynarray_len[(&_ESBMC_Object_CVXStaker)->$address]`),
+        # which reads as a mapping coordinate and was refused here while the
+        # storage layout lists `rewardTokens.length` at that slot. MEASURED on
+        # CVXStaker (full-20260822-v33): every body-path PUT of the case
+        # (owner, stakedBalance, earned, depositAndStake, transferOwnership)
+        # was written and then refused in the basis replay on this one name.
+        dyn_len = re.match(r"^([A-Za-z_$][A-Za-z0-9_$]*)_dynarray_len\[", raw_state_name)
+        if dyn_len is not None:
+            length_key = layout_scalar_key(dyn_len.group(1) + ".length", layout,
+                                           state_store_names)
+            if length_key is None:
+                return source, 0, (f"certified dynamic-array length coordinate {name} names "
+                                   "no array the storage layout lists")
+            slot, off, nb = layout[length_key]
+            additions += slot_write_lines(receiver, slot, off, nb, str(scalar_value))
+            additions += slot_landing_check(receiver, slot, off, nb, str(scalar_value), name)
+            continue
         if parse_slot_name(raw_state_name)[0] is not None:
             return source, 0, f"certified mapping state coordinate {name} is not materialized"
         layout_name = layout_scalar_key(raw_state_name, layout, state_store_names)

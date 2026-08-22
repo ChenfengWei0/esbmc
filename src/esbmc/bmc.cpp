@@ -6450,7 +6450,23 @@ smt_convt::resultt bmct::multi_property_check(
                 // local is assigned where it is bound, and a later reassignment
                 // is a different value of the same name rather than a reseed of
                 // the same one.
-                if (nondet_local_seen.insert(name).second)
+                // ---- A CALLEE'S PARAMETER IS A FORWARDED ARGUMENT ----
+                //
+                // The unit's own parameters took the `is_param` branch above.
+                // A parameter of a function the unit CALLS is assigned from
+                // the caller's expression -- the nondet in its rhs is the
+                // unit's own argument flowing down one frame -- so it is not
+                // a quantity the harness chose here. MEASURED on
+                // VaultAdapter.setLimits (full-20260822-v33): `_maxMultiplier`,
+                // `_minMultiplier`, `_rate` were published under `inputs` AND,
+                // from the internal `_setLimits` they are passed to, under
+                // `extcall_returns`; the driver then pinned
+                // `extcall._maxMultiplier`, the certification query could not
+                // express it, and no body path of the unit was certified.
+                const symbolt *lsym = ns.lookup(irep_idt(sym_id));
+                if (lsym && lsym->is_parameter)
+                  ++ce.dropped_internal;
+                else if (nondet_local_seen.insert(name).second)
                   ce.extcall_returns.emplace_back(name, val);
               }
               else

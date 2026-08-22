@@ -60,6 +60,9 @@ DRIVER_T0 = _time_mod.monotonic()
 DRIVER_REFINE_SHARE = 0.5
 # The share of the unit budget the FIRST refine round must leave for certification.
 DRIVER_CERTIFY_RESERVE = 0.25
+# Wall seconds per decided claim of the LAST outer round, or None. Written by
+# outer_round, read by the refine call site to size its ladder.
+LAST_ROUND_PER_CLAIM_S = [None]
 DRIVER_PIECE_SHARE = 0.8
 
 
@@ -5618,6 +5621,15 @@ def outer_round(esbmc,
     print(f"[round] {kind}: {_wall:.1f}s wall, {len(spec_coords)} coordinate(s),"
           f" ~{n_probe} candidate value(s) per direction, {len(paths)} path(s)")
     print("[round] " + round_accounting(log))
+    # The measured cost of ONE claim in this round, for the next round's
+    # ladder to be sized by (see the refine call site).
+    _m_reached = REACHED_RE.search(log)
+    try:
+        _decided = int(_m_reached.group(1)) if _m_reached else 0
+    except (TypeError, ValueError):
+        _decided = 0
+    if _decided > 0 and _wall > 0:
+        LAST_ROUND_PER_CLAIM_S[0] = _wall / _decided
     # A timed-out round measures nothing, and "measured nothing" is reported
     # downstream as "no fully bounded region was measured" -- which reads as a
     # property of the path. Say which it was, here, where it is known.
@@ -10760,6 +10772,32 @@ def main():
             # bounds the LATER rounds.
             first_round_cutoff = (1.0 - DRIVER_CERTIFY_RESERVE) * args.timeout
             cutoff = first_round_cutoff if r == 0 else DRIVER_REFINE_SHARE * args.timeout
+            # ---- THE LADDER IS SIZED BY WHAT THE BUDGET AFFORDS ----
+            #
+            # One refine round is ONE ESBMC run with (probes+2) x coords x 2
+            # x paths claims, and the per-claim cost is a property of the
+            # contract, not of the ladder: MEASURED on VaultAdapter.setLimits
+            # (full-20260822-v33) the level-0 round reported 0.12 s per query
+            # and the refine round's 132 claims then took 0.34 s each -- 50 s
+            # for a round the unit had 35 s left for, so it was KILLED and
+            # "no fully bounded region was measured" although every probe
+            # would have answered. The same rule for every unit: take the
+            # last round's measured wall per claim, the budget this round may
+            # still use, and lay only as many rungs as fit (never fewer than
+            # 2 per coordinate). A thinner ladder is a coarser box, which the
+            # shrink rounds then refine; a killed ladder is nothing.
+            round_probes = args.probes
+            per_claim = LAST_ROUND_PER_CLAIM_S[0]
+            if per_claim and coords and paths:
+                afford = (cutoff - driver_elapsed()) / per_claim
+                per_coord = int(afford // (2 * len(paths) * len(coords)))
+                if per_coord - 2 < round_probes:
+                    round_probes = max(2, per_coord - 2)
+                    print(f"[refine {r+1}] LADDER SIZED TO BUDGET: {round_probes} probe(s) per "
+                          f"coordinate instead of {args.probes} -- the last round cost "
+                          f"{per_claim:.2f}s per claim, {cutoff - driver_elapsed():.0f}s of "
+                          f"this round's share are left, {len(paths)} path(s) x "
+                          f"{len(coords)} coordinate(s) x 2 directions")
             if driver_elapsed() > cutoff:
                 print(f"[refine {r+1}] SKIPPED: {driver_elapsed():.0f}s of the {args.timeout}s "
                       f"unit budget are spent and "
@@ -10778,7 +10816,7 @@ def main():
                                   paths,
                                   coords,
                                   outer_pins(),
-                                  args.probes,
+                                  round_probes,
                                   query_max_tx,
                                   args.timeout,
                                   cwd,

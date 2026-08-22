@@ -106,6 +106,46 @@ expr2tc materialise_trace_step_value(smt_convt &smt_conv, goto_trace_stept &step
           get_expr_id(step.lhs),
           is_nil_expr(target));
     }
+    // ---- NO ELEMENT-WISE MODEL OF A LARGE ARRAY ----
+    //
+    // smt_convt::get on an array asks the solver for every element (and
+    // every element of every nested array). MEASURED on PuttyV2.balanceOf
+    // (full-20260822-v33): a nondet-sourced nested array assignment sent
+    // get_array into bitwuzla get_value per element until the process hit
+    // std::bad_alloc at --memlimit 5g, 97 s after the last claim was
+    // decided -- in eager mode too. The harvest renders no array of that
+    // size (inputs are scalars, `.length`s and small literals), so such a
+    // value is left nil and the step is dropped exactly as a nil value
+    // always was.
+    {
+      size_t elems = 1;
+      bool too_big = false;
+      const type2tc *t = &step.lhs->type;
+      while (is_array_type(*t))
+      {
+        const array_type2t &at = to_array_type(*t);
+        if (at.size_is_infinite || !is_constant_int2t(at.array_size))
+        {
+          too_big = true;
+          break;
+        }
+        elems *= to_constant_int2t(at.array_size).value.to_uint64();
+        if (elems > 256)
+        {
+          too_big = true;
+          break;
+        }
+        t = &at.subtype;
+      }
+      if (too_big)
+      {
+        if (lazy_debug)
+          log_status(
+            "[lazy-trace] array too large to materialise, dropped: {}",
+            from_expr(step.lhs));
+        return step.value;
+      }
+    }
     step.value = build_rhs(smt_conv, step.rhs);
     if (lazy_debug)
       log_status(
