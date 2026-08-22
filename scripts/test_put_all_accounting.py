@@ -349,6 +349,48 @@ contract UnrelatedProbeTest is Test {
             revert_put_rec, revert_basis_rec, {"ce": revert_ce})
         bad += check("certified-ce-anchor-reverting-basis-needs-no-return-oracle",
                      revert_error, None)
+        # A DYNAMIC ARRAY fuzz parameter the CE fixes by LENGTH only: the fixed
+        # replay's guard term is `<name>.length == N` (rc_unchecked 0x2972
+        # `transfer(address[] memory _tos, ...)`, `_tos.length = 0`).
+        put3_file = os.path.join(td, "test", "Put3.t.sol")
+        basis3_file = os.path.join(td, "Basis3.t.sol")
+        put3_source = put_source.replace(
+            "function f(uint256 x) public returns (uint256) { y = x + 2; emit Seen(y); return y; }",
+            "function f(uint256 x) public returns (uint256) { y = x + 2; emit Seen(y); return y; }\n"
+            "  function g(address[] memory a) public { require(a.length > 0); y = 1; }"
+        ).replace(
+            "  function test_put_Probe_f_path1(uint256 x) public {\n"
+            "    assertTrue(x <= type(uint256).max);\n    c0.f(x);\n  }",
+            "  function test_put_Probe_g_path1(address[] memory a) public {\n"
+            "    bool _put_ok = true;\n    try c0.g(a) {} catch { _put_ok = false; }\n"
+            "    assertFalse(_put_ok);\n  }")
+        assert put3_source != put_source, "fixture: array PUT was not substituted"
+        basis3_source = basis2_source.replace(
+            "function f(uint256 x) public returns (uint256) { y = x + 2; emit Seen(y); return y; }",
+            "function f(uint256 x) public returns (uint256) { y = x + 2; emit Seen(y); return y; }\n"
+            "  function g(address[] memory a) public { require(a.length > 0); y = 1; }"
+        ).replace("try c0.f(7) {", "try c0.g(new address[](0)) {")
+        assert basis3_source != basis2_source, "fixture: array basis was not substituted"
+        with open(put3_file, "w", encoding="utf-8") as fh:
+            fh.write(put3_source)
+        with open(basis3_file, "w", encoding="utf-8") as fh:
+            fh.write(basis3_source)
+        array_ce = {"a.length": "0"}
+        array_basis_rec = dict(revert_basis_rec)
+        array_basis_rec.update({
+            "file": basis3_file,
+            "unit": "g",
+            "certified_ce_binding": source_binding(basis3_source, array_ce),
+        })
+        array_put_rec = dict(put_rec)
+        array_put_rec.update({"file": put3_file, "test": "test_put_Probe_g_path1", "unit": "g"})
+        array_anchor, array_error = put_all.attach_certified_ce_anchor(
+            array_put_rec, array_basis_rec, {"ce": array_ce})
+        bad += check("certified-ce-anchor-array-length-only-ce-is-accepted", array_error, None)
+        # A reverting basis with only a call-status oracle fuses nothing new
+        # into the PUT (the exit assertion is already there); the accepted
+        # guard is what this case is about.
+        bad += check("certified-ce-anchor-array-anchor-returns", array_anchor is not None, True)
         _normal_anchor, normal_error = put_all.attach_certified_ce_anchor(
             revert_put_rec, dict(revert_basis_rec, concrete_oracles=[{
                 "class": "R0",

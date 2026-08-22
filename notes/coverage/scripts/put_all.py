@@ -1919,12 +1919,27 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail, representat
         # carries no term for it. MEASURED: EmergencyOracleFactory
         # .newEmergencyOracle 6p1 (acfix_088, full-20260822-v39), the
         # `onlyJojoTeam` revert arm with `description` unread.
-        dynamic_type = re.sub(r"\s+(memory|calldata)$", "", solidity_type.strip()) in (
-            "bytes", "string")
+        _bare_type = re.sub(r"\s+(memory|calldata)$", "", solidity_type.strip())
+        dynamic_type = _bare_type in ("bytes", "string") or _bare_type.endswith("[]")
         bare = name[2:] if name.startswith("p_") else name
         if (raw_value is None and dynamic_type
                 and not any(key == bare or key == name or key.startswith(bare + ".")
                             or key.startswith(bare + "[") for key in ce)):
+            continue
+        # A dynamic argument (bytes/string/T[]) the CE fixes by LENGTH only:
+        # the guard's term is the length, which is the coordinate the point
+        # has. MEASURED: rc_unchecked 0x2972/0x4051 `transfer(address[]
+        # memory _tos, ...)` with `_tos.length = 0` (full-20260822-v40
+        # round 10).
+        if raw_value is None and dynamic_type:
+            length_value = next((ce[key] for key in (bare + ".length", name + ".length")
+                                 if key in ce), None)
+            length_literal = (_concrete_return_literal("uint256", length_value)
+                              if length_value is not None else None)
+            if length_literal is None:
+                return None, (f"certified CE lacks an exact scalar value for PUT parameter "
+                              f"{name} (dynamic; no `{bare}.length` either)")
+            parameter_values.append((f"{name}.length", length_literal))
             continue
         literal = _concrete_return_literal(solidity_type, raw_value)
         if literal is None:

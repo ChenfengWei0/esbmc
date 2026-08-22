@@ -11395,7 +11395,10 @@ def bind_emitted_source_to_certified_ce(body,
                 continue
             empty_string = (str(typ).strip() in ("string", "string memory", "string calldata")
                             and expr.strip() in ('""', 'string("")'))
-            if (empty_string and expected_ce.get(length_name) == 0):
+            empty_array = (dynamic_calldata_signature_type(typ) is not None
+                           and re.match(r"^new\s+[A-Za-z_][\w.]*(\[\d*\])*\[\]\(\s*0\s*\)$",
+                                        expr.strip()) is not None)
+            if ((empty_string or empty_array) and expected_ce.get(length_name) == 0):
                 rendered[length_name] = 0
                 bindings[length_name] = {
                     "kind": "empty-dynamic-call-argument",
@@ -11407,8 +11410,9 @@ def bind_emitted_source_to_certified_ce(body,
             # no element, no member) was never read on the path; the CE is
             # complete WITHOUT it and the argument is not a coordinate of
             # the point. Recorded, not refused (see the call-point renderer).
-            dynamic = str(typ).strip() in ("bytes", "bytes memory", "bytes calldata", "string",
-                                           "string memory", "string calldata")
+            dynamic = (str(typ).strip() in ("bytes", "bytes memory", "bytes calldata", "string",
+                                            "string memory", "string calldata")
+                       or dynamic_calldata_signature_type(typ) is not None)
             if dynamic and not any(
                     key == name or key == length_name or key.startswith(name + "[")
                     or key.startswith(name + ".") for key in expected_ce):
@@ -21042,8 +21046,19 @@ def materialize_concrete_certified_call_point(source, test_name, unit, params, c
         elif (str(sol_type).strip() in ("string", "string memory", "string calldata")
               and expected.get(name + ".length") == 0):
             literal = '""'
-        elif (str(sol_type).strip() in ("bytes", "bytes memory", "bytes calldata", "string",
-                                        "string memory", "string calldata")
+        elif (dynamic_calldata_signature_type(sol_type) is not None
+              and dynamic_default_call_arg(sol_type) is not None
+              and expected.get(name + ".length") == 0):
+            # A dynamic ARRAY whose certified length is 0 is the empty array:
+            # `new T[](0)`. MEASURED: rc_unchecked 0x2972/0x4051
+            # `transfer(address[] memory _tos, ...)` -- the
+            # `require(_tos.length > 0)` revert path, CE `_tos.length = 0`,
+            # refused here as "cannot be rendered exactly" (full-20260822-v40
+            # round 10).
+            literal = dynamic_default_call_arg(sol_type)
+        elif ((str(sol_type).strip() in ("bytes", "bytes memory", "bytes calldata", "string",
+                                         "string memory", "string calldata")
+               or dynamic_calldata_signature_type(sol_type) is not None)
               and name + ".length" not in expected
               and not any(key == name or key.startswith(name + "[") or
                           key.startswith(name + ".") for key in expected)):

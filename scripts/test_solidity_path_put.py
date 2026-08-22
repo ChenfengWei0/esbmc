@@ -26679,6 +26679,46 @@ def test_certified_call_point_keeps_dynamic_arguments_the_ce_never_mentions():
     return bad
 
 
+def test_certified_call_point_renders_dynamic_arrays_like_bytes():
+    """`address[] memory` at certified length 0 -> `new address[](0)`; unmentioned
+    arrays keep the emitter's literal; the binder accepts both (rc_unchecked
+    0x2972/0x4051 transfer, full-20260822-v40 round 10)."""
+    source = """contract T is Test {
+  F c0;
+  function setUp() public { c0 = new F(); }
+  function test_cov_1() public {
+    vm.prank(address(uint160(1)));
+    c0.transfer(address(uint160(5700)), new address[](4), 7);
+  }
+}
+"""
+    params = [("from", "address"), ("_tos", "address[] memory"), ("v", "uint256")]
+    empty, _n, reason_empty = materialize_concrete_certified_call_point(
+        source, "test_cov_1", "transfer", params, {"from": "0", "v": "7", "_tos.length": "0"})
+    bad = 0
+    bad += check(reason_empty is None and
+                 'c0.transfer(address(uint160(0)), new address[](0), uint256(7));' in empty,
+                 f"an array the CE fixes at length 0 renders as the empty array: {reason_empty} / {empty}")
+    kept, _n2, reason_kept = materialize_concrete_certified_call_point(
+        source, "test_cov_1", "transfer", params, {"from": "0", "v": "7"})
+    bad += check(reason_kept is None and "new address[](4)" in kept,
+                 f"an array the CE never mentions keeps the emitter's literal: {reason_kept}")
+    _r, _n3, reason_read = materialize_concrete_certified_call_point(
+        source, "test_cov_1", "transfer", params, {"from": "0", "v": "7", "_tos.length": "2"})
+    bad += check(reason_read is not None and "cannot be rendered exactly" in reason_read,
+                 "an array the CE constrains to a nonzero length still refuses")
+    # binder on the rendered empty array
+    body = function_body_lines(empty, "test_cov_1")
+    call_i = find_unit_call(body, "transfer")
+    audit = {}
+    digest, bind_error = bind_emitted_source_to_certified_ce(
+        body, call_i, "transfer", params,
+        {"from": "0", "v": "7", "_tos.length": "0", "msg.sender": "1"}, audit=audit)
+    bad += check(digest is not None and bind_error is None,
+                 f"the empty array binds as the CE's `_tos.length = 0`: {bind_error}")
+    return bad
+
+
 def test_certified_basis_projects_unsettable_state_constants():
     em, case = make_case()
     source = "\n".join(em.lines) + "\n"
@@ -27324,7 +27364,8 @@ def main():
               test_the_funding_line_precedes_the_prank,
               test_a_value_gate_certified_at_ZERO_still_REFUSES,
               test_crowded_snapshot_locals_are_hoisted_to_storage,
-              test_certified_ce_binder_matches_store_alias_and_symbolic_key):
+              test_certified_ce_binder_matches_store_alias_and_symbolic_key,
+              test_certified_call_point_renders_dynamic_arrays_like_bytes):
         print(f"--- {t.__name__}")
         registered.add(t.__name__)
         bad += t()
