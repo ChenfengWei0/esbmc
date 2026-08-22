@@ -138,6 +138,13 @@ __ESBMC_HIDE:;
   block_basefee = nondet_uint256();
   block_blobbasefee = nondet_uint256();
   block_chainid = nondet_uint256();
+  // EIP-155 chain ids are small integers in practice and Foundry's
+  // vm.chainId (the only way a generated test can establish one) takes a
+  // uint64. A witness with block.chainid = 2^256-1 is an execution no test
+  // can reproduce (MEASURED, PuttyV2 in VeriPUT full-20260822-v34: every
+  // body-path PUT refused on exactly that pin), so the harness keeps the
+  // chain id inside the domain a test can set.
+  __ESBMC_assume(block_chainid < ((uint256_t)1 << 64));
   block_coinbase = (address_t)nondet_uint();
   block_difficulty = nondet_uint256();
   block_gaslimit = nondet_uint256();

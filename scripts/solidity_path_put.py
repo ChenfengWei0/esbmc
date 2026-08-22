@@ -13250,7 +13250,14 @@ def materialize_concrete_certified_state_point(source,
                    if name.startswith("state.")]
     if not state_items:
         return source, 0, None
-    if not isinstance(layout, dict) or not layout:
+    # An EMPTY layout is not an UNAVAILABLE one. A contract whose storage is
+    # all ERC-7201 namespaced structs (VaultAdapter, full-20260822-v34) has
+    # no layout-listed variable at all: solc answers with an empty table, and
+    # every state coordinate the CE carries is then a `constant` slot
+    # location the loop below projects as constant/immutable -- which is the
+    # correct answer, not a refusal. Only a layout the caller could not read
+    # (None) refuses.
+    if not isinstance(layout, dict):
         return source, 0, "certified CE has state coordinates but storage layout is unavailable"
     lines = source.splitlines()
     fn_re = re.compile(r"^\s*function\s+" + re.escape(test_name) + r"\s*\(")
