@@ -19975,6 +19975,157 @@ def runtime_staticcall_mock_lines(forge_project, claim, indent):
     return _staticcall_mock_lines(forge_project, claim, indent, "runtime")
 
 
+def _source_chain_chunks(source, contract):
+    """Source chunks of a contract and its declared bases (depth-first)."""
+    out, visited = [], set()
+
+    def visit(name):
+        if name in visited:
+            return
+        visited.add(name)
+        chunk = _source_contract_chunk(source or "", name)
+        if not chunk:
+            return
+        out.append((name, chunk))
+        for base in _source_inheritance_names(chunk):
+            visit(base)
+        for base, _args in _constructor_initializer_calls(chunk):
+            visit(base)
+
+    visit(contract)
+    return out
+
+
+def _erc7201_storage_member_slot(source, contract, getter, member):
+    """Storage slot of `getter().member` for an ERC-7201 style handle.
+
+    Accepts only `function <getter>() ... returns (<T> storage $) { assembly {
+    $.slot := <X> } }` with `<X>` a hex literal or a `constant` resolved to a
+    hex literal in the flat source, and `member` the FIRST declared member of
+    struct `<T>` with an address-sized type.  Returns (slot_int, member_type)
+    or (None, reason).
+    """
+    masked = _mask_solidity_comments_and_strings(source or "")
+    getters = list(re.finditer(
+        r"\bfunction\s+" + re.escape(getter) +
+        r"\s*\(\s*\)[^{;]*\breturns\s*\(\s*([A-Za-z_][\w.]*)\s+storage\s+"
+        r"([A-Za-z_$][\w$]*)\s*\)\s*\{", masked))
+    if len(getters) != 1:
+        return None, f"storage handle getter `{getter}` is not declared exactly once"
+    gm = getters[0]
+    depth, pos = 1, gm.end()
+    while pos < len(masked) and depth:
+        depth += (masked[pos] == "{") - (masked[pos] == "}")
+        pos += 1
+    body = masked[gm.end():pos - 1]
+    struct_type, handle = gm.group(1), gm.group(2)
+    am = re.fullmatch(r"\s*assembly\s*(?:\(\s*\"memory-safe\"\s*\)\s*)?\{\s*" +
+                      re.escape(handle) + r"\.slot\s*:=\s*([A-Za-z_$][\w$]*|0x[0-9A-Fa-f]+)\s*\}\s*",
+                      body)
+    if am is None:
+        return None, f"storage handle getter `{getter}` is not a single `$.slot := X` assembly block"
+    slot_src = am.group(1)
+    if re.fullmatch(r"0x[0-9A-Fa-f]+", slot_src):
+        slot = int(slot_src, 16)
+    else:
+        consts = set(re.findall(
+            r"\bbytes32\s+(?:(?:private|internal|public)\s+)?constant\s+" + re.escape(slot_src) +
+            r"\s*=\s*(0x[0-9A-Fa-f]+)\s*;", masked))
+        if len(consts) != 1:
+            return None, f"storage slot constant `{slot_src}` is not a unique hex literal"
+        slot = int(consts.pop(), 16)
+    sname = struct_type.split(".")[-1]
+    structs = list(re.finditer(r"\bstruct\s+" + re.escape(sname) + r"\s*\{(.*?)\}", masked, re.S))
+    if len(structs) != 1:
+        return None, f"storage struct `{sname}` is not declared exactly once"
+    members = [m for m in (x.strip() for x in structs[0].group(1).split(";")) if m]
+    if not members:
+        return None, f"storage struct `{sname}` has no members"
+    first = re.fullmatch(r"([A-Za-z_][\w.]*)(?:\s+payable)?\s+([A-Za-z_]\w*)", members[0])
+    if first is None or first.group(2) != member:
+        return None, (f"`{member}` is not the first member of storage struct `{sname}`; only "
+                      "slot-aligned first members are rendered")
+    return slot, first.group(1)
+
+
+def _high_level_bool_call_sites(source, contract):
+    """`bool NAME = IFACE(<expr>).fn(<args>);` sites across the inheritance chain.
+
+    Returns {NAME: [(iface, target_expr, fn, arity, chunk_name), ...]}.
+    """
+    rx = re.compile(r"\bbool\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*\(")
+    out = {}
+    for cname, chunk in _source_chain_chunks(source, contract):
+        masked = _mask_solidity_comments_and_strings(chunk)
+        for m in rx.finditer(masked):
+            depth, pos = 1, m.end()
+            while pos < len(masked) and depth:
+                depth += (masked[pos] == "(") - (masked[pos] == ")")
+                pos += 1
+            if depth:
+                continue
+            target_expr = masked[m.end():pos - 1].strip()
+            tail = re.match(r"\s*\.\s*([A-Za-z_]\w*)\s*\(", masked[pos:])
+            if tail is None:
+                continue
+            fn = tail.group(1)
+            depth, apos = 1, pos + tail.end()
+            while apos < len(masked) and depth:
+                depth += (masked[apos] == "(") - (masked[apos] == ")")
+                apos += 1
+            if depth or not re.match(r"\s*;", masked[apos:]):
+                continue
+            arity = len([a for a in split_top_level(masked[pos + tail.end():apos - 1]) if a.strip()])
+            out.setdefault(m.group(1), []).append((m.group(2), target_expr, fn, arity, cname))
+    return out
+
+
+def _render_high_level_bool_pin(source, contract, name, pin_value, indent):
+    """Render a certified pin on a high-level interface call's bool result.
+
+    Supported target shapes: an ERC-7201 storage handle member
+    `getXStorage().member` (slot read with `vm.load` at the unit call, so a
+    state preamble that rewrites the member is honoured) and a literal
+    address.  Returns (lines, None) or (None, reason).
+    """
+    sites = _high_level_bool_call_sites(source, contract).get(name) or []
+    renders = set()
+    reason = None
+    for iface, target_expr, fn, arity, _cname in sites:
+        abis = _source_type_function_abis(source, iface)
+        if not abis:
+            reason = f"`{iface}` declares no function ABI in the flat source"
+            continue
+        choice = _unique_function_choice(abis.get(fn) or [], arity)
+        if choice is None:
+            reason = f"`{iface}.{fn}` with {arity} argument(s) is not a unique ABI"
+            continue
+        signature, returns = choice
+        if [_norm_ty(t) for t in returns] != ["bool"]:
+            reason = f"`{iface}.{fn}` does not return exactly one bool"
+            continue
+        value_expr = "true" if pin_value else "false"
+        hm = re.fullmatch(r"([A-Za-z_]\w*)\s*\(\s*\)\s*\.\s*([A-Za-z_]\w*)", target_expr)
+        lm = re.fullmatch(r"0x[0-9A-Fa-f]{40}", target_expr)
+        if hm is not None:
+            slot, why = _erc7201_storage_member_slot(source, contract, hm.group(1), hm.group(2))
+            if slot is None:
+                reason = why
+                continue
+            renders.add(f"{indent}// VERIPUT_EXTCALL_IFACE_SLOT {hex(slot)} {signature} {value_expr}")
+        elif lm is not None:
+            renders.add(f"{indent}vm.mockCall(address({target_expr}), "
+                        f"abi.encodeWithSignature(\"{signature}\"), abi.encode({value_expr}));")
+        else:
+            reason = (f"high-level call target `{target_expr}` is neither an ERC-7201 storage "
+                      "handle member nor a literal address")
+    if len(renders) == 1:
+        return [renders.pop()], None
+    if len(renders) > 1:
+        return None, f"`bool {name} = ...` has {len(renders)} differently rendered sites"
+    return None, reason
+
+
 def runtime_low_level_success_mock_lines(forge_project, contract, unit, extcall_pins, indent):
     """Realise a certified low-level-call success pin with a Foundry mock.
 
@@ -20016,8 +20167,22 @@ def runtime_low_level_success_mock_lines(forge_project, contract, unit, extcall_
         name = full_name[len("extcall."):]
         site = sites.get(name)
         if site is None:
+            try:
+                hl_value = int(str(raw_value), 0)
+            except ValueError:
+                return [], f"external-call pin `{full_name}` is not numeric"
+            if hl_value not in (0, 1):
+                return [], f"external-call success pin `{full_name}` is not boolean"
+            hl_lines, hl_reason = _render_high_level_bool_pin(source, contract, name, hl_value,
+                                                              indent)
+            if hl_lines is not None:
+                lines.extend(hl_lines)
+                continue
             return [], (f"external-call pin `{full_name}` has no uniquely "
-                        f"renderable `(bool {name}, ...) = target.call(...)` site")
+                        f"renderable `(bool {name}, ...) = target.call(...)` site"
+                        + (f" and no renderable `bool {name} = IFACE(...).fn(...)` "
+                           f"site ({hl_reason})" if hl_reason else
+                           f" nor any `bool {name} = IFACE(...).fn(...)` site"))
         target, _kind, calldata = site.group(2), site.group(3), site.group(5).strip()
         carries_value = bool(site.group(4) and re.search(r"\bvalue\s*:", site.group(4)))
         try:
@@ -20157,10 +20322,15 @@ def apply_runtime_interface_mocks(lines, emitted, case, unit, contract, mock_lin
     deal_contract = False
     sender_eoa = False
     marker = re.compile(r"^\s*// VERIPUT_EXTCALL_CALLSITE ([A-Za-z_]\w*) ([A-Za-z_]\w*) ([01])\s*$")
+    slot_marker = re.compile(r"^\s*// VERIPUT_EXTCALL_IFACE_SLOT (0x[0-9a-fA-F]+) (\S+) (true|false)\s*$")
+    iface_slot_specs = []
     for line in mock_lines:
         match = marker.match(line)
+        slot_match = slot_marker.match(line)
         if match:
             callsite_specs.append((match.group(1), match.group(2), match.group(3) == "1"))
+        elif slot_match:
+            iface_slot_specs.append((slot_match.group(1), slot_match.group(2), slot_match.group(3)))
         elif line.strip() == "// VERIPUT_EXTCALL_DEAL_CONTRACT":
             deal_contract = True
         elif line.strip() == "// VERIPUT_EXTCALL_SENDER_EOA":
@@ -20231,6 +20401,33 @@ def apply_runtime_interface_mocks(lines, emitted, case, unit, contract, mock_lin
                         f"{ind}vm.assume({ident}.code.length == 0);",
                     ]
                     break
+    if iface_slot_specs:
+        # ---- A PIN ON A HIGH-LEVEL CALL THROUGH A STORAGE HANDLE -----------
+        #
+        # `bool ok = IFACE(getXStorage().member).fn(...)` targets whatever
+        # address the member holds WHEN THE UNIT RUNS: deployment, the
+        # certified state preamble and the fixed-replay stores all write it
+        # before the unit call. The mock is therefore resolved at the call,
+        # by reading the slot with `vm.load`, not at deployment. Cheatcodes do
+        # not consume a pending prank, so the lines sit between the prank and
+        # the call without changing the sender.
+        rendered, placed = [], False
+        for line in out:
+            _rewritten, args = rewrite_call_args(line, unit, {})
+            if args is not None and not placed:
+                indent = re.match(r"^\s*", line).group(0)
+                inst = target_instance_for_call([line], 0, unit) or "c0"
+                for k, (slot_hex, signature, value_expr) in enumerate(iface_slot_specs):
+                    rendered.append(f"{indent}// certified external-call pin on a high-level "
+                                    f"interface call: the handle read from storage slot "
+                                    f"{slot_hex} answers `{signature}` with {value_expr}")
+                    rendered.append(f"{indent}{{ address _vp_ec{k} = address(uint160(uint256("
+                                    f"vm.load(address({inst}), bytes32(uint256({slot_hex}))))));")
+                    rendered.append(f"{indent}  vm.mockCall(_vp_ec{k}, abi.encodeWithSignature("
+                                    f"\"{signature}\"), abi.encode({value_expr})); }}")
+                placed = True
+            rendered.append(line)
+        out = rendered
     if not callsite_specs:
         return out
 

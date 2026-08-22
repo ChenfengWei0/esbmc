@@ -1098,6 +1098,67 @@ contract B {
     return bad
 
 
+def test_high_level_bool_pin_through_storage_handle_is_rendered_at_the_call():
+    source = """pragma solidity ^0.8.0;
+interface IAccessControl {
+  function checkAccess(bytes4 s, address c, address a) external view returns (bool hasAccess);
+}
+abstract contract Access {
+  struct AccessStorage { address accessControl; }
+  bytes32 private constant AccessStorageLocation = 0xb413d65cb88f23816c329284a0d3eb15a99df7963ab7402ade4c5da22bff6b00;
+  function getAccessStorage() internal pure returns (AccessStorage storage $) {
+    assembly { $.slot := AccessStorageLocation }
+  }
+  modifier checkAccess(bytes4 s) { _checkAccess(s); _; }
+  function _checkAccess(bytes4 s) internal view {
+    bool hasAccess = IAccessControl(getAccessStorage().accessControl).checkAccess(s, address(this), msg.sender);
+    if (!hasAccess) revert();
+  }
+}
+contract VA is Access {
+  uint256 public rate;
+  function setLimits(uint256 r) external checkAccess(this.setLimits.selector) { rate = r; }
+}"""
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "src"))
+        with open(os.path.join(project, "src", "flat.sol"), "w") as f:
+            f.write(source)
+        yes, err = runtime_low_level_success_mock_lines(project, "VA", "setLimits",
+                                                        {"extcall.hasAccess": "1"}, "    ")
+        no, err_no = runtime_low_level_success_mock_lines(project, "VA", "setLimits",
+                                                          {"extcall.hasAccess": "0"}, "    ")
+    bad = 0
+    bad += check(err is None and len(yes) == 1 and yes[0].strip().startswith(
+        "// VERIPUT_EXTCALL_IFACE_SLOT 0xb413d65cb88f23816c329284a0d3eb15a99df7963ab7402ade4c5da22bff6b00"
+        " checkAccess(bytes4,address,address) true"),
+                 "a true pin on a high-level call through an ERC-7201 handle becomes a slot marker")
+    bad += check(err_no is None and len(no) == 1 and no[0].strip().endswith(" false"),
+                 "a false pin renders the same marker with `false`")
+    lines = ["contract T is Test {", "  VA c0;", "  function setUp() public {",
+             "    c0 = new VA();", "  }", "  function test_cov_0() public {",
+             "    vm.prank(address(1));", "    c0.setLimits(7);", "  }", "}"]
+
+    class Emitted:
+        pass
+
+    emitted = Emitted()
+    emitted.lines = lines
+    emitted.blocks = [("T",)]
+    out = apply_runtime_interface_mocks(lines, emitted, (0, None, None, (5, 8)), "setLimits", "VA",
+                                        yes, source)
+    call_i = next(i for i, l in enumerate(out) if "c0.setLimits(7);" in l)
+    prank_i = next(i for i, l in enumerate(out) if "vm.prank(" in l)
+    mock_i = next(i for i, l in enumerate(out) if "vm.mockCall(_vp_ec0" in l)
+    load_i = next(i for i, l in enumerate(out) if "vm.load(address(c0), bytes32(uint256(0xb413" in l)
+    bad += check(prank_i < load_i < mock_i < call_i,
+                 "the slot is read and the mock installed between the prank and the unit call")
+    bad += check('abi.encodeWithSignature("checkAccess(bytes4,address,address)"), abi.encode(true)'
+                 in out[mock_i], "the mock answers the resolved ABI signature with the pinned bool")
+    bad += check(not any("VERIPUT_EXTCALL_IFACE_SLOT" in l for l in out),
+                 "the marker itself does not survive into the test")
+    return bad
+
+
 def test_low_level_success_pin_accepts_typed_target_and_calldata_parameters():
     source = """pragma solidity ^0.8.0;
 contract Proxy {
@@ -26633,6 +26694,7 @@ def main():
               test_proxy_fixture_getter_uses_low_level_success_oracle,
               test_constructor_staticcall_mock_is_scoped_to_deployment,
               test_low_level_success_pin_is_realized_and_unsupported_shape_refused,
+              test_high_level_bool_pin_through_storage_handle_is_rendered_at_the_call,
               test_low_level_success_pin_accepts_typed_target_and_calldata_parameters,
               test_empty_bytes_claim_binds_to_its_certified_length_coordinate,
               test_constructor_param_runtime_bytes_quote_mock_encodes_decode_payload,
