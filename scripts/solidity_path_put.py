@@ -7310,6 +7310,31 @@ def storage_layout(project, contract):
                        capture_output=True,
                        text=True)
     if p.returncode != 0:
+        # ---- THE SAME VIA-IR FALLBACK THE TEST RUNNER HAS -----------------
+        #
+        # The project is written with `via_ir = true`; the runner flips it to
+        # `false` on a stack-too-deep compile and retries. The layout is read
+        # BEFORE the first `forge test`, so a source that only compiles
+        # without via-IR lost every state and mapping oracle here, and the
+        # basis replay then refused the certified state coordinates
+        # ("storage layout unavailable"). MEASURED: MergingPool
+        # (full-20260822-v38) -- via-IR "Variable var_mintpassIdsToBurn_length
+        # is 1 too deep in the stack" in an unrelated contract of the flat
+        # source; `forge inspect` passes with via_ir = false.
+        text = (p.stdout + p.stderr).lower()
+        config = os.path.join(project, "foundry.toml")
+        if (("too deep in the stack" in text or "stack too deep" in text)
+                and os.path.exists(config)):
+            with open(config) as stream:
+                foundry_toml = stream.read()
+            if "via_ir = true" in foundry_toml:
+                with open(config, "w") as stream:
+                    stream.write(foundry_toml.replace("via_ir = true", "via_ir = false", 1))
+                p = subprocess.run(["forge", "inspect", contract, "storageLayout", "--json"],
+                                   cwd=project,
+                                   capture_output=True,
+                                   text=True)
+    if p.returncode != 0:
         return None, None, (f"forge inspect failed (rc={p.returncode}): "
                             f"{p.stdout + p.stderr}")
     try:
@@ -13378,6 +13403,21 @@ def materialize_concrete_certified_state_point(source,
                     kexprs.append(key_expr_typed(k))
                     continue
                 key_value = expected_ce.get(k)
+                # A key that is ANOTHER STATE VARIABLE is spelled by the
+                # frontend as a member of the contract object,
+                # `(&_ESBMC_Object_MergingPool)->_ownerAddress$5604`; the CE
+                # fixes it as `state._ownerAddress$5604`. MEASURED:
+                # MergingPool transferOwnership/adjustAdminAccess/addPoints
+                # 6p1 (full-20260822-v38), `isAdmin$5630[<that>]`.
+                if key_value is None:
+                    # ... optionally under the frontend's width cast,
+                    # `(unsigned _ExtInt(256))(&_ESBMC_Object_GameItems)->...`.
+                    obj_member = re.fullmatch(
+                        r"(?:\(\s*(?:unsigned\s+|signed\s+)?_ExtInt\(\d+\)\s*\)\s*)?"
+                        r"\(\s*&\s*_ESBMC_Object_[A-Za-z_]\w*\s*\)\s*->\s*"
+                        r"([A-Za-z_$][\w$]*)", k)
+                    if obj_member is not None:
+                        key_value = expected_ce.get("state." + obj_member.group(1))
                 if not isinstance(key_value, int):
                     return source, 0, (f"certified mapping state coordinate {name} has key "
                                        f"`{k}` that the certified CE does not fix")

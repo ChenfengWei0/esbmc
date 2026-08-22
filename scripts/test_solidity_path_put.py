@@ -26521,6 +26521,45 @@ def test_certified_basis_state_setup_does_not_leave_pending_prank():
     return bad
 
 
+def test_certified_basis_materializes_mapping_keyed_by_another_state_variable():
+    em, case = make_case()
+    source = "\n".join(em.lines) + "\n"
+    certified_ce = {
+        "u": "0",
+        "bps": "250",
+        "state.owner": "0",
+        "state._ownerAddress$5604": "730750818665451459101842416358141509832261238783",
+        "state.isAdmin$5630[(&_ESBMC_Object_MergingPool)->_ownerAddress$5604]": "1",
+    }
+    layout = dict(LAYOUT)
+    layout["_ownerAddress"] = (2, 0, 20)
+    maps = {"isAdmin$5630": (3, "address", 1, 0, "isAdmin", None),
+            "isAdmin": (3, "address", 1, 0, "isAdmin", None)}
+    rendered, changed, reason = materialize_concrete_certified_state_point(
+        source, case[1], "setDiscount", certified_ce, layout, maps=maps)
+    body = "\n".join(function_body_lines(rendered, case[1]) or [])
+    bad = 0
+    bad += check(reason is None and changed >= 4,
+                 f"a mapping keyed by another state variable is materialized: {reason}")
+    bad += check("730750818665451459101842416358141509832261238783" in body
+                 and "keccak256" in body,
+                 "the slot is keccak(<the CE value of that state variable>, base slot)")
+    cast_ce = dict(certified_ce)
+    cast_ce["state.isAdmin$5630[(unsigned _ExtInt(256))(&_ESBMC_Object_MergingPool)"
+            "->_ownerAddress$5604]"] = cast_ce.pop(
+                "state.isAdmin$5630[(&_ESBMC_Object_MergingPool)->_ownerAddress$5604]")
+    _r2, _c2, cast_reason = materialize_concrete_certified_state_point(
+        source, case[1], "setDiscount", cast_ce, layout, maps=maps)
+    bad += check(cast_reason is None, f"the width-cast spelling of the key resolves too: {cast_reason}")
+    _r, _c, missing = materialize_concrete_certified_state_point(
+        source, case[1], "setDiscount",
+        {k: v for k, v in certified_ce.items() if k != "state._ownerAddress$5604"},
+        layout, maps=maps)
+    bad += check(missing is not None and "does not fix" in missing,
+                 "a key state variable the CE does not fix still refuses")
+    return bad
+
+
 def test_certified_basis_projects_unsettable_state_constants():
     em, case = make_case()
     source = "\n".join(em.lines) + "\n"
@@ -27155,6 +27194,7 @@ def main():
               test_certified_basis_materializes_env_pins_and_binds_full_ce,
               test_certified_basis_materializes_state_pins_and_binds_full_ce,
               test_certified_basis_state_setup_does_not_leave_pending_prank,
+              test_certified_basis_materializes_mapping_keyed_by_another_state_variable,
               test_certified_basis_projects_unsettable_state_constants,
               test_concrete_value_gate_uses_fresh_status_identifiers,
               test_certified_value_gate_setup_materialization_is_narrowly_projected,
