@@ -491,7 +491,27 @@ bool solidity_convertert::get_function_definition(
     // payload remains recoverable for witness/Foundry generation; constrain the
     // length field here instead of hiding that nondet behind a with-expression
     // or a bytes_static_from_uint call at the caller.
-    if (body_exprt.is_code())
+    //
+    // ONLY where the harness can be the caller. An internal/private function
+    // or an event receives its bytesN from SOURCE code, and a value read from
+    // a never-written storage slot is the zero-initialised struct with
+    // `length == 0` (the mapping default is the type's zero value). Assuming
+    // `length == N` there is not a constraint on a nondet -- it is a
+    // contradiction that deletes the execution. MEASURED on TimelockController
+    // (acfix_032/033, full-20260822-v39): the constructor's
+    // `_setRoleAdmin(role, admin)` reads `_roles[role].adminRole` (default,
+    // length 0) and emits `RoleAdminChanged(role, previousAdminRole, ...)`;
+    // the event's `previousAdminRole.length == 32` assume made EVERY path of
+    // EVERY unit of the contract vacuous ("bounded-holds", NO-PATH).
+    const std::string fn_visibility =
+      ast_node.contains("visibility") && ast_node["visibility"].is_string()
+        ? ast_node["visibility"].get<std::string>()
+        : "";
+    const bool bytesn_params_from_harness =
+      !is_event_or_err && (is_ctor || is_receive_fallback ||
+                           fn_visibility == "public" ||
+                           fn_visibility == "external");
+    if (body_exprt.is_code() && bytesn_params_from_harness)
     {
       code_blockt bytesn_assumes;
       for (const auto &arg : type.arguments())

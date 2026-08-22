@@ -189,6 +189,7 @@ from solidity_path_put import (
     extcall_fixture_ce_projection,
     materialize_concrete_certified_env_point,
     materialize_concrete_certified_state_point,
+    materialize_concrete_certified_call_point,
     materialize_concrete_nonpayable_value_gate,
     target_call_calldata_ce_projection,
     unobserved_auxiliary_env_ce_projection,
@@ -6935,6 +6936,22 @@ def test_certified_basis_requires_the_exact_certified_ce():
                                                              })
     bad += check(source_sha is None and "arguments do not match" in reason,
                  f"defaulted or missing argument is refused: {reason}")
+    dyn_body = [body[0], '    c0.g("abc", uint256(7));']
+    dyn_params = [("description", "string calldata"), ("amount", "uint256")]
+    dyn_audit = {}
+    source_sha, reason = bind_emitted_source_to_certified_ce(
+        dyn_body, 1, "g", dyn_params, {"amount": "7", "msg.sender": "9"}, audit=dyn_audit)
+    bad += check(source_sha is not None and reason is None,
+                 f"a string argument the CE never mentions binds (unread on the path): {reason}")
+    bad += check((dyn_audit.get("coordinates") or dyn_audit.get("bindings") or {}).get(
+        "description", {}).get("kind") == "ce-unconstrained-dynamic-call-argument"
+                 or "ce-unconstrained-dynamic-call-argument" in json.dumps(dyn_audit),
+                 "the unconstrained dynamic argument is recorded in the audit")
+    source_sha, reason = bind_emitted_source_to_certified_ce(
+        dyn_body, 1, "g", dyn_params, {"amount": "7", "msg.sender": "9",
+                                       "description.length": "3"})
+    bad += check(source_sha is None and "no exact certified CE coordinate" in (reason or ""),
+                 f"a string the CE constrains by length is still refused: {reason}")
     gate_body = [
         "    vm.deal(address(uint160(1)), 1);",
         "    vm.prank(address(uint160(1)));",
@@ -26560,6 +26577,37 @@ def test_certified_basis_materializes_mapping_keyed_by_another_state_variable():
     return bad
 
 
+def test_certified_call_point_keeps_dynamic_arguments_the_ce_never_mentions():
+    source = """contract T is Test {
+  F c0;
+  function setUp() public { c0 = new F(); }
+  function test_cov_1() public {
+    vm.prank(address(uint160(1)));
+    c0.f("abc", 7);
+  }
+}
+"""
+    params = [("description", "string calldata"), ("x", "uint256")]
+    kept, n, reason = materialize_concrete_certified_call_point(
+        source, "test_cov_1", "f", params, {"x": "7", "msg.sender": "1"})
+    bad = 0
+    bad += check(reason is None and 'c0.f("abc", uint256(7));' in kept,
+                 f"a string the CE never mentions keeps the emitter's literal: {reason}")
+    empty, _n, reason_empty = materialize_concrete_certified_call_point(
+        source, "test_cov_1", "f", params, {"x": "7", "description.length": "0"})
+    bad += check(reason_empty is None and 'c0.f("", uint256(7));' in empty,
+                 f"a string the CE fixes at length 0 renders as the empty string: {reason_empty}")
+    _r, _n2, reason_read = materialize_concrete_certified_call_point(
+        source, "test_cov_1", "f", params, {"x": "7", "description.length": "3"})
+    bad += check(reason_read is not None and "cannot be rendered exactly" in reason_read,
+                 "a string the CE constrains to a nonzero length still refuses")
+    _r2, _n3, reason_scalar = materialize_concrete_certified_call_point(
+        source, "test_cov_1", "f", params, {"msg.sender": "1"})
+    bad += check(reason_scalar is not None and "`x`" in reason_scalar,
+                 "a scalar the CE does not fix still refuses")
+    return bad
+
+
 def test_certified_basis_projects_unsettable_state_constants():
     em, case = make_case()
     source = "\n".join(em.lines) + "\n"
@@ -27195,6 +27243,7 @@ def main():
               test_certified_basis_materializes_state_pins_and_binds_full_ce,
               test_certified_basis_state_setup_does_not_leave_pending_prank,
               test_certified_basis_materializes_mapping_keyed_by_another_state_variable,
+              test_certified_call_point_keeps_dynamic_arguments_the_ce_never_mentions,
               test_certified_basis_projects_unsettable_state_constants,
               test_concrete_value_gate_uses_fresh_status_identifiers,
               test_certified_value_gate_setup_materialization_is_narrowly_projected,

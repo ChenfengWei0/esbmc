@@ -1909,6 +1909,19 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail, representat
         solidity_type, name = match.groups()
         keys = (aliases.get(name), name, name[2:] if name.startswith("p_") else None)
         raw_value = next((ce[key] for key in keys if key is not None and key in ce), None)
+        # A dynamic (bytes/string) fuzz parameter the CE never mentions (no
+        # value, no `<name>.length`) was not read on the path: the fixed
+        # replay's point is the same for every value of it, so the guard
+        # carries no term for it. MEASURED: EmergencyOracleFactory
+        # .newEmergencyOracle 6p1 (acfix_088, full-20260822-v39), the
+        # `onlyJojoTeam` revert arm with `description` unread.
+        dynamic_type = re.sub(r"\s+(memory|calldata)$", "", solidity_type.strip()) in (
+            "bytes", "string")
+        bare = name[2:] if name.startswith("p_") else name
+        if (raw_value is None and dynamic_type
+                and not any(key == bare or key == name or key.startswith(bare + ".")
+                            or key.startswith(bare + "[") for key in ce)):
+            continue
         literal = _concrete_return_literal(solidity_type, raw_value)
         if literal is None:
             return None, f"certified CE lacks an exact scalar value for PUT parameter {name}"

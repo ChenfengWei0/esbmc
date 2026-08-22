@@ -11339,6 +11339,7 @@ def bind_emitted_source_to_certified_ce(body,
         return None, mock_error
     rendered = {}
     bindings = {}
+    unconstrained_dynamic = {}
     for (name, typ), expr in zip(params, args):
         if name not in expected_ce:
             length_name = name + ".length"
@@ -11351,6 +11352,28 @@ def bind_emitted_source_to_certified_ce(body,
                     "rendered": 0,
                     "certified": 0,
                 }
+                continue
+            empty_string = (str(typ).strip() in ("string", "string memory", "string calldata")
+                            and expr.strip() in ('""', 'string("")'))
+            if (empty_string and expected_ce.get(length_name) == 0):
+                rendered[length_name] = 0
+                bindings[length_name] = {
+                    "kind": "empty-dynamic-call-argument",
+                    "rendered": 0,
+                    "certified": 0,
+                }
+                continue
+            # A dynamic argument the CE never mentions (no `<name>.length`,
+            # no element, no member) was never read on the path; the CE is
+            # complete WITHOUT it and the argument is not a coordinate of
+            # the point. Recorded, not refused (see the call-point renderer).
+            dynamic = str(typ).strip() in ("bytes", "bytes memory", "bytes calldata", "string",
+                                           "string memory", "string calldata")
+            if dynamic and not any(
+                    key == name or key == length_name or key.startswith(name + "[")
+                    or key.startswith(name + ".") for key in expected_ce):
+                unconstrained_dynamic[name] = {"kind": "ce-unconstrained-dynamic-call-argument",
+                                               "rendered": expr.strip()}
                 continue
             return None, f"emitted argument {name} has no exact certified CE coordinate"
         value = _lit_int(expr)
@@ -11436,6 +11459,11 @@ def bind_emitted_source_to_certified_ce(body,
             "ce_sha256": digest,
             "coordinates": bindings,
         })
+        if unconstrained_dynamic:
+            # Not coordinates of the point (the CE never names them), so
+            # they sit beside the coordinate map, not in it: put_all's
+            # projection check requires the map to equal the CE's keys.
+            audit["unconstrained_dynamic_arguments"] = unconstrained_dynamic
     return digest, None
 
 
@@ -20906,6 +20934,26 @@ def materialize_concrete_certified_call_point(source, test_name, unit, params, c
         elif (str(sol_type).strip() in ("bytes", "bytes memory", "bytes calldata")
               and expected.get(name + ".length") == 0):
             literal = 'hex""'
+        elif (str(sol_type).strip() in ("string", "string memory", "string calldata")
+              and expected.get(name + ".length") == 0):
+            literal = '""'
+        elif (str(sol_type).strip() in ("bytes", "bytes memory", "bytes calldata", "string",
+                                        "string memory", "string calldata")
+              and name + ".length" not in expected
+              and not any(key == name or key.startswith(name + "[") or
+                          key.startswith(name + ".") for key in expected)):
+            # ---- A DYNAMIC ARGUMENT THE CE NEVER MENTIONS -----------------
+            #
+            # The CE spells a dynamic argument it read as `<name>.length`
+            # (and bytes it compared). When NEITHER appears, the path never
+            # touched it and the certified point does not constrain it: the
+            # emitter's own literal is as exact a representative as any.
+            # MEASURED: EmergencyOracleFactory.newEmergencyOracle 6p1
+            # (acfix_088, full-20260822-v39) -- the `onlyJojoTeam` revert
+            # arm, `description` unread, R1 PUT written and its basis refused
+            # here. Scalars are NOT exempted: the CE names every scalar a
+            # path reads or not, and a missing one is a real gap.
+            continue
         else:
             literal = None
         if literal is None:
@@ -23472,6 +23520,31 @@ def main():
                 _bare = _name[len("state."):]
                 if _bare in _entry or _name in _entry:
                     continue
+                # A mapping slot the CE spells by a SYMBOLIC key it fixes
+                # (`members[msg.sender]`, msg.sender = 0) IS in the witness
+                # under the literal spelling (`members[0]`); filling the
+                # symbolic spelling on top left the literal one "extra" in
+                # the binder, whose rename only fires when the symbolic
+                # name is ABSENT. MEASURED: TimelockController getMinDelay/
+                # getTimestamp/isOperationDone 3p1 (acfix_032, standalone
+                # after the frontend fixes of 53).
+                _mname, _keys, _tail = parse_slot_name(_bare)
+                if _mname is not None:
+                    _lits = []
+                    for _key in _keys:
+                        _k = _key.strip()
+                        if _KEY_LIT_RE.match(_k):
+                            _lits.append(str(int(_k, 0)))
+                            continue
+                        _kv = _ce_map.get(_k)
+                        if not isinstance(_kv, int):
+                            _lits = None
+                            break
+                        _lits.append(str(_kv))
+                    if _lits is not None:
+                        _literal = _mname + "".join(f"[{_k}]" for _k in _lits) + _tail
+                        if _literal in _entry or "state." + _literal in _entry:
+                            continue
                 _entry[_bare] = _value
                 _filled.append(_name)
             if _filled:

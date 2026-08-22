@@ -776,6 +776,27 @@ bool solidity_convertert::get_var_decl(
   // special handling for array/dynarray
   SolidityGrammar::SolType t_sol_type = get_sol_type(t);
 
+  // ---- A STATE-VAR INITIALISER RUNS IN THE CONSTRUCTOR PROLOGUE ----------
+  //
+  // A state variable can be converted LAZILY, on its first reference inside
+  // a function body (current_functionDecl set). Its initialiser's helper
+  // declarations (make_aux_var, bytes conversions, ...) then go to the
+  // FUNCTION's pending front block and are flushed into that body, while
+  // the member assignment itself goes through move_to_initializer() into the
+  // constructor PROLOGUE -- so the member is assigned from an aux that is
+  // declared and computed only later. MEASURED on TimelockController
+  // (acfix_032/033, full-20260822-v39): `this->TIMELOCK_ADMIN_ROLE =
+  // _ESBMC_aux247` at the prologue, `DECL _ESBMC_aux247 ... = keccak256(
+  // "TIMELOCK_ADMIN_ROLE")` eleven instructions later in the body; the
+  // frontend's `role.length == 32` assumption on the still-zero struct made
+  // every path of every unit vacuously UNSAT ("bounded-holds", NO-PATH).
+  // Converting the initialiser with current_functionDecl cleared routes its
+  // helpers to ctor_frontBlockDecl, which move_to_initializer() emits BEFORE
+  // the assignment -- exactly the eager (contract-scope) conversion order.
+  const nlohmann::json *saved_functionDecl_for_state_init = current_functionDecl;
+  if (is_state_var && set_init && !is_inherited)
+    current_functionDecl = nullptr;
+
   // this pointer
   exprt this_expr;
   if (!current_contractName.empty())
@@ -1231,6 +1252,8 @@ bool solidity_convertert::get_var_decl(
     !(is_contract && !has_init) && !(is_mapping && !is_new_expr) &&
     !(is_mapping_array && !is_new_expr) && !is_dynarray_state)
     move_to_initializer(decl);
+
+  current_functionDecl = saved_functionDecl_for_state_init;
 
   decl.location() = location_begin;
   new_expr = decl;
