@@ -183,7 +183,7 @@ from solidity_path_put import (
     _source_custom_type_import_symbol,
     can_synthesize_missing_emitter_output,
     concrete_stage2_source_record,
-    bind_emitted_claim_to_certified_ce,
+    store_alias_variants, bind_emitted_claim_to_certified_ce,
     bind_emitted_source_to_certified_ce,
     abi_value_gate_ce_projection,
     extcall_fixture_ce_projection,
@@ -6877,6 +6877,26 @@ def test_r1_r2_proof_uses_clean_k_induction_args():
     return check(
         got == ["--cvc5", "--k-induction", "--enable-forward-condition", "--max-k-step", "30"],
         f"R1/R2 proof args are clean k-induction only: {got}")
+
+
+def test_certified_ce_binder_matches_store_alias_and_symbolic_key():
+    """`state._rOwned$952[msg.sender]` (CE, msg.sender=0) is the witness's
+    `state._rOwned[0]` (ANCHToken, full-20260822-v40 round 9)."""
+    claim = {"inputs": {}, "env": {"msg.sender": "0", "msg.value": "0"},
+             "entry_storage": {"_rOwned[0]": "5", "_decimals": "9"}}
+    expected = {"msg.sender": "0", "msg.value": "0",
+                "state._rOwned$952[msg.sender]": "5", "state._decimals": "9"}
+    binding, reason = bind_emitted_claim_to_certified_ce(claim, expected)
+    bad = check(reason is None and binding["status"] == "exact",
+                f"alias + symbolic key binds exactly: {binding}, {reason}")
+    other = dict(expected); other["state._rOwned$952[msg.sender]"] = "6"
+    binding, reason = bind_emitted_claim_to_certified_ce(claim, other)
+    bad += check(binding is None and "different=" in reason,
+                 f"a different value is still refused: {reason}")
+    bad += check(store_alias_variants("_rOwned$952") == ["_rOwned$952", "_rOwned"]
+                 and store_alias_variants("wards") == ["wards"],
+                 "alias variants: suffix stripped once, plain name unchanged")
+    return bad
 
 
 def test_certified_basis_requires_the_exact_certified_ce():
@@ -27303,7 +27323,8 @@ def main():
               test_abstract_target_harness_supplies_unresolved_base_constructor,
               test_the_funding_line_precedes_the_prank,
               test_a_value_gate_certified_at_ZERO_still_REFUSES,
-              test_crowded_snapshot_locals_are_hoisted_to_storage):
+              test_crowded_snapshot_locals_are_hoisted_to_storage,
+              test_certified_ce_binder_matches_store_alias_and_symbolic_key):
         print(f"--- {t.__name__}")
         registered.add(t.__name__)
         bad += t()

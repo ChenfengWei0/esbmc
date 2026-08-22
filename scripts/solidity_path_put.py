@@ -7696,6 +7696,23 @@ def slot_inside_region_check(addr, slot, off, nbytes, lo, hi, what, indent="    
 # must NOT be re-cast: `uint256(someAddress)` is a compile error, while
 # `abi.encode(someAddress)` is exactly the 32-byte padding Solidity hashes.
 _KEY_LIT_RE = re.compile(r"^(?:0[xX][0-9a-fA-F]+|[0-9]+)$")
+
+# `_rOwned$952` (ESBMC's contract-scope store name) and `_rOwned` (the
+# source name the fresh witness's entry_storage may print) are ONE mapping.
+# MEASURED: ANCHToken decimals/totalSupply/totalFees/owner/allowance 3p1
+# (full-20260822-v40 round 9): certified CE `state._rOwned$952[msg.sender]`
+# (msg.sender = 0), witness `state._rOwned[0]` -> "fresh emitted witness is
+# not the certified CE: extra=state._rOwned[0]" on every unit of the contract.
+_STORE_ALIAS_RE = re.compile(r"^([A-Za-z_$][\w$]*?)\$\d+$")
+
+
+def store_alias_variants(mname):
+    """The store name with and without its `$N` suffix (itself first)."""
+    out = [mname]
+    m = _STORE_ALIAS_RE.match(mname or "")
+    if m and m.group(1) not in out:
+        out.append(m.group(1))
+    return out
 _ADDRESS_SIZED_HEX_RE = re.compile(r"^0[xX]([0-9a-fA-F]{40})$")
 
 
@@ -16963,9 +16980,11 @@ def bind_emitted_claim_to_certified_ce(claim, expected, params=None):
             literal_keys.append(str(value))
         if literal_keys is None:
             continue
-        literal_name = "state." + mname + "".join(f"[{k}]" for k in literal_keys) + tail
-        if literal_name in actual_ce and literal_name not in expected_ce:
-            actual_ce[name] = actual_ce.pop(literal_name)
+        for _alias in store_alias_variants(mname):
+            literal_name = "state." + _alias + "".join(f"[{k}]" for k in literal_keys) + tail
+            if literal_name in actual_ce and literal_name not in expected_ce:
+                actual_ce[name] = actual_ce.pop(literal_name)
+                break
     if expected_ce != actual_ce:
         missing = sorted(set(expected_ce) - set(actual_ce))
         extra = sorted(set(actual_ce) - set(expected_ce))
@@ -23629,8 +23648,13 @@ def main():
                             break
                         _lits.append(str(_kv))
                     if _lits is not None:
-                        _literal = _mname + "".join(f"[{_k}]" for _k in _lits) + _tail
-                        if _literal in _entry or "state." + _literal in _entry:
+                        _present = False
+                        for _alias in store_alias_variants(_mname):
+                            _literal = _alias + "".join(f"[{_k}]" for _k in _lits) + _tail
+                            if _literal in _entry or "state." + _literal in _entry:
+                                _present = True
+                                break
+                        if _present:
                             continue
                 _entry[_bare] = _value
                 _filled.append(_name)
