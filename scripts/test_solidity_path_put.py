@@ -26679,6 +26679,22 @@ def test_certified_call_point_keeps_dynamic_arguments_the_ce_never_mentions():
     return bad
 
 
+def test_fixed_length_dynamic_ctor_builds_the_pinned_length():
+    from solidity_path_put import fixed_length_dynamic_ctor as f
+    bad = 0
+    bad += check(f("_tos", "address[] memory", 0, 0, []) == "    _tos = new address[](0);",
+                 "address[] at length 0 constructs new address[](0)")
+    bad += check(f("_x", "bytes memory", 3, 3, []) == "    _x = new bytes(3);",
+                 "bytes at length 3 constructs new bytes(3)")
+    bad += check(f("_tos", "address[] memory", 0, 4, []) is None,
+                 "a multi-value length region is left to fuzz+assume")
+    bad += check(f("_tos", "address[] memory", 0, 0, [0]) is None,
+                 "a hole emptying the single length gives no constructor")
+    bad += check(f("_s", "string memory", 0, 0, []) is None,
+                 "string has no length constructor, keep the assume")
+    return bad
+
+
 def test_certified_call_point_renders_dynamic_arrays_like_bytes():
     """`address[] memory` at certified length 0 -> `new address[](0)`; unmentioned
     arrays keep the emitter's literal; the binder accepts both (rc_unchecked
@@ -27365,7 +27381,8 @@ def main():
               test_a_value_gate_certified_at_ZERO_still_REFUSES,
               test_crowded_snapshot_locals_are_hoisted_to_storage,
               test_certified_ce_binder_matches_store_alias_and_symbolic_key,
-              test_certified_call_point_renders_dynamic_arrays_like_bytes):
+              test_certified_call_point_renders_dynamic_arrays_like_bytes,
+              test_fixed_length_dynamic_ctor_builds_the_pinned_length):
         print(f"--- {t.__name__}")
         registered.add(t.__name__)
         bad += t()

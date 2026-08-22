@@ -13658,6 +13658,29 @@ def freed_state_fuzz_param(name, bits, lo, hi, coord_holes, used, sig, rendered_
     return var, lines
 
 
+def fixed_length_dynamic_ctor(var, sol_type, lo, hi, holes):
+    """Assignment that builds `var` at a SINGLE certified length, or None.
+
+    Only when the length region is one point (`lo == hi`) not emptied by a
+    hole, and the type has a constructor whose length is the argument
+    (`new T[](N)`, `new bytes(N)`). String has no such constructor, so it
+    still takes the fuzz+assume path.
+    """
+    if int(lo) != int(hi):
+        return None
+    n = int(lo)
+    if any(int(h) == n for h in holes):
+        return None
+    t = _norm_ty(sol_type)
+    if t in ("bytes", "bytes memory", "bytes calldata"):
+        return f"    {var} = new bytes({n});"
+    dyn_base = _source_dynamic_array_base_type(t)
+    if (dyn_base is not None and _source_dynamic_array_base_type(dyn_base) is None
+            and signature_type(dyn_base) is not None):
+        return f"    {var} = new {signature_type(dyn_base)}[]({n});"
+    return None
+
+
 def dynamic_length_assume_lines(var, sol_type, lo, hi, holes):
     """Constrain a dynamic calldata value by the certified length region.
 
@@ -14573,7 +14596,19 @@ def build_put(contract,
                                  "iteration is not entered; this remains a multi-value subset "
                                  "of the certified region and avoids malformed payload reverts")
                 else:
-                    pre_lines += dynamic_length_assume_lines(var, ptype, lo, hi, param_holes)
+                    fixed_ctor = fixed_length_dynamic_ctor(var, ptype, lo, hi, param_holes)
+                    if fixed_ctor is not None:
+                        # A length PINNED to a single value: construct the value
+                        # at that length instead of fuzzing + `vm.assume(len ==
+                        # N)`. The assume rejects all but a vanishing fraction of
+                        # fuzzed arrays, so Foundry hits its reject limit and the
+                        # reference-valid replay FAILS -- flakily (0x2972 passed,
+                        # 0x4051 failed on the same `_tos.length == 0` shape,
+                        # full-20260822-v40 round 10). A `new T[](N)` /
+                        # `new bytes(N)` is deterministic and always in-region.
+                        pre_lines.append(fixed_ctor)
+                    else:
+                        pre_lines += dynamic_length_assume_lines(var, ptype, lo, hi, param_holes)
                 rendered_width[pname] = (
                     (int(materialized_hi) - int(lo) + 1) -
                     len({int(h)
