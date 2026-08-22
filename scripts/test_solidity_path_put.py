@@ -7852,6 +7852,16 @@ def test_bind_return_refuses_the_exit_kind_shapes():
                  f"an already-bound call is refused: {why}")
     ln, why = bind_return("    c0.f(1);", "f", "uint256", "_r")
     bad += check(ln == "    uint256 _r = c0.f(1);", f"a bare asserted call IS bound: {ln}")
+    # A NORMAL-exit path unwraps the revert-tolerant wrapper first (PuttyV2.owner
+    # 3#1, full-20260822-v35): the PUT route already did, and the fixed basis
+    # replay must read the same call the PUT asserts on.
+    ln, why = bind_return("    try c0.f(1) { } catch { }", "f", "uint256", "_r",
+                          normal_exit=True)
+    bad += check(ln == "    uint256 _r = c0.f(1);",
+                 f"on a normal-exit path the try/catch is unwrapped and bound: {ln} {why}")
+    ln, why = bind_return("    try c0.call(abi.encode(1)) { } catch { }", "call", "uint256", "_r",
+                          normal_exit=True)
+    bad += check(ln is None, "a low-level .call try/catch stays refused even on a normal exit")
     return bad
 
 

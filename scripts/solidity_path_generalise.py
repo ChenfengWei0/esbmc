@@ -4149,11 +4149,23 @@ def unit_params(ast_path, contract, unit, declaration_id=None):
     if ast is None:
         return []
     if contract:
-        target = next(
-            (node for node in _walk_ast(ast)
-             if node.get("nodeType") == "ContractDefinition" and node.get("name") == contract),
-            None)
-        nodes = [target] if target is not None else [ast]
+        # The unit may be DECLARED in a base contract and merely inherited by
+        # `contract` (PuttyV2.balanceOf#2259 lives in the ERC721 base). The
+        # schedule still addresses it through the derived contract, so the
+        # whole linearized chain is searched, bases first, most-derived last:
+        # the last match wins, which is the override the derived contract
+        # actually dispatches to. MEASURED on PuttyV2.balanceOf
+        # (full-20260822-v35): an empty parameter table left the `owner`
+        # address coordinate in the uint256 domain, the structural region came
+        # out as [1, 2^256-1], and ESBMC REFUSED THE LADDER on the body path.
+        nodes = _chain_nodes(ast, contract)
+        if not nodes:
+            target = next(
+                (node for node in _walk_ast(ast)
+                 if node.get("nodeType") == "ContractDefinition"
+                 and node.get("name") == contract),
+                None)
+            nodes = [target] if target is not None else [ast]
     else:
         nodes = [ast]
     found = []

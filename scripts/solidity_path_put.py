@@ -4125,7 +4125,8 @@ def observe_fixed_scalar_return_with_forge(source,
                                            forge_project,
                                            workdir,
                                            contract_name,
-                                           timeout):
+                                           timeout,
+                                           normal_exit=False):
     """Replay the fixed concrete basis and read its scalar return from Foundry.
 
     Stage-2 may report a model-level return value that differs from the real
@@ -4147,7 +4148,8 @@ def observe_fixed_scalar_return_with_forge(source,
     call_i = find_unit_call(body, unit)
     if call_i is None:
         return None, "selected target call is absent or ambiguous"
-    rebound, reason = bind_return(body[call_i], unit, return_type, observed)
+    rebound, reason = bind_return(body[call_i], unit, return_type, observed,
+                                  normal_exit=normal_exit)
     if rebound is None:
         return None, "fixed return cannot be bound to the concrete target call: " + str(reason)
     marker = "VERIPUT_FIXED_RETURN_" + hashlib.sha256(
@@ -6786,8 +6788,17 @@ def return_rung_assertions(text, kind, var, label, idents_abs=None, r2_terms=Non
     return None
 
 
-def bind_return_lhs(call_line, unit, lhs):
+def bind_return_lhs(call_line, unit, lhs, normal_exit=False):
     """(rewritten call line, None) or (None, reason it may not be bound).
+
+    `normal_exit=True` says Stage 1/Stage 4 identified THIS path as a normal
+    exit; the emitter's revert-tolerant `try X {} catch {}` is then unwrapped
+    (exactly as the PUT route does through `unwrap_normal_try_call`) before the
+    binding, because on a normal-exit path the wrapper is not the exit-kind
+    expectation any more -- it is what prevents the return from being read.
+    MEASURED on PuttyV2.owner 3#1 (full-20260822-v35): the PUT was written with
+    an R1 rung and then un-counted because the fixed basis replay refused to
+    bind the return behind the try/catch the PUT had already unwrapped.
 
     `lhs` is the whole left-hand side -- `uint256 _put_ret` for a scalar, or a
     destructuring pattern `(uint248 _put_ret0, )` for a tuple. ONE
@@ -6803,6 +6814,8 @@ def bind_return_lhs(call_line, unit, lhs):
     assertion about how the transaction ends with a different statement, which
     is exactly the failure this whole lifting route exists to avoid.
     """
+    if normal_exit:
+        call_line, _unwrapped = unwrap_normal_try_call(call_line)
     stripped = call_line.lstrip()
     indent = call_line[:len(call_line) - len(stripped)]
     if stripped.startswith("try "):
@@ -6837,9 +6850,9 @@ def unwrap_normal_try_call(call_line):
     return m.group(1) + call + ";", True
 
 
-def bind_return(call_line, unit, decl_type, var):
+def bind_return(call_line, unit, decl_type, var, normal_exit=False):
     """The scalar case of `bind_return_lhs`."""
-    return bind_return_lhs(call_line, unit, f"{decl_type} {var}")
+    return bind_return_lhs(call_line, unit, f"{decl_type} {var}", normal_exit=normal_exit)
 
 
 # ---------------------------------------------------------------------------
@@ -13229,8 +13242,20 @@ def materialize_concrete_certified_env_point(source, test_name, unit, certified_
         return source, 0, None
     prelude_start = _target_env_prelude_start(body, stmt_i)
     if prelude_start < stmt_i:
+        # The walk back over the old prelude steps over comment lines too, and
+        # the state-point materialisation (which runs BEFORE this one) leaves
+        # its `VERIPUT_FIXED_REPLAY_STATE_PROJECTION` marker as a comment
+        # right there. Deleting it with the `vm.*` lines silently unbinds the
+        # projected constant state coordinates, and the final-source
+        # authentication then refuses the replay. MEASURED on VaultAdapter
+        # setLimits 3#1 / initialize 124#1 (full-20260822-v35 and the v36
+        # standalone check): the marker was written and gone by the time the
+        # body was read. Comment lines are kept, in order, ahead of the new
+        # prelude.
+        kept = [line for line in body[prelude_start:stmt_i] if line.strip().startswith("//")]
         del lines[start + 1 + prelude_start:start + 1 + stmt_i]
         stmt_i = prelude_start
+        additions = kept + additions
     insert_at = start + 1 + stmt_i
     lines[insert_at:insert_at] = additions
     return "\n".join(lines) + "\n", len(additions), None
@@ -14620,6 +14645,16 @@ def build_put(contract,
     # same one: the emitted test is not known to be inside the certified slice,
     # and that has to be visible on the test rather than inferred from silence.
     store_lines, stored, state_skipped = [], [], []
+    # Width-one pins / bounds on a state coordinate the layout does not list
+    # (a `constant`/`immutable`, or an ERC-7201 namespace slot constant such as
+    # `AccessStorageLocation`). No test can set them -- and none needs to: the
+    # compiled contract carries the value. They are PROJECTED as
+    # `fixed-replay-state-constant-or-immutable` through the same marker the
+    # basis replay writes, so the final-source authentication can bind them
+    # instead of refusing the PUT for "coordinates not directly bound".
+    # MEASURED on VaultAdapter.setLimits 3#1 (full-20260822-v35): every
+    # body-path PUT of the case was refused on `state.AccessStorageLocation$1311`.
+    projected_constants = {}
     established_relations = []
     established_state_targets = set()
     # Coordinates the certification query FREED at entry (`state.<c> := *`).
@@ -14869,6 +14904,14 @@ def build_put(contract,
         if layout_name is None:
             state_skipped.append(f"{name} (no storage slot: solc's layout does not list it, so "
                                  f"it is a constant/immutable and no test can set it)")
+            if lo == hi:
+                const_value = _normalized_concrete_ce_value(lo)
+                if const_value is not None:
+                    projected_constants[name] = {
+                        "kind": "fixed-replay-state-constant-or-immutable",
+                        "certificate": FIXED_REPLAY_STATE_CONSTANT_PROJECTION,
+                        "value": const_value,
+                    }
             continue
         slot, off, nb = layout[layout_name]
         if lo != hi:
@@ -15796,6 +15839,9 @@ def build_put(contract,
                    "ESTABLISHED (not assumed):")
         out.append("    //   " + "; ".join(stored))
         out += store_lines
+    if projected_constants:
+        out.append("    // VERIPUT_FIXED_REPLAY_STATE_PROJECTION " +
+                   json.dumps(projected_constants, sort_keys=True, separators=(",", ":")))
     if pre_reads:
         out.append("    // pre-state for the oracle, at this path's own entry")
         out += pre_reads
@@ -21104,7 +21150,7 @@ def event_signatures_from_ast_file(path):
         return {}
 
 
-def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
+def _oracle_claim_coverage_error(claim, oracles, event_signatures=None, unreadable_state=()):
     """Require exact oracle classes for every structured report boundary."""
     if not isinstance(claim, dict):
         return "authenticated concrete replay has no retained report claim"
@@ -21198,10 +21244,20 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None):
         return (left_members is not None and right_members is not None
                 and left_members == right_members)
 
+    # A state name solc's layout does not list is a `constant`/`immutable`:
+    # no storage slot holds it, so no test can read it back, and it cannot
+    # change on-chain. When the model reports it "changed" anyway, that is a
+    # model artefact, not a post-state this replay has to cover. MEASURED on
+    # VaultAdapter.setLimits path 3 (full-20260822-v35 basis replay): the
+    # revert path's whole-object rollback restored the ERC-7201 slot constant
+    # `VaultAdapterStorageLocation$1545` as `{ .data = { 0 } }` while the entry
+    # snapshot carried its declared bytes; the replay was refused for lacking
+    # a slot oracle on a value that has no slot.
+    unreadable = {str(name) for name in (unreadable_state or ())}
     changed_state = {
         str(name): value
         for name, value in final_state.items()
-        if not same_value(entry_state.get(name), value)
+        if str(name) not in unreadable and not same_value(entry_state.get(name), value)
     }
     if changed_state:
         state_oracles = [
@@ -21333,7 +21389,8 @@ def _concrete_return_literal(sol_type, value):
     return None
 
 
-def add_concrete_fixed_return_oracle(source, test_name, unit, rettypes, witness_value):
+def add_concrete_fixed_return_oracle(source, test_name, unit, rettypes, witness_value,
+                                     normal_exit=False):
     """Bind a source-synthesized fixed replay to its Stage-2 return value."""
     if witness_value is None or rettypes is None or len(rettypes) != 1:
         return source, []
@@ -21360,7 +21417,8 @@ def add_concrete_fixed_return_oracle(source, test_name, unit, rettypes, witness_
     if call_i is None:
         return source, []
     observed = "_veriput_concrete_return"
-    rebound, reason = bind_return(body[call_i], unit, return_type, observed)
+    rebound, reason = bind_return(body[call_i], unit, return_type, observed,
+                                  normal_exit=normal_exit)
     if rebound is None:
         return source, []
     absolute_call = start + 1 + call_i
@@ -21384,10 +21442,12 @@ def add_concrete_fixed_return_oracle(source, test_name, unit, rettypes, witness_
     }]
 
 
-def add_concrete_fixed_return_oracles(source, test_name, unit, rettypes, witness_value):
+def add_concrete_fixed_return_oracles(source, test_name, unit, rettypes, witness_value,
+                                      normal_exit=False):
     """Bind every scalar or tuple ABI return component to its witness value."""
     if not rettypes or len(rettypes) == 1:
-        return add_concrete_fixed_return_oracle(source, test_name, unit, rettypes, witness_value)
+        return add_concrete_fixed_return_oracle(source, test_name, unit, rettypes, witness_value,
+                                                normal_exit=normal_exit)
     if not isinstance(witness_value, str):
         return source, []
     raw = witness_value.strip()
@@ -21406,7 +21466,7 @@ def add_concrete_fixed_return_oracles(source, test_name, unit, rettypes, witness
         return source, []
     names = [f"_veriput_concrete_return_{index}" for index in range(len(rettypes))]
     lhs = ", ".join(f"{sol_type} {name}" for name, (_label, sol_type) in zip(names, rettypes))
-    rebound, _reason = bind_return_lhs(body[call_i], unit, f"({lhs})")
+    rebound, _reason = bind_return_lhs(body[call_i], unit, f"({lhs})", normal_exit=normal_exit)
     if rebound is None:
         return source, []
     receiver_match = re.search(r"\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\.\s*" + re.escape(unit) + r"\s*\(",
@@ -23618,6 +23678,7 @@ def main():
                     "\n".join(rendered_test_body).encode("utf-8")).hexdigest()
                 certified_ce_binding["setup_body_sha256"] = hashlib.sha256(
                     "\n".join(rendered_setup_body).encode("utf-8")).hexdigest()
+            skipped_state = []
             if supplied_concrete_oracles is not None:
                 txt, concrete_oracles, oracle_error = reuse_authenticated_concrete_oracles(
                     txt, case[1], a.unit, supplied_concrete_oracles)
@@ -23634,7 +23695,7 @@ def main():
                                                postprocess_reserve_s))
                         witness_return, return_error = observe_fixed_scalar_return_with_forge(
                             txt, case[1], a.unit, concrete_rettypes, a.forge_project, a.workdir,
-                            newc, remaining)
+                            newc, remaining, normal_exit=True)
                         if witness_return is None:
                             raise ValueError("fixed replay return observation unavailable: " +
                                              str(return_error))
@@ -23646,7 +23707,8 @@ def main():
                         witness_return = a.concrete_return_value
                 if witness_return is not None:
                     txt, return_oracles = add_concrete_fixed_return_oracles(
-                        txt, case[1], a.unit, concrete_rettypes, witness_return)
+                        txt, case[1], a.unit, concrete_rettypes, witness_return,
+                        normal_exit=(path_exit_kind == "normal"))
                     if not return_oracles:
                         raise ValueError("authenticated non-void return witness could not be "
                                          "bound to the exact source-typed target call")
@@ -23676,7 +23738,8 @@ def main():
                     raise ValueError(oracle_error)
             if certified_ce_binding is not None:
                 claim_error = _oracle_claim_coverage_error(claim, concrete_oracles,
-                                                           event_signatures_from_ast_file(a.ast))
+                                                           event_signatures_from_ast_file(a.ast),
+                                                           unreadable_state=skipped_state)
                 if claim_error:
                     raise ValueError(claim_error)
             if certified_ce_binding is not None:
