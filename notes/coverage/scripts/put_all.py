@@ -1619,6 +1619,7 @@ def certified_source_projection_error(binding,
         "foundry-prevrandao-establishes-difficulty/v1",
         "fixed-replay-entry-state/v1",
         "fixed-replay-state-constant-or-immutable/v1",
+        "fixed-replay-state-deployment-established/v1",
     }
     if not projected_certificates <= allowed_certificates:
         return "certified basis replay coordinate projection uses unknown certificates"
@@ -1655,11 +1656,14 @@ def certified_source_projection_error(binding,
                     or certificate != "foundry-prevrandao-establishes-difficulty/v1"
                     or record.get("value") != value):
                 return f"certified basis replay coordinate projection is unauthenticated on {name}"
-        elif kind in ("fixed-replay-entry-state", "fixed-replay-state-constant-or-immutable"):
+        elif kind in ("fixed-replay-entry-state", "fixed-replay-state-constant-or-immutable",
+                      "fixed-replay-state-deployment-established"):
             expected_certificate = {
                 "fixed-replay-entry-state": "fixed-replay-entry-state/v1",
                 "fixed-replay-state-constant-or-immutable":
                 "fixed-replay-state-constant-or-immutable/v1",
+                "fixed-replay-state-deployment-established":
+                "fixed-replay-state-deployment-established/v1",
             }[kind]
             if (not str(name).startswith("state.") or certificate != expected_certificate
                     or record.get("value") != value):

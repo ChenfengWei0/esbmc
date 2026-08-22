@@ -10953,11 +10953,13 @@ TARGET_CALL_CALldata_PROJECTION = "selected-target-call-calldata/v1"
 UNOBSERVED_AUX_ENV_PROJECTION = "unobserved-auxiliary-environment/v1"
 FIXED_REPLAY_STATE_PROJECTION = "fixed-replay-entry-state/v1"
 FIXED_REPLAY_STATE_CONSTANT_PROJECTION = "fixed-replay-state-constant-or-immutable/v1"
+FIXED_REPLAY_STATE_DEPLOYMENT_PROJECTION = "fixed-replay-state-deployment-established/v1"
 PREVRANDAO_DIFFICULTY_PROJECTION = "foundry-prevrandao-establishes-difficulty/v1"
 CE_PROJECTION_KINDS = frozenset(
     ("calldata-determined", "constructor-or-setup", "path-irrelevant",
      "certified-region-member", "unobserved-auxiliary-environment",
      "fixed-replay-entry-state", "fixed-replay-state-constant-or-immutable",
+     "fixed-replay-state-deployment-established",
      "prevrandao-establishes-difficulty"))
 EXACT_SOURCE_ENV_METHODS = {
     **{
@@ -11138,6 +11140,15 @@ def _ce_projection_error(name,
         value = _normalized_concrete_ce_value(evidence.get("value"))
         if value is None or value != expected_value:
             return "fixed replay constant evidence does not carry the exact CE value"
+        return None
+    if kind == "fixed-replay-state-deployment-established":
+        if not name.startswith("state."):
+            return "fixed replay deployment evidence is restricted to state coordinates"
+        if certificate != FIXED_REPLAY_STATE_DEPLOYMENT_PROJECTION:
+            return f"unsupported fixed replay deployment certificate {certificate!r}"
+        value = _normalized_concrete_ce_value(evidence.get("value"))
+        if value is None or value != expected_value:
+            return "fixed replay deployment evidence does not carry the exact CE value"
         return None
     if kind == "prevrandao-establishes-difficulty":
         if name != "block.difficulty":
@@ -13337,7 +13348,8 @@ def materialize_concrete_certified_state_point(source,
                                                certified_ce,
                                                layout,
                                                state_store_names=None,
-                                               maps=None):
+                                               maps=None,
+                                               deployment_established=()):
     """Establish exact scalar entry-state coordinates for a fixed CE replay."""
     expected_ce = normalized_concrete_ce(certified_ce)
     if expected_ce is None:
@@ -13415,6 +13427,27 @@ def materialize_concrete_certified_state_point(source,
             # refuses, as no guessed key addresses a word the contract reads.
             mkey = mname + map_tail
             spec = (maps or {}).get(mkey)
+            if not spec and name in (deployment_established or ()):
+                # ---- A FRONTEND-INTERNAL NESTED MAPPING THE DEPLOYMENT WROTE --
+                #
+                # `mapping(bytes32 => RoleData{mapping(address=>bool) members;
+                # ..})` -- the frontend lifts the inner mapping to ONE global
+                # `_ESBMC_inf_316$members[account]` (the outer key is gone), so
+                # no solc slot names it. The caller admits here only names the
+                # FRESH WITNESS's own entry state reports with the CE's value,
+                # i.e. values the same deployment the replay performs
+                # establishes in the model; nothing is stored and nothing is
+                # checked, the coordinate is projected and audited as such.
+                # MEASURED: TimelockController getMinDelay/getTimestamp/
+                # isOperationDone 3p1 (acfix_032, standalone after 53's frontend
+                # fixes): `state._ESBMC_inf_316$members[1]` (= address(this),
+                # granted TIMELOCK_ADMIN_ROLE by the constructor).
+                projected[name] = {
+                    "kind": "fixed-replay-state-deployment-established",
+                    "certificate": FIXED_REPLAY_STATE_DEPLOYMENT_PROJECTION,
+                    "value": scalar_value,
+                }
+                continue
             if not spec:
                 return source, 0, (f"certified mapping state coordinate {name} is not "
                                    "materialized: solc's layout reports no value-type-key "
@@ -20770,7 +20803,8 @@ def assemble_concrete_source(emitted,
                              certified_value_gate_basis=False,
                              certified_ce=None,
                              certified_env_basis=False,
-                             maps=None):
+                             maps=None,
+                             deployment_established=()):
     """Keep exactly one concrete replay case and rename its test contract.
 
     This is the point-region fallback for a certified region that renders no
@@ -20898,7 +20932,8 @@ def assemble_concrete_source(emitted,
             raise ValueError(arg_error)
     if certified_ce is not None and unit is not None:
         source, _state_repairs, state_error = materialize_concrete_certified_state_point(
-            source, case[1], unit, certified_ce, layout or {}, state_store_names, maps=maps)
+            source, case[1], unit, certified_ce, layout or {}, state_store_names, maps=maps,
+            deployment_established=deployment_established)
         if state_error is not None:
             raise ValueError(state_error)
     if certified_env_basis and unit is not None and certified_ce is not None:
@@ -23440,6 +23475,7 @@ def main():
         return 1
     ast_declaration_id = None if getter_only else declaration_id
     certified_ce_binding = None
+    deployment_established = []
     if concrete_return_mode_allowed(a.concrete_only, a.concrete_stage2_source,
                                     a.concrete_stage2_witness_check):
         if certified_ce is None:
@@ -23552,6 +23588,46 @@ def main():
                 claim["entry_storage"] = _entry
                 print("[put]   certified-basis: entry state pinned from the certified CE "
                       "(not in the fresh witness): " + ", ".join(sorted(_filled)))
+            # Frontend-internal nested-mapping coordinates (`_ESBMC_inf_N$m[k]`)
+            # that the fresh witness's OWN entry state reports at the CE's
+            # value: established by the deployment the replay performs, not
+            # by a store (see materialize_concrete_certified_state_point).
+            deployment_established = []
+            for _name, _value in _ce_map.items():
+                if not _name.startswith("state."):
+                    continue
+                _bare = _name[len("state."):]
+                _mname, _keys, _tail = parse_slot_name(_bare)
+                if _mname is None or not re.match(r"^_ESBMC_inf_\d+\$", _mname):
+                    continue
+                _candidates = [_bare]
+                _lits = []
+                for _key in _keys:
+                    _k = _key.strip()
+                    if _KEY_LIT_RE.match(_k):
+                        _lits.append(str(int(_k, 0)))
+                        continue
+                    _kv = _ce_map.get(_k)
+                    if not isinstance(_kv, int):
+                        _lits = None
+                        break
+                    _lits.append(str(_kv))
+                if _lits is not None:
+                    _candidates.append(_mname + "".join(f"[{_k}]" for _k in _lits) + _tail)
+                _witness_value = None
+                for _cand in _candidates:
+                    if _cand in _entry:
+                        _witness_value = _normalized_concrete_ce_value(_entry[_cand])
+                        break
+                    if "state." + _cand in _entry:
+                        _witness_value = _normalized_concrete_ce_value(_entry["state." + _cand])
+                        break
+                if _witness_value is not None and _witness_value == _value:
+                    deployment_established.append(_name)
+            if deployment_established:
+                print("[put]   certified-basis: deployment-established frontend-internal "
+                      "mapping coordinate(s), projected not stored: "
+                      + ", ".join(sorted(deployment_established)))
             certified_ce_binding, reason = bind_emitted_claim_to_certified_ce(claim,
                                                                               certified_ce,
                                                                               params=basis_params)
@@ -24093,7 +24169,8 @@ def main():
                 constructor_param_struct_field_mocks, constructor_param_runtime_mocks,
                 constructor_param_hascode_mocks, flat_source, region, pins,
                 state_store_names, certified_value_gate_basis, certified_ce,
-                certified_env_basis=certified_env_basis, maps=maps)
+                certified_env_basis=certified_env_basis, maps=maps,
+                deployment_established=deployment_established)
             if certified_ce_binding is not None:
                 rendered_test_body = function_body_lines(txt, case[1])
                 rendered_setup_body = function_body_lines_in_contract_of(txt, case[1], "setUp")
