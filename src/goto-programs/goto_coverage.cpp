@@ -1793,6 +1793,45 @@ static bool path_cov_bytes_static_to_uint_expr(
   // in both places (regression solidity_path_cov_assert_bytes32_state_component
   // and its two siblings), which is also how a `--memlimit`-less run brought
   // the host down. The value is identical either way; only the shape differs.
+  // The width can also be recovered from the DECLARATION when the caller did
+  // not pass one: a `bytesN` STATE VARIABLE (or struct field) lowers to the
+  // generic `BytesStatic` struct whose `length` is a symbolic member, not a
+  // literal, but the frontend stamps `#sol_bytesn_size` on the owning struct's
+  // component (solidity_convert_decl.cpp). MEASURED on acfix_3_5_077_L1Block
+  // (`bytes32 public hash`): the ladder over that one state variable took the
+  // dynamic branch and the 5g memlimit in 7s on every path of the unit, which
+  // the harness then had to report as "REGION VACUOUS" -- the whole unit lost
+  // its PUT to an expression shape.
+  if (fixed_len == 0 && is_member2t(e))
+  {
+    const member2t &m = to_member2t(e);
+    const typet pst = ns.follow(migrate_type_back(m.source_value->type));
+    if (pst.id() == "struct")
+      for (const auto &comp : to_struct_type(pst).components())
+        if (comp.get_name() == m.member)
+        {
+          const std::string bn = comp.get("#sol_bytesn_size").as_string();
+          if (!bn.empty())
+          {
+            unsigned long v = std::strtoul(bn.c_str(), nullptr, 10);
+            if (v >= 1 && v <= 32)
+              fixed_len = static_cast<unsigned>(v);
+          }
+          break;
+        }
+  }
+  if (fixed_len == 0)
+  {
+    const std::string bn =
+      migrate_type_back(e->type).get("#sol_bytesn_size").as_string();
+    if (!bn.empty())
+    {
+      unsigned long v = std::strtoul(bn.c_str(), nullptr, 10);
+      if (v >= 1 && v <= 32)
+        fixed_len = static_cast<unsigned>(v);
+    }
+  }
+
   unsigned n = fixed_len == 0 ? 32 : std::min(fixed_len, 32u);
   bool constant_length = fixed_len != 0;
   if (fixed_len == 0 && is_constant_int2t(length))
@@ -1804,15 +1843,43 @@ static bool path_cov_bytes_static_to_uint_expr(
       constant_length = true;
     }
   }
-  for (unsigned i = 0; i < n; ++i)
+  if (constant_length)
   {
-    const expr2tc idx = constant_int2tc(length->type, BigInt(i));
-    expr2tc byte = index2tc(elem_t, data, idx);
-    byte = typecast2tc(u256, byte);
-    const expr2tc shifted = shl2tc(u256, raw, constant_int2tc(u256, BigInt(8)));
-    const expr2tc next = bitor2tc(u256, shifted, byte);
-    raw = constant_length ? next
-                          : if2tc(u256, greaterthan2tc(length, idx), next, raw);
+    for (unsigned i = 0; i < n; ++i)
+    {
+      const expr2tc idx = constant_int2tc(length->type, BigInt(i));
+      expr2tc byte = index2tc(elem_t, data, idx);
+      byte = typecast2tc(u256, byte);
+      const expr2tc shifted =
+        shl2tc(u256, raw, constant_int2tc(u256, BigInt(8)));
+      raw = bitor2tc(u256, shifted, byte);
+    }
+  }
+  else
+  {
+    // SYMBOLIC length, LINEAR shape. The old guarded fold
+    // `raw = if(length > i, (raw << 8) | byte_i, raw)` names `raw` in BOTH arms,
+    // so the DAG is a 2^n tree to anything that walks it (see above). The same
+    // value -- big-endian packing of the first `length` bytes -- is
+    // `OR_i (length > i ? byte_i << 8*(length-1-i) : 0)`, in which `raw`
+    // appears ONCE per level: 32 terms, each of constant size. The shift amount
+    // in the dead arm (length <= i) wraps, and is never read.
+    const expr2tc eight = constant_int2tc(u256, BigInt(8));
+    const expr2tc zero = constant_int2tc(u256, BigInt(0));
+    const expr2tc len256 = typecast2tc(u256, length);
+    for (unsigned i = 0; i < n; ++i)
+    {
+      const expr2tc idx = constant_int2tc(length->type, BigInt(i));
+      expr2tc byte = index2tc(elem_t, data, idx);
+      byte = typecast2tc(u256, byte);
+      // 8 * (length - 1 - i)
+      const expr2tc pos =
+        sub2tc(u256, len256, constant_int2tc(u256, BigInt(i + 1)));
+      const expr2tc amount = mul2tc(u256, pos, eight);
+      const expr2tc term = if2tc(
+        u256, greaterthan2tc(length, idx), shl2tc(u256, byte, amount), zero);
+      raw = bitor2tc(u256, raw, term);
+    }
   }
 
   if (mapping_key)

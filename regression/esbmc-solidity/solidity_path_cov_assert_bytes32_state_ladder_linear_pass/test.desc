@@ -1,0 +1,7 @@
+CORE
+contract.sol
+--contract Bytes32State --solidity-path-coverage --solidity-max-tx 1 --memlimit 2g --focus-function set --path-cov-assert spec.json
+^--path-cov-assert: responseHash: post == pre  REFUTED
+^--path-cov-assert: responseHash: post != pre  REFUTED
+\A(?!(.|\n)*Out of memory)
+\A(?!(.|\n)*THE REGION IS VACUOUS)
