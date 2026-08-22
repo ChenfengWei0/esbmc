@@ -4014,6 +4014,32 @@ bool solidity_convertert::get_contract_member_call_expr(
       if (!build_revert_rollback_block(&condition, rollback))
       {
         rollback.set("#sol_extcall_target_guard", true);
+        // The guard IS a source-level decision: Solidity reverts a high-level
+        // call whose target is a null handle / the zero address, and the
+        // revert arm is a distinct complete path of the unit. Without a
+        // location the lowered IF carried no `sol_source_decision` stamp,
+        // complete-path coverage explored both arms as an UNRECORDED
+        // (model-internal) branch, and the revert arm and the continuing arm
+        // received the SAME path id. MEASURED on LiquidityPool (bugfix124
+        // pop_051, full-20260822-v36): `convertToShares` enumerated 4 paths
+        // with 1 decision site, the emit run solved `path:3` twice (PASSED,
+        // then FAILED), Stage 2 certified "enc 3" as the body path while the
+        // assertion ladder's "enc 3" was the value-gate revert, and every
+        // body-path PUT of seven view units was refused as "ladder-vacuous".
+        // Deliberately NO file/line: `--branch-coverage` admits a goto by its
+        // location's FILE, and this guard must not enter the locked
+        // branch-coverage baseline (regression foundry_covgen_nested_call_fail
+        // went from 2 to 3 cases when it did). The site is keyed by the
+        // call's `sol_src` + kind, so both guards of one call share the site
+        // and are told apart by occurrence, exactly as a loop's repeated
+        // decision is.
+        locationt call_loc;
+        get_location_from_node(func_call_json, call_loc);
+        locationt guard_loc;
+        guard_loc.set("sol_src", call_loc.get("sol_src"));
+        guard_loc.set("sol_source_decision", true);
+        guard_loc.set("sol_source_decision_kind", "external-call-target");
+        rollback.location() = guard_loc;
         move_to_front_block(rollback);
         return;
       }
@@ -4033,6 +4059,22 @@ bool solidity_convertert::get_contract_member_call_expr(
       move_to_front_block(assume_call);
     };
 
+    // ---- --extcall-nondet: THE TARGET'S EXISTENCE IS ABSTRACTED TOO ----
+    //
+    // Under --extcall-nondet no callee runs and the call's value is a fresh
+    // nondet; the EVM-level "target has no code / is the zero address ⇒
+    // revert" is the other side of the same boundary and is abstracted with
+    // it (an over-approximation: the call at an unset handle is admitted to
+    // succeed with a nondet value). Emitting the guards here made every such
+    // call a three-way split on a quantity that is NOT a coordinate (the
+    // handle's address lives in the model's allocator), so the normal path
+    // and the zero-address revert could never be separated by any region --
+    // MEASURED on LiquidityPool.convertToShares (full-20260822-v36): both
+    // were "REFERRED TO THE COORDINATE GATE" and no PUT was possible for
+    // seven view units. Without --extcall-nondet the guards stay and are
+    // recorded decisions (below).
+    if (!is_extcall_nondet)
+    {
     // An uninitialised contract-typed variable is represented as a null
     // pointer.  Reject it before reading `$address`, then reject a materialised
     // contract pointer whose EVM address is zero.
@@ -4055,6 +4097,7 @@ bool solidity_convertert::get_contract_member_call_expr(
         ? exprt(and_exprt(target_address_nonzero, nondet_bool_expr))
         : target_address_nonzero;
     emit_call_guard(call_succeeds);
+    }
   }
 
   if (opaque_contract_cast)

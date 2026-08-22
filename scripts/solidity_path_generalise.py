@@ -2151,6 +2151,13 @@ def _decision_relation(branch_claim, arm=None):
     follows. Only simple binary comparisons are admitted here.
     """
     inner, was_not = _unwrap_not(branch_claim)
+    # A pointer member access (`investmentManager->$address != 0`: the
+    # frontend's external-call target guard, a declared decision since the
+    # LiquidityPool fix of 2026-08-22) is not a product-region relation over a
+    # rendered coordinate; SIMPLE_BRANCH_RE would split it at the `>` of `->`.
+    # Not admitted here: the caller falls back to ESBMC certification.
+    if "->" in (inner or ""):
+        return None
     m = SIMPLE_BRANCH_RE.match(inner)
     if not m:
         return _boolean_decision_relation(inner, was_not, arm=arm)

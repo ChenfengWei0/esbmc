@@ -27166,10 +27166,35 @@ def test_bytesn_literal_maps_to_the_certified_ce_scalar():
     # not a bytesN spelling
     assert _bytesn_literal_value("{ .currentRound = 0 }") is None
     assert _bytesn_literal_value("{ .data={ 300 }, .length=1 }") is None
+    # a non-zero byte BEYOND the length is not a bytesN value
     assert _bytesn_literal_value("{ .data={ 1, 2 }, .length=1 }") is None
+    # the 32-byte BytesStatic buffer printed whole for a bytes16 (LiquidityPool
+    # trancheId, 2026-08-22): value in data[0..15], zero tail
+    assert _bytesn_literal_value("{ .data={ " + ", ".join(["0"] * 32) + " }, .length=16 }") == 0
+    assert _bytesn_literal_value("{ .data={ 0, 1" + ", 0" * 30 + " }, .length=16 }") == 1 << (14 * 8)
+    assert _bytesn_literal_value("{ .data={ " + "0, " * 31 + "7 }, .length=16 }") is None
     claim = {"inputs": {"assertionId": "{ .data = { 0 } }", "who": "2001"},
              "env": {}, "entry_storage": {}}
     assert claim_concrete_ce(claim) == {"assertionId": 0, "who": 2001}
+    # a symbolic mapping key the certified CE fixes is the witness's literal key
+    # (LiquidityPool.rely, 2026-08-22): the binder renames the witness spelling
+    from solidity_path_put import bind_emitted_claim_to_certified_ce
+    expected = {"msg.sender": "7", "state.wards$5[msg.sender]": "1"}
+    claim = {"inputs": {}, "env": {"msg.sender": "7"}, "entry_storage": {"wards$5[7]": "1"}}
+    bound, err = bind_emitted_claim_to_certified_ce(claim, expected)
+    assert err is None and bound["status"] == "exact", err
+    claim_other = {"inputs": {}, "env": {"msg.sender": "7"}, "entry_storage": {"wards$5[8]": "1"}}
+    bound, err = bind_emitted_claim_to_certified_ce(claim_other, expected)
+    assert bound is None and "wards$5[8]" in err, err
+    # the oracle-part representative CE reads bytesN / struct state like the
+    # binder does (LiquidityPool.trancheId, 2026-08-22)
+    from solidity_path_put import claim_oracle_ce_values
+    claim_b16 = {"inputs": {"assets": "5"}, "env": {"msg.sender": "0"},
+                 "entry_storage": {"trancheId": "{ .data={ " + ", ".join(["0"] * 32) + " }, .length=16 }",
+                                   "s": "{ .currentRound = 3 }"}}
+    assert claim_oracle_ce_values(claim_b16) == {"assets": "5", "msg.sender": "0",
+                                                 "state.trancheId": "0", "state.s.currentRound": "3"}
+    assert claim_oracle_ce_values({"inputs": {"x": "{ .data={ 1 } }"}, "env": {}, "entry_storage": {}}) is None
 
 
 def test_oracle_part_query_plan_names_every_r1_variable_once():

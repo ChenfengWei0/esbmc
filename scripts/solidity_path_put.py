@@ -1344,11 +1344,28 @@ def claim_oracle_ce_values(claim):
             return None
         for raw_name, raw_value in group.items():
             name = prefix + str(raw_name)
+            # The same reading `claim_concrete_ce` applies: a bytesN state
+            # variable arrives as the frontend's `{ .data={...}, .length=N }`
+            # and a storage struct as `{ .m = v, ... }`. MEASURED on
+            # LiquidityPool.convertToShares (full-20260822-v36 standalone):
+            # `trancheId` (bytes16) made this return None for EVERY claim of
+            # the contract, every oracle part "lacks a complete CE", and all
+            # three written body-path PUTs were refused in the basis replay.
             try:
                 int(str(raw_value), 0)
+                values[name] = str(raw_value)
+                continue
             except (TypeError, ValueError):
+                pass
+            value = _normalized_concrete_ce_value(raw_value)
+            if isinstance(value, int):
+                values[name] = str(value)
+                continue
+            members = _struct_literal_members(raw_value)
+            if members is None:
                 return None
-            values[name] = str(raw_value)
+            for member, member_value in members.items():
+                values[name + "." + member] = str(member_value)
     if claim.get("return_value_known") is True:
         try:
             int(str(claim.get("return_value")), 0)
@@ -13266,7 +13283,8 @@ def materialize_concrete_certified_state_point(source,
                                                unit,
                                                certified_ce,
                                                layout,
-                                               state_store_names=None):
+                                               state_store_names=None,
+                                               maps=None):
     """Establish exact scalar entry-state coordinates for a fixed CE replay."""
     expected_ce = normalized_concrete_ce(certified_ce)
     if expected_ce is None:
@@ -13331,8 +13349,44 @@ def materialize_concrete_certified_state_point(source,
             additions += slot_write_lines(receiver, slot, off, nb, str(scalar_value))
             additions += slot_landing_check(receiver, slot, off, nb, str(scalar_value), name)
             continue
-        if parse_slot_name(raw_state_name)[0] is not None:
-            return source, 0, f"certified mapping state coordinate {name} is not materialized"
+        mname, map_keys, map_tail = parse_slot_name(raw_state_name)
+        if mname is not None:
+            # A MAPPING SLOT of the certified CE (`state.wards$5[2147483647]`,
+            # `state.wards$5[msg.sender]`). The PUT route establishes the same
+            # shape with vm.store at keccak(key, slot); the basis replay refused
+            # it wholesale. MEASURED on LiquidityPool rely/deny/file/updatePrice
+            # (full-20260822-v36 standalone): every body-path PUT written, then
+            # un-counted here. A key is a literal, or a coordinate the same CE
+            # fixes (`msg.sender` -- the replay pranks exactly that value, so
+            # the slot written IS the slot the unit reads); anything else still
+            # refuses, as no guessed key addresses a word the contract reads.
+            mkey = mname + map_tail
+            spec = (maps or {}).get(mkey)
+            if not spec:
+                return source, 0, (f"certified mapping state coordinate {name} is not "
+                                   "materialized: solc's layout reports no value-type-key "
+                                   f"mapping `{mkey}`")
+            _mslot, _kt, vnb, voff, _mb, _mm = spec[:6]
+            nlev = 1 if isinstance(_kt, str) else len(_kt)
+            if len(map_keys) != nlev:
+                return source, 0, (f"certified mapping state coordinate {name} gives "
+                                   f"{len(map_keys)} key(s) for a {nlev}-level store")
+            kexprs = []
+            for key_name in map_keys:
+                k = key_name.strip()
+                if _KEY_LIT_RE.match(k):
+                    kexprs.append(key_expr_typed(k))
+                    continue
+                key_value = expected_ce.get(k)
+                if not isinstance(key_value, int):
+                    return source, 0, (f"certified mapping state coordinate {name} has key "
+                                       f"`{k}` that the certified CE does not fix")
+                kexprs.append(key_expr_typed(str(key_value)))
+            slot_expr = map_value_slot_expr(kexprs, spec)
+            additions += slot_write_lines_at(receiver, slot_expr, voff, vnb, str(scalar_value))
+            additions += slot_landing_check_at(receiver, slot_expr, voff, vnb, str(scalar_value),
+                                               name)
+            continue
         layout_name = layout_scalar_key(raw_state_name, layout, state_store_names)
         if layout_name is None:
             projected[name] = {
@@ -16464,7 +16518,17 @@ def _bytesn_literal_value(raw):
     if width is None:
         return 0 if all(byte == 0 for byte in values) else None
     if len(values) > width:
-        return None
+        # The frontend's BytesStatic is `unsigned char data[32]; size_t length`
+        # (c2goto/library/solidity/solidity_bytes.c): a bytes16 prints all 32
+        # buffer bytes with `.length=16`, its value in data[0..15] and the tail
+        # unused. MEASURED on LiquidityPool.rely/deny/file/updatePrice
+        # (full-20260822-v36): `trancheId` (bytes16) reached every body-path
+        # basis replay as 32 items at length 16 and the whole claim was refused
+        # as "non-scalar or malformed". The tail must be zero: a non-zero tail
+        # is not a bytes16 value and is still refused.
+        if any(byte != 0 for byte in values[width:]):
+            return None
+        values = values[:width]
     values = values + [0] * (width - len(values))
     result = 0
     for byte in values:
@@ -16728,6 +16792,36 @@ def bind_emitted_claim_to_certified_ce(claim, expected, params=None):
                 and expected_ce[sibling] == actual_ce[sibling]
                 and isinstance(actual_ce[name], int)):
             del actual_ce[name]
+    # ---- ONE SLOT, TWO KEY SPELLINGS ----
+    #
+    # The certified CE names a mapping slot by a SYMBOLIC key it also fixes
+    # (`state.wards$5[msg.sender]` with `msg.sender = 0`); the fresh witness
+    # names the same slot by the VALUE (`state.wards$5[0]`). MEASURED on
+    # LiquidityPool rely/deny/file/updatePrice (full-20260822-v36 standalone):
+    # "fresh emitted witness is not the certified CE: extra=state.wards$5[0]".
+    # The witness spelling is renamed to the certified one when every key of
+    # the certified name resolves through the certified CE to the witness's
+    # literal; the certified side (and its hash) is left untouched.
+    for name in [n for n in expected_ce if n.startswith("state.") and n not in actual_ce]:
+        mname, keys, tail = parse_slot_name(name[len("state."):])
+        if mname is None:
+            continue
+        literal_keys = []
+        for key in keys:
+            k = key.strip()
+            if _KEY_LIT_RE.match(k):
+                literal_keys.append(str(int(k, 0)))
+                continue
+            value = expected_ce.get(k)
+            if not isinstance(value, int):
+                literal_keys = None
+                break
+            literal_keys.append(str(value))
+        if literal_keys is None:
+            continue
+        literal_name = "state." + mname + "".join(f"[{k}]" for k in literal_keys) + tail
+        if literal_name in actual_ce and literal_name not in expected_ce:
+            actual_ce[name] = actual_ce.pop(literal_name)
     if expected_ce != actual_ce:
         missing = sorted(set(expected_ce) - set(actual_ce))
         extra = sorted(set(actual_ce) - set(expected_ce))
@@ -18537,7 +18631,15 @@ def constructor_param_runtime_interface_mock_specs(forge_project, contract, unit
         visited.add(name)
         chunks.append(chunk)
         body = _constructor_body_text(chunk)
-        for lhs, rhs in re.findall(r"\b([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*;", body):
+        # `state = param;` AND `state = Interface(param);` -- the cast is how
+        # an `address`-typed constructor parameter becomes a contract handle
+        # (LiquidityPool: `investmentManager = InvestmentManagerLike(
+        # investmentManager_)`, full-20260822-v36 standalone). Without the
+        # cast form no mock was deployed, the basis replay called address(0),
+        # and Foundry reverted where the model returned a nondet value.
+        for lhs, rhs in re.findall(
+                r"\b([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*\s*\(\s*)?([A-Za-z_]\w*)\s*\)?\s*;",
+                body):
             binding = bindings.get(rhs)
             if binding is None:
                 continue
@@ -18671,7 +18773,13 @@ def constructor_param_runtime_interface_mock_specs(forge_project, contract, unit
                 found = assigned.get(state_var)
                 if found is None:
                     continue
-                choice = _unique_function_choice(functions.get(fname) or [])
+                # The interface the call is made through names the ABI; the
+                # flat source often declares the same function name in several
+                # interfaces (`convertToShares` in an ERC-4626 view and in
+                # `InvestmentManagerLike`, LiquidityPool, 2026-08-22), and the
+                # name-only index then has no unique choice.
+                typed = _source_type_function_abis(source, iface).get(fname) or []
+                choice = _unique_function_choice(typed or functions.get(fname) or [])
                 if choice is None:
                     continue
                 idx, pname = found
@@ -18703,8 +18811,17 @@ def constructor_param_runtime_interface_mock_specs(forge_project, contract, unit
         # member call at that argument just like the casted spelling.
         for state_var, (idx, pname) in sorted(assigned.items()):
             direct_rx = re.compile(r"\b" + re.escape(state_var) + r"\s*\.\s*([A-Za-z_]\w*)\s*\(")
+            # The state variable's DECLARED type names the ABI (see the casted
+            # branch above for why the name-only index is not enough).
+            decl_rx = re.compile(
+                r"^\s*([A-Za-z_][\w.]*)\s+(?:(?:public|private|internal|immutable|constant|"
+                r"override|payable)\s+)*" + re.escape(state_var) + r"\s*(?:=|;)", re.M)
+            decl_match = decl_rx.search(chunks[0] if chunks else "")
+            decl_type = decl_match.group(1).split(".")[-1] if decl_match else None
             for fname in sorted(set(direct_rx.findall(chunk))):
-                choice = _unique_function_choice(functions.get(fname) or [])
+                typed = (_source_type_function_abis(source, decl_type).get(fname)
+                         if decl_type else None) or []
+                choice = _unique_function_choice(typed or functions.get(fname) or [])
                 if choice is None:
                     continue
                 signature, returns = choice
@@ -20387,7 +20504,8 @@ def assemble_concrete_source(emitted,
                              state_store_names=None,
                              certified_value_gate_basis=False,
                              certified_ce=None,
-                             certified_env_basis=False):
+                             certified_env_basis=False,
+                             maps=None):
     """Keep exactly one concrete replay case and rename its test contract.
 
     This is the point-region fallback for a certified region that renders no
@@ -20515,7 +20633,7 @@ def assemble_concrete_source(emitted,
             raise ValueError(arg_error)
     if certified_ce is not None and unit is not None:
         source, _state_repairs, state_error = materialize_concrete_certified_state_point(
-            source, case[1], unit, certified_ce, layout or {}, state_store_names)
+            source, case[1], unit, certified_ce, layout or {}, state_store_names, maps=maps)
         if state_error is not None:
             raise ValueError(state_error)
     if certified_env_basis and unit is not None and certified_ce is not None:
@@ -23633,7 +23751,7 @@ def main():
                 constructor_param_struct_field_mocks, constructor_param_runtime_mocks,
                 constructor_param_hascode_mocks, flat_source, region, pins,
                 state_store_names, certified_value_gate_basis, certified_ce,
-                certified_env_basis=certified_env_basis)
+                certified_env_basis=certified_env_basis, maps=maps)
             if certified_ce_binding is not None:
                 rendered_test_body = function_body_lines(txt, case[1])
                 rendered_setup_body = function_body_lines_in_contract_of(txt, case[1], "setUp")

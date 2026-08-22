@@ -5110,6 +5110,10 @@ check("decision-relation-inverts-ordered-claim", _decision_relation("x > 5"), ("
 check("decision-relation-keeps-negated-ordered-claim", _decision_relation("!(x > 5)"),
       ("x", ">", "5"))
 check("decision-relation-boolean-false-guard", _decision_relation("!(!m[k])"), ("m[k]", "==", "0"))
+# The external-call target guard (LiquidityPool, 2026-08-22) is a pointer member
+# access; it is not a product-region relation and must not be split at `->`.
+check("decision-relation-refuses-pointer-member-access",
+      _decision_relation("!(!(investmentManager->$address != 0))", "fall-through"), None)
 check("decision-relation-boolean-true-guard", _decision_relation("!(m[k])"), ("m[k]", "==", "1"))
 check("decision-relation-boolean-taken-guard", _decision_relation("!(!m[k])", "taken"),
       ("m[k]", "==", "0"))

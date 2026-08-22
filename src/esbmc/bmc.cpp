@@ -6463,8 +6463,18 @@ smt_convt::resultt bmct::multi_property_check(
                 // `extcall_returns`; the driver then pinned
                 // `extcall._maxMultiplier`, the certification query could not
                 // express it, and no body path of the unit was certified.
+                // ---- THE ROLLBACK SNAPSHOT IS THE MODEL'S OWN ----
+                //
+                // `_sol_save_this` / `_sol_save_g_<store>` are the frontend's
+                // function-entry copies that a revert restores from; their
+                // rhs is the contract object, which is nondet-seeded at
+                // deployment, so they landed here as a "harness-chosen local"
+                // and published the WHOLE struct under `extcall_returns`.
+                // MEASURED on LiquidityPool.rely (full-20260822-v36).
                 const symbolt *lsym = ns.lookup(irep_idt(sym_id));
                 if (lsym && lsym->is_parameter)
+                  ++ce.dropped_internal;
+                else if (name.rfind("_sol_save_", 0) == 0)
                   ++ce.dropped_internal;
                 else if (nondet_local_seen.insert(name).second)
                   ce.extcall_returns.emplace_back(name, val);
