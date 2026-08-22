@@ -295,6 +295,73 @@ contract UnrelatedProbeTest is Test {
                      in anchored_source, True)
         bad += check("certified-ce-anchor-adds-no-test-unit",
                      len(re.findall(r"\bfunction\s+test_", anchored_source)), 1)
+        # A REVERTING basis: the harvested representative CE carries a
+        # `return`, the chain returns nothing; the failed call status is the
+        # exit oracle and no return-value oracle can or need exist.
+        put2_file = os.path.join(td, "test", "Put2.t.sol")
+        basis2_file = os.path.join(td, "Basis2.t.sol")
+        with open(put2_file, "w", encoding="utf-8") as fh:
+            fh.write(put_source)
+        basis2_source = basis_source.replace(
+            """    vm.recordLogs();
+    uint256 observed = c0.f(7);
+    assertEq(observed, 9, "fixed witness return must match");
+    uint256 observedState = uint256(vm.load(address(c0), bytes32(uint256(0))));
+    assertEq(observedState, uint256(9), "fixed witness state");
+    Vm.Log[] memory observedLogs = vm.getRecordedLogs();
+    assertEq(observedLogs.length, 1);
+    assertEq(observedLogs[0].emitter, address(c0));
+    assertEq(observedLogs[0].topics.length, 1);
+    assertEq(observedLogs[0].topics[0], keccak256("Seen(uint256)"));
+    assertEq(observedLogs[0].data, abi.encode(uint256(9)));
+""", """    bool _veriput_concrete_completed = false;
+    try c0.f(7) {
+      _veriput_concrete_completed = true;
+    } catch {}
+    assertFalse(_veriput_concrete_completed, "fixed witness call must revert");
+""")
+        assert basis2_source != basis_source, "fixture: revert basis body was not substituted"
+        with open(basis2_file, "w", encoding="utf-8") as fh:
+            fh.write(basis2_source)
+        revert_ce = {"x": "7", "return": "0"}
+        revert_basis_rec = {
+            "file": basis2_file,
+            "test": "test_cov_0",
+            "unit": "f",
+            "path_function": path_function,
+            "enc": 1,
+            "piece": None,
+            "certified_ce_binding": source_binding(basis2_source, revert_ce),
+            "concrete_oracles": [{
+                "class": "R0",
+                "kind": "call-status",
+                "observed": "_veriput_concrete_completed",
+                "expected": False,
+                "provenance": "stage2-witness",
+                "target_receiver": "c0",
+                "assertion": ('assertFalse(_veriput_concrete_completed, '
+                              '"fixed witness call must revert");'),
+            }],
+        }
+        revert_put_rec = dict(put_rec)
+        revert_put_rec["file"] = put2_file
+        _revert_anchor, revert_error = put_all.attach_certified_ce_anchor(
+            revert_put_rec, revert_basis_rec, {"ce": revert_ce})
+        bad += check("certified-ce-anchor-reverting-basis-needs-no-return-oracle",
+                     revert_error, None)
+        _normal_anchor, normal_error = put_all.attach_certified_ce_anchor(
+            revert_put_rec, dict(revert_basis_rec, concrete_oracles=[{
+                "class": "R0",
+                "kind": "call-status",
+                "observed": "_veriput_concrete_completed",
+                "expected": True,
+                "provenance": "stage2-witness",
+                "target_receiver": "c0",
+                "assertion": ('assertFalse(_veriput_concrete_completed, '
+                              '"fixed witness call must revert");'),
+            }]), {"ce": revert_ce})
+        bad += check("certified-ce-anchor-normal-basis-still-needs-return-oracle",
+                     normal_error, "certified return CE lacks one exact return-value oracle")
         with open(os.path.join(td, "foundry.toml"), "w", encoding="utf-8") as stream:
             stream.write("[profile.default]\ntest = 'test'\nlibs = ['lib']\n")
         os.makedirs(os.path.join(td, "lib"))

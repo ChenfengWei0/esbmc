@@ -23436,6 +23436,21 @@ def main():
                                  f"overridden by the path's exit {_cli_exit!r}")
                     claim["exit_kind"] = _cli_exit
                     claim["representative_claim_exit_kind"] = _claim_exit
+                    # On chain a revert ROLLS BACK: the post-state is the
+                    # entry state. The harvested `_r` claim's `final_state`
+                    # is the model's pre-rollback word (MEASURED:
+                    # Owned.setOwner 6p1 `_r_r`, owner$94 entry 0, final
+                    # 0x8000...3FFFFFFF), and a "fixed witness state"
+                    # assertion on it turned both `_r` bases red while the
+                    # three part PUTs were green. The return value is gone
+                    # with it.
+                    if _cli_exit == "revert":
+                        entry_state = claim.get("entry_storage")
+                        if isinstance(entry_state, dict):
+                            claim["final_state"] = dict(entry_state)
+                        elif isinstance(claim.get("final_state"), dict):
+                            claim["final_state"] = {}
+                        claim["rolled_back_final_state"] = True
             # A FREED entry-state coordinate the path never reads is absent from
             # the fresh witness's `entry_storage` (ESBMC snapshots only what the
             # path touched), while the certified CE names it, because the driver

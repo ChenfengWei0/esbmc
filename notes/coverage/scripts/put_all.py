@@ -1873,7 +1873,14 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail, representat
             return None, "certified basis replay assertion omits its observed result"
     expected_return = certified_ce_return(ce)
     return_oracles = [oracle for oracle in oracles if oracle.get("kind") == "return-value"]
-    if expected_return is not None:
+    # A basis that asserts a FAILED call status replays a reverting path: the
+    # chain returns nothing, and the `return` the harvested `_r` representative
+    # CE carries is the model's mark-and-return value. MEASURED: Owned.setOwner
+    # 6p1 (acfix_015, full-20260822-v38) -- three green R1 part PUTs, three
+    # green bases, refused here for a `return == 0` the chain never produced.
+    reverting_basis = any(oracle.get("kind") == "call-status" and oracle.get("expected") is False
+                          for oracle in oracles)
+    if expected_return is not None and not reverting_basis:
         if len(return_oracles) != 1:
             return None, "certified return CE lacks one exact return-value oracle"
         if (return_oracles[0].get("source") != "foundry-fixed-replay"
