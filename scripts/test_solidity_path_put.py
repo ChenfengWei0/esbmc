@@ -25755,6 +25755,22 @@ def test_authenticated_concrete_oracle_downgrade_fails_closed():
     scalar_oracle = [{"kind": "return-value", "expected": "uint8(8)"}]
     bad += check("differs" in _oracle_claim_coverage_error({"return_value": "7"}, scalar_oracle),
                  "wrong scalar expected value is rejected")
+    revert_claim = {"return_value": "true", "exit_kind": "revert",
+                    "representative_claim_exit_kind": "normal"}
+    bad += check(
+        _oracle_claim_coverage_error(revert_claim, [{"kind": "call-status", "expected": False}])
+        is None,
+        "a harvested return value on a REVERTING path needs no return-value oracle when the "
+        "call status is asserted")
+    bad += check(
+        "lacks an exact return-value oracle" in (_oracle_claim_coverage_error(
+            revert_claim, [{"kind": "post-state", "expected": "0"}]) or ""),
+        "without a call-status oracle the harvested return value still demands coverage")
+    bad += check(
+        "lacks an exact return-value oracle" in (_oracle_claim_coverage_error(
+            {"return_value": "true", "exit_kind": "normal"},
+            [{"kind": "call-status", "expected": True}]) or ""),
+        "a NORMAL exit still demands the return-value oracle")
     foundry_observed = [{
         "kind": "return-value",
         "expected": "uint8(18)",

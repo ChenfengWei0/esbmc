@@ -21488,6 +21488,23 @@ def _oracle_claim_coverage_error(claim, oracles, event_signatures=None, unreadab
             return False, None
 
     report_return = claim.get("return_value")
+    # ---- A REVERTING PATH HAS NO RETURN VALUE TO COVER ----------------------
+    #
+    # The `_r` representative of a part split is harvested from an assertion
+    # query, where the modelled revert is mark-and-return, so the claim carries
+    # a `return_value` although the PATH reverts (the caller overrides
+    # `exit_kind` to Stage 2's "revert" and keeps the harvest label in
+    # `representative_claim_exit_kind`). On chain the call reverts and returns
+    # nothing; the exit is covered by the call-status oracle the replay asserts
+    # (`assertFalse(_put_ok)`). MEASURED: Owned.setOwner 6p1 (acfix_015,
+    # full-20260822-v38) wrote three R1 part PUTs over the revert arm and all
+    # three were refused "retained scalar return lacks an exact return-value
+    # oracle" for a `true` the chain never returns.
+    if (report_return is not None
+            and normalize_exit_kind(claim.get("exit_kind")) == "revert"
+            and any(oracle.get("kind") == "call-status" and oracle.get("expected") is False
+                    for oracle in oracles if isinstance(oracle, dict))):
+        report_return = None
     if report_return is not None:
         text = str(report_return).strip()
         if text.startswith("(") and text.endswith(")"):
