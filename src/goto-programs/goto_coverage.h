@@ -1274,6 +1274,22 @@ public:
   // Set by solidity_path_coverage() when a certification query was emitted, so
   // the reporting side can behave differently WITHOUT re-reading the CLI.
   static bool path_cov_certify_mode;
+  // `return_value$__ESBMC_array_length$N` -> `<param>.length`. The `.length`
+  // of a dynamic-array PARAMETER is the header word of its allocation, read
+  // by the library call `_ESBMC_array_length(p)`; the temporary that holds
+  // the call's result is what the counterexample and the decision texts
+  // name, and nothing downstream can bound or render a symex temporary.
+  // Filled per unit from its FUNCTION_CALL sites (key: the temporary's
+  // symbol id AND its base name); read by the harvest (bmc.cpp), the
+  // decision texts and resolve_coord. MEASURED: rc_unchecked
+  // 0x2972/0x4051 `transfer(address[] memory _tos, ...)` --
+  // `require(_tos.length > 0)`: the revert path's CE carried
+  // `return_value$__ESBMC_array_length$1 = 0` under extcall_returns, the
+  // path guard was "not nameable", the basis refused `_tos` as
+  // unrenderable, PUT 0 on both subjects.
+  static std::map<std::string, std::string> path_cov_array_length_aliases;
+  static std::string
+  path_cov_rewrite_array_length_aliases(const std::string &text);
   // The coordinate names the box bounds. Kept because the witness audit below
   // needs to know what a refutation is obliged to report.
   static std::vector<std::string> path_cov_certify_box_names;

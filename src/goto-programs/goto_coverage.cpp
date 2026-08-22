@@ -4,6 +4,7 @@
 #include <goto-programs/goto_functions.h>
 #include <goto-programs/goto_inline.h>
 #include <util/arith_tools.h>
+#include <util/c_types.h>
 #include <goto-programs/k_path_spanning.h>
 #include <goto-programs/remove_no_op.h>
 #include <irep2/irep2_utils.h>
@@ -99,6 +100,43 @@ std::map<std::pair<std::string, std::string>, std::string>
 std::string goto_coveraget::path_covered_outpath;
 std::map<std::string, std::string> goto_coveraget::units_not_entered;
 bool goto_coveraget::path_cov_certify_mode = false;
+std::map<std::string, std::string>
+  goto_coveraget::path_cov_array_length_aliases;
+
+std::string goto_coveraget::path_cov_rewrite_array_length_aliases(
+  const std::string &text)
+{
+  if (path_cov_array_length_aliases.empty())
+    return text;
+  std::string out = text;
+  for (const auto &[key, alias] : path_cov_array_length_aliases)
+  {
+    // Base names only (the ids carry '@' and never appear in a printed
+    // expression); longest first is not needed: every key ends in `$N`
+    // and a longer `$NM` is not a prefix match of `$N` followed by a
+    // word character, which the boundary check below refuses.
+    if (key.find('@') != std::string::npos)
+      continue;
+    size_t p = 0;
+    while ((p = out.find(key, p)) != std::string::npos)
+    {
+      const size_t e = p + key.size();
+      const bool lb = p == 0 || !(isalnum((unsigned char)out[p - 1]) ||
+                                  out[p - 1] == '_' || out[p - 1] == '$');
+      const bool rb = e >= out.size() ||
+                      !(isalnum((unsigned char)out[e]) || out[e] == '_' ||
+                        out[e] == '$');
+      if (lb && rb)
+      {
+        out.replace(p, key.size(), alias);
+        p += alias.size();
+      }
+      else
+        p = e;
+    }
+  }
+  return out;
+}
 bool goto_coveraget::path_cov_k_induction = false;
 bool goto_coveraget::path_cov_k_induction_proved = false;
 std::atomic<bool> goto_coveraget::path_cov_solver_inconclusive{false};
@@ -5886,6 +5924,7 @@ void goto_coveraget::solidity_path_coverage()
   // resolve its own KEY through this same function. The alternative was a second
   // copy of the parameter/environment lookups inside that branch, which is the
   // one-fact-two-ledgers shape this file has already paid for elsewhere.
+  std::map<std::string, expr2tc> path_cov_length_ghosts;
   std::function<bool(const symbolt *, const std::string &, expr2tc &)>
     resolve_coord;
   std::function<bool(
@@ -6142,6 +6181,69 @@ void goto_coveraget::solidity_path_coverage()
         if (s == nullptr)
           return false;
         out = symbol2tc(migrate_type(s->type), s->id);
+        // `<param>.length` of a DYNAMIC-ARRAY parameter: what the library's
+        // `_ESBMC_array_length(p)` returns (the header word of the
+        // allocation), which is also the quantity the harvest publishes as
+        // `<param>.length` (path_cov_array_length_aliases). Resolved through
+        // that SAME call, not by rebuilding the header read here: an
+        // equivalent `*((size_t *)p - 1)` written into the unit read the
+        // allocation-time header (the bound) while the library read saw the
+        // stored nondet length -- measured: region `a.length in [4,4]` made
+        // `n = a.length` read 0 (`n: post == pre HOLDS`), [0,0]/[1,1] were
+        // "VACUOUS". One ghost per (unit, parameter), assigned at the unit's
+        // first instruction, before every region assume.
+        if (
+          dot != std::string::npos && name.substr(dot + 1) == "length" &&
+          is_pointer_type(out->type))
+        {
+          const std::string ghost_key = fsym->id.as_string() + "\t" + base;
+          auto gi = path_cov_length_ghosts.find(ghost_key);
+          if (gi != path_cov_length_ghosts.end())
+          {
+            out = gi->second;
+            return true;
+          }
+          const symbolt *lenfn = ns.lookup(irep_idt("c:@F@_ESBMC_array_length"));
+          auto fit = goto_functions.function_map.find(fsym->id);
+          if (lenfn == nullptr || fit == goto_functions.function_map.end() ||
+              !fit->second.body_available || cov_context == nullptr)
+            return false;
+          goto_programt &unit_prog = fit->second.body;
+          symbolt gsym;
+          gsym.type = migrate_type_back(get_uint32_type());
+          gsym.name = "__ESBMC_param_length$" + i2string(ghost_counter++);
+          gsym.id = "path_cov::" + id2string(gsym.name);
+          gsym.lvalue = true;
+          gsym.static_lifetime = false;
+          gsym.is_extern = false;
+          symbolt *pg;
+          cov_context->move(gsym, pg);
+          config.no_slice_names.insert(pg->id.as_string());
+          const expr2tc ghost = symbol2tc(migrate_type(pg->type), pg->id);
+          auto first = unit_prog.instructions.begin();
+          const locationt gloc = first->location;
+          goto_programt::instructiont gd;
+          gd.type = DECL;
+          gd.code = code_decl2tc(get_uint32_type(), pg->id);
+          gd.location = gloc;
+          gd.location.property("skipped");
+          gd.function = first->function;
+          unit_prog.instructions.insert(first, gd);
+          goto_programt::instructiont gc;
+          gc.type = FUNCTION_CALL;
+          gc.code = code_function_call2tc(
+            ghost,
+            symbol2tc(migrate_type(lenfn->type), lenfn->id),
+            std::vector<expr2tc>{
+              typecast2tc(pointer_type2tc(get_empty_type()), out)});
+          gc.location = gloc;
+          gc.location.property("skipped");
+          gc.function = first->function;
+          unit_prog.instructions.insert(first, gc);
+          path_cov_length_ghosts[ghost_key] = ghost;
+          out = ghost;
+          return true;
+        }
         if (dot == std::string::npos)
         {
           if (!path_cov_is_bytes_static_type(ns, out->type))
@@ -6372,6 +6474,66 @@ void goto_coveraget::solidity_path_coverage()
       }
     if (!in_user_src)
       continue;
+
+    // ---- `<param>.length` for dynamic-array parameters (see the header) ----
+    //
+    // Parameter ids are `sol:@C@<C>@F@<fn>@<name>#<declid>` -- the unit id
+    // WITHOUT its `#<id>`, then the name, then the declaration id -- and the
+    // call's result temporary is `<unit id>::$tmp::return_value$...`.
+    {
+      std::string unit_prefix = f_it->first.as_string();
+      {
+        const size_t hp = unit_prefix.rfind('#');
+        if (
+          hp != std::string::npos && hp + 1 < unit_prefix.size() &&
+          std::all_of(
+            unit_prefix.begin() + hp + 1, unit_prefix.end(), [](char ch) {
+              return isdigit((unsigned char)ch);
+            }))
+          unit_prefix = unit_prefix.substr(0, hp);
+      }
+      unit_prefix += "@";
+      forall_goto_program_instructions (ai, goto_program)
+      {
+        if (!ai->is_function_call() || !is_code_function_call2t(ai->code))
+          continue;
+        const code_function_call2t &fc = to_code_function_call2t(ai->code);
+        if (
+          is_nil_expr(fc.function) || is_nil_expr(fc.ret) ||
+          !is_symbol2t(fc.function) || !is_symbol2t(fc.ret) ||
+          fc.operands.size() != 1 || is_nil_expr(fc.operands[0]))
+          continue;
+        const std::string fn = to_symbol2t(fc.function).thename.as_string();
+        if (fn != "c:@F@_ESBMC_array_length")
+          continue;
+        expr2tc arg = fc.operands[0];
+        while (is_typecast2t(arg))
+          arg = to_typecast2t(arg).from;
+        if (!is_symbol2t(arg))
+          continue;
+        const std::string aid = to_symbol2t(arg).thename.as_string();
+        if (aid.rfind(unit_prefix, 0) != 0)
+          continue;
+        const symbolt *asym = ns.lookup(irep_idt(aid));
+        if (asym == nullptr || !asym->is_parameter)
+          continue;
+        std::string pname = aid.substr(unit_prefix.size());
+        if (pname.find('@') != std::string::npos)
+          continue;
+        {
+          const size_t hp = pname.rfind('#');
+          if (hp != std::string::npos)
+            pname = pname.substr(0, hp);
+        }
+        const std::string rid = to_symbol2t(fc.ret).thename.as_string();
+        size_t cut = rid.rfind("::");
+        cut = cut == std::string::npos ? rid.rfind('@') : cut + 1;
+        const std::string rbase =
+          cut == std::string::npos ? rid : rid.substr(cut + 1);
+        path_cov_array_length_aliases[rid] = pname + ".length";
+        path_cov_array_length_aliases[rbase] = pname + ".length";
+      }
+    }
 
     // --contract scoping (codex #4): only enumerate functions declared in the
     // target contract; sibling contracts / their helpers are out of the unit
@@ -7384,8 +7546,10 @@ void goto_coveraget::solidity_path_coverage()
       {
         path_decisiont d;
         d.loc = loc;
-        d.cond_arm_false = from_expr(ns, "", cond);
-        d.cond_arm_true = from_expr(ns, "", gen_not_expr(cond));
+        d.cond_arm_false =
+          path_cov_rewrite_array_length_aliases(from_expr(ns, "", cond));
+        d.cond_arm_true = path_cov_rewrite_array_length_aliases(
+          from_expr(ns, "", gen_not_expr(cond)));
         d.sub = sub;
         d.synthetic_abi_gate = l.get_bool("sol_abi_value_gate");
         d.source_span = id2string(l.get("sol_src"));

@@ -735,10 +735,41 @@ bool solidity_convertert::assign_param_nondet(
         exprt sizeof_expr;
         get_size_of_expr(t.subtype(), sizeof_expr);
 
+        // Only a SCALAR-element array takes the header-backed harness helper.
+        // A struct / function / nested-array element goes through the old
+        // calloc path unchanged: the helper's `_ESBMC_store_array` and the
+        // nondet length are sound only for a flat element, and routing the
+        // others through it regressed struct-member and function-type arrays
+        // (measured: delegate_shadow_2 "member x$3", stress_libsol_*
+        // is_code_type assert, yul_struct_reinterpret, cov_pilot_aqua).
+        const bool scalar_elem =
+          !t.subtype().is_struct() && !t.subtype().is_code() &&
+          !t.subtype().is_pointer() && !t.subtype().is_array() &&
+          t.subtype().id() != "struct" && t.subtype().id() != "code" &&
+          t.subtype().id() != "symbol";
         side_effect_expr_function_callt alloc;
-        get_calloc_function_call(locationt(), alloc);
-        alloc.arguments().push_back(size_expr);
-        alloc.arguments().push_back(sizeof_expr);
+        if (sz_str.empty() && scalar_elem)
+        {
+          // DYNAMIC length: header-backed allocation with a NONDET length in
+          // [0, kHarnessDynLen] and nondet contents (see
+          // `_ESBMC_alloc_array_harness`). The calloc shape had NO header,
+          // so `a.length` read the word before the block and every
+          // `a.length > 0` body was unreachable.
+          get_library_function_call_no_args(
+            "_ESBMC_alloc_array_harness",
+            "c:@F@_ESBMC_alloc_array_harness",
+            pointer_typet(empty_typet()),
+            locationt(),
+            alloc);
+          alloc.arguments().push_back(size_expr);
+          alloc.arguments().push_back(sizeof_expr);
+        }
+        else
+        {
+          get_calloc_function_call(locationt(), alloc);
+          alloc.arguments().push_back(size_expr);
+          alloc.arguments().push_back(sizeof_expr);
+        }
 
         exprt cast_alloc = typecast_exprt(alloc, t);
         call.arguments().push_back(cast_alloc);

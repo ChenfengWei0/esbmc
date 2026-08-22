@@ -1,0 +1,6 @@
+CORE
+contract.sol
+--contract ArrLen --solidity-path-coverage --solidity-max-tx 1 --memlimit 2g --focus-function set --path-cov-assert spec.json
+^--path-cov-assert: n: post > pre  HOLDS
+^--path-cov-assert: n: post == pre  REFUTED
+\A(?!(.|\n)*a\.length.*(refus|cannot|does not resolve))

@@ -139,6 +139,39 @@ __ESBMC_HIDE:;
     return (void *)(block + 1);         /* data pointer    */
 }
 
+/* Entry-harness backing for a 1-D DYNAMIC array PARAMETER (`T[] memory` /
+ * `T[] calldata`): a header-backed allocation (so `_ESBMC_array_length`
+ * reads a real length) whose length is NONDET in [0, max_len] and whose
+ * contents are NONDET -- "an external caller passed some array of any
+ * length up to the bound, holding anything". The earlier harness used
+ * `calloc(4, elem)` WITHOUT a header: `a.length` then read the word in
+ * front of the block (0 or invalid), so `require(a.length > 0)` and every
+ * loop body over the parameter were unreachable while the revert arm was
+ * the only path (MEASURED: rc_unchecked 0x2972/0x4051 `transfer`,
+ * full-20260822-v40 round 10; the `set:path:7` body of a one-line
+ * `require(a.length > 0)` contract PASSED = unreachable). No zero loop: a
+ * caller's data is not zero, and the harness should not spend unwinding
+ * on it. */
+void _ESBMC_store_array(void *array, size_t length);
+unsigned int nondet_uint();
+void *_ESBMC_alloc_array_harness(size_t max_len, size_t elem_size)
+{
+__ESBMC_HIDE:;
+    _ESBMC_zero_size_check(elem_size != 0);
+    size_t len = (size_t)nondet_uint();
+    __ESBMC_assume(len <= max_len);
+    /* The block is the library's own header-backed allocation, sized for
+     * the BOUND (a symbolic-size malloc does not give the header word back
+     * on read, and a plain malloc of concrete size read back garbage
+     * through `_hdr_read` in the Solidity flow -- measured with
+     * `assert(a.length <= 4)` on a one-line contract); the nondet length
+     * then goes into the header through the same writer every other
+     * array uses. Contents are zero (calloc), as before. */
+    void *data = _ESBMC_alloc_array(max_len, elem_size);
+    _ESBMC_store_array(data, len);
+    return data;
+}
+
 /* Symbolic-size variant: uses malloc + a TYPED-element zero loop to
  * initialize the data region.  We avoid `calloc(1, total)` because
  * calloc's internal memset lowering creates a VLA-typed temporary

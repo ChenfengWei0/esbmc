@@ -6476,8 +6476,24 @@ smt_convt::resultt bmct::multi_property_check(
                   ++ce.dropped_internal;
                 else if (name.rfind("_sol_save_", 0) == 0)
                   ++ce.dropped_internal;
-                else if (nondet_local_seen.insert(name).second)
-                  ce.extcall_returns.emplace_back(name, val);
+                else
+                {
+                  // `return_value$__ESBMC_array_length$N` IS a parameter's
+                  // `.length` (goto_coveraget::path_cov_array_length_aliases):
+                  // published under `inputs` by that name, exactly as a
+                  // bytes/string parameter's struct length is.
+                  auto al = goto_coveraget::path_cov_array_length_aliases.find(
+                    sym_id);
+                  if (al == goto_coveraget::path_cov_array_length_aliases.end())
+                    al = goto_coveraget::path_cov_array_length_aliases.find(name);
+                  if (al != goto_coveraget::path_cov_array_length_aliases.end())
+                  {
+                    if (input_seen.insert(al->second).second)
+                      ce.inputs.emplace_back(al->second, val);
+                  }
+                  else if (nondet_local_seen.insert(name).second)
+                    ce.extcall_returns.emplace_back(name, val);
+                }
               }
               else
                 ++ce.dropped_internal;
