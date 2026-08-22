@@ -10833,6 +10833,57 @@ def test_path_decision_guard_negates_plain_unary_bool_claim():
     return bad
 
 
+def test_crowded_snapshot_locals_are_hoisted_to_storage():
+    """8+ snapshot locals with fuzz parameters: declarations move to storage,
+    reads and assertions stay (acfix_3_5_077_L1Block stack-too-deep)."""
+    em, case = make_case()
+    layout = dict(LAYOUT)
+    for i, name in enumerate(["a", "b", "c", "d"]):
+        layout[name] = (2 + i, 0, 32)
+    rows = [(v, "post == pre", "HOLDS") for v in ["owner", "feeReceiver", "a", "b", "c", "d"]]
+    notes = []
+    put, stats = build_put("FeeVault", "setDiscount", 7, 2,
+                           "sol:@C@FeeVault@F@setDiscount#61",
+                           region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+                           holes={}, pins={"msg.value": 0}, params=PARAMS,
+                           emitted=em, case=case, layout=layout,
+                           ladder_rows=rows, notes=notes, exit_kind="normal")
+    text = "\n".join(put or [])
+    bad = 0
+    bad += check(put is not None, f"a PUT is produced: {notes}")
+    bad += check("  uint256 _pre_a; // VERIPUT_HOISTED_SNAPSHOT" in text
+                 and "  uint256 _post_a; // VERIPUT_HOISTED_SNAPSHOT" in text,
+                 "snapshot names are declared as contract-level storage fields")
+    bad += check("    uint256 _pre_a = " not in text and "    uint256 _post_a = " not in text,
+                 "no snapshot local is declared inside the function")
+    bad += check("    _pre_a = uint256(vm.load(address(c0)" in text
+                 and "    _post_a = uint256(vm.load(address(c0)" in text,
+                 "the reads are assignments at the same positions")
+    bad += check('assertEq(_post_a, _pre_a, "a: post == pre");' in text,
+                 "the assertion text is unchanged")
+    hdr = [ln for ln in (put or []) if ln.startswith("  function ")]
+    decl_i = (put or []).index("  uint256 _pre_a; // VERIPUT_HOISTED_SNAPSHOT")
+    bad += check(hdr and (put or []).index(hdr[0]) > decl_i,
+                 "declarations precede the function header")
+    # small case: unchanged shape
+    put2, _ = build_put("FeeVault", "setDiscount", 7, 2,
+                        "sol:@C@FeeVault@F@setDiscount#61",
+                        region={"bps": (0, 250), "u": (0, (1 << 160) - 1)},
+                        holes={}, pins={"msg.value": 0}, params=PARAMS,
+                        emitted=em, case=case, layout=LAYOUT,
+                        ladder_rows=LADDER, notes=[], exit_kind="normal")
+    text2 = "\n".join(put2 or [])
+    bad += check("    uint256 _pre_owner = " in text2 and "VERIPUT_HOISTED_SNAPSHOT" not in text2,
+                 "under the budget the locals stay locals")
+    # splice: two PUT functions hoisting the same name yield ONE declaration
+    src = assemble_put_source(em, case, [put, put], "FeeVaultCovTest_FeeVault_setDiscount_putX",
+                              layout=layout, contract="FeeVault", unit="setDiscount")
+    bad += check(src.count("  uint256 _pre_a; // VERIPUT_HOISTED_SNAPSHOT") == 1,
+                 f"assemble_put_source keeps one storage declaration per name: "
+                 f"{src.count('uint256 _pre_a;')}")
+    return bad
+
+
 def test_path_guard_materializes_state_coord_without_oracle_rung():
     em, case = make_case()
     notes = []
@@ -27251,7 +27302,8 @@ def main():
               test_abstract_target_harness_forwards_dynamic_constructor_args,
               test_abstract_target_harness_supplies_unresolved_base_constructor,
               test_the_funding_line_precedes_the_prank,
-              test_a_value_gate_certified_at_ZERO_still_REFUSES):
+              test_a_value_gate_certified_at_ZERO_still_REFUSES,
+              test_crowded_snapshot_locals_are_hoisted_to_storage):
         print(f"--- {t.__name__}")
         registered.add(t.__name__)
         bad += t()

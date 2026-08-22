@@ -1048,6 +1048,18 @@ def run_esbmc(esbmc,
 # The assertion ladder
 # ---------------------------------------------------------------------------
 
+# Fuzz parameters + `_pre_*`/`_post_*` snapshot locals above this count are
+# rendered as CONTRACT-LEVEL storage fields of the test instead of function
+# locals. MEASURED: acfix_3_5_077_L1Block.setL1BlockValues -- 8 fuzz parameters
+# + 8 pre + 8 post snapshot locals -> solc "Stack too deep" in BOTH code
+# generators (LValue.cpp:50 legacy; "Variable converted is 1 too deep" via-IR),
+# the test never compiled and the unit's two PUTs were lost after the ladder
+# had answered every rung. A storage field costs gas the test does not pay for
+# and reads back identically; the assertion text is unchanged, so the counted
+# oracle is unchanged. Twelve leaves room for bound() temporaries, the try
+# frame and `_put_ok` under solc's 16-slot reach.
+PUT_LOCAL_STACK_BUDGET = 12
+
 LADDER_ROW_RE = re.compile(r"^--path-cov-assert: (\S+): (.*?)  "
                            r"(HOLDS|REFUTED|NO VERDICT \(solver unknown\)|"
                            r"NO VERDICT \(never reached the solver\))(?:  \[|$)")
@@ -15956,6 +15968,37 @@ def build_put(contract,
         # looks like part of the reconstructed counterexample, which is the one
         # thing it is not.
         out.append(f"  //   environment ESTABLISHED: {s}")
+    # ---- STACK REACH: snapshot locals become storage when crowded ----------
+    #
+    # See PUT_LOCAL_STACK_BUDGET. Only the DECLARATION moves: every assertion
+    # still names `_pre_x` / `_post_x`, and the read happens at the same
+    # statement position, so nothing about the oracle changes. The fields are
+    # emitted at contract level right above the function; when several PUT
+    # functions of one contract hoist the same name, `assemble_put_source`
+    # keeps one declaration (storage is shared and each function assigns its
+    # own snapshot before reading it).
+    _snapshot_locals = len(pre_reads) + len(post_reads)
+    hoisted_decls = []
+    if len(sig) + _snapshot_locals > PUT_LOCAL_STACK_BUDGET:
+        def _hoist(lines_):
+            hoisted = []
+            for ln in lines_:
+                m = re.match(r"^(\s+)uint256 (\w+) = (.*);$", ln)
+                if m is None:
+                    hoisted.append(ln)
+                    continue
+                decl = f"  uint256 {m.group(2)}; // VERIPUT_HOISTED_SNAPSHOT"
+                if decl not in hoisted_decls:
+                    hoisted_decls.append(decl)
+                hoisted.append(f"{m.group(1)}{m.group(2)} = {m.group(3)};")
+            return hoisted
+        pre_reads = _hoist(pre_reads)
+        post_reads = _hoist(post_reads)
+        out.append(f"  // {len(hoisted_decls)} snapshot local(s) HOISTED to storage: "
+                   f"{len(sig)} fuzz parameter(s) + {_snapshot_locals} snapshot "
+                   f"local(s) exceed the {PUT_LOCAL_STACK_BUDGET}-slot budget "
+                   f"(solc stack reach); the reads and every assertion are unchanged")
+        out += hoisted_decls
     out.append(f"  function {fname}({sig_txt}) public {{")
     out += pre_lines
     # ---- WHAT MAY BE INSERTED BEFORE THE CALL, AND WHAT MAY NOT -----------
@@ -20673,8 +20716,16 @@ def assemble_put_source(emitted,
     cname, _cstart, cend = emitted.blocks[case[0]]
     lines = list(emitted.lines)
     inserted = []
+    seen_hoisted = set()
     for put in puts:
-        inserted += put
+        for ln in put:
+            # One storage field per name per contract: several PUT functions
+            # of one contract may hoist the same snapshot name (build_put).
+            if ln.endswith("// VERIPUT_HOISTED_SNAPSHOT"):
+                if ln in seen_hoisted:
+                    continue
+                seen_hoisted.add(ln)
+            inserted.append(ln)
     # The `test_cov_*` cases are the concrete replay source of truth, but they
     # are not part of the PUT deliverable. Keeping them in the assembled project
     # lets stale replay details fail compilation before forge can measure the
