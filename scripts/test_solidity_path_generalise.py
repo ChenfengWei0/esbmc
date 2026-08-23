@@ -143,6 +143,7 @@ from solidity_path_generalise import (
     single_path_outer_claim_shards,
     parse_outer_round_output,
     decision_read_slot_coords,
+    decision_literal_slot_candidates,
     derive_env_coord_disagreed,
     derive_agreed_establishable_env_pins,
     derive_agreed_unpinned_establishable_env_coords,
@@ -1050,6 +1051,34 @@ check(
             "branch_claim": "!(!(guesses[msg.sender].block != 0))"
         }]}, ["state.guesses$11[msg.sender].block", "state.guesses$11[msg.sender].guess"]),
     {"state.guesses$11[msg.sender].block"})
+
+# A mapping slot no counterexample carries a scalar for is invisible to
+# level0_candidates (which reads each coordinate's value from the payload), so
+# the write region on lockInGuess stayed UNSEPARATED from the first-`require`
+# revert -- the slot's zero-default precondition could never be pinned. The
+# candidate is READ FROM THE SOURCE DECISION `guesses[msg.sender].block == 0`,
+# not invented: level 0 can then ask the equality that separates the region.
+check(
+    "decision-literal-seeds-a-slot-no-counterexample-names",
+    decision_literal_slot_candidates(
+        [(7, 2, {"msg.value": 10**18})],
+        {7: [{"branch_claim": "!(guesses[msg.sender].block == 0)", "arm": "taken"}]},
+        ["state.guesses$11[msg.sender].block"]),
+    {"state.guesses$11[msg.sender].block": [0]})
+# level0_candidates offers nothing for the same slot: no payload scalar exists,
+# which is exactly the gap the decision-literal seed fills.
+check("level0-candidates-cannot-see-a-mapping-slot",
+      "state.guesses$11[msg.sender].block" in level0_candidates(
+          [(7, 2, {"msg.value": 10**18})], ["state.guesses$11[msg.sender].block"]),
+      False)
+# A slot no decision compares to a literal gets no seed -- the value must come
+# from the model, never guessed.
+check("no-decision-literal-means-no-seed",
+      decision_literal_slot_candidates(
+          [(7, 2, {})],
+          {7: [{"branch_claim": "!(guesses[msg.sender].block != other)", "arm": "taken"}]},
+          ["state.guesses$11[msg.sender].block"]),
+      {})
 
 # THE FALSE ALARM. This is not a refinement of the overlap check, it is a live
 # bug without it: the partition check EXITS on an intersection, so reading these
@@ -3912,6 +3941,17 @@ check("coord_values accepts journal list payloads", _ce_from_journal, {
 check("coord_values journal payloads do not refuse scalars", _ref_from_journal, [])
 check("payload_extras accepts journal name field", payload_extras(_journal_claim),
       {"extcall.return_value$__msgSender$2": 2})
+# The re-entrancy model's save/restore snapshot (old_sender/old_value) is a
+# deterministic copy of msg.sender/msg.value, NOT a nondet callee return.
+# Harvesting it as an extcall pin makes certification refuse the whole query
+# (Roulette.fallback: "coordinate 'extcall.old_value' cannot be expressed"), so
+# it must be dropped -- a real extcall return in the same payload is kept.
+check("payload_extras drops the reentrancy save/restore snapshot",
+      payload_extras({"extcall_returns": [
+          {"name": "old_sender", "value": "4294967295"},
+          {"name": "old_value", "value": "0x8AC7230489E80000"},
+          {"name": "ok1", "value": "1"}]}),
+      {"extcall.ok1": 1})
 
 _journal_report = report_from_ce_journal({
     "claims_decided": 6,
@@ -5725,3 +5765,44 @@ if FAILURES:
         print("  " + f)
     sys.exit(1)
 print("solidity_path_generalise: all checks passed")
+
+# ---- BOUNDED-REGION-FIRST certify order (roulette enc=30/enc=31 starvation) --
+# The certify loop iterates paths in an order sorted by (unbounded-coord-count,
+# depth, enc), so the region that pins the branch-driving coordinate to a finite
+# range (the PUT-bearing region) is certified before a modular / UNKNOWN-prone
+# region that leaves it unbounded -- otherwise the loose region starves the tight
+# one out of the unit budget under parallel CPU contention. This replicates the
+# key. Roulette boxes: enc=2 has 3 FULL coords, enc=6 has block.number FULL (1),
+# enc=31 pins block.number to a 14-wide window with only pastBlockTime FULL (1),
+# and enc=30 is a `% k` modular class with NO product region at all. Expected
+# order: enc=6 and enc=31 (1 unbounded each; depth breaks the tie so enc=6 then
+# enc=31), then enc=2 (3 unbounded), then the modular enc=30 LAST.
+_FULL = (1 << 256) - 1
+_roulette_regions = {
+    2: {"block.number": ("0", str(_FULL)), "msg.value": ("0", str(_FULL)),
+        "pastBlockTime": ("0", str(_FULL)), "msg.sender": ("0", str((1 << 32) - 1))},
+    6: {"block.number": ("0", str(_FULL)), "msg.value": ("10", "10"),
+        "pastBlockTime": (str(_FULL), str(_FULL)), "msg.sender": ("0", str((1 << 32) - 1))},
+    31: {"block.number": (str(_FULL - 13), str(_FULL)), "msg.value": ("10", "10"),
+         "pastBlockTime": ("0", str(_FULL)), "msg.sender": ("0", str((1 << 32) - 1))},
+    # enc=30: modular -> no product region (regions.get(30) is None)
+}
+def _unbounded_coord_count(_enc, _regions=_roulette_regions):
+    _box = _regions.get(_enc)
+    if not _box:
+        return 10 ** 6
+    _n = 0
+    for _iv in _box.values():
+        try:
+            _lo, _hi = _iv
+            if int(_hi) - int(_lo) > (1 << 64):
+                _n += 1
+        except (TypeError, ValueError):
+            _n += 1
+    return _n
+_roulette_paths = [(2, 1, {}), (30, 4, {}), (31, 4, {}), (6, 2, {})]
+_certify_seq = sorted(range(len(_roulette_paths)),
+                      key=lambda _i: (_unbounded_coord_count(_roulette_paths[_i][0]),
+                                      _roulette_paths[_i][1], _roulette_paths[_i][0]))
+check("bounded-region-first-certifies-put-region-before-modular-unknown",
+      [_roulette_paths[i][0] for i in _certify_seq], [6, 31, 2, 30])

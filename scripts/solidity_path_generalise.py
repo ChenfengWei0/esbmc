@@ -64,6 +64,18 @@ DRIVER_CERTIFY_RESERVE = 0.25
 # outer_round, read by the refine call site to size its ladder.
 LAST_ROUND_PER_CLAIM_S = [None]
 DRIVER_PIECE_SHARE = 0.8
+# No single region's certify query may consume the whole unit budget. A region
+# that comes back UNKNOWN -- e.g. the undecidable `block.number % 15 != 0`
+# branch of Roulette.fallback (enc 30) -- otherwise runs its query (and any
+# retreat-retry) out and starves the certifiable siblings AFTER it in the certify
+# order, which is exactly how enc 31 (the block.number%15==0 write path, which
+# DOES certify and carries the R2 PUT) went unreached and the whole unit
+# published no method PUT. Each region's query is therefore capped at an EQUAL
+# SHARE of the budget still left (budget_remaining // regions_left, floored at
+# CERTIFY_MIN_QUERY_S); a region that finishes fast returns its unused share to
+# the pool, since the cap is recomputed from the elapsed clock at every region.
+# A single-region unit gets the whole budget unchanged (regions_left == 1).
+CERTIFY_MIN_QUERY_S = 25
 
 
 def driver_elapsed():
@@ -564,6 +576,58 @@ def decision_read_slot_coords(paths, path_decisions, slot_coords):
             claim = str(decision.get("branch_claim") or "")
             read.update(coord for coord, spelling in spellings.items() if spelling in claim)
     return read
+
+
+def decision_literal_slot_candidates(paths, path_decisions, slot_coords):
+    """Seed values for a proposed mapping slot no counterexample can name.
+
+    A mapping slot never appears in ESBMC's scalar payload, so
+    `level0_candidates` -- which reads each coordinate's value from the
+    siblings' own counterexamples -- has no question to put to it, and the slot
+    descends to the ladder over its full type range and can never be pinned to
+    the value a path decision actually constrains it to. Measured on
+    PredictTheBlockHashChallenge.lockInGuess: `guesses[msg.sender].block == 0`
+    is the shared precondition of the write path, but the write region stays
+    UNSEPARATED from the first-`require` revert because the slot is laid over
+    [0, type-max] with no known member -- so the refuting witness (a nonzero
+    entry that reverts) "agrees on every coordinate" and the region is sent to
+    the coordinate gate.
+
+    The value is READ FROM THE SOURCE DECISION, not invented from a catalogue:
+    the same provenance rule level0_candidates follows for payload coordinates
+    (proposition 9), extended to the one coordinate the trace cannot carry a
+    scalar for. A seed only gives the outer-box round a point to probe; ESBMC's
+    certify query remains the sole arbiter of whether the region holds, so a
+    wrong seed cannot certify a region that does not.
+    """
+    spellings = {}
+    for coord in slot_coords or ():
+        spelling = re.sub(r"\$\d+(?=\[)", "", coord)
+        if spelling.startswith("state."):
+            spelling = spelling[len("state."):]
+        spellings[coord] = spelling
+    out = {}
+    for enc, _depth, _ce in paths:
+        for decision in (path_decisions or {}).get(enc) or ():
+            rel = _decision_relation(decision.get("branch_claim"), decision.get("arm"))
+            if rel is None:
+                continue
+            lhs, op, rhs = rel
+            if op not in ("==", "!="):
+                continue
+            for coord, spelling in spellings.items():
+                if lhs.strip() == spelling:
+                    other = rhs
+                elif rhs.strip() == spelling:
+                    other = lhs
+                else:
+                    continue
+                try:
+                    val = parse_int(other)
+                except (ValueError, TypeError):
+                    continue
+                out.setdefault(coord, set()).add(val)
+    return {c: sorted(v) for c, v in out.items()}
 
 
 def derive_agreed_unpinned_establishable_env_coords(paths,
@@ -6622,6 +6686,24 @@ def payload_extras(c):
             else None
         if not name:
             continue
+        # ⛔ The re-entrancy model's SAVE/RESTORE snapshot of the environment is
+        # not an external-call return and must never become an `extcall.*` pin.
+        # `old_sender`/`old_value` are `old_sender = msg.sender` /
+        # `old_value = msg.value` emitted by solidity_convert_contract.cpp
+        # around every external call so the frame can be restored after a
+        # modelled re-entry; they are DETERMINISTIC copies of coordinates that
+        # already exist (msg.sender, msg.value), not a nondet callee return. If
+        # harvested, --pin-extcall pins `extcall.old_value` and certification
+        # REFUSES the whole query ("coordinate 'extcall.old_value' cannot be
+        # expressed: no ASSIGN of a NONDET value ... exists in this unit's
+        # body") -- because the assignment is of msg.value, not of a harness
+        # choice. MEASURED on Roulette.fallback: dropping these two lets the
+        # method region (enc 31, the block.number%15==0 write+transfer path)
+        # certify instead of every non-revert path refusing. This is the same
+        # class of restore-snapshot plumbing the docstring already skips for the
+        # non-scalar `_sol_save_this`; these two are the scalar members of it.
+        if name in ("old_sender", "old_value"):
+            continue
         try:
             out["extcall." + name] = parse_int(e.get("value"))
         except (ValueError, TypeError):
@@ -9634,6 +9716,7 @@ def main():
     # cost is multiplicative in the coordinate count.
     slot_added = []
     static_slot_type_ranges = {}
+    slot_decision_cands = {}
     if args.slot_coords or args.slot_coord:
         maps, map_refused = mapping_state_vars(args.ast, args.contract)
         state_store_names, state_store_evidence = \
@@ -9696,6 +9779,7 @@ def main():
                   ", ".join(irrelevant_slots) + ". They remain unconstrained, which is their exact "
                   "full-domain projection; explicit --slot-coord requests "
                   "are never filtered by this gate")
+        slot_decision_cands = decision_literal_slot_candidates(paths, path_decisions, slot_added)
         coords = sorted(set(coords) | set(slot_added))
         if dependency_evidence:
             print(f"[coords] mapping dependency policy "
@@ -10249,6 +10333,32 @@ def main():
     at_risk = set()
     if args.level0:
         cand = level0_candidates(paths, coords)
+        # ---- SLOT COORDINATES: a source decision literal is the only candidate
+        # a mapping slot can offer, because no counterexample carries a scalar
+        # for it. Seed it here -- AFTER the payload candidates, never over one
+        # -- so level 0 asks the equality the source decision states instead of
+        # skipping the slot for want of a value, which is what left the write
+        # region UNSEPARATED from its sibling revert on lockInGuess. The value
+        # is derived from the model, and ESBMC certification still decides.
+        for slot_c, slot_vals in (slot_decision_cands or {}).items():
+            if slot_c not in coords or slot_c in cand:
+                continue
+            seeded = set(slot_vals)
+            if args.level0_perturb:
+                lo, hi = static_slot_type_ranges.get(slot_c, (None, None))
+                for v in list(seeded):
+                    if v - 1 >= (lo if lo is not None else 0):
+                        seeded.add(v - 1)
+                    if hi is not None and v + 1 <= hi:
+                        seeded.add(v + 1)
+            cand[slot_c] = sorted(seeded)
+            print("[level0] SEEDED " + slot_c + " from a complete-path "
+                  "decision literal " +
+                  ", ".join(str(v) for v in sorted(slot_vals)) +
+                  ": no counterexample carries a scalar for a mapping slot, so "
+                  "the value the source decision constrains it to is the only "
+                  "candidate a payload cannot supply; ESBMC certification still "
+                  "decides whether the region holds")
         # ---- LEVEL 0 CAN ONLY ASK ABOUT COORDINATES A WITNESS NAMES ----
         #
         # Its candidates are the values the siblings' own counterexamples take,
@@ -10916,10 +11026,21 @@ def main():
     # paths because `pins` is global, so the drop is announced once but affects
     # every path after it.
 
-    def run_single_point_witness_check(enc, depth, ce, xpins, establishes):
-        """Run §Certification's concrete-replay floor for one failed path."""
+    def run_single_point_witness_check(enc, depth, ce, xpins, establishes,
+                                       witness_timeout=None):
+        """Run §Certification's concrete-replay floor for one failed path.
+
+        witness_timeout bounds this single-point query to the FAILED region's
+        remaining fair share; without it the check ran at the full unit timeout
+        and, on an UNKNOWN-prone modular region (roulette enc 30), burned the
+        whole budget AFTER the region query already failed -- starving the
+        certifiable siblings after it (enc 31, the R2-PUT region). It is one
+        fully-fixed query, so the fair-share slice is ample; None keeps the old
+        full-timeout behaviour for any caller that does not pass a share.
+        """
         if not args.witness_check:
             return ""
+        _witness_timeout = int(witness_timeout) if witness_timeout is not None else args.timeout
         point = {c: (ce[c], ce[c]) for c in coords if c in ce}
         if not point:
             witness_check[enc] = "NOT-PUT"
@@ -10938,7 +11059,7 @@ def main():
                                                     ce,
                                                     dict(query_pins(), **xpins),
                                                     query_max_tx,
-                                                    args.timeout,
+                                                    _witness_timeout,
                                                     cwd,
                                                     ast=args.ast,
                                                     focus=focus,
@@ -11019,7 +11140,65 @@ def main():
     except (ValueError, OSError):
         pass
     try:
-      for enc, depth, ce in paths:
+      # BOUNDED-REGION-FIRST certify order. Certify the regions that pin the
+      # most coordinates to finite ranges before the loose ones, so a modular /
+      # UNKNOWN-prone region cannot starve a tightly-bounded certifiable one out
+      # of the unit budget under parallel CPU contention. Order matters ONLY
+      # when the budget runs out mid-loop; when it does not, every region is
+      # certified regardless of order, so this never removes a certification --
+      # it only changes which ones survive a truncated budget, maximizing
+      # regions-certified-under-deadline. The primary key is the number of
+      # UNBOUNDED coordinates (interval wider than 2^64, or no product region at
+      # all -- e.g. a `block.number % k` modular class): fewer first. A tightly
+      # bounded region is both faster to certify AND the one whose behavioural
+      # oracle actually holds across it, so it is the PUT-bearing region; a
+      # region that leaves the branch-driving coordinate unbounded yields no
+      # invariant to assert. MEASURED: rc_time_manipulation roulette fallback --
+      # depth-only order certified the loose enc=6 (block.number FULL, no
+      # oracle) and the modular UNKNOWN enc=30 before the tightly-bounded
+      # enc=31 (block.number in a 14-wide interval, the R2-PUT region), which
+      # then missed the 120s SIGTERM under --jobs 5. Depth then enc break ties.
+      def _unbounded_coord_count(_enc):
+          _box = regions.get(_enc)
+          if not _box:
+              return 10 ** 6
+          _n = 0
+          for _iv in _box.values():
+              try:
+                  _lo, _hi = _iv
+                  if int(_hi) - int(_lo) > (1 << 64):
+                      _n += 1
+              except (TypeError, ValueError):
+                  _n += 1
+          return _n
+      _certify_seq = sorted(
+          range(len(paths)),
+          key=lambda _i: (_unbounded_coord_count(paths[_i][0]),
+                          paths[_i][1], paths[_i][0]))
+      for _region_idx, _orig_idx in enumerate(_certify_seq):
+        enc, depth, ce = paths[_orig_idx]
+        # EQUAL-SHARE fair-share cap for THIS region's certify query. Each
+        # remaining region gets an equal slice of the budget still left, so one
+        # UNKNOWN-prone region (which will run its whole slice out and certify
+        # nothing) cannot hog the budget and starve the regions after it.
+        # Recomputed every iteration, so a region that finishes fast donates its
+        # unused time forward to the ones still to come. This REPLACES the older
+        # "give the current region everything but a MIN reserve per remaining
+        # region" rule, which was greedy-to-current: MEASURED on
+        # rc_time_manipulation roulette (fallback, --jobs 5), the modular UNKNOWN
+        # enc=30 was handed a ~59s cap and burned 57s across an attempt + a
+        # retreat-retry, so enc=31 (the R2-PUT region) started at ~58s and lost
+        # the 120s SIGTERM. Equal share caps enc=30 near the budget/regions-left
+        # quotient (~40s of 120s over 3 remaining) and leaves enc=31 an equal
+        # slice, which it certifies in ~16s. CERTIFY_MIN_QUERY_S floors it so a
+        # region is never handed an unusably short query. (A single-region unit
+        # still gets the whole budget: regions_left == 1.)
+        _regions_left = len(paths) - _region_idx
+        _budget_remaining = args.timeout - driver_elapsed()
+        certify_timeout = int(max(
+            CERTIFY_MIN_QUERY_S,
+            min(args.timeout,
+                _budget_remaining // max(1, _regions_left))))
         box = regions.get(enc)
         if enc in structural_seed_regions:
             box = structural_seed_regions[enc]
@@ -11113,7 +11292,8 @@ def main():
                     enc, depth, ce, xpins,
                     dict(
                         structural_seed_establishes.get(enc)
-                        or structural_region_establishes.get(enc) or {}))
+                        or structural_region_establishes.get(enc) or {}),
+                    witness_timeout=certify_timeout)
                 continue
         if enc in warned:
             # Not fatal: certification is the arbiter. But say it, because a
@@ -11228,7 +11408,7 @@ def main():
                     ce,
                     dict(query_pins(), **xpins),
                     query_max_tx,
-                    args.timeout,
+                    certify_timeout,
                     cwd,
                     ast=args.ast,
                     focus=focus,
@@ -11321,7 +11501,7 @@ def main():
                         ce,
                         dict(query_pins(), **xpins),
                         query_max_tx,
-                        args.timeout,
+                        certify_timeout,
                         cwd,
                         ast=args.ast,
                         focus=focus,
@@ -11847,7 +12027,8 @@ def main():
                 enc, depth, ce, xpins,
                 dict(
                     structural_seed_establishes.get(enc) or structural_region_establishes.get(enc)
-                    or {}))
+                    or {}),
+                witness_timeout=certify_timeout)
 
     # HARD CHECK, not a warning. Two certified regions that share a point mean
     # an input would have to walk two different paths. Reporting them and
