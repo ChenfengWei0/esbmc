@@ -7850,7 +7850,31 @@ def _visible_contract_scopes(ast_path, contract):
     index(ast)
     if target is None:
         return [ast]
-    return [target]
+    # ---- AN INHERITED PUBLIC STATE VARIABLE IS STILL A GETTER OF THIS UNIT --
+    #
+    # `by_id` was already built here and then never read: the walk stopped at
+    # the target contract, so a `public` state variable declared in a BASE was
+    # invisible and `_public_state_getter_decl` returned None. The unit exists
+    # -- solc synthesizes the getter on the derived contract -- so the caller
+    # concluded "declared parameters are unavailable" and the synthetic emitter
+    # fallback refused, which is `emitter-no-output`.
+    #
+    # MEASURED (full-20260822-v40, cases short of a PUT): 22 of the 24
+    # `emitter-no-output` rows are exactly this -- StableLPOracle /
+    # WeightedLPOracle / DynamicWeightedLPOracle `pool`, declared
+    # `IBasePool public immutable pool` in the base LPOracleBase, and EVault's
+    # MODULE_* constants. `_public_state_getter_decl` returns None for every one
+    # of them against its own AST.
+    #
+    # `linearizedBaseContracts` is most-derived first, so the target's own
+    # declaration still wins wherever it has one: this can only turn a None into
+    # an answer, never change an answer already given.
+    chain = []
+    for base_id in target.get("linearizedBaseContracts") or [target.get("id")]:
+        base = by_id.get(base_id)
+        if base is not None:
+            chain.append(base)
+    return chain or [target]
 
 
 def _public_state_getter_decl(ast_path, contract, unit):
