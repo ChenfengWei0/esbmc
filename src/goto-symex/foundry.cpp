@@ -2932,6 +2932,26 @@ size_t foundry_generator::write_foundry_file(
     return s;
   };
 
+  // `<method>(<declared arg types>)` for abi.encodeWithSignature, or empty when
+  // some argument type cannot be named. Built from the DECLARED types, never
+  // from the literals: encodeWithSignature hashes the textual selector, so a
+  // literal's spelling must not reach it.
+  auto selector_sig = [](const sol_call &call) {
+    std::string sig = call.method + "(";
+    bool first = true;
+    for (const auto &a : call.args)
+    {
+      const std::string st = sol_type_to_solidity(a.sol_type);
+      if (st.empty())
+        return std::string(); // cannot name the type -> cannot build a selector
+      if (!first)
+        sig += ",";
+      sig += st;
+      first = false;
+    }
+    return sig + ")";
+  };
+
   // A construction plan: one instance per distinct contract (sorted for a
   // stable var mapping shared across the group), built via its reconstructed
   // constructor call (or `new C()` when parameterless). A single dispatcher
@@ -3388,8 +3408,21 @@ size_t foundry_generator::write_foundry_file(
             abi_sig += ")";
         }
 
+        // Dispatch on what the declaration IS, not on what it is called.
+        // `function receive() external {}` is an ordinary named function, and
+        // Solidity requires the special ether receiver to be `payable`, so a
+        // non-payable `receive` cannot be the special entry. Treating one as
+        // special emits an empty-calldata low-level call at a contract that
+        // has no receiver, which always reverts: MEASURED as 14 of the 40
+        // "covered receive/fallback path must return normally" failures
+        // (EStack and friends declare `function receive() external {}`).
+        //
+        // `fallback` keeps the name test on purpose: a genuine fallback may be
+        // declared non-payable, so payability cannot separate the two there,
+        // and the 25 genuine-fallback failures are a different defect.
         const bool special_entry =
-          call.method == "receive" || call.method == "fallback";
+          (call.method == "receive" && call.payable) ||
+          call.method == "fallback";
         if (!call.supported || (!is_lib && !built.count(call.contract)))
         {
           // No `vm.deal` here: the call is not emitted, so an orphan deal would
@@ -3433,6 +3466,40 @@ size_t foundry_generator::write_foundry_file(
             << (args.empty() ? "" : ", " + args) << "));\n";
           f << "    assertFalse(ok" << fn
             << ", \"value sent to a non-payable entry must revert\");\n";
+        }
+        else if (
+          !is_lib && (call.method == "receive" || call.method == "fallback") &&
+          !selector_sig(call).empty())
+        {
+          // An ORDINARY function that happens to be named `receive` or
+          // `fallback`. Solidity reserves both words, so `c0.receive()` does
+          // not even parse -- solc rejects it with "Error (2314): Expected
+          // identifier but got 'receive'" (MEASURED on EStack, whose source
+          // declares `function receive() external {}`). Such a function is
+          // reachable only through its selector, so route it to a low-level
+          // call rather than the named-call branches below.
+          //
+          // Reached only when `special_entry` was false, i.e. a non-payable
+          // `receive`; a genuine payable receiver is handled above.
+          const std::string args = join_args(call);
+          f << deal_line;
+          f << "    (bool ok" << fn << ", ) = address(" << recv << ").call"
+            << value_brace << "(\n";
+          f << "        abi.encodeWithSignature(\"" << selector_sig(call) << "\""
+            << (args.empty() ? "" : ", " + args) << "));\n";
+          if (call.reverts)
+            f << "    assertFalse(ok" << fn << ", \"covered " << call.method
+              << " path must revert\");\n";
+          else if (call.normal_confirmed)
+            f << "    assertTrue(ok" << fn << ", \"covered " << call.method
+              << " path must return normally\");\n";
+          else
+          {
+            // Outcome not confirmed: the boolean is deliberately left
+            // unasserted, matching the try/catch branch below.
+            f << "    ok" << fn << ";\n";
+            ++revert_tolerant;
+          }
         }
         else if (call.reverts)
         {
