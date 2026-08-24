@@ -20475,6 +20475,37 @@ def runtime_low_level_success_mock_lines(forge_project, contract, unit, extcall_
     chunk = _source_contract_chunk(source, contract)
     fm = re.search(r"\bfunction\s+" + re.escape(unit) + r"\s*\([^)]*\)[^{]*\{", chunk)
     if not fm:
+        # ---- AN INHERITED BODY IS STILL THIS UNIT'S BODY -------------------
+        #
+        # `_source_contract_chunk` returns the target contract's text only, so a
+        # unit the target INHERITS has its body in a base's chunk and was
+        # reported as "cannot locate source body" -- the same blind spot as
+        # `_visible_contract_scopes` had for inherited public state getters.
+        # MEASURED (full-20260822-v40, cases short of a PUT):
+        # CompatibilityFallbackHandler.onERC721Received / onERC1155Received /
+        # onERC1155BatchReceived, all defined in the base TokenCallbackHandler.
+        # The walk reuses `_source_contract_chunk` + `_source_inheritance_names`,
+        # the same pair `source_inherited_function_params` already walks with.
+        #
+        # ADDITIVE: only reached when the target's own chunk has no match, so a
+        # unit defined on the target keeps resolving to the target's body.
+        seen = set()
+        queue = list(_source_inheritance_names(chunk))
+        while queue and not fm:
+            base_name = queue.pop(0)
+            if base_name in seen:
+                continue
+            seen.add(base_name)
+            base_chunk = _source_contract_chunk(source, base_name)
+            if not base_chunk:
+                continue
+            fm = re.search(r"\bfunction\s+" + re.escape(unit) + r"\s*\([^)]*\)[^{]*\{",
+                           base_chunk)
+            if fm:
+                chunk = base_chunk
+                break
+            queue.extend(_source_inheritance_names(base_chunk))
+    if not fm:
         return [], f"cannot locate source body for {contract}.{unit}"
     start = fm.end()
     depth, end = 1, start
