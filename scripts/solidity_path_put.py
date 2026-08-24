@@ -9276,6 +9276,79 @@ def _is_zero_address_expr(expr):
     return _address_expr_literal_int(text) == 0
 
 
+def _split_top_level_or(condition):
+    """Top-level ``||`` operands, or None if the condition also joins with ``&&``.
+
+    A conjunction is deliberately declined: under ``a == 0 && b == 0`` a single
+    zero argument does not revert, so constraining either one would narrow the
+    replay beyond what the source demands.
+    """
+    parts, depth, current, i = [], 0, [], 0
+    while i < len(condition):
+        char = condition[i]
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        if depth == 0 and condition.startswith("&&", i):
+            return None
+        if depth == 0 and condition.startswith("||", i):
+            parts.append("".join(current))
+            current = []
+            i += 2
+            continue
+        current.append(char)
+        i += 1
+    parts.append("".join(current))
+    return parts
+
+
+def _body_has_nonzero_address_disjunct_guard(body, name):
+    """``if (a == address(0) || b == address(0)) revert ...`` rejects both.
+
+    ``_body_has_nonzero_address_guard`` only matches a guard whose whole
+    condition is the zero test, so a constructor that rejects several
+    arguments in one disjunction looks unguarded and the replay keeps the
+    counterexample's literal zero -- deployment then reverts in ``setUp()``.
+    """
+    clean = _mask_solidity_comments_and_strings(body or "")
+    plain = re.escape(name)
+    zero_terms = [
+        r"\b" + plain + r"\b\s*==\s*address\s*\(\s*0\s*\)",
+        r"address\s*\(\s*\b" + plain + r"\b\s*\)\s*==\s*address\s*\(\s*0\s*\)",
+        r"address\s*\(\s*0\s*\)\s*==\s*\b" + plain + r"\b",
+        r"address\s*\(\s*0\s*\)\s*==\s*address\s*\(\s*\b" + plain + r"\b\s*\)",
+    ]
+    zero_rx = re.compile(r"^\s*(?:\(\s*)*(?:" + "|".join(zero_terms) + r")\s*(?:\)\s*)*$")
+    for match in re.finditer(r"\bif\s*\(", clean):
+        open_at = match.end() - 1
+        depth, cursor = 0, open_at
+        while cursor < len(clean):
+            if clean[cursor] == "(":
+                depth += 1
+            elif clean[cursor] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            cursor += 1
+        if cursor >= len(clean):
+            continue
+        tail = clean[cursor + 1:cursor + 40].lstrip()
+        if tail.startswith("{"):
+            tail = tail[1:].lstrip()
+        if not tail.startswith("revert"):
+            continue
+        operands = _split_top_level_or(clean[open_at + 1:cursor])
+        if operands is None or len(operands) < 2:
+            continue
+        if not any(zero_rx.match(operand) for operand in operands):
+            continue
+        if (_is_top_level_mandatory_guard(clean, match)
+                and not _has_assignment_to_name_before(clean, match.start(), name)):
+            return True
+    return False
+
+
 def _body_has_nonzero_address_guard(body, name):
     plain = re.escape(name)
     clean_body = _mask_solidity_comments_and_strings(body or "")
@@ -10170,6 +10243,7 @@ def constructor_param_nonzero_specs(source, contract):
             match_sender = (sender_mint_call and _constructor_arg_controls_sender_guarded_call(
                 current_chunk, body, pname))
             if (not match_sender and not _body_has_nonzero_address_guard(body, pname)
+                    and not _body_has_nonzero_address_disjunct_guard(body, pname)
                     and not _constructor_arg_flows_to_nonzero_guard(current_chunk, body, pname)):
                 continue
             spec = dict(binding)
