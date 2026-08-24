@@ -18225,6 +18225,56 @@ def unit_param_interface_mock_specs(source, contract, unit):
     return specs
 
 
+def _public_state_getter_scopes(source, name, _seen=None):
+    """`name` and its base contracts, in declaration order."""
+    seen = _seen if _seen is not None else []
+    if not name or name in seen:
+        return seen
+    seen.append(name)
+    chunk = _source_contract_chunk(source, name)
+    if chunk:
+        for base in _source_inheritance_names(chunk) or []:
+            _public_state_getter_scopes(source, base, seen)
+    return seen
+
+
+def _public_state_getter_choice(source, iface, fname):
+    """The compiler-generated getter behind ``<Type> public <name>;``.
+
+    ``_source_function_abis`` only sees ``function`` declarations, so a
+    deployment-time call such as ``_root.ens()`` against ``ENS public ens;``
+    resolves to nothing and its mock is never installed -- the constructor
+    then reverts against an empty address and ``setUp()`` fails.
+
+    Mappings, arrays and functions are declined on purpose: their generated
+    getters take a key, an index, or their own arguments, so they are not the
+    zero-argument call being resolved here.
+    """
+    for scope in _public_state_getter_scopes(source, iface):
+        chunk = _source_contract_chunk(source, scope)
+        if not chunk:
+            continue
+        chunk = _mask_solidity_comments_and_strings(chunk)
+        for hit in re.finditer(r"\bpublic\b", chunk):
+            start = max(chunk.rfind(sep, 0, hit.start()) for sep in ";{}")
+            end = chunk.find(";", hit.end())
+            if end < 0:
+                continue
+            decl = chunk[start + 1:end]
+            if "(" in decl or ")" in decl:
+                continue
+            tokens = decl.split("=", 1)[0].split()
+            if len(tokens) < 2 or tokens[-1] != fname:
+                continue
+            words = [t for t in tokens[:-1]
+                     if t not in ("public", "override", "immutable", "constant")]
+            return_type = _norm_ty(" ".join(words))
+            if not return_type or return_type.endswith("]"):
+                continue
+            return (f"{fname}()", [return_type])
+    return None
+
+
 def constructor_param_interface_mock_specs(forge_project, contract):
     """Interface calls made through constructor parameters.
 
@@ -18268,6 +18318,8 @@ def constructor_param_interface_mock_specs(forge_project, contract):
             choice = _unique_function_choice(functions.get(fname) or [], arity)
         if choice is None and arity in (None, 0):
             choice = public_constant_getter_choice(iface, fname)
+        if choice is None and arity in (None, 0):
+            choice = _public_state_getter_choice(source, iface, fname)
         return choice
 
     def add_cast_calls(scan_body, ctor_pname, spec_pname, idx):
@@ -19542,6 +19594,41 @@ def _constructor_interface_mock_return_expr(source, contract, args, spec, typ):
             continue
         return f"{typ}({expr})"
     return None
+
+
+def repair_flat_source_imports(lines, source):
+    """Import types the mock fixtures name but ESBMC's own test did not.
+
+    A constructor mock may have to name an interface to build its return
+    value, e.g. ``abi.encode(ENS(mock))`` for ``ENS public ens;``.  ESBMC
+    emits an import list covering only the types *its* test mentions, so the
+    fixture would fail to compile on an undeclared identifier.
+
+    Strictly additive: names are only appended, never reordered or removed,
+    and only when ``flat.sol`` really declares them.
+    """
+    if not source:
+        return list(lines)
+    import_rx = re.compile(r"^(\s*import\s*\{)([^}]*)(\}\s*from\s*\"[^\"]*flat\.sol\";\s*)$")
+    matched = [(i, import_rx.match(ln)) for i, ln in enumerate(lines)]
+    matched = [(i, m) for i, m in matched if m]
+    if len(matched) != 1:
+        return list(lines)
+    idx, match = matched[0]
+    head, body, tail = match.groups()
+    have = [piece.strip() for piece in body.split(",") if piece.strip()]
+    used = set()
+    for line in lines:
+        used.update(re.findall(r"\b([A-Z]\w*)\s*\(", line))
+    missing = []
+    for name in sorted(used.difference(have)):
+        if _source_contract_chunk(source, name):
+            missing.append(name)
+    if not missing:
+        return list(lines)
+    out = list(lines)
+    out[idx] = head + ", ".join(have + missing) + tail
+    return out
 
 
 def apply_constructor_param_interface_mocks(lines, contract, specs, source, indent="    "):
@@ -21080,6 +21167,7 @@ def assemble_put_source(emitted,
         lines, _constructor_param_hascode_repairs = \
             apply_constructor_param_hascode_mocks(
                 lines, contract, constructor_param_hascode_mocks or [])
+        lines = repair_flat_source_imports(lines, flat_source or "")
         lines = repair_pranked_constructor_origins(lines, contract)
         lines, _constructor_payable_repairs = repair_payable_constructor_args(
             lines, contract, constructor_params or [])
@@ -21219,6 +21307,7 @@ def assemble_concrete_source(emitted,
         lines, _constructor_param_hascode_repairs = \
             apply_constructor_param_hascode_mocks(
                 lines, contract, constructor_param_hascode_mocks or [])
+        lines = repair_flat_source_imports(lines, flat_source or "")
         if params is not None:
             lines, _payable_replay_repairs = repair_payable_replay_call_args(
                 lines, unit, named_params(params), flat_source or "")
