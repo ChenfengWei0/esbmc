@@ -200,6 +200,32 @@ CERTIFIED_REGION_CONCRETE_FALLBACK_REFUSALS = {
     "no-assertions",
     "path-depth-unavailable",
     "zero-assertions",
+    # ---- A TRUNCATED LADDER IS A BOUND'S LIMIT, NOT THE REGION'S ----------
+    #
+    # `ladder-undecided-truncated` is the driver's own verdict that a loop was
+    # cut at the unwind bound while unwinding assertions were disabled, and it
+    # states in the same breath: "This is NOT a vacuous region and must not be
+    # recorded as one: the region may be perfectly good and the BOUND is what
+    # could not see it." The region was CERTIFIED and Stage 4 had already
+    # authenticated and selected a concrete case; only the ORACLE LADDER came
+    # back undecided. That is the same shape as `build-put-refused` -- the PUT
+    # builder could not render a deliverable oracle -- so the same salvage
+    # applies: emit the concrete replay, which asserts the observed behaviour
+    # of a witnessed input and needs no ladder verdict at all. Foundry still
+    # has to accept it before it counts.
+    #
+    # MEASURED: PoolPauseHelper (real203, full-20260822-v40) -- every unit is a
+    # plain getter, `owner` CERTIFIES in 9s, and the whole subject was recorded
+    # `no-valid` with "Concrete replays emitted: 0" because each unit's ladder
+    # truncated and no row reached this salvage. A certified getter that yields
+    # not even a concrete replay is a pipeline gap, not a property of the
+    # contract.
+    #
+    # ⛔ `ladder-vacuous` is deliberately NOT here. Vacuous means no execution
+    # the region admits walks the path, so a replay built on it would stand for
+    # an execution that does not exist -- the one case this salvage must not
+    # cover.
+    "ladder-undecided-truncated",
 }
 
 # Byte for byte the driver's own printers (solidity_path_generalise.py:800,
@@ -1913,6 +1939,25 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail, representat
         solidity_type, name = match.groups()
         keys = (aliases.get(name), name, name[2:] if name.startswith("p_") else None)
         raw_value = next((ce[key] for key in keys if key is not None and key in ce), None)
+        if raw_value is None and name.startswith("s_"):
+            # A state-slot fuzz parameter is named `s_<slot-ident>`, where the
+            # slot-ident is `re.sub("[^0-9A-Za-z_]","_", <coordinate>).strip("_")`
+            # of the certified region's `state.<...>` coordinate (see
+            # freed_state_fuzz_param / _slot_ident in solidity_path_put). The
+            # certified-CE key keeps the ORIGINAL coordinate spelling
+            # (`state.pastBlockTime`, `state.balances[5]`), so neither `name`
+            # nor `name[2:]` finds it and the anchor is refused as "lacks an
+            # exact scalar" even though the CE carries the value. Recover it by
+            # matching the parameter's slot-ident against each `state.` CE
+            # coordinate's slot-ident. MEASURED: rc_time_manipulation roulette
+            # fallback enc=31, `s_pastBlockTime` <- `state.pastBlockTime` == 0.
+            want = name[2:]
+            for _key, _value in ce.items():
+                if not _key.startswith("state."):
+                    continue
+                if re.sub(r"[^0-9A-Za-z_]", "_", _key[len("state."):]).strip("_") == want:
+                    raw_value = _value
+                    break
         # A dynamic (bytes/string) fuzz parameter the CE never mentions (no
         # value, no `<name>.length`) was not read on the path: the fixed
         # replay's point is the same for every value of it, so the guard

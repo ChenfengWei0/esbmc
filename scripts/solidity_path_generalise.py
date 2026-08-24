@@ -3064,7 +3064,47 @@ def empty_enumeration_tally_lines(tally, total):
     return lines
 
 
-def empty_enumeration_diagnostic(cwd, unit):
+def bounded_holds_retry_scope(ast_path, contract, unit):
+    """The dispatcher alphabet a `bounded-holds-only` retry needs.
+
+    ⛔ WHY `focus` IS THE WRONG ANSWER HERE, AND WHY THIS EXISTS. The retry
+    hint below already asks for `--max-tx 2`, and the certify call's own
+    comment explains what that is for: "a path whose guard needs an EARLIER
+    transaction's write is only witnessed [at max_tx>1]; certifying it at 1 tx
+    runs the setup transaction not at all ... the query answers VACUOUS".
+    But the hint also pinned `"scope": "focus"`, and `focus` puts ONLY the
+    target in the dispatcher alphabet -- so the "earlier transaction" can only
+    be another call to the target itself. For the shape this retry exists to
+    rescue (`ownerOf` behind `require(_conduits[c].key != 0)`, whose writer is
+    `createConduit`) the writer is not callable, the guard state can never be
+    established, and the second transaction changes nothing. The retry was
+    structurally incapable of succeeding.
+
+    The alphabet is derived from the AST -- the target plus the units that
+    ASSIGN to the state it reads, including writes through a `storage` pointer
+    -- so it holds for any contract and encodes no subject or file name. An
+    empty derivation returns `focus` unchanged: where no other unit writes the
+    state, escalation cannot help and the retry must not be given a wider
+    alphabet for nothing.
+    """
+    try:
+        from state_writer_scope import writer_scope_for_unit
+    except ImportError:
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            from state_writer_scope import writer_scope_for_unit
+        except ImportError:
+            return "focus", ["writer-scope derivation unavailable (module not importable)"]
+    try:
+        scope, evidence = writer_scope_for_unit(ast_path, contract, unit)
+    except Exception as exc:  # a derivation failure must not kill the run
+        return "focus", [f"writer-scope derivation failed: {exc}"]
+    if not scope or len(scope) < 2:
+        return "focus", evidence
+    return ",".join(scope), evidence
+
+
+def empty_enumeration_diagnostic(cwd, unit, ast_path=None, contract=None):
     report = os.path.join(cwd, "cov-report.json")
     try:
         with open(report) as f:
@@ -3109,12 +3149,19 @@ def empty_enumeration_diagnostic(cwd, unit):
         },
     }
     if cls == "bounded-holds-only":
+        retry_scope, scope_evidence = ("focus", [])
+        if ast_path and contract and unit:
+            retry_scope, scope_evidence = bounded_holds_retry_scope(ast_path, contract, unit)
         diag["retry_hint"] = {
             "reason": "bounded-holds-only",
             "max_tx": 2,
             "unwind": 8,
-            "scope": "focus",
+            "scope": retry_scope,
         }
+        # The alphabet is a DERIVED value, so record what it was derived from:
+        # a retry that widens the scope and still finds nothing must be
+        # distinguishable from one that was never given the writer at all.
+        diag["retry_scope_evidence"] = list(scope_evidence)
     return diag
 
 
@@ -9192,7 +9239,9 @@ def main():
         # claims had been abandoned at the per-claim budget and the sentence
         # above reported that as a property of the contract.
         fatal, why = empty_enumeration_reason(cwd, args.unit)
-        empty_diag = empty_enumeration_diagnostic(cwd, args.unit)
+        empty_diag = empty_enumeration_diagnostic(cwd, args.unit,
+                                                  ast_path=getattr(args, 'ast', None),
+                                                  contract=getattr(args, 'contract', None))
         print(f"[enumerate] no witnessed path for this unit, {why}")
         if not fatal:
             print("  A path with no counterexample has no known member of its "
