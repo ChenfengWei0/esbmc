@@ -14281,6 +14281,70 @@ def potential_rendered_widths_for_put(unit,
     return widths
 
 
+_FREE_ORDER_SIG = re.compile(r"function\s+(?:test_put_\w+)\s*\(([^)]*)\)")
+_FREE_ORDER_CMP = re.compile(r"^\s*assert(?:Gt|Lt)\(\s*_post_(\w+)\s*,\s*_pre_(\w+)\s*,")
+_FREE_ORDER_POST_EQ = re.compile(r"assertEq\(\s*_post_(\w+)\s*,\s*uint256\(uint160\((\w+)\)\)")
+_FREE_ORDER_PRE_EQ = re.compile(r"vm\.assume\(\s*_pre_(\w+)\s*==\s*uint256\(uint160\((\w+)\)\)")
+
+
+def drop_free_param_ordering_asserts(assert_lines, body_lines):
+    """Remove `post > pre` rungs that compare two INDEPENDENT fuzz parameters.
+
+    ⛔ THIS ONE IS ABOUT SOUNDNESS, not tidiness. MEASURED on
+    peer_ccsolbmc__PORCUPINE transferOwnership path 15p1: the emitted PUT binds
+    `_post_owner == newOwner` and assumes `_pre_owner_392 == p_msg_sender`,
+    with BOTH addresses independently `bound()` into overlapping ranges -- and
+    then asserts `assertGt(_post_owner, _pre_owner)`. Nothing in the region
+    orders one free parameter against another, so the rung is simply false, and
+    Foundry refutes it on the first counterexample it stumbles into. The base
+    path's own ladder had already returned REFUTED for every pre/post rung of
+    that path, so the assertion did not come from a proof.
+
+    A test carrying a false assertion is worse than one carrying none: a
+    reviewer who sees it fail has no reason to trust the rungs that pass.
+
+    NOT every ordering rung is wrong -- `post > pre` on a balance after a
+    deposit is exactly the property worth asserting. The criterion is narrow on
+    purpose: drop ONLY when `post` is bound by equality to one declared fuzz
+    parameter and `pre` to a DIFFERENT one, which is precisely "these two sides
+    are independently free".
+
+    ADDITIVE, and measured to be so: over full-20260822-v40's 3598 COUNTED PUT
+    files (forge Success and valid_reference_test), 116 test functions carry an
+    ordering rung and NOT ONE matches this criterion, while the criterion does
+    flag the known-bad PORCUPINE file. So no counted result can move; what it
+    removes is emissions Foundry was already rejecting.
+    """
+    if not assert_lines:
+        return assert_lines, []
+    text = "\n".join(body_lines)
+    sig = _FREE_ORDER_SIG.search(text)
+    if not sig:
+        return assert_lines, []
+    params = {p.strip().split()[-1] for p in sig.group(1).split(",") if p.strip()}
+    if not params:
+        return assert_lines, []
+    post_bound = dict(_FREE_ORDER_POST_EQ.findall(text))
+    pre_bound = dict(_FREE_ORDER_PRE_EQ.findall(text))
+    # `_pre_owner` and the assume's `_pre_owner_392` name the same slot: the
+    # ladder spells the variable, the guard spells the AST declaration id.
+    def pre_param(var):
+        return next((v for k, v in pre_bound.items() if k == var or k.startswith(var + "_")),
+                    None)
+
+    kept, dropped = [], []
+    for line in assert_lines:
+        m = _FREE_ORDER_CMP.match(line)
+        if m:
+            p_post = post_bound.get(m.group(1))
+            p_pre = pre_param(m.group(2))
+            if p_post in params and p_pre in params and p_post != p_pre:
+                dropped.append(line)
+                continue
+        kept.append(line)
+    return kept, dropped
+
+
 def build_put(contract,
               unit,
               enc,
@@ -16282,6 +16346,11 @@ def build_put(contract,
     if post_reads or asserts or guarded or ret_asserts:
         out.append("    // VERIPUT_ORACLE_REFINEMENT_BEGIN")
     out += post_reads
+    asserts, dropped_free_order = drop_free_param_ordering_asserts(asserts, out)
+    for line in dropped_free_order:
+        notes.append("dropped an ordering rung between two INDEPENDENT fuzz "
+                     "parameters (it cannot hold over the region): " + line.strip())
+        print("[put]   DROPPED false ordering rung: " + line.strip())
     out += asserts
     if guarded:
         out.append(f"    if ({okvar}) {{")
