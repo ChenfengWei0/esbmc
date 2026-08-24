@@ -5427,6 +5427,13 @@ def promote_zero_sender_owner_slice(region,
             canonical = canonical_state_coord_name(name, state_store_names)
             candidates.append((name, canonical))
 
+    # Whether ANY address-like state coordinate is pinned at zero BEFORE the
+    # dependency-closure filter. This is what distinguishes the two promotable
+    # shapes. If one exists but is not in the closure (or several do), the pin
+    # is ambiguous and is left for the normal refusal to guess nothing -- but
+    # if NONE exists at all, there is no ownership relation to materialize and
+    # the sender==0 is a bare pin (see the `not raw_had_candidates` branch).
+    raw_had_candidates = bool(candidates)
     if dep_coords:
         candidates = [c for c in candidates if c[0] in dep_coords or c[1] in dep_coords]
     unique = []
@@ -5437,25 +5444,52 @@ def promote_zero_sender_owner_slice(region,
             continue
         unique.append((name, canonical))
         seen.add(key)
-    if len(unique) != 1:
-        return region, holes, pins, establish, None
 
-    target, _canonical = unique[0]
-    pins.pop("msg.sender", None)
-    if region.get("msg.sender") == (0, 0) or region.get("msg.sender") == [0, 0]:
-        region.pop("msg.sender", None)
-    pins.pop(target, None)
-    region.pop(target, None)
-    region["msg.sender"] = (1, ADDRESS_MAX)
-    holes.pop("msg.sender", None)
-    establish.append({"target": target, "source": "msg.sender"})
-    note = (f"msg.sender == 0 with {target} == 0 was promoted to executable "
-            f"entry relation `{target} := msg.sender` and "
-            f"msg.sender in [1, {ADDRESS_MAX}]; Foundry cannot prank "
-            "address(0), so the verifier-backed Stage-4 ladder is re-run over "
-            "the non-zero sender slice rather than replaying the old zero "
-            "point")
-    return region, holes, pins, establish, note
+    if len(unique) == 1:
+        target, _canonical = unique[0]
+        pins.pop("msg.sender", None)
+        if region.get("msg.sender") == (0, 0) or region.get("msg.sender") == [0, 0]:
+            region.pop("msg.sender", None)
+        pins.pop(target, None)
+        region.pop(target, None)
+        region["msg.sender"] = (1, ADDRESS_MAX)
+        holes.pop("msg.sender", None)
+        establish.append({"target": target, "source": "msg.sender"})
+        note = (f"msg.sender == 0 with {target} == 0 was promoted to executable "
+                f"entry relation `{target} := msg.sender` and "
+                f"msg.sender in [1, {ADDRESS_MAX}]; Foundry cannot prank "
+                "address(0), so the verifier-backed Stage-4 ladder is re-run over "
+                "the non-zero sender slice rather than replaying the old zero "
+                "point")
+        return region, holes, pins, establish, note
+
+    if not raw_had_candidates:
+        # BARE spurious sender==0 pin. No address-like state coordinate is
+        # pinned at zero anywhere, so there is NO ownership relation to
+        # materialize: the sender==0 is the ESBMC nondet default recorded as a
+        # point on a path that does not constrain the sender (e.g. a normal
+        # exit whose only use of msg.sender is a branch it does not take, or no
+        # use at all). Foundry cannot prank address(0), so today this is
+        # refused and yields nothing. Promote to the non-zero sender slice with
+        # NO establish relation and let the verifier-backed Stage-4 ladder
+        # re-run over [1, ADDRESS_MAX]: if the path GENUINELY needs sender==0
+        # the promoted region is vacuous over the non-zero slice and the ladder
+        # refuses exactly as before, so this only ever rescues a spurious pin --
+        # it can turn a guaranteed no-PUT refusal into a PUT, never weaken one.
+        pins.pop("msg.sender", None)
+        if region.get("msg.sender") == (0, 0) or region.get("msg.sender") == [0, 0]:
+            region.pop("msg.sender", None)
+        region["msg.sender"] = (1, ADDRESS_MAX)
+        holes.pop("msg.sender", None)
+        note = (f"msg.sender == 0 was a bare pin with no zero owner state "
+                f"coordinate to bind; promoted to msg.sender in "
+                f"[1, {ADDRESS_MAX}] with no entry relation. Foundry cannot "
+                "prank address(0), so the verifier-backed Stage-4 ladder is "
+                "re-run over the non-zero sender slice; a path that genuinely "
+                "requires the zero sender is vacuous there and stays refused")
+        return region, holes, pins, establish, note
+
+    return region, holes, pins, establish, None
 
 
 def mapping_source_coord_alias(name, maps):
@@ -8433,6 +8467,38 @@ def dynamic_default_call_arg(sol_type):
     return None
 
 
+def dynamic_fixed_length_call_arg(sol_type, n):
+    """Inline call-argument expression for a dynamic value pinned to length `n`.
+
+    `new T[](n)` for a single-level array of scalar base type (`address[]`,
+    `uint256[]`, ...), `new bytes(n)` for bytes. Elements/bytes default to zero.
+
+    This is SOUND only when the certified CE constrains the LENGTH ALONE and no
+    element coordinate (`<name>[i]`): here the array contents are free and a
+    zero-filled array of the certified length is as exact a representative as
+    any. MEASURED 2026-08-22 on
+    rc_unchecked...0xa1fceeff...AirDropContract.transfer(address[] tos,
+    uint256[] vs, ...): the certified regions pin `tos.length`/`vs.length`
+    (e.g. 4 and 3) and name no element, yet the exact-CE renderer refused them
+    as "uint256[] cannot be rendered exactly" because it only knew length 0.
+    Generalising length 0 to any certified length clears them. String has no
+    length constructor, so a non-empty string still takes the fuzz+assume path.
+    """
+    t = _norm_ty(sol_type)
+    n = int(n)
+    if n < 0:
+        return None
+    if t == "bytes":
+        return f"new bytes({n})"
+    if t == "string":
+        return '""' if n == 0 else None
+    dyn_base = _source_dynamic_array_base_type(t)
+    if (dyn_base is not None and _source_dynamic_array_base_type(dyn_base) is None
+            and signature_type(dyn_base) is not None):
+        return f"new {signature_type(dyn_base)}[]({n})"
+    return None
+
+
 def default_call_arg(sol_type):
     """Concrete placeholder used before a missing emitted arg is fuzz-lifted."""
     lk = lift_kind(sol_type)
@@ -11406,6 +11472,33 @@ def bind_emitted_source_to_certified_ce(body,
                     "certified": 0,
                 }
                 continue
+            # A dynamic ARRAY / bytes the CE pins by LENGTH ALONE renders as
+            # `new T[](N)` / `new bytes(N)` at that certified length; bind it.
+            # The elements are free (the CE names none), so the length is the
+            # whole coordinate. Pairs with `dynamic_fixed_length_call_arg` in
+            # the call-point renderer (0xa1fceeff transfer(address[] tos,
+            # uint256[] vs, ...), full-20260822-v40 round 12).
+            fixed_len = None
+            m_arr = re.match(r"^new\s+[A-Za-z_][\w.]*(?:\[\d*\])*\[\]\(\s*(\d+)\s*\)$",
+                             expr.strip())
+            m_byt = re.match(r"^new\s+bytes\(\s*(\d+)\s*\)$", expr.strip())
+            if dynamic_calldata_signature_type(typ) is not None and m_arr is not None:
+                fixed_len = int(m_arr.group(1))
+            elif (str(typ).strip() in ("bytes", "bytes memory", "bytes calldata")
+                  and m_byt is not None):
+                fixed_len = int(m_byt.group(1))
+            if (fixed_len is not None
+                    and isinstance(expected_ce.get(length_name), int)
+                    and int(expected_ce.get(length_name)) == fixed_len
+                    and not any(key == name or key.startswith(name + "[")
+                                for key in expected_ce)):
+                rendered[length_name] = fixed_len
+                bindings[length_name] = {
+                    "kind": "fixed-length-dynamic-call-argument",
+                    "rendered": fixed_len,
+                    "certified": fixed_len,
+                }
+                continue
             # A dynamic argument the CE never mentions (no `<name>.length`,
             # no element, no member) was never read on the path; the CE is
             # complete WITHOUT it and the argument is not a coordinate of
@@ -13511,7 +13604,23 @@ def materialize_concrete_certified_state_point(source,
                         r"\(\s*&\s*_ESBMC_Object_[A-Za-z_]\w*\s*\)\s*->\s*"
                         r"([A-Za-z_$][\w$]*)", k)
                     if obj_member is not None:
-                        key_value = expected_ce.get("state." + obj_member.group(1))
+                        member = obj_member.group(1)
+                        # The contract object's OWN address member `$address` is
+                        # `address(this)` of the unit under test -- a mapping
+                        # keyed by it (`whiteAddress[address(this)]`) reads a
+                        # word the harness CAN address, because in the test
+                        # `address(this)` is the deployed instance's address
+                        # (the receiver). It is a KNOWN value, not a free
+                        # coordinate, so it is bound directly and needs no CE
+                        # fix. MEASURED: reprod_DCFToken owner / totalSupply /
+                        # balanceOf / allowance / setDistributeAddress
+                        # (full-20260822-v40 round 19) -- every body-path PUT
+                        # written then refused on `state.whiteAddress[(&
+                        # _ESBMC_Object_DCF)->$address]`.
+                        if member == "$address":
+                            kexprs.append(key_expr_typed(receiver))
+                            continue
+                        key_value = expected_ce.get("state." + member)
                 if not isinstance(key_value, int):
                     return source, 0, (f"certified mapping state coordinate {name} has key "
                                        f"`{k}` that the certified CE does not fix")
@@ -21083,14 +21192,22 @@ def materialize_concrete_certified_call_point(source, test_name, unit, params, c
             literal = '""'
         elif (dynamic_calldata_signature_type(sol_type) is not None
               and dynamic_default_call_arg(sol_type) is not None
-              and expected.get(name + ".length") == 0):
-            # A dynamic ARRAY whose certified length is 0 is the empty array:
-            # `new T[](0)`. MEASURED: rc_unchecked 0x2972/0x4051
-            # `transfer(address[] memory _tos, ...)` -- the
-            # `require(_tos.length > 0)` revert path, CE `_tos.length = 0`,
-            # refused here as "cannot be rendered exactly" (full-20260822-v40
-            # round 10).
-            literal = dynamic_default_call_arg(sol_type)
+              and isinstance(expected.get(name + ".length"), int)
+              and int(expected.get(name + ".length")) >= 0
+              and not any(key == name or key.startswith(name + "[")
+                          for key in expected)):
+            # A dynamic ARRAY the CE pins by LENGTH ALONE (no element
+            # coordinate `<name>[i]`) renders as `new T[](N)` at that certified
+            # length -- zero-filled, which is exact because the contents are
+            # free. Length 0 is the empty-array special case. MEASURED:
+            # rc_unchecked 0x2972/0x4051 `transfer(address[] _tos, ...)`
+            # `require(_tos.length > 0)` revert path, CE `_tos.length = 0`
+            # (round 10); and 0xa1fceeff `transfer(address[] tos, uint256[] vs,
+            # ...)` regions pinning `tos.length`/`vs.length` at 4/3 with no
+            # element named, refused as "uint256[] cannot be rendered exactly"
+            # until this generalised the length (round 12).
+            literal = dynamic_fixed_length_call_arg(
+                sol_type, int(expected.get(name + ".length")))
         elif ((str(sol_type).strip() in ("bytes", "bytes memory", "bytes calldata", "string",
                                          "string memory", "string calldata")
                or dynamic_calldata_signature_type(sol_type) is not None)
@@ -21959,6 +22076,34 @@ def _concrete_return_literal(sol_type, value):
         match = re.fullmatch(r"bytes([1-9]|[12][0-9]|3[0-2])", typ)
         if match:
             return f"{typ}(uint{int(match.group(1)) * 8}({int(raw, 0)}))"
+        # ---- USER-DEFINED SCALARS ARE EXACTLY RENDERABLE TOO ---------------
+        #
+        # `contract C` / `interface I` and `enum E` are not extra types the
+        # witness cannot express: solc lowers the first to a 160-bit address
+        # and the second to its uint8 ordinal, and the CE value IS that
+        # integer. Refusing them threw away an exact literal.
+        # `_source_identity_type_name` is the module's existing answer to
+        # "which type strings are address-encoded", so the identity half
+        # reuses it rather than re-deciding.
+        # MEASURED (full-20260822-v40, the 68 cases still short of a PUT):
+        # `certified CE argument ... cannot be rendered exactly` fired for
+        # `contract MarketAdminPermissionCheckerInterface` and
+        # `enum ISablierComptroller.Protocol`.
+        # NOT a soundness risk if the ordinal is out of range: Solidity 0.8
+        # panics on the conversion, the replay reverts, Forge is not green and
+        # the fusion gate refuses it -- the same refusal as today, never a PUT
+        # asserted on a value the contract cannot hold. `struct` stays refused:
+        # it is not a scalar and needs member-wise rendering, not a cast.
+        identity = _source_identity_type_name(sol_type)
+        if identity is not None:
+            return f"{identity}(address(uint160({int(raw, 0)})))"
+        enum_match = re.fullmatch(r"enum\s+([A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*)", typ)
+        if enum_match:
+            ordinal = int(raw, 0)
+            if 0 <= ordinal <= 255:
+                name = re.sub(r"\s*\.\s*", ".", enum_match.group(1))
+                return f"{name}(uint8({ordinal}))"
+            return None
     except ValueError:
         return None
     return None

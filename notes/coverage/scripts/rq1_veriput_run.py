@@ -5961,6 +5961,55 @@ def _strength_quality(put_summary: dict) -> dict:
     }
 
 
+def _requeue_structural_only_for_empty_case(jobs: list,
+                                            deferred: list,
+                                            requeued: list,
+                                            case_dir: Path,
+                                            *,
+                                            deadline_remaining_s: float,
+                                            min_remaining_s: float) -> bool:
+    """Give the skipped gate-only units their Stage 4 when nothing else will.
+
+    STRUCTURAL_ONLY_STAGE4_SKIP drops a unit whose only certified regions are
+    the compiler's ABI/getter value gates, and that is safe ONLY because of the
+    rule it states in the same breath: "the last unit of a case is never
+    skipped, so a gate-only case still leaves a Valid test". The rule is
+    positional -- `pending_units_after_this > 0` -- so it protects whichever
+    unit happens to be LAST, which need not be a unit that can emit anything.
+
+    MEASURED (full-20260822-v40 and re-measured 2026-08-24 on this machine):
+    peer_ccsolbmc__StarNFTProxy schedules 9 units; Stage 2 returns CERTIFIED for
+    exactly the 6 gate-only ones and NO-PATH for `fallback`, `receive` and
+    `upgradeToAndCall`. Every certified unit is therefore skipped, the last unit
+    has nothing to publish, and the case ends with no put.json at all -- bucket
+    `no-valid`, from 6 certified regions, 0 timeouts, 0 OOM. Five more cases
+    show the same shape (ReferenceConsideration, BufferRouter, Router,
+    UnbalancedAddViaSwapRouter, ESynth: 8 certified regions each).
+
+    Appending to `jobs` while `enumerate(jobs, 1)` walks it extends the walk,
+    and `pending_units_after_this` is recomputed from `len(jobs)`, so the last
+    requeued unit sees 0 pending and the skip cannot fire for it.
+
+    ADDITIVE BY CONSTRUCTION -- returns False, changing nothing, unless the case
+    has emitted absolutely nothing (`raw == 0`: not one PUT, not one concrete
+    replay). Any case that already published an artifact keeps its recorded
+    behaviour, so no result in a completed campaign can move. It also refuses
+    when the case is out of budget, so no deadline is extended.
+    """
+    if requeued or not deferred:
+        return False
+    if deadline_remaining_s < min_remaining_s:
+        return False
+    if int(summarize_put_artifacts(case_dir / "put").get("raw") or 0) != 0:
+        return False
+    for job in deferred:
+        jobs.append(job)
+        requeued.append(job["unit"])
+    print("[rq1]   stage4 REQUEUE for empty case: no artifact was emitted and every certified "
+          "unit was gate-only; requeueing " + ", ".join(requeued), flush=True)
+    return True
+
+
 def summarize_put_artifacts(put_root: Path) -> dict:
     emission = Counter()
     valid = Counter()
@@ -8609,6 +8658,23 @@ def _effective_stage2_unit_timeout_cap_s(job: dict,
                                          stage4_reserve_s: int = 0) -> int:
     explicit = int(args.stage2_unit_timeout_cap_s or 0)
     if explicit > 0:
+        # A FEW-UNIT case has almost the whole case budget to itself, so the
+        # flat many-unit cap starves it. MEASURED 2026-08-22:
+        # rc_unchecked...0xa1fceeff...AirDropContract.transfer is a single-unit
+        # case whose region certification needs ~120 s (it certifies 0 regions
+        # at 60 s and 2 at 120 s), so the flat 60 s KILLED it before any method
+        # region certified. Give a case below the many-unit threshold the
+        # larger declared adaptive cap; many-unit cases keep the explicit fair
+        # cap so their per-unit shares stay bounded. Uniform by unit count, and
+        # strictly-additive (a shorter run is never forced longer than it would
+        # otherwise get). `--stage2-unit-timeout-cap-s 60` therefore now means
+        # "60 s per unit once a case has enough units to share, 120 s when it
+        # does not."
+        adaptive = int(args.adaptive_stage2_unit_timeout_cap_s or 0)
+        if (adaptive > explicit
+                and not _is_internal_target_wrapper_job(job)
+                and units_scheduled < ADAPTIVE_STAGE2_MANY_UNIT_THRESHOLD):
+            return adaptive
         return explicit
     if _is_internal_target_wrapper_job(job):
         return 0
@@ -8631,8 +8697,11 @@ def _effective_stage2_unit_timeout_cap_s(job: dict,
 
 
 def _stage2_unit_timeout_cap_reason(args, effective_cap_s: int) -> str:
-    if int(args.stage2_unit_timeout_cap_s or 0) > 0:
-        return "explicit"
+    explicit = int(args.stage2_unit_timeout_cap_s or 0)
+    if explicit > 0:
+        # A few-unit case is raised from the explicit many-unit cap to the
+        # larger adaptive one (see _effective_stage2_unit_timeout_cap_s).
+        return "explicit" if int(effective_cap_s or 0) == explicit else "adaptive-few-unit"
     if effective_cap_s > 0:
         return "adaptive"
     return "uncapped"
@@ -8902,6 +8971,10 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     stage4_candidate_units_attempted = 0
     low_budget_concrete_only_stage4_skips = []
     structural_only_stage4_skips = []
+    # The gate-only jobs the skip deferred, and the units requeued from them
+    # when the case would otherwise finish with no artifact at all.
+    structural_only_deferred_jobs = []
+    structural_only_requeued_units = []
     consecutive_structural_only_units = 0
     low_budget_timeout_only_stage4_skips = []
     put_saturated_concrete_only_stage4_skips = []
@@ -9664,6 +9737,17 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 result_status = "early-stop-no-output"
                 failure_reason = early_stop_reason
                 break
+            # A unit with no Stage-4 candidate leaves the loop body here, so the
+            # requeue at the bottom never sees it -- and this is exactly the
+            # shape that loses the case: on StarNFTProxy the LAST unit is
+            # NO-PATH, so the last-unit rule protects a unit that cannot emit
+            # anything while the six units that certified were all skipped.
+            if (pending_units_after_this == 0
+                    and _requeue_structural_only_for_empty_case(
+                        jobs, structural_only_deferred_jobs, structural_only_requeued_units,
+                        case_dir, deadline_remaining_s=_remaining(deadline),
+                        min_remaining_s=args.min_remaining_s)):
+                continue
             continue
         consecutive_no_candidate_units = 0
         partial_put = summarize_put_artifacts(case_dir / "put")
@@ -9838,7 +9922,17 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         else:
             consecutive_structural_only_units = 0
         if (STRUCTURAL_ONLY_STAGE4_SKIP and strict_case_wall_budget
-                and pending_units_after_this > 0 and structural_only_unit):
+                and pending_units_after_this > 0 and structural_only_unit
+                and unit not in structural_only_requeued_units):
+            recorded_so_far = summarize_put_artifacts(case_dir / "put")
+            would_stop_case = (
+                consecutive_structural_only_units >= STRUCTURAL_ONLY_CASE_STOP_N
+                and int(recorded_so_far.get("put_valid") or 0) == 0)
+            # Remember it: if the case ends up emitting NOTHING, the gate-only
+            # units are the only ones that could have emitted anything, and the
+            # requeue at the end of the loop gives one of them its Stage 4.
+            if job not in structural_only_deferred_jobs:
+                structural_only_deferred_jobs.append(job)
             structural_only_stage4_skips.append({
                 "unit": unit,
                 "job_id": job.get("job_id"),
@@ -9851,14 +9945,34 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             })
             print(f"[rq1]   stage4 skipped for {unit}: structural-only certificates, "
                   f"{pending_units_after_this} unit(s) pending", flush=True)
-            if (consecutive_structural_only_units >= STRUCTURAL_ONLY_CASE_STOP_N
-                    and int(summarize_put_artifacts(case_dir / "put").get("put_valid") or 0) == 0):
+            if would_stop_case:
+                # ---- THE CASE-STOP MUST NOT END THE CASE WITH NOTHING -------
+                #
+                # The stop is budget triage and is right to fire: these units
+                # produce no METHOD PUT. But it BREAKS out of the loop, so it
+                # also skips the last unit -- and the last-unit rule
+                # (`pending_units_after_this > 0`) is the whole reason the skip
+                # above is safe: "the last unit of a case is never skipped, so
+                # a gate-only case still leaves a Valid test". Breaking early
+                # loses that, and the case ends with no put.json at all.
+                #
+                # If the case has emitted NOTHING, requeue instead of breaking:
+                # the deferred gate-only units go to the back of `jobs`, where
+                # the last of them has `pending_units_after_this == 0` and the
+                # skip cannot fire. That is exactly the spend the last-unit rule
+                # would have made -- no budget is raised, and the remaining
+                # deadline still governs.
+                if _requeue_structural_only_for_empty_case(
+                        jobs, structural_only_deferred_jobs, structural_only_requeued_units,
+                        case_dir, deadline_remaining_s=_remaining(deadline),
+                        min_remaining_s=args.min_remaining_s):
+                    continue
                 result_status = "early-stop-no-output"
                 failure_reason = (
-                    f"{consecutive_structural_only_units} consecutive unit(s) certified only the "
-                    f"compiler's ABI/getter value gate and no method PUT was published; the "
-                    f"remaining {pending_units_after_this} unit(s) were not attempted (the case "
-                    f"budget is unchanged, it was simply producing nothing)")
+                    f"{consecutive_structural_only_units} consecutive unit(s) certified only "
+                    f"the compiler's ABI/getter value gate and no method PUT was published; "
+                    f"the remaining {pending_units_after_this} unit(s) were not attempted "
+                    f"(the case budget is unchanged, it was simply producing nothing)")
                 print(f"[rq1]   STOP case: {failure_reason}", flush=True)
                 break
             continue
@@ -10092,6 +10206,18 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             result_status = "early-stop-no-output"
             failure_reason = early_stop_reason
             break
+        # The schedule ran out with the case still empty. The last unit is never
+        # skipped, but that only guarantees a Valid test when the last unit HAS
+        # something to emit: on StarNFTProxy the 6 CERTIFIED units were all
+        # gate-only and were skipped, and the three units after them were
+        # NO-PATH, so the rule protected units with nothing to publish. Requeue
+        # the deferred gate-only units here for the same reason as at the stop.
+        if (pending_units_after_this == 0
+                and _requeue_structural_only_for_empty_case(
+                    jobs, structural_only_deferred_jobs, structural_only_requeued_units,
+                    case_dir, deadline_remaining_s=_remaining(deadline),
+                    min_remaining_s=args.min_remaining_s)):
+            continue
 
     if strict_case_wall_budget:
         certification_staging_root = cert_path.parent
@@ -10312,6 +10438,13 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         structural_only_stage4_skips,
         "structural_only_stage4_skip_count":
         len(structural_only_stage4_skips),
+        # The gate-only units requeued because the case would otherwise have
+        # finished with no artifact at all. Recorded so the rescue is auditable
+        # rather than invisible: an empty list means the case never needed it.
+        "structural_only_requeued_units":
+        structural_only_requeued_units,
+        "structural_only_requeued_unit_count":
+        len(structural_only_requeued_units),
         "low_budget_timeout_only_stage4_skips":
         low_budget_timeout_only_stage4_skips,
         "low_budget_timeout_only_stage4_skip_count":
