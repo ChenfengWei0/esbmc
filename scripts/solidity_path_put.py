@@ -22109,6 +22109,38 @@ def _concrete_return_literal(sol_type, value):
     return None
 
 
+def _return_witness_expressible(rettypes):
+    """Whether an exact Stage-2 return witness can be SPELLED for this signature.
+
+    The witness is a scalar literal -- `_concrete_return_literal` is the whole
+    vocabulary -- so a unit returning `bytes`, `string`, a dynamic array or a
+    struct can never have one. Asking for it is not "the witness has not arrived
+    yet", it is "the witness cannot exist", and refusing the basis on that never
+    becomes satisfiable.
+
+    MEASURED over full-20260822-v40's cases that are short of a PUT: EVERY ONE
+    of the 17 `certified-basis-return-witness-missing` refusals (13 subjects) is
+    a non-scalar return -- bytes x3, `struct CometConfiguration.Configuration`
+    x2, `string, string` x2, `bytes, bytes` x2, `address[], address[]`,
+    `string[], string[]`, `bytes32[], bytes32[]`, `struct CometCore.AssetInfo`,
+    `struct AbstractUniversalResolver.ResolverInfo`,
+    `struct EulerSavingsRate.ESRSlot`, `string, string, bytes`,
+    `uint256, bool, bytes`. Not one returns a scalar.
+
+    Asking `_concrete_return_literal` itself, rather than re-listing the types,
+    keeps this in step with the renderer -- including the contract/interface and
+    enum cases it learned to render.
+    """
+    if not rettypes:
+        return False
+    for entry in rettypes:
+        sol_type = (entry[1]
+                    if isinstance(entry, (list, tuple)) and len(entry) > 1 else entry)
+        if _concrete_return_literal(sol_type, 0) is None:
+            return False
+    return True
+
+
 def add_concrete_fixed_return_oracle(source, test_name, unit, rettypes, witness_value,
                                      normal_exit=False):
     """Bind a source-synthesized fixed replay to its Stage-2 return value."""
@@ -22431,6 +22463,15 @@ def certified_basis_missing_return_witness(concrete_only,
     has_exact_observable = any(
         isinstance(oracle, dict) and oracle.get("kind") in CONCRETE_STRUCTURED_ORACLE_KINDS
         for oracle in (concrete_oracles or []))
+    # A return the witness vocabulary cannot spell is not a MISSING witness, it
+    # is an IMPOSSIBLE one, and refusing the basis for it can never be satisfied
+    # -- see `_return_witness_expressible`. Emit the replay without a return
+    # oracle instead: it still asserts the exit/revert behaviour of a witnessed
+    # input, which is strictly LESS than before and never anything false. This
+    # only reaches cases that are refused outright today, so no emitted PUT can
+    # lose an oracle it currently carries.
+    if not _return_witness_expressible(rettypes):
+        return False
     return (concrete_return_mode_allowed(concrete_only, stage2_source, witness_check)
             and rettypes is not None and len(rettypes) > 0 and witness_value is None
             and not has_exact_observable)
