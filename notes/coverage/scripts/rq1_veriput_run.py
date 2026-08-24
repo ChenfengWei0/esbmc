@@ -5966,6 +5966,7 @@ def _requeue_structural_only_for_empty_case(jobs: list,
                                             requeued: list,
                                             case_dir: Path,
                                             *,
+                                            after_index: int,
                                             deadline_remaining_s: float,
                                             min_remaining_s: float) -> bool:
     """Give the skipped gate-only units their Stage 4 when nothing else will.
@@ -5986,9 +5987,14 @@ def _requeue_structural_only_for_empty_case(jobs: list,
     show the same shape (ReferenceConsideration, BufferRouter, Router,
     UnbalancedAddViaSwapRouter, ESynth: 8 certified regions each).
 
-    Appending to `jobs` while `enumerate(jobs, 1)` walks it extends the walk,
-    and `pending_units_after_this` is recomputed from `len(jobs)`, so the last
-    requeued unit sees 0 pending and the skip cannot fire for it.
+    The deferred jobs are inserted IMMEDIATELY AFTER the current one, not
+    appended. `enumerate(jobs, 1)` walks by index, so an insert at `after_index`
+    is picked up on the very next iteration. Appending was measured to lose the
+    race: on ESynth the requeue fired at the 8th gate-only unit and the 9th
+    tripped STRUCTURAL_ONLY_CASE_STOP_N one iteration later, breaking out of the
+    loop with 25 units still ahead of the requeued ones -- which therefore never
+    ran, and the case stayed `no-valid`. Running them next also keeps them from
+    being re-skipped by the caller's `unit not in requeued` guard.
 
     ADDITIVE BY CONSTRUCTION -- returns False, changing nothing, unless the case
     has emitted absolutely nothing (`raw == 0`: not one PUT, not one concrete
@@ -6002,8 +6008,8 @@ def _requeue_structural_only_for_empty_case(jobs: list,
         return False
     if int(summarize_put_artifacts(case_dir / "put").get("raw") or 0) != 0:
         return False
-    for job in deferred:
-        jobs.append(job)
+    for offset, job in enumerate(deferred):
+        jobs.insert(after_index + offset, job)
         requeued.append(job["unit"])
     print("[rq1]   stage4 REQUEUE for empty case: no artifact was emitted and every certified "
           "unit was gate-only; requeueing " + ", ".join(requeued), flush=True)
@@ -9745,7 +9751,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             if (pending_units_after_this == 0
                     and _requeue_structural_only_for_empty_case(
                         jobs, structural_only_deferred_jobs, structural_only_requeued_units,
-                        case_dir, deadline_remaining_s=_remaining(deadline),
+                        case_dir, after_index=idx, deadline_remaining_s=_remaining(deadline),
                         min_remaining_s=args.min_remaining_s)):
                 continue
             continue
@@ -9964,7 +9970,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 # deadline still governs.
                 if _requeue_structural_only_for_empty_case(
                         jobs, structural_only_deferred_jobs, structural_only_requeued_units,
-                        case_dir, deadline_remaining_s=_remaining(deadline),
+                        case_dir, after_index=idx, deadline_remaining_s=_remaining(deadline),
                         min_remaining_s=args.min_remaining_s):
                     continue
                 result_status = "early-stop-no-output"
@@ -10215,7 +10221,7 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         if (pending_units_after_this == 0
                 and _requeue_structural_only_for_empty_case(
                     jobs, structural_only_deferred_jobs, structural_only_requeued_units,
-                    case_dir, deadline_remaining_s=_remaining(deadline),
+                    case_dir, after_index=idx, deadline_remaining_s=_remaining(deadline),
                     min_remaining_s=args.min_remaining_s)):
             continue
 
