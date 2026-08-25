@@ -9881,7 +9881,85 @@ def _constructor_arg_controls_sender_guarded_call(chunk, ctor_body, pname):
     return False
 
 
-def _constructor_arg_flows_to_nonzero_guard(chunk, ctor_body, pname):
+def _modifier_always_runs_body(source, chunk, name):
+    """Whether `modifier name` can only run the body or revert, never skip it.
+
+    A modified callee is skipped by `_constructor_arg_flows_to_nonzero_guard`
+    because a modifier MAY prevent the body -- and with it the body's `require`
+    -- from running at all, which would make a nonzero spec a claim the source
+    does not support. That caution is only warranted for a modifier that can
+    RETURN WITHOUT the body: one whose `_` sits under an `if`, a loop, or is
+    absent entirely. For `require(cond); _;` the two outcomes are "revert" and
+    "run the body", so a mandatory call to the callee rejects address(0)
+    either way and the spec is exactly as sound as an inline guard.
+
+    MEASURED on ERC-3643 TREXFactory (full-20260822-v40, a no-valid case). Its
+    constructor is `setImplementationAuthority(x); setIdFactory(y);` and BOTH
+    callees open with `require(a != address(0), "invalid argument - zero
+    address")` -- but both are `public override onlyOwner`, so every gate of
+    `_constructor_arg_flows_to_nonzero_guard` passed EXCEPT the modifier one,
+    `constructor_param_nonzero_specs` returned [], and setUp rendered
+    `new TREXFactory(address(uint160(0)), address(uint160(0)))`, which reverts
+    with that very message on every emitted row.
+
+    The modifier is looked up across the WHOLE source, not just this contract's
+    chunk, because it is usually inherited (`onlyOwner` lives in Ownable). When
+    a name has several definitions every one of them must always run the body:
+    a single skipping definition makes the callee's guard optional again. A
+    name with no definition found at all returns False.
+    """
+    if not name:
+        return False
+    bodies = []
+    for text in (chunk, source):
+        if not text:
+            continue
+        body = _source_modifier_body(text, name)
+        if body is not None:
+            bodies.append(body)
+    # `_source_modifier_body` returns the FIRST definition in the text it is
+    # given, so scan `source` for the rest by hand rather than trusting one hit.
+    for match in re.finditer(r"modifier\s+" + re.escape(name) + r"\s*(?:\([^)]*\))?\s*[^;{]*\{",
+                             source or "", re.S):
+        body = _source_modifier_body((source or "")[match.start():], name)
+        if body is not None:
+            bodies.append(body)
+    if not bodies:
+        return False
+    for body in bodies:
+        masked = _mask_solidity_comments_and_strings(body)
+        depth = 0
+        placeholder_at_top = False
+        index = 0
+        while index < len(masked):
+            ch = masked[index]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+            elif (ch == "_" and depth == 0
+                  and (index == 0 or not (masked[index - 1].isalnum()
+                                          or masked[index - 1] == "_"))):
+                rest = masked[index + 1:]
+                stripped = rest.lstrip()
+                if stripped.startswith(";"):
+                    placeholder_at_top = True
+            index += 1
+        if not placeholder_at_top:
+            return False
+    return True
+
+
+def _constructor_callee_modifiers_are_mandatory(source, chunk, header_tail):
+    """Every modifier on a constructor-called function always runs its body."""
+    tail = re.sub(r"\breturns\s*\([^)]*\)", " ", header_tail or "", flags=re.S)
+    names = _source_modifier_names_from_header(tail)
+    if not names:
+        return True
+    return all(_modifier_always_runs_body(source, chunk, name) for name in names)
+
+
+def _constructor_arg_flows_to_nonzero_guard(chunk, ctor_body, pname, source=None):
     call_rx = re.compile(r"\b([A-Za-z_]\w*)\s*\((.*?)\)\s*;?", re.S)
     clean_body = _mask_solidity_comments_and_strings(ctor_body or "")
     for m in call_rx.finditer(clean_body):
@@ -9894,7 +9972,9 @@ def _constructor_arg_flows_to_nonzero_guard(chunk, ctor_body, pname):
             if arg != pname:
                 continue
             for params, header_tail, body in _source_function_decl_infos(chunk, m.group(1)):
-                if _source_function_header_has_modifier(header_tail):
+                if (_source_function_header_has_modifier(header_tail)
+                        and not _constructor_callee_modifiers_are_mandatory(
+                            source, chunk, header_tail)):
                     continue
                 if arg_idx >= len(params):
                     continue
@@ -10244,7 +10324,8 @@ def constructor_param_nonzero_specs(source, contract):
                 current_chunk, body, pname))
             if (not match_sender and not _body_has_nonzero_address_guard(body, pname)
                     and not _body_has_nonzero_address_disjunct_guard(body, pname)
-                    and not _constructor_arg_flows_to_nonzero_guard(current_chunk, body, pname)):
+                    and not _constructor_arg_flows_to_nonzero_guard(
+                        current_chunk, body, pname, source)):
                 continue
             spec = dict(binding)
             spec["match_sender"] = bool(spec.get("match_sender") or match_sender)
