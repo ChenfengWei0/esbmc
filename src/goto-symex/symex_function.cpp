@@ -245,10 +245,13 @@ unsigned goto_symext::argument_assignments(
         else
         {
           log_error(
-            "function call: argument \"{}\" type mismatch: got {}, expected {}",
+            "function call: argument \"{}\" type mismatch: got {}, expected {} "
+            "(call at {}; actual: {})",
             id2string(identifier),
             get_type_id((*it1)->type),
-            get_type_id(arg_type));
+            get_type_id(arg_type),
+            cur_state->source.pc->location.as_string(),
+            *rhs);
           abort();
         }
       }

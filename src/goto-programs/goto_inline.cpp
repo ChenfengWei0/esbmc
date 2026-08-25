@@ -95,10 +95,12 @@ void goto_inlinet::parameter_assignments(
         else
         {
           log_error(
-            "function call: argument `{}' type mismatch: got {}, expected {}",
+            "function call: argument `{}' type mismatch: got {}, expected {} "
+            "(call at {})",
             id2string(identifier),
             from_type(ns, identifier, actual->type),
-            from_type(ns, identifier, formal_type));
+            from_type(ns, identifier, formal_type),
+            location.as_string());
           abort();
         }
       }

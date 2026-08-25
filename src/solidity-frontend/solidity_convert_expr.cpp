@@ -2123,6 +2123,25 @@ bool solidity_convertert::get_tuple_expr(
         }
       */
 
+    // Parentheses around ONE tuple-valued expression are not a tuple
+    // literal: `(a, ) = (ctl.getConduitCodeHashes());` parses as a
+    // TupleExpression{components:[FunctionCall]} whose typeString is the
+    // callee's `tuple(bytes32,bytes32)`. Building a 1-member tuple struct
+    // here wrapped the whole call result in `mem0` with an empty struct
+    // type, and the later `bytes32(...)` cast of that member aborted symex
+    // with "argument `bytes_static_from_uint@val` type mismatch: got
+    // struct, expected unsignedbv" for EVERY unit of the contract.
+    // MEASURED on full-20260822-v40 ReferenceConsideration (9 driver runs,
+    // constructor statement at src 13460:61): removing the parentheses
+    // from the source made the same run VERIFICATION SUCCESSFUL. Unwrap.
+    if (
+      !current_lhsDecl && expr["components"].is_array() &&
+      expr["components"].size() == 1 && !expr["components"][0].is_null() &&
+      expr["components"][0].is_object())
+    {
+      return get_expr(expr["components"][0], literal_type, new_expr);
+    }
+
     if (current_lhsDecl)
     {
       // avoid nested

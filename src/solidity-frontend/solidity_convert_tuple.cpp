@@ -22,11 +22,23 @@ namespace
 {
 const nlohmann::json *get_tuple_assignment_rhs_json(const nlohmann::json &expr)
 {
+  const nlohmann::json *rhs = nullptr;
   if (expr.contains("rightHandSide"))
-    return &expr["rightHandSide"];
-  if (expr.contains("initialValue"))
-    return &expr["initialValue"];
-  return nullptr;
+    rhs = &expr["rightHandSide"];
+  else if (expr.contains("initialValue"))
+    rhs = &expr["initialValue"];
+  // `(p, q) = (two());` -- parentheses around ONE tuple-valued expression
+  // are not a tuple literal; every consumer below looks for the call's
+  // `.expression`, which lives one level down. Same unwrap as the callee
+  // loop in construct_tuple_assigments and as get_tuple_expr.
+  while (rhs != nullptr && rhs->is_object() &&
+         rhs->value("nodeType", "") == "TupleExpression" &&
+         rhs->contains("components") && (*rhs)["components"].is_array() &&
+         (*rhs)["components"].size() == 1 &&
+         !(*rhs)["components"][0].is_null() &&
+         (*rhs)["components"][0].is_object())
+    rhs = &(*rhs)["components"][0];
+  return rhs;
 }
 
 bool is_low_level_call_tuple_rhs(const nlohmann::json &expr)
