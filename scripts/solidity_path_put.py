@@ -21869,6 +21869,18 @@ def materialize_concrete_certified_call_point(source, test_name, unit, params, c
         return source, 0, "certified CE target call is absent"
     replacements = {}
     for index, (name, sol_type) in enumerate(declared):
+        # An UNNAMED parameter (`supportsInterface(bytes4)`) is `_arg<i>` to the
+        # source parser but `omitted_param_<i>` in the frontend's CE (ordinal =
+        # position in the declaration, solidity_convert_decl.cpp). Look the CE
+        # up under that name, else the value is never found and the basis is
+        # refused "cannot be rendered exactly". MEASURED: ETHReverseResolver /
+        # ChainReverseResolver.supportsInterface(bytes4), fix-20260826-harvest.
+        alias = f"omitted_param_{index}"
+        if (name not in expected
+                and not any(k.startswith((name + ".", name + "[")) for k in expected)
+                and (alias in expected
+                     or any(k.startswith((alias + ".", alias + "[")) for k in expected))):
+            name = alias
         if name in expected:
             literal = _concrete_return_literal(sol_type, expected[name])
         elif (str(sol_type).strip() in ("bytes", "bytes memory", "bytes calldata")
