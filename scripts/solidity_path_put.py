@@ -11773,7 +11773,16 @@ def bind_emitted_source_to_certified_ce(body,
     rendered = {}
     bindings = {}
     unconstrained_dynamic = {}
-    for (name, typ), expr in zip(params, args):
+    for index, ((name, typ), expr) in enumerate(zip(params, args)):
+        # Unnamed parameter: the CE names it `omitted_param_<i>` (frontend
+        # ordinal), the source parser `_arg<i>`. Same rule as the call-point
+        # renderer (`materialize_concrete_certified_call_point`).
+        alias = f"omitted_param_{index}"
+        if (name not in expected_ce
+                and not any(k.startswith((name + ".", name + "[")) for k in expected_ce)
+                and (alias in expected_ce
+                     or any(k.startswith((alias + ".", alias + "[")) for k in expected_ce))):
+            name = alias
         if name not in expected_ce:
             length_name = name + ".length"
             empty_dynamic = (str(typ).strip() in ("bytes", "bytes memory", "bytes calldata")

@@ -1944,7 +1944,12 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail, representat
         if match is None:
             return None, "PUT fuzz parameter declaration is not scalar and exact"
         solidity_type, name = match.groups()
-        keys = (aliases.get(name), name, name[2:] if name.startswith("p_") else None)
+        bare = name[2:] if name.startswith("p_") else None
+        # Unnamed parameter: `p__arg<i>` in the PUT, `omitted_param_<i>` in the
+        # CE (frontend ordinal). Same rule as the Stage-4 renderers.
+        m_arg = re.fullmatch(r"(?:p_)?_arg(\d+)", name)
+        keys = (aliases.get(name), name, bare,
+                f"omitted_param_{m_arg.group(1)}" if m_arg else None)
         raw_value = next((ce[key] for key in keys if key is not None and key in ce), None)
         if raw_value is None and name.startswith("s_"):
             # A state-slot fuzz parameter is named `s_<slot-ident>`, where the
