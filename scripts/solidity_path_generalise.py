@@ -4632,7 +4632,13 @@ def constructor_param_immutables(ast_path, contract):
                 if (n.get("nodeType") == "Assignment" and n.get("operator") == "="
                         and ident_ref(n.get("rightHandSide")) in free):
                     d = decls.get(ident_ref(n.get("leftHandSide")))
-                    if d is not None and d.get("mutability") == "immutable":
+                    # Value types only: an address/contract immutable names
+                    # the code behind an external call, which the emitted
+                    # setUp() mocks at the address it passed; freeing the
+                    # number would not free anything the test can establish.
+                    ty = str(((d or {}).get("typeDescriptions") or {}).get("typeString") or "")
+                    if (d is not None and d.get("mutability") == "immutable"
+                            and not ty.startswith(("address", "contract ", "interface "))):
                         out.add(d.get("name"))
                 for v in n.values():
                     scan(v)

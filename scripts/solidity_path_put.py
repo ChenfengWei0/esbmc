@@ -9107,6 +9107,14 @@ def deployment_coordinate_param(name, ptype, lo, hi, coord_holes, used, sig, ren
     None when the type has no scalar rendering.
     """
     ptype = (ptype or "").strip()
+    # VALUE types only. An address (or contract/interface) parameter names
+    # the code the unit will call; the query modelled that call through its
+    # extcall pins, and the emitted setUp() put a mock at the address it
+    # passed. Re-deploying with the CE's number instead would point the unit
+    # at an address with no code behind it, and the call reverts -- a green
+    # PUT that merely skipped the pin would turn red. Not a coordinate here.
+    if ptype in ("address", "address payable") or re.fullmatch(r"[A-Z]\w*", ptype):
+        return None
     lo, hi = int(lo), int(hi)
     hs = sorted({int(h) for h in coord_holes if lo <= int(h) <= hi})
     if lo == hi:
@@ -9115,8 +9123,6 @@ def deployment_coordinate_param(name, ptype, lo, hi, coord_holes, used, sig, ren
             bits = int(m.group(1) or 256)
             lo = lo - (1 << bits) if lo >= (1 << (bits - 1)) else lo
         lit = _constructor_param_bound_literal(ptype, lo)
-        if lit is None and re.fullmatch(r"[A-Z]\w*", ptype) and 0 <= lo < (1 << 160):
-            lit = f"{ptype}(address(uint160({lo})))"
         return (lit, []) if lit is not None else None
     m = re.fullmatch(r"(u?)int([0-9]*)", ptype)
     if m:
@@ -9129,17 +9135,9 @@ def deployment_coordinate_param(name, ptype, lo, hi, coord_holes, used, sig, ren
         # the constructor gets the same bits reinterpreted.
         var, lines = freed_state_fuzz_param(name, bits, lo, hi, hs, used, sig, rendered_width)
         return f"int{bits}({var})", lines
-    if ptype in ("address", "address payable"):
-        var, lines = freed_state_fuzz_param(name, 160, lo, hi, hs, used, sig, rendered_width)
-        return f"address(uint160({var}))", lines
     if ptype == "bool":
         var, lines = freed_state_fuzz_param(name, 8, lo, hi, hs, used, sig, rendered_width)
         return f"({var} != 0)", lines
-    # A contract/interface-typed parameter is an address coordinate in the
-    # query; the constructor takes it wrapped in its own type.
-    if re.fullmatch(r"[A-Z]\w*", ptype) and lo >= 0 and hi < (1 << 160):
-        var, lines = freed_state_fuzz_param(name, 160, lo, hi, hs, used, sig, rendered_width)
-        return f"{ptype}(address(uint160({var})))", lines
     return None
 
 
@@ -15716,8 +15714,9 @@ def build_put(contract,
                     continue
                 state_skipped.append(f"{name} (immutable set from constructor parameter "
                                      f"`{_pname}: {_ptype}`, but the deploy takes "
-                                     f"{len(_dargs)} argument(s) or the type has no scalar "
-                                     f"rendering over [{lo}, {hi}])")
+                                     f"{len(_dargs)} argument(s) or the type is not a value "
+                                     f"type with a scalar rendering over [{lo}, {hi}]; an "
+                                     f"address names the mock the setUp deployed and stays)")
                 continue
             state_skipped.append(f"{name} (no storage slot: solc's layout does not list it, so "
                                  f"it is a constant/immutable and no test can set it)")
