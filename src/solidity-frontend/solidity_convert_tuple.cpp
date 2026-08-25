@@ -489,7 +489,25 @@ bool solidity_convertert::get_tuple_member_call(
 
 void solidity_convertert::get_tuple_function_call(const exprt &op)
 {
-  assert(op.id() == "sideeffect");
+  // A tuple-returning call whose RHS is NOT a call expression has already
+  // been materialised upstream: under --extcall-nondet (and for opaque /
+  // path-coverage address casts) synthesize_nondet_member_return() assigns a
+  // fresh nondet to every member of the callee's tuple instance in the front
+  // block and hands back the INSTANCE SYMBOL, not a `sideeffect`. There is no
+  // call left to emit; the members the caller extracts next are the nondets
+  // already assigned. MEASURED on full-20260822-v40: `(a, b, c) =
+  // _vault.removeLiquidity(...)` tripped the former assert here and aborted
+  // the whole contract conversion, so EVERY unit of Router, BufferRouter,
+  // SeaportValidator (26 driver runs across the zero-PUT cases) enumerated
+  // nothing and fell through to the structural msg.value gate.
+  if (op.id() != "sideeffect")
+  {
+    log_debug(
+      "solidity",
+      "tuple function call already materialised as `{}`; nothing to emit",
+      op.id().as_string());
+    return;
+  }
   exprt func_call = op;
   convert_expression_to_code(func_call);
   if (current_functionDecl)
@@ -712,8 +730,28 @@ bool solidity_convertert::construct_tuple_assigments(
           }
           return false;
         }
-        log_error("tuple assignment: cannot resolve RHS tuple function");
-        return true;
+        // No tuple instance can be found for this callee (a `using for`
+        // library call, a member call on a value the frontend did not bind,
+        // ...). The former log_error here aborted the WHOLE contract
+        // conversion, so one unsupported statement cost every unit of the
+        // subject: MEASURED on full-20260822-v40, SeaportNavigator and
+        // ECLPSurgeHook (17 driver runs) enumerated nothing for this reason.
+        // Over-approximate exactly as the abi.decode branch above does --
+        // an independent typed nondet per requested slot -- and say so.
+        log_warning(
+          "[approx] tuple assignment at {}: RHS tuple function could not be "
+          "resolved to a tuple instance; assigning an independent nondet to "
+          "each slot (sound over-approximation, precision lost here only)",
+          expr.value("src", "?"));
+        for (const auto &lop : lhs.operands())
+        {
+          if (lop.is_nil())
+            continue;
+          exprt value;
+          get_solidity_nondet_value(lop.type(), lop.location(), value);
+          get_tuple_assignment(expr, lop, value);
+        }
+        return false;
       }
     }
     else
