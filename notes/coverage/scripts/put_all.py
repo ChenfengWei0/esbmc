@@ -2520,6 +2520,8 @@ def append_stage4_driver_options(cmd, args, path_function, exit_kind, stage2_sou
         cmd += ["--lift-unconstrained-calldata"]
     if getattr(args, "lift_unconstrained_sender", False):
         cmd += ["--lift-unconstrained-sender"]
+    if getattr(args, "synthetic_args_from_ce", False):
+        cmd += ["--synthetic-args-from-ce"]
     if path_function:
         cmd += ["--path-function", path_function]
     if exit_kind:
@@ -3667,6 +3669,16 @@ def main():
                     help="passed to the driver: lift declared calldata "
                     "parameters absent from the certified region as "
                     "full-domain fuzz inputs when their type is supported")
+    ap.add_argument("--synthetic-args-from-ce",
+                    action="store_true",
+                    help="passed to the driver: when ESBMC emitted no concrete "
+                         "case and VeriPUT synthesizes the preamble itself, "
+                         "spell a target parameter the region and the pins do "
+                         "NOT fix from the authenticated CE rather than from "
+                         "the type's default. Default OFF. See "
+                         "solidity_path_put.py --synthetic-args-from-ce for the "
+                         "measurement and the StaticBulkRenewal positive "
+                         "control.")
     ap.add_argument("--lift-unconstrained-sender",
                     action="store_true",
                     help="passed to the driver: lift sender absent from the "

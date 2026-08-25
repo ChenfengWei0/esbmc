@@ -4706,6 +4706,29 @@ def filter_schedule_units(schedule: dict, units: list[str]) -> dict:
     return filtered
 
 
+def apply_stage2_no_coordinate_writer_retry(schedule: dict, enabled: bool) -> dict:
+    """Pass --no-coordinate-writer-retry to every Stage-2 certify_all job.
+
+    OFF by default; see certify_all's help for the measurement that says why.
+    The case wall budget is shared, so this retry spends time a later unit
+    would otherwise get -- it is an experiment switch, not a default.
+    """
+    if not enabled:
+        return schedule
+    updated = dict(schedule)
+    jobs = []
+    for current in schedule.get("jobs") or []:
+        job = dict(current)
+        argv = [str(arg) for arg in job.get("certify_argv") or []]
+        if "--no-coordinate-writer-retry" not in argv:
+            argv.append("--no-coordinate-writer-retry")
+        job["certify_argv"] = argv
+        jobs.append(job)
+    updated["jobs"] = jobs
+    updated["no_coordinate_writer_retry"] = True
+    return updated
+
+
 def apply_stage2_free_entry_state(schedule: dict, enabled: bool) -> dict:
     """Pass --free-entry-state to every Stage-2 certify_all job (see its help)."""
     if not enabled:
@@ -8816,7 +8839,8 @@ def _put_argv(cert_path: Path,
               emit_concrete_fallbacks: bool = True,
               foundry_fixture: str | None = None,
               concrete_replay_only: bool = False,
-              no_test_assert_refinement: bool = False) -> list[str]:
+              no_test_assert_refinement: bool = False,
+              synthetic_args_from_ce: bool = False) -> list[str]:
     budget = max(1, int(remaining_s))
     selector = (f"{benchmark_key}.{path_function}" if path_function else f"{benchmark_key}.{unit}")
     argv = [
@@ -8846,6 +8870,8 @@ def _put_argv(cert_path: Path,
         argv.append("--certified-concrete-only")
     if no_test_assert_refinement:
         argv.append("--no-test-assert-refinement")
+    if synthetic_args_from_ce:
+        argv.append("--synthetic-args-from-ce")
     if emit_concrete_fallbacks:
         argv.append("--emit-cleared-concrete-fallbacks")
     if foundry_fixture:
@@ -9011,6 +9037,8 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
         schedule = apply_stage2_extcall_pins(schedule, bool(getattr(args, "pin_extcall", False)))
         schedule = apply_stage2_free_entry_state(
             schedule, bool(getattr(args, "free_entry_state", False)))
+        schedule = apply_stage2_no_coordinate_writer_retry(
+            schedule, bool(getattr(args, "no_coordinate_writer_retry", False)))
         schedule = apply_stage2_flag(schedule, bool(getattr(args, "log_ladder", False)),
                                      "--log-ladder", "log_ladder")
         annotate_stage2_runtime_policy(schedule, args)
@@ -10064,7 +10092,9 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                              concrete_replay_only=bool(
                                  getattr(args, "concrete_replay_only_ablation", False)),
                              no_test_assert_refinement=bool(
-                                 getattr(args, "no_test_assert_refinement", False)))
+                                 getattr(args, "no_test_assert_refinement", False)),
+                             synthetic_args_from_ce=bool(
+                                 getattr(args, "synthetic_args_from_ce", False)))
         # Stage 4's ESBMC/emission work is budgeted by --timeout and the
         # remaining case deadline passed above.  put_all.py then runs Foundry
         # as a second, refutation-only replay oracle; let that finish outside
@@ -11186,6 +11216,24 @@ def main(argv=None) -> int:
         action="store_true",
         help="Stage 2: refine rounds lay scale-free rungs (lo+2^j / hi-2^j) instead of "
              "uniform ones, same rung count")
+    ap.add_argument(
+        "--synthetic-args-from-ce",
+        action="store_true",
+        help="Stage 4 EXPERIMENT, off by default: when ESBMC emitted no concrete case "
+             "and VeriPUT synthesizes the preamble itself, spell a target parameter that "
+             "the region and the pins do NOT fix from the authenticated CE rather than "
+             "from the type's default. MEASURED on full-20260822-v40: 40 rows over 29 "
+             "subjects assert a stage2-witness RETURN beside a default-valued argument; "
+             "7 of those subjects have no counted PUT. Positive control: "
+             "StaticBulkRenewal.supportsInterface enc=7 is RED with bytes4(0) and GREEN "
+             "on path 7 with the CE's own 0xf14869c5. Costs no extra budget.")
+    ap.add_argument(
+        "--no-coordinate-writer-retry",
+        action="store_true",
+        help="Stage 2 EXPERIMENT, off by default: when a complete witness yields no "
+             "generalisable coordinate, retry once at --max-tx 2 with the dispatcher "
+             "alphabet widened to the AST-derived writers of the state the unit reads. "
+             "Spends shared case wall budget -- see certify_all's help for the numbers")
     ap.add_argument(
         "--free-entry-state",
         action="store_true",

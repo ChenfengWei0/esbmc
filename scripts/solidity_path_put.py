@@ -12188,6 +12188,43 @@ def synthesize_unsupported_case_replay(emitted,
     return repaired, repaired_case, True
 
 
+def _certified_ce_call_arg_expr(name, sol_type, certified_ce):
+    """Spell one synthesized call argument from the authenticated CE, or None.
+
+    `synthesize_minimal_emitted_case` fills a target parameter from the region,
+    then the pins, and OTHERWISE FROM THE TYPE'S DEFAULT -- and a type default
+    is not the value the witness walked the path with. The emitted case then
+    carries the witness's RETURN oracle beside an argument the witness never
+    used, so it asserts an outcome its own input cannot produce.
+
+    MEASURED on StaticBulkRenewal.supportsInterface enc=7 (full-20260822-v40):
+    the CE names `interfaceID = 0xf14869c5` (the frontend's
+    `{ .data={241,72,105,197,0,...}, .length=4 }`) and the witness returns
+    true; the synthesizer spelled `bytes4(0)`; forge reported
+    `fixed witness return must match: false != true`, the replay was renamed
+    `disabled_test_cov_0`, and the row was refused with "concrete replay test
+    test_cov_0 is absent". Re-running the SAME emitted file with the CE's own
+    value is GREEN and walks path 7 (verified with forge, 2026-08-25).
+
+    The region and the pins keep priority: they are the CERTIFIED entry state,
+    while this is only the witness point inside it. Only a parameter that would
+    otherwise have taken a type default is spelled here, so a case that already
+    had a value is bit-identical.
+    """
+    if not certified_ce or not name:
+        return None
+    expected = normalized_concrete_ce(certified_ce)
+    if expected is None or name not in expected:
+        return None
+    value = expected[name]
+    if not isinstance(value, int) or isinstance(value, bool):
+        # A non-scalar CE coordinate (array/tuple/struct) has no literal in
+        # `_concrete_return_literal`'s vocabulary. Refusing it here leaves the
+        # existing type default in place rather than half-rendering a value.
+        return None
+    return _concrete_return_literal(sol_type, value)
+
+
 def synthesize_minimal_emitted_case(out_dir,
                                     contract,
                                     unit,
@@ -12198,7 +12235,8 @@ def synthesize_minimal_emitted_case(out_dir,
                                     notes,
                                     region=None,
                                     pins=None,
-                                    flat_source=""):
+                                    flat_source="",
+                                    certified_ce=None):
     """Create a minimal `.cov.t.sol` when ESBMC's concrete emitter timed out.
 
     The certified-region route does not trust this file for proof. It only
@@ -12218,6 +12256,8 @@ def synthesize_minimal_emitted_case(out_dir,
     call_args = []
     for idx, (_name, ty) in enumerate(named_params(params)):
         expr = _source_point_expr(_name, ty, region or {}, pins or {}, flat_source)
+        if expr is None:
+            expr = _certified_ce_call_arg_expr(_name, ty, certified_ce)
         if expr is None:
             expr = _source_type_default_expr(ty, 2000 + idx, flat_source)
         if expr is None:
@@ -23356,6 +23396,25 @@ def main():
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--memlimit", default="8g")
     ap.add_argument("--test-suffix", default="")
+    ap.add_argument("--synthetic-args-from-ce",
+                    action="store_true",
+                    help="when ESBMC emitted no concrete case and VeriPUT "
+                    "synthesizes the preamble itself, spell a target parameter "
+                    "the region and the pins do NOT fix from the authenticated "
+                    "CE instead of from the type's default. Default OFF. "
+                    "MEASURED (full-20260822-v40): 40 emitted rows over 29 "
+                    "subjects carry a `stage2-witness` return oracle that was "
+                    "NOT observed by Foundry, i.e. a witness return asserted "
+                    "beside a default-valued argument; 7 of those subjects have "
+                    "no counted PUT at all. On "
+                    "StaticBulkRenewal.supportsInterface enc=7 the default "
+                    "`bytes4(0)` made the replay RED (`false != true`), it was "
+                    "disabled, and the row was refused as \"concrete replay "
+                    "test test_cov_0 is absent\"; the CE's own "
+                    "`interfaceID = 0xf14869c5` makes the same file GREEN and "
+                    "walking path 7. A parameter the region or the pins already "
+                    "fix is untouched, so a case that had a value is "
+                    "bit-identical.")
     ap.add_argument("--concrete-only",
                     action="store_true",
                     help="emit only the authenticated concrete replay for this "
@@ -23929,7 +23988,11 @@ def main():
                                                                 notes,
                                                                 region=region,
                                                                 pins=pins,
-                                                                flat_source=synthetic_flat_source)
+                                                                flat_source=synthetic_flat_source,
+                                                                certified_ce=(
+                                                                    certified_ce
+                                                                    if getattr(a, "synthetic_args_from_ce", False)
+                                                                    else None))
                 if emitted is not None and case is not None:
                     produced = [os.path.basename(emitted.path)]
                     synthetic_claim = {
