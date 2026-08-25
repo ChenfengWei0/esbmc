@@ -18508,6 +18508,48 @@ def _public_state_getter_choice(source, iface, fname):
     return None
 
 
+def _constructor_nested_deployments(body):
+    """`new X(args)` statements a constructor performs, with their arguments.
+
+    A contract deployed BY the constructor runs its own constructor inside the
+    target's deployment, so any external call it makes on a forwarded argument
+    happens before `new Target(...)` returns -- earlier than the runtime
+    fixtures, which are installed after it.
+
+    MEASURED on balancer-v3 TimelockAuthorizerMigrator (a no-valid case in
+    full-20260822-v40). Its constructor runs
+    `new TimelockAuthorizer(address(this), _root, _vault, _changeRootDelay)`
+    and that constructor calls
+    `IAuthentication(vault).getActionId(IVaultAdmin.setAuthorizer.selector)`.
+    Only the target's OWN constructor body was scanned, so `getActionId` was
+    emitted as a RUNTIME fixture -- after `c0 = new TimelockAuthorizerMigrator(
+    ...)` -- and all 18 emitted rows died in setUp with `EvmError: Revert`.
+    Installing that one mock before the deployment turns setUp green and the
+    row's PUT passes 256 fuzz runs.
+
+    Only the constructor's own top-level `new` is read here; the walk into the
+    deployed contract's OWN bases is `scan_base_chain`'s job, which is why this
+    returns names and arguments rather than doing the scan itself.
+    """
+    out = []
+    clean = _mask_solidity_comments_and_strings(body or "")
+    for match in re.finditer(r"\bnew\s+([A-Za-z_]\w*)\s*\(", clean):
+        start = match.end()
+        depth, index = 1, start
+        while index < len(clean) and depth:
+            if clean[index] == "(":
+                depth += 1
+            elif clean[index] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            index += 1
+        if depth != 0:
+            continue
+        out.append((match.group(1), [a.strip() for a in split_top_level(clean[start:index])]))
+    return out
+
+
 def constructor_param_interface_mock_specs(forge_project, contract):
     """Interface calls made through constructor parameters.
 
@@ -19234,6 +19276,24 @@ def constructor_param_interface_mock_specs(forge_project, contract):
                 base_bindings[base_pname] = binding
         if base_bindings:
             scan_base_chain(base_name, base_bindings, set())
+
+    # A contract the constructor DEPLOYS runs inside this deployment, so its
+    # own constructor's calls on a forwarded argument are constructor-time, not
+    # runtime. `scan_base_chain` already walks a contract's constructor and its
+    # bases; it only needed to be pointed at the deployed contract too.
+    for nested_name, nested_args in _constructor_nested_deployments(body):
+        nested_params = _source_constructor_params_from_source(source, nested_name)
+        if not nested_params:
+            continue
+        nested_bindings = {}
+        for arg_idx, (nested_pname, _nested_ptype) in enumerate(nested_params):
+            if arg_idx >= len(nested_args):
+                continue
+            binding = resolve_binding(nested_args[arg_idx], target_bindings)
+            if binding is not None:
+                nested_bindings[nested_pname] = binding
+        if nested_bindings:
+            scan_base_chain(nested_name, nested_bindings, set())
 
     for iface, pname, fname in re.findall(
             r"\(?\s*\b([A-Za-z_]\w*)\s*\(\s*([A-Za-z_]\w*)\s*\)"
