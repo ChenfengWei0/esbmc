@@ -292,9 +292,17 @@ def _authenticated_put_basis_hashes(entry: dict, subject_dir: Path | None = None
     # Certified basis concrete rows store their own __basis_concrete/put.json.
     # The parameterized PUT is the sibling workdir without that suffix.
     rel_path = str(put_origin.get("path") or "")
-    if subject_dir is not None and rel_path.endswith("__basis_concrete/put.json"):
-        put_rel = rel_path[:-len("__basis_concrete/put.json")] + "/put.json"
-        put_path = subject_dir / put_rel
+    # The basis child's workdir is the PUT's workdir plus `__basis_concrete`
+    # -- and, since put_all splits a fused PUT into one basis per oracle
+    # input part, plus `__basis_concrete__<part>` (put_all.py, basis_wd).
+    # Only the unsuffixed form was recognised here, so no part-split PUT was
+    # ever authenticated against its basis and every one of them was demoted
+    # as "lacks an exact concrete basis replay" with Forge green. MEASURED:
+    # IRMLinearKink.computeInterestRateView, 4 green PUTs, put_valid 0
+    # (fix-20260825-ceargs2); 9 subjects in the region-found-no-put census.
+    sibling = re.match(r"^(.*)__basis_concrete(?:__[A-Za-z0-9_]+)?/put\.json$", rel_path)
+    if subject_dir is not None and sibling:
+        put_path = subject_dir / (sibling.group(1) + "/put.json")
         if put_path.is_file():
             hashes[_sha256(put_path)] = "authenticated-basis-sibling-put-json-sha256"
     return hashes
