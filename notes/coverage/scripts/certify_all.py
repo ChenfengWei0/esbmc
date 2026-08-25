@@ -769,6 +769,71 @@ def bounded_holds_retry_cmd(cmd, workdir, retry_hint=None):
     return out
 
 
+def _driver_option(cmd, flag):
+    """The value that follows `flag` in a driver argv, or None."""
+    for i, token in enumerate(cmd):
+        if token == flag and i + 1 < len(cmd):
+            return cmd[i + 1]
+    return None
+
+
+def no_coordinate_writer_scope(cmd):
+    """Widened dispatcher alphabet for a COMPLETE-WITNESS-NO-COORDINATE result.
+
+    The witness is complete, so enumeration is NOT empty and
+    `bounded_holds_retry_reason` deliberately declines it (it returns None as
+    soon as `no_coordinate_reason` is set).  What the path lacks is a FREE
+    coordinate: every coordinate it renders is pinned to one value, typically
+    because the guard state is written by a DIFFERENT unit that `--scope focus`
+    keeps out of the dispatcher alphabet.
+
+    Returns the derived alphabet only when it genuinely widens.  A unit that
+    writes every state variable it reads, or whose state no other unit writes,
+    derives fewer than two entries -- escalation cannot help it, and returning
+    None there is what keeps this retry from touching those paths at all.
+    """
+    ast_path = _driver_option(cmd, "--ast")
+    contract = _driver_option(cmd, "--contract")
+    unit = _driver_option(cmd, "--unit")
+    if not (ast_path and contract and unit):
+        return None
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(DRIVER)))
+        from state_writer_scope import writer_scope_for_unit
+        scope, _evidence = writer_scope_for_unit(ast_path, contract, unit)
+    except Exception:  # a derivation failure must not kill the run
+        return None
+    if not scope or len(scope) < 2:
+        return None
+    return ",".join(scope)
+
+
+def no_coordinate_retry_reason(out, rc):
+    """Retry a complete witness that produced no generalisable coordinate.
+
+    Not a proof rule: the retry only re-runs the driver with the writer in the
+    dispatcher alphabet and `--max-tx 2`, so the guard state can be established
+    by an EARLIER transaction.  Certified rows still have to come from the
+    driver/ESBMC.
+
+    Deliberately NOT declined when other encs of the same unit certified.
+    MEASURED on the three subjects whose units derive a wider alphabet
+    (Governance, CometWithExtendedAssetList, RiskManager): all three of their
+    no-coordinate driver runs also certified something, so declining there
+    would never fire at all.  It is safe because a retry cannot erase an
+    established certificate -- `merge_detail_sidecars` merges every workdir in
+    `artifact_runs` and `merge_parsed_driver_outputs` merges every entry in
+    `command_logs`, and both reconcile so an earlier certified row survives a
+    later run that lacks it.
+    """
+    if rc not in (0, 1):
+        return None
+    rec = parse_driver(out or "")
+    if not rec["no_coordinate_reason"]:
+        return None
+    return "no-coordinate-writer-retry"
+
+
 def coverage_retryable_diagnostic(diagnostic):
     if not isinstance(diagnostic, dict):
         return None
@@ -3474,6 +3539,29 @@ def main():
                     help="passed to the driver: transaction bound for the outer-box "
                          "rounds and certification queries (0 = --max-tx). Use with "
                          "--free-entry-state; see the driver's help.")
+    ap.add_argument("--no-coordinate-writer-retry", action="store_true",
+                    help="OFF BY DEFAULT, and it must stay that way unless the "
+                         "run is a deliberate experiment. When a COMPLETE "
+                         "witness yields no generalisable coordinate, re-run "
+                         "the driver once with `--max-tx 2` and a dispatcher "
+                         "alphabet widened to the units that WRITE the state "
+                         "this unit reads (derived from the AST by "
+                         "state_writer_scope), so the guard state can be "
+                         "established by an earlier transaction. "
+                         "MEASURED over full-20260822-v40 before wiring it: "
+                         "the trigger plus the widening gate fires on 29 "
+                         "driver runs across 23 subjects, but 17 of those "
+                         "subjects ALREADY have counted PUTs; adding the "
+                         "coords-empty gate narrows it to 6 runs of which 5 "
+                         "are likewise already green. The case wall budget is "
+                         "SHARED, so a retry spends time a later unit would "
+                         "otherwise get -- which is exactly the kind of "
+                         "option-level effect on the existing PUT set that is "
+                         "not allowed by default. Certified rows themselves "
+                         "are safe (merge_detail_sidecars and "
+                         "merge_parsed_driver_outputs both reconcile so an "
+                         "earlier certificate survives a later run without "
+                         "one); the cost is budget, not correctness.")
     ap.add_argument("--free-entry-state", action="store_true",
                     help="passed to the driver: FREE every `state.*` coordinate a "
                          "query measures, bounds or pins at the query entry "
@@ -4233,6 +4321,7 @@ def main():
             resource_retry = None
             probe_goal_cap_retry = None
             bounded_holds_retry = None
+            no_coordinate_retry = None
             cheap_stage2_retry = None
             ce_region_retry = None
             unknown_certification_retry = None
@@ -4409,11 +4498,84 @@ def main():
                 out, rc = retry_out, retry_rc
                 wall += retry_wall
                 t1 = retry_since
+            # A COMPLETE witness with no free coordinate. Distinct from the
+            # bounded-holds retry above, which declines this shape outright,
+            # and gated on the derivation actually widening -- so a unit that
+            # is its own writer, or whose state nothing else writes, is left
+            # exactly as it is today.
+            no_coord_reason = None
+            no_coord_scope = None
+            if (retry_allowed and not bounded_reason
+                    and getattr(args, "no_coordinate_writer_retry", False)):
+                no_coord_reason = no_coordinate_retry_reason(out, rc)
+                if no_coord_reason:
+                    no_coord_scope = no_coordinate_writer_scope(cmd)
+                    if not no_coord_scope:
+                        no_coord_reason = None
+            if no_coord_reason and int(args.timeout - wall) < CHEAP_RETRY_MIN_BUDGET_S:
+                no_coordinate_retry = {
+                    "reason": no_coord_reason,
+                    "scope": no_coord_scope,
+                    "skipped": "budget",
+                    "remaining_s": round(max(0.0, args.timeout - wall), 1),
+                    "min_budget_s": CHEAP_RETRY_MIN_BUDGET_S,
+                }
+                print(f"[driver] no-coordinate-retry SKIPPED: "
+                      f"{no_coordinate_retry['remaining_s']}s left is under the "
+                      f"{CHEAP_RETRY_MIN_BUDGET_S}s floor", flush=True)
+                no_coord_reason = None
+            if no_coord_reason:
+                remaining = max(1, int(args.timeout - wall))
+                retry_initial_uwd = active_uwd
+                retry_uwd = uwd + "__retry_no_coordinate"
+                os.makedirs(retry_uwd, exist_ok=True)
+                retry_hint = {
+                    "reason": no_coord_reason,
+                    "max_tx": 2,
+                    "unwind": 8,
+                    "scope": no_coord_scope,
+                }
+                retry_esbmc_args = []
+                if (not has_driver_esbmc_arg(cmd, "--unwind")
+                        and not has_driver_esbmc_arg(cmd, "--unwindset")):
+                    retry_esbmc_args = ["--unwind", str(retry_hint["unwind"])]
+                retry_cmd = bounded_holds_retry_cmd(cmd, retry_uwd, retry_hint)
+                print(f"[driver] no-coordinate-retry: --max-tx 2 --scope "
+                      f"{no_coord_scope}", flush=True)
+                retry_since = time.time()
+                retry_out, retry_rc, retry_wall = run_driver_subprocess(
+                    retry_cmd, remaining)
+                artifact_runs.append(("no-coordinate-retry", retry_uwd,
+                                      retry_since))
+                active_uwd = retry_uwd
+                effective_esbmc_args += retry_esbmc_args
+                no_coordinate_retry = {
+                    "reason": no_coord_reason,
+                    "scope": no_coord_scope,
+                    "initial_workdir": retry_initial_uwd,
+                    "retry_workdir": retry_uwd,
+                    "timeout_s": remaining,
+                    "exit": retry_rc,
+                    "wall_s": round(retry_wall, 1),
+                    "retry_hint": retry_hint,
+                    "esbmc_args": retry_esbmc_args,
+                }
+                command_logs.append({
+                    "label": "no-coordinate-retry",
+                    "cmd": retry_cmd,
+                    "out": retry_out or "",
+                    "rc": retry_rc,
+                    "wall_s": retry_wall,
+                })
+                out, rc = retry_out, retry_rc
+                wall += retry_wall
+                t1 = retry_since
             cheap_reason = (
                 coverage_retryable_diagnostic(result_driver_diagnostic(out))
                 if retry_allowed else None)
             if (retry_allowed
                     and cheap_reason is None and bounded_holds_retry is None
+                    and no_coordinate_retry is None
                     and result_driver_diagnostic(out) is None):
                 cheap_reason = empty_witness_retry_reason(out, rc)
             # A retry launched with a one-second budget cannot certify anything:
@@ -4573,6 +4735,12 @@ def main():
             if concrete_fallback_reason is None and bounded_holds_retry:
                 concrete_fallback_reason = (
                     "no-path/bounded-holds retry did not produce a certified "
+                    "region; emitting only concrete replay fallback rows for "
+                    "paths that already have a usable witness journal "
+                    "counterexample")
+            if concrete_fallback_reason is None and no_coordinate_retry:
+                concrete_fallback_reason = (
+                    "no-coordinate writer retry did not produce a certified "
                     "region; emitting only concrete replay fallback rows for "
                     "paths that already have a usable witness journal "
                     "counterexample")
@@ -4768,6 +4936,7 @@ def main():
                         "auto_probe_goal_cap_retry": probe_goal_cap_retry,
                         "auto_resource_retry": resource_retry,
                         "auto_bounded_holds_retry": bounded_holds_retry,
+                        "auto_no_coordinate_retry": no_coordinate_retry,
                         "auto_cheap_stage2_retry": cheap_stage2_retry,
                         "auto_ce_region_retry": ce_region_retry,
                         "auto_unknown_certification_retry":
