@@ -19,6 +19,39 @@
 #include <util/message.h>
 #include <fstream>
 
+
+// name + parameter type list of a FunctionDefinition node, e.g.
+// `extsload(t_bytes32,t_uint256)`. Solidity overloads share a name and
+// differ only in this list; an override has the SAME list. Comparing names
+// alone therefore reads every inherited overload as an override and drops
+// it (measured: PoolManager kept extsload#504 and lost #516/#530, SafeL2
+// lost the second checkSignatures, so `--focus-function extsload` matched
+// no unit and the whole method produced nothing).
+static std::string inherit_func_signature(const nlohmann::json &fn)
+{
+  std::string sig = fn.contains("name") && fn["name"].is_string()
+                      ? fn["name"].get<std::string>()
+                      : std::string();
+  if (sig.empty() && fn.contains("kind") && fn["kind"].is_string())
+    sig = fn["kind"].get<std::string>();
+  sig += "(";
+  if (fn.contains("parameters") && fn["parameters"].contains("parameters"))
+  {
+    bool first = true;
+    for (const auto &prm : fn["parameters"]["parameters"])
+    {
+      std::string t;
+      if (prm.contains("typeDescriptions") &&
+          prm["typeDescriptions"].contains("typeIdentifier") &&
+          prm["typeDescriptions"]["typeIdentifier"].is_string())
+        t = prm["typeDescriptions"]["typeIdentifier"].get<std::string>();
+      sig += (first ? "" : ",") + t;
+      first = false;
+    }
+  }
+  return sig + ")";
+}
+
 void solidity_convertert::add_inherit_label(
   nlohmann::json &node,
   const std::string &cname)
@@ -124,7 +157,7 @@ void solidity_convertert::merge_inheritance_ast(
           i.contains("body") && !i["body"].is_null() &&
           i.contains("name"))
         {
-          const std::string i_fname = i["name"].get<std::string>();
+          const std::string i_fsig = inherit_func_signature(i);
           for (auto c_it = c_node["nodes"].begin();
                c_it != c_node["nodes"].end();)
           {
@@ -132,7 +165,7 @@ void solidity_convertert::merge_inheritance_ast(
               c_it->contains("nodeType") &&
               (*c_it)["nodeType"] == "FunctionDefinition" &&
               c_it->contains("name") &&
-              (*c_it)["name"].get<std::string>() == i_fname &&
+              inherit_func_signature(*c_it) == i_fsig &&
               (!c_it->contains("body") || (*c_it)["body"].is_null()))
             {
               c_it = c_node["nodes"].erase(c_it);
@@ -188,7 +221,12 @@ void solidity_convertert::merge_inheritance_ast(
                                       : c_i["name"].get<std::string>();
               assert(!c_iname.empty());
 
-              if (i_name == c_iname)
+              // Same name AND same parameter list: an override (or the
+              // diamond case below). Same name, different list: an
+              // overload, which is merged like any other member.
+              if (
+                i_name == c_iname &&
+                inherit_func_signature(i) == inherit_func_signature(c_i))
               {
                 /*
                    A

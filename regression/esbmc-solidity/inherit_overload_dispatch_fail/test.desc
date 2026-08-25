@@ -1,0 +1,4 @@
+CORE
+contract.solast
+--sol contract.sol --contract D --no-standard-checks --unwind 2
+^VERIFICATION FAILED$
