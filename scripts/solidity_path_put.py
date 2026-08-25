@@ -12344,6 +12344,26 @@ def _certified_ce_call_arg_expr(name, sol_type, certified_ce):
     return _concrete_return_literal(sol_type, value)
 
 
+def _synthetic_args_ce(a, certified_ce):
+    """The CE --synthetic-args-from-ce may draw arguments from.
+
+    The authenticated certified CE wins when the driver was given one; the
+    row CE passed by put_all as --synthetic-args-ce-json fills in for every
+    other row (primary certified rows and cleared concrete fallbacks), which
+    MEASURED on fix-20260825-ceargs never received a CE at all.
+    """
+    if isinstance(certified_ce, dict) and certified_ce:
+        return certified_ce
+    raw = getattr(a, "synthetic_args_ce_json", None)
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) and parsed else None
+
+
 def synthesize_minimal_emitted_case(out_dir,
                                     contract,
                                     unit,
@@ -23575,6 +23595,12 @@ def main():
     ap.add_argument("--timeout", type=int, default=600)
     ap.add_argument("--memlimit", default="8g")
     ap.add_argument("--test-suffix", default="")
+    ap.add_argument("--synthetic-args-ce-json", default=None,
+                    help="JSON object: the Stage-2 counterexample of THIS row, "
+                         "consumed ONLY by --synthetic-args-from-ce to pick "
+                         "synthetic call arguments. It is not a return witness "
+                         "and does not unlock any --concrete-* mode; without "
+                         "--synthetic-args-from-ce it is ignored.")
     ap.add_argument("--synthetic-args-from-ce",
                     action="store_true",
                     help="when ESBMC emitted no concrete case and VeriPUT "
@@ -24169,7 +24195,7 @@ def main():
                                                                 pins=pins,
                                                                 flat_source=synthetic_flat_source,
                                                                 certified_ce=(
-                                                                    certified_ce
+                                                                    _synthetic_args_ce(a, certified_ce)
                                                                     if getattr(a, "synthetic_args_from_ce", False)
                                                                     else None))
                 if emitted is not None and case is not None:

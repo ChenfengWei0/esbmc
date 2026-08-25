@@ -4387,6 +4387,19 @@ def main():
         ]
         if stage4_kind:
             base_cmd += ["--stage4-kind", str(stage4_kind)]
+        # The CE this row was witnessed with. MEASURED on fix-20260825-ceargs
+        # (29 subjects, --synthetic-args-from-ce ON): the driver only ever
+        # received a CE through --concrete-certified-ce-json, which this sweep
+        # passes to the CERTIFIED-BASIS-REPLAY child alone; every primary row
+        # and every cleared concrete fallback ran with certified_ce=None, so
+        # the flag changed nothing and StaticBulkRenewal.supportsInterface
+        # still replayed `bytes4(0)` against a path that needs 0xf14869c5.
+        # Passed ONLY under the flag, so a sweep without it derives the same
+        # command line as before.
+        if getattr(args, "synthetic_args_from_ce", False):
+            row_ce = (certified_detail or {}).get("ce") or {}
+            if isinstance(row_ce, dict) and row_ce:
+                base_cmd += ["--synthetic-args-ce-json", json.dumps(row_ce, sort_keys=True)]
         if args.reuse_emitted_dir:
             base_cmd += ["--reuse-emitted-dir", args.reuse_emitted_dir]
 
