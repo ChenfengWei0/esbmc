@@ -255,7 +255,18 @@ smt_astt array_convt::mk_unbounded_select(
   {
     if (it->idx == real_idx)
     {
-      // Aha.
+      // Aha. Unless this is the select currently being laid out (re-entered
+      // through its own index conversion, see the end of this function):
+      // its value is not known yet, so hand out a fresh symbol that
+      // apply_new_selects binds to the valuation once it exists.
+      if (!it->val)
+      {
+        it->val = ctx->mk_fresh(
+          ressort,
+          "array_reentrant_select::",
+          ressort->id == SMT_SORT_ARRAY ? ressort->get_range_sort() : nullptr);
+        it->converted = false;
+      }
       return it->val;
     }
   }
@@ -276,6 +287,30 @@ smt_astt array_convt::mk_unbounded_select(
 
   add_new_indexes();
   apply_new_selects();
+
+  // Re-entrant select. Converting an index of this array can come back here
+  // for the SAME array before the outer add_new_indexes has finished laying
+  // out valuations: measured on Solidity's address-space array of
+  // {start, end} (a K=1 array-of-struct, so this legacy flattener), where an
+  // Ackermann constraint converts a `typecast(ptr -> int)` index, and that
+  // typecast reads `__ESBMC_addrspace_arr[pointer_object(ptr)].start` -- a
+  // select on the array whose indexes are being Ackermannised. The nested
+  // call finds no valuation slot yet and used to return NULL, which the
+  // caller turned into "SMT array select produced no AST" and an abort that
+  // killed every claim of the unit. Hand back a fresh symbol instead: the
+  // select stays recorded as unconverted with that symbol as its value, so
+  // the outer apply_new_selects binds it to the real valuation through an
+  // equality once the slot exists (the "old code" branch there).
+  if (!it.first->val)
+  {
+    smt_astt fresh = ctx->mk_fresh(
+      ressort,
+      "array_reentrant_select::",
+      ressort->id == SMT_SORT_ARRAY ? ressort->get_range_sort() : nullptr);
+    it.first->val = fresh;
+    it.first->converted = false;
+    return fresh;
+  }
 
   return it.first->val;
 }

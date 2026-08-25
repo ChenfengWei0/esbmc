@@ -1,3 +1,5 @@
+#include <map>
+#include <unordered_map>
 #include <bitwuzla_conv.h>
 #include <solvers/solve.h>
 #include <cstring>
@@ -87,6 +89,15 @@ smt_convt::resultt bitwuzla_convt::dec_solve()
   if (result == BITWUZLA_UNSAT)
     return P_UNSATISFIABLE;
 
+  if (const char *d = getenv("ESBMC_BZLA_DUMP_UNKNOWN"))
+  {
+    FILE *f = fopen(d, "w");
+    if (f)
+    {
+      bitwuzla_print_formula(bitw, "smt2", f, 10);
+      fclose(f);
+    }
+  }
   return P_ERROR;
 }
 
@@ -570,16 +581,128 @@ smt_astt bitwuzla_convt::mk_store(smt_astt a, smt_astt b, smt_astt c)
     a->sort);
 }
 
+// ---- select pushed through array-sorted ITE -------------------------------
+//
+// Bitwuzla's array solver registers SELECT, STORE and EQUAL nodes only. An
+// array-sorted ITE -- every SSA phi node over a mapping or a storage snapshot
+// -- is therefore eliminated by its preprocessor into a fresh array constant
+// plus two guarded equalities. When the branch being equated bottoms out in a
+// const array (a fresh mapping is `(as const 0)`, and every store over it
+// still does) the array solver answers "Equality over constant arrays not
+// fully supported yet" and the query comes back `unknown`; a whole
+// path-coverage unit then dies with `SMT solver failed` (GAZ_ERC20.transfer,
+// ClockBoxContract.transferFrom: 22 claims, 1 reached the solver).
+//
+// So no array ITE is ever asserted: a select over `ite(c, A, B)` becomes
+// `ite(c, select(A, i), select(B, i))`, and a select over a store that sits
+// on top of such an ITE is read out as `ite(i = j, v, select(base, i))` until
+// the ITE is reached. Arrays without an ITE underneath keep the native select.
+// Memoised per (array, index) so a long store chain is expanded once.
+static bool bitw_array_term_has_ite(
+  BitwuzlaTerm t, std::unordered_map<BitwuzlaTerm, bool> &memo)
+{
+  auto it = memo.find(t);
+  if (it != memo.end())
+    return it->second;
+  bool r = false;
+  BitwuzlaKind k = bitwuzla_term_get_kind(t);
+  if (k == BITWUZLA_KIND_ITE)
+  {
+    // Push only when a branch leads to a nested const array. Pushing every
+    // array ITE was measured to turn a 10 s bytes32-push regression test
+    // into 66 s once combined with the SSA substitution, and gains nothing
+    // for flat arrays, which Bitwuzla handles natively.
+    size_t n = 0;
+    BitwuzlaTerm *p = bitwuzla_term_get_children(t, &n);
+    BitwuzlaTerm c1 = n == 3 ? p[1] : 0, c2 = n == 3 ? p[2] : 0;
+    r = n == 3 &&
+        (bitw_array_term_has_ite(c1, memo) || bitw_array_term_has_ite(c2, memo));
+  }
+  else if (k == BITWUZLA_KIND_CONST_ARRAY)
+    // A const array whose element is itself an array (a nested mapping,
+    // `(as const (as const 0))`) is the other shape the array solver reports
+    // as "Equality over constant arrays not fully supported": reading through
+    // it is `select(const v, i) = v`, which the walker below applies directly.
+    r = bitwuzla_sort_is_array(
+      bitwuzla_sort_array_get_element(bitwuzla_term_get_sort(t)));
+  else if (k == BITWUZLA_KIND_ARRAY_STORE)
+  {
+    size_t n = 0;
+    BitwuzlaTerm *ch = bitwuzla_term_get_children(t, &n);
+    r = n == 3 && bitw_array_term_has_ite(ch[0], memo);
+  }
+  memo[t] = r;
+  return r;
+}
+
+static BitwuzlaTerm bitw_select_through_ite(
+  BitwuzlaTermManager *tm,
+  BitwuzlaTerm arr,
+  BitwuzlaTerm idx,
+  std::unordered_map<BitwuzlaTerm, bool> &has_ite,
+  std::map<std::pair<BitwuzlaTerm, BitwuzlaTerm>, BitwuzlaTerm> &memo)
+{
+  auto key = std::make_pair(arr, idx);
+  auto it = memo.find(key);
+  if (it != memo.end())
+    return it->second;
+  BitwuzlaTerm r;
+  BitwuzlaKind k = bitwuzla_term_get_kind(arr);
+  // bitwuzla_term_get_children hands back a buffer the next call reuses, so
+  // the children are copied out before any recursive call is made.
+  size_t n = 0;
+  BitwuzlaTerm ch[3] = {0, 0, 0};
+  if (
+    k == BITWUZLA_KIND_ITE || k == BITWUZLA_KIND_ARRAY_STORE ||
+    k == BITWUZLA_KIND_CONST_ARRAY)
+  {
+    BitwuzlaTerm *p = bitwuzla_term_get_children(arr, &n);
+    for (size_t i = 0; i < n && i < 3; i++)
+      ch[i] = p[i];
+  }
+  if (k == BITWUZLA_KIND_CONST_ARRAY && n == 1 && bitw_array_term_has_ite(arr, has_ite))
+    r = ch[0];
+  else if (k == BITWUZLA_KIND_ITE && n == 3)
+    r = bitwuzla_mk_term3(
+      tm,
+      BITWUZLA_KIND_ITE,
+      ch[0],
+      bitw_select_through_ite(tm, ch[1], idx, has_ite, memo),
+      bitw_select_through_ite(tm, ch[2], idx, has_ite, memo));
+  else if (
+    k == BITWUZLA_KIND_ARRAY_STORE && n == 3 &&
+    bitw_array_term_has_ite(ch[0], has_ite))
+    r = bitwuzla_mk_term3(
+      tm,
+      BITWUZLA_KIND_ITE,
+      bitwuzla_mk_term2(tm, BITWUZLA_KIND_EQUAL, idx, ch[1]),
+      ch[2],
+      bitw_select_through_ite(tm, ch[0], idx, has_ite, memo));
+  else
+    r = bitwuzla_mk_term2(tm, BITWUZLA_KIND_ARRAY_SELECT, arr, idx);
+  memo[key] = r;
+  return r;
+}
+
 smt_astt bitwuzla_convt::mk_select(smt_astt a, smt_astt b)
 {
   assert(a->sort->id == SMT_SORT_ARRAY);
   assert(a->sort->get_domain_width() == b->sort->get_data_width());
+  // The memos live on the converter: term ids are recycled when a term
+  // manager is destroyed, so a process-wide cache would answer for a term
+  // that no longer exists (measured on ClockBoxContract.transferFrom: a
+  // stale `false` let a nested const array through to the solver again).
+  auto &has_ite = sel_has_ite_memo;
+  auto &memo = sel_memo;
+  BitwuzlaTerm arr = to_solver_smt_ast<bitw_smt_ast>(a)->a;
+  BitwuzlaTerm idx = to_solver_smt_ast<bitw_smt_ast>(b)->a;
+  // ESBMC_NO_SELECT_PUSH=1 keeps the native select (diagnostic).
+  static const bool no_push = getenv("ESBMC_NO_SELECT_PUSH") != nullptr;
   return new_ast(
-    bitwuzla_mk_term2(
-      bitw_term_manager,
-      BITWUZLA_KIND_ARRAY_SELECT,
-      to_solver_smt_ast<bitw_smt_ast>(a)->a,
-      to_solver_smt_ast<bitw_smt_ast>(b)->a),
+    !no_push && bitw_array_term_has_ite(arr, has_ite)
+      ? bitw_select_through_ite(bitw_term_manager, arr, idx, has_ite, memo)
+      : bitwuzla_mk_term2(
+          bitw_term_manager, BITWUZLA_KIND_ARRAY_SELECT, arr, idx),
     a->sort->get_range_sort());
 }
 

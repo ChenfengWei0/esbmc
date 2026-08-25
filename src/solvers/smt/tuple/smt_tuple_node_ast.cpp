@@ -1,3 +1,4 @@
+#include <typeinfo>
 #include <solvers/smt/smt_conv.h>
 #include <solvers/smt/tuple/smt_tuple.h>
 #include <solvers/smt/tuple/smt_tuple_node.h>
@@ -93,6 +94,15 @@ void tuple_node_smt_ast::assign(smt_convt *ctx, smt_astt sym) const
   // If we're being assigned to something, populate all our vars first
   const_cast<tuple_node_smt_ast *>(this)->make_free(ctx);
 
+  if (!dynamic_cast<tuple_node_smt_astt>(sym))
+  {
+    log_error(
+      "tuple_node assign: target of '{}' is not a tuple node ({}, sort id {})",
+      name,
+      typeid(*sym).name(),
+      (int)sym->sort->id);
+    abort();
+  }
   tuple_node_smt_astt target = to_tuple_node_ast(sym);
 
   // 2C.2d: a struct-of-arrays symbol target (mk_tuple_array_symbol) has
@@ -197,7 +207,19 @@ smt_astt tuple_node_smt_ast::select(smt_convt *ctx, const expr2tc &idx) const
   // therefore never aborts.  Reached only via the 2C.2c/2C.2d K>=2
   // representation; the historical K=1 array-of-struct path uses
   // array_conv (not a tuple_node) and never enters here.
-  if (!elements.empty() && elements[0]->sort->id == SMT_SORT_ARRAY)
+  // A field whose own leaf is a struct (Solidity bytes32 = BytesStatic, so
+  // `mapping(uint64 => mapping(bytes32 => PublicKey{bytes32 x, y}))` has
+  // struct-of-arrays fields that are themselves struct-of-arrays nodes) is a
+  // nested tuple_node; distributing the select over it recurses here.
+  // Measured: PublicResolver/OwnedResolver.pubkey aborted below on exactly
+  // that shape.
+  auto is_soa_node = [](smt_astt e) {
+    auto *tn = dynamic_cast<const tuple_node_smt_ast *>(e);
+    return tn && !tn->elements.empty();
+  };
+  if (
+    !elements.empty() &&
+    (elements[0]->sort->id == SMT_SORT_ARRAY || is_soa_node(elements[0])))
   {
     std::string name = ctx->mk_fresh_name("tuple_select::") + ".";
     tuple_node_smt_ast *result = new tuple_node_smt_ast(flat, ctx, sort, name);
@@ -207,7 +229,13 @@ smt_astt tuple_node_smt_ast::select(smt_convt *ctx, const expr2tc &idx) const
     return result;
   }
 
-  log_error("Select operation applied to tuple");
+  log_error(
+    "Select operation applied to tuple '{}' ({} element(s), first sort {})",
+    name,
+    elements.size(),
+    elements.empty() ? -1 : (int)elements[0]->sort->id);
+  for (auto const &e : elements)
+    log_error("  element sort id {} data width {}", (int)e->sort->id, e->sort->get_data_width());
   abort();
 }
 

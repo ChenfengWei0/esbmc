@@ -1760,6 +1760,19 @@ bool solidity_convertert::get_sol_builtin_ref(
           if (!sym)
             return true;
 
+          // bytes.concat accepts bytes AND bytesN operands
+          // (`bytes.concat("\x19\x01", DOMAIN_SEPARATOR, hashStruct)`, Morpho
+          // and the PrivatePool family). bytes_dynamic_concat takes two
+          // BytesDynamic, so a bytesN operand is widened through the same
+          // bytesN -> bytes conversion `bytes(x)` uses; passing the static
+          // struct straight through was a GOTO type mismatch that killed
+          // every claim of the unit.
+          for (auto &a : args)
+          {
+            if (is_bytesN_type(a.type()))
+              convert_type_expr(ns, a, byte_dynamic_t, expr);
+          }
+
           side_effect_expr_function_callt first;
           get_library_function_call_no_args(
             "bytes_dynamic_concat",

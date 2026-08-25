@@ -3,6 +3,7 @@
 #include <iomanip>
 #include <solvers/prop/literal.h>
 #include <solvers/smt/smt_conv.h>
+#include <solvers/smt/tuple/smt_tuple_node_ast.h>
 #include <sstream>
 #include <util/arith_tools.h>
 #include <util/base_type.h>
@@ -370,6 +371,74 @@ smt_astt smt_convt::convert_assign(const expr2tc &expr)
     is_symbol2t(eq.side_1) &&
     (is_forall2t(eq.side_2) || is_exists2t(eq.side_2)))
     forall_defs_[to_symbol2t(eq.side_1).thename] = eq.side_2;
+
+  // Array SSA assignment by substitution (see array_assign_by_substitution):
+  // the LHS is a fresh SSA symbol that has never been referenced, so instead
+  // of declaring it and asserting `(= lhs rhs)` -- which Bitwuzla rejects as
+  // incomplete when `rhs` is a const array, or a store/ite over one -- we
+  // bind the symbol to the RHS term in the cache. Every later reference to
+  // the symbol then resolves to the term itself; models are read off the
+  // term, which the solver supports. Restricted to plain SMT arrays: tuple
+  // arrays go through the tuple flattener and keep the equality path.
+  // ESBMC_NO_ARRAY_ASSIGN_SUBST=1 restores the equality encoding (diagnostic).
+  static const bool no_subst = getenv("ESBMC_NO_ARRAY_ASSIGN_SUBST") != nullptr;
+  if (
+    !no_subst && array_assign_by_substitution() && is_symbol2t(eq.side_1) &&
+    is_array_type(eq.side_1) && !is_struct_type(to_array_type(eq.side_1->type).subtype))
+  {
+    bool fresh;
+    {
+      std::lock_guard lock(smt_cache_mutex);
+      fresh = smt_cache.find(eq.side_1) == smt_cache.end();
+    }
+    if (fresh)
+    {
+      smt_astt side2 = convert_ast(eq.side_2);
+      if (side2->sort->id == SMT_SORT_ARRAY)
+      {
+        const smt_cache_entryt e = {eq.side_1, side2, ctx_level};
+        std::lock_guard lock(smt_cache_mutex);
+        smt_cache.insert(e);
+        return side2;
+      }
+    }
+  }
+
+  // Array-of-struct SSA assignment whose RHS is a struct-of-arrays tuple
+  // node (2C.2c/2C.2d: one dimension read out of a K>=2 array-of-struct,
+  // e.g. `PoolData[] memory x = poolsByKey[key]`) while the LHS symbol is a
+  // K=1 array-of-struct, which the legacy array_conv flattener represents as
+  // an array_ast. The two representations cannot be equated (measured:
+  // VaultExtension.getBptRate died in tuple_node_smt_ast::assign with
+  // "Tuple AST mismatch"). The LHS is a fresh SSA symbol, so bind it to the
+  // tuple node instead: every later read of the symbol then goes through
+  // tuple_node_smt_ast::select, which handles the struct-of-arrays shape.
+  if (is_symbol2t(eq.side_1) && is_array_type(eq.side_1) &&
+      is_tuple_array_ast_type(eq.side_1->type))
+  {
+    bool fresh;
+    {
+      std::lock_guard lock(smt_cache_mutex);
+      fresh = smt_cache.find(eq.side_1) == smt_cache.end();
+    }
+    if (fresh)
+    {
+      smt_astt side2 = convert_ast(eq.side_2);
+      const tuple_node_smt_ast *tn =
+        dynamic_cast<const tuple_node_smt_ast *>(side2);
+      if (
+        tn && !tn->elements.empty() &&
+        tn->elements[0]->sort->id == SMT_SORT_ARRAY)
+      {
+        const smt_cache_entryt e = {eq.side_1, side2, ctx_level};
+        std::lock_guard lock(smt_cache_mutex);
+        smt_cache.insert(e);
+        return side2;
+      }
+      // Otherwise fall through: side2 is already cached, the LHS gets its
+      // own symbol and the historical assign runs unchanged.
+    }
+  }
 
   smt_astt side1 = convert_ast(eq.side_1); // LHS
   smt_astt side2 = convert_ast(eq.side_2); // RHS

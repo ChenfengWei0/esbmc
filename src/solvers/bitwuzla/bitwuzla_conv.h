@@ -1,6 +1,8 @@
 #ifndef _ESBMC_SOLVERS_BITWUZLA_BITWUZLA_CONV_H_
 #define _ESBMC_SOLVERS_BITWUZLA_BITWUZLA_CONV_H_
 
+#include <map>
+#include <unordered_map>
 #include <cstdio>
 #include <solvers/smt/smt_conv.h>
 #include <irep2/irep2.h>
@@ -30,6 +32,10 @@ public:
   void pop_ctx() override;
   resultt dec_solve() override;
   const std::string solver_text() override;
+  bool array_assign_by_substitution() const override
+  {
+    return true;
+  }
 
   void assert_ast(smt_astt a) override;
 
@@ -112,6 +118,10 @@ public:
   Bitwuzla *bitw;
   BitwuzlaOptions *bitw_options;
   BitwuzlaTermManager *bitw_term_manager;
+  // Per-instance memos for mk_select's push-through-ITE rewrite; the term
+  // ids they key on belong to bitw_term_manager and die with it.
+  std::unordered_map<BitwuzlaTerm, bool> sel_has_ite_memo;
+  std::map<std::pair<BitwuzlaTerm, BitwuzlaTerm>, BitwuzlaTerm> sel_memo;
 
   symtabt symtable;
 };

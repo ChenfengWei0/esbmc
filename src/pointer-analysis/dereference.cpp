@@ -459,11 +459,41 @@ expr2tc dereferencet::dereference_expr_nonscalar(
       u.datatype_members.front(), guard, mode, base);
   }
 
+  if (is_if2t(expr))
+  {
+    // `(cond ? s1 : s2).field` -- a struct-valued ternary under a member /
+    // index access. There is no single object to dereference for the
+    // access itself; resolve every dereference INSIDE the ternary (the
+    // condition typically reads `this->...`, the branches are struct
+    // values such as abi.encodePacked(...)) and report "no dereference at
+    // the bottom". MEASURED on v40 ChainReverseResolver.resolve /
+    // ETHReverseResolver.resolve: `coinType == COIN_TYPE_ETH ? abi.encodePacked(
+    // chainRegistrar) : ...` reached the assert below and aborted the run.
+    if2t &ifv = to_if2t(expr);
+    dereference_expr(ifv.cond, guard, dereferencet::READ);
+    dereference_expr(ifv.true_value, guard, mode);
+    dereference_expr(ifv.false_value, guard, mode);
+    return expr2tc();
+  }
+
   // there should be no sudden transition back to scalars, except through
   // dereferences. Return nil to indicate that there was no dereference at
   // the bottom of this.
   assert(!is_scalar_type(expr));
-  assert(is_constant_expr(expr) || is_symbol2t(expr));
+  if (!(is_constant_expr(expr) || is_symbol2t(expr)))
+  {
+    // Diagnostic instead of a bare assert: v40 ChainReverseResolver.resolve /
+    // ETHReverseResolver.resolve died here with no record of WHAT
+    // non-scalar, non-constant, non-symbol expression reached the bottom of
+    // the dereference walk.
+    log_error(
+      "dereference_expr_nonscalar: unexpected non-scalar expression at the "
+      "bottom of the walk (id {}):\n{}\nbase:\n{}",
+      get_expr_id(expr),
+      *expr,
+      *base);
+    abort();
+  }
   assert(!has_dereference(expr));
 
   return expr2tc();

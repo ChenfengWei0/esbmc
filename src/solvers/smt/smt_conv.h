@@ -285,6 +285,16 @@ public:
    *  @return The name of the solver this smt_convt uses. */
   virtual const std::string solver_text() = 0;
 
+  /** Whether SSA assignments to array-typed symbols should be encoded by
+   *  binding the symbol to the RHS term instead of asserting an equality.
+   *  Bitwuzla answers `unknown` ("Equality over constant arrays not fully
+   *  supported yet") for `(= sym <term built on a const array>)`, which is
+   *  exactly what every mapping / storage-snapshot assignment looks like. */
+  virtual bool array_assign_by_substitution() const
+  {
+    return false;
+  }
+
   /** Fetch the value of a boolean sorted smt_ast. (The 'l' is for literal, and
    *  is historic). Returns a three valued result, of true, false, or
    *  unassigned.
