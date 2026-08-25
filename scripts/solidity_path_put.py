@@ -9041,6 +9041,108 @@ def constructor_state_region_param_overrides(source, contract, constructor_param
     return overrides, notes
 
 
+def _immutable_constructor_param_route(source, contract, var, _depth=0):
+    """(index, name, type) of the TARGET constructor parameter that becomes
+    immutable `var`, or None.
+
+    A DEPLOYMENT coordinate. `unsettable_coords` in the driver is right that
+    `vm.store` cannot reach an immutable -- but a test does not have to reach
+    it after deployment when the constructor itself copies a parameter into it
+    (`price = price_`), directly or by forwarding the parameter to a base
+    constructor (`Base(price_)` whose body assigns it). The value is then an
+    INPUT of the deployment, and the PUT establishes it by deploying with the
+    fuzz value. Only bare-identifier copies count: `x = p * 2` or `x = f(p)`
+    is a computed value, and establishing `x` would need the inverse.
+    """
+    if _depth > 4 or not source or not contract or not var:
+        return None
+    chunk = _source_contract_chunk(source, contract)
+    if not chunk:
+        return None
+    var = re.sub(r"\$\d+$", "", str(var))
+    params = _source_constructor_params_from_source(source, contract)
+    if not params:
+        return None
+    body = _mask_solidity_comments_and_strings(_constructor_body_text(chunk))
+    for idx, (pname, ptype) in enumerate(params):
+        if re.search(r"(?<![\w.])" + re.escape(var) + r"\s*=\s*" + re.escape(pname) + r"\s*;", body):
+            return idx, pname, ptype
+    # Forwarded to a base constructor: `constructor(int p) Base(p) {}`.
+    pindex = {pname: i for i, (pname, _t) in enumerate(params)}
+    for base, args in _constructor_initializer_calls(chunk):
+        if base == contract:
+            continue
+        for k, arg in enumerate(args):
+            arg = arg.strip()
+            if arg not in pindex:
+                continue
+            route = _immutable_constructor_param_route(source, base, var, _depth + 1)
+            if route is not None and route[0] == k:
+                i = pindex[arg]
+                return i, params[i][0], params[i][1]
+    return None
+
+
+def _deployment_statement(lines, contract):
+    """(start, end, receiver, args) of the emitted `recv = new C(...)`, or None."""
+    rx = re.compile(r"(?:^|[^\w.])([A-Za-z_]\w*)\s*=\s*new\s+" + re.escape(contract) + r"\s*\(")
+    for i, ln in enumerate(lines or []):
+        m = rx.search(ln)
+        if m is None:
+            continue
+        end = _statement_end(lines, i)
+        stmt = "\n".join(lines[i:end + 1])
+        span = _constructor_arg_span(stmt, contract)
+        if span is None:
+            return None
+        return i, end, m.group(1), span[2]
+    return None
+
+
+def deployment_coordinate_param(name, ptype, lo, hi, coord_holes, used, sig, rendered_width):
+    """(expr, bound lines) rendering a constructor argument over `[lo, hi]`.
+
+    Point regions become the literal itself; wider ones a fuzz parameter of the
+    constructor parameter's own type, bound() into the interval minus the holes.
+    None when the type has no scalar rendering.
+    """
+    ptype = (ptype or "").strip()
+    lo, hi = int(lo), int(hi)
+    hs = sorted({int(h) for h in coord_holes if lo <= int(h) <= hi})
+    if lo == hi:
+        m = re.fullmatch(r"int([0-9]*)", ptype)
+        if m:
+            bits = int(m.group(1) or 256)
+            lo = lo - (1 << bits) if lo >= (1 << (bits - 1)) else lo
+        lit = _constructor_param_bound_literal(ptype, lo)
+        if lit is None and re.fullmatch(r"[A-Z]\w*", ptype) and 0 <= lo < (1 << 160):
+            lit = f"{ptype}(address(uint160({lo})))"
+        return (lit, []) if lit is not None else None
+    m = re.fullmatch(r"(u?)int([0-9]*)", ptype)
+    if m:
+        bits = int(m.group(2) or 256)
+        if m.group(1) == "u":
+            var, lines = freed_state_fuzz_param(name, bits, lo, hi, hs, used, sig, rendered_width)
+            return var, lines
+        # The region names the coordinate in the query's unsigned encoding
+        # (two's complement bit pattern), as every other state arm here does;
+        # the constructor gets the same bits reinterpreted.
+        var, lines = freed_state_fuzz_param(name, bits, lo, hi, hs, used, sig, rendered_width)
+        return f"int{bits}({var})", lines
+    if ptype in ("address", "address payable"):
+        var, lines = freed_state_fuzz_param(name, 160, lo, hi, hs, used, sig, rendered_width)
+        return f"address(uint160({var}))", lines
+    if ptype == "bool":
+        var, lines = freed_state_fuzz_param(name, 8, lo, hi, hs, used, sig, rendered_width)
+        return f"({var} != 0)", lines
+    # A contract/interface-typed parameter is an address coordinate in the
+    # query; the constructor takes it wrapped in its own type.
+    if re.fullmatch(r"[A-Z]\w*", ptype) and lo >= 0 and hi < (1 << 160):
+        var, lines = freed_state_fuzz_param(name, 160, lo, hi, hs, used, sig, rendered_width)
+        return f"{ptype}(address(uint160({var})))", lines
+    return None
+
+
 def _source_constructor_params_from_source(source, contract):
     chunk = _source_contract_chunk(source, contract)
     if not chunk:
@@ -15434,6 +15536,7 @@ def build_put(contract,
         established_state_targets.add(canonical_state_coord_name(target, state_store_names))
     state_items = [(n, b) for n, b in region.items()]
     state_items += [(n, (v, v)) for n, v in pins.items() if n not in region]
+    deploy_overrides = {}
     for name, (lo, hi) in sorted(state_items):
         if not name.startswith("state."):
             continue
@@ -15585,6 +15688,37 @@ def build_put(contract,
             continue
         layout_name = layout_scalar_key(v, layout, state_store_names)
         if layout_name is None:
+            # ---- A DEPLOYMENT COORDINATE ------------------------------------
+            #
+            # An immutable the constructor copies straight from a parameter is
+            # an input of the deployment, so the PUT establishes it the only
+            # way it can be established: by deploying with that value. The
+            # emitted deploy lives in setUp(), out of reach of a fuzz
+            # parameter, so the test body re-deploys the receiver in front of
+            # every other store. Nothing is faked: the constructor runs.
+            _route = _immutable_constructor_param_route(flat_source or "", contract, v)
+            _deploy = _deployment_statement(emitted.lines, contract) if _route else None
+            if _route is not None and _deploy is not None:
+                _idx, _pname, _ptype = _route
+                _dargs = _deploy[3]
+                _rend = deployment_coordinate_param(name, _ptype, lo, hi, holes.get(name, ()),
+                                                    used, sig, rendered_width) \
+                    if _idx < len(_dargs) else None
+                if _rend is not None:
+                    _dexpr, _dpre = _rend
+                    pre_lines += _dpre
+                    deploy_overrides[_idx] = _dexpr
+                    stored.append(f"{name} := {_dexpr} via constructor parameter `{_pname}`"
+                                  + (f" in [{lo}, {hi}] (FUZZED)" if lo != hi else "")
+                                  + " (DEPLOYMENT coordinate: the receiver is re-deployed "
+                                    "with it, immutables are set by construction only)")
+                    established_state_targets.add(canonical_name)
+                    continue
+                state_skipped.append(f"{name} (immutable set from constructor parameter "
+                                     f"`{_pname}: {_ptype}`, but the deploy takes "
+                                     f"{len(_dargs)} argument(s) or the type has no scalar "
+                                     f"rendering over [{lo}, {hi}])")
+                continue
             state_skipped.append(f"{name} (no storage slot: solc's layout does not list it, so "
                                  f"it is a constant/immutable and no test can set it)")
             if lo == hi:
@@ -16548,6 +16682,14 @@ def build_put(contract,
         break
     for ln in body[:head_end]:
         out.append(ln)
+    if deploy_overrides:
+        _dep = _deployment_statement(emitted.lines, contract)
+        _dargs = list(_dep[3])
+        for _i, _e in deploy_overrides.items():
+            _dargs[_i] = _e
+        store_lines.insert(0, f"    {_dep[2]} = new {contract}({', '.join(_dargs)});")
+        store_lines.insert(0, "    // DEPLOYMENT coordinate(s): re-deploy the receiver so the "
+                              "constructor sets the immutable(s) the region names")
     if store_lines:
         out.append("    // entry state the certified region names, "
                    "ESTABLISHED (not assumed):")
@@ -22655,6 +22797,24 @@ def _concrete_return_literal(sol_type, value):
     return None
 
 
+def _fixed_return_observable(rettypes):
+    """Whether Foundry can OBSERVE the fixed replay's return as one uint256.
+
+    `observe_fixed_scalar_return_with_forge` reads exactly one scalar through
+    `_fixed_return_uint_observation_expr`; a multi-value return (Chainlink's
+    `latestRoundData` returns five) or a type that expression does not spell
+    can be expressible as a witness yet never observed -- and the basis was
+    refused for it ("fixed return observation supports one scalar return").
+    Such a basis fuses without a return oracle instead, exactly as an
+    inexpressible one does: strictly less, never false.
+    """
+    if not rettypes or len(rettypes) != 1:
+        return False
+    entry = rettypes[0]
+    sol_type = entry[1] if isinstance(entry, (list, tuple)) and len(entry) > 1 else entry
+    return _fixed_return_uint_observation_expr(sol_type, "_x") is not None
+
+
 def _return_witness_expressible(rettypes):
     """Whether an exact Stage-2 return witness can be SPELLED for this signature.
 
@@ -23016,7 +23176,7 @@ def certified_basis_missing_return_witness(concrete_only,
     # input, which is strictly LESS than before and never anything false. This
     # only reaches cases that are refused outright today, so no emitted PUT can
     # lose an oracle it currently carries.
-    if not _return_witness_expressible(rettypes):
+    if not _return_witness_expressible(rettypes) or not _fixed_return_observable(rettypes):
         return False
     return (concrete_return_mode_allowed(concrete_only, stage2_source, witness_check)
             and rettypes is not None and len(rettypes) > 0 and witness_value is None
@@ -25113,8 +25273,26 @@ def main():
                 if concrete_return_mode_allowed(a.concrete_only,
                                                 a.concrete_stage2_source,
                                                 a.concrete_stage2_witness_check):
+                    _claim_tuple = (str(claim.get("return_value") or "").strip()
+                                    if isinstance(claim, dict) else "")
                     if (path_exit_kind == "normal" and concrete_rettypes
-                            and not _return_witness_expressible(concrete_rettypes)):
+                            and len(concrete_rettypes) > 1
+                            and _return_witness_expressible(concrete_rettypes)
+                            and _claim_tuple.startswith("(") and _claim_tuple.endswith(")")):
+                        # Foundry observes ONE scalar; a tuple of scalars takes
+                        # the retained report claim's value instead. If the
+                        # model value and the chain disagree the replay is
+                        # red and the row fails gate 4 -- refused, as it is
+                        # today, never counted on a wrong oracle. MEASURED:
+                        # ConstantPriceFeed.latestRoundData (5 returns) was
+                        # refused "supports one scalar return" with a green PUT.
+                        witness_return = claim.get("return_value")
+                        notes.append("fixed replay tuple return taken from the retained "
+                                     "report claim (Foundry observes one scalar only); "
+                                     "the forge green gate verifies it")
+                    elif (path_exit_kind == "normal" and concrete_rettypes
+                            and (not _return_witness_expressible(concrete_rettypes)
+                                 or not _fixed_return_observable(concrete_rettypes))):
                         # Same rule as certified_basis_missing_return_witness: a
                         # `string`/`bytes`/struct/array return has no scalar
                         # observation, so asking for one can never succeed.

@@ -556,6 +556,43 @@ def test_zero_sender_owner_pin_is_promoted_to_executable_relation():
     return bad
 
 
+def test_bare_zero_sender_pin_is_promoted_without_a_relation():
+    # msg.sender == 0 with NO address-like state coordinate pinned at zero: a
+    # spurious nondet-default pin on a sender-independent path (the roulette
+    # fallback normal exit). Promote to the non-zero slice with NO establish
+    # relation; the re-run ladder is the soundness check (a path that truly
+    # needs sender==0 is vacuous over [1, MAX] and stays refused).
+    region = {"block.number": (0, (1 << 256) - 1)}
+    pins = {"msg.sender": 0, "block.timestamp": 5}
+    out_region, out_holes, out_pins, establish, note = (promote_zero_sender_owner_slice(
+        region, {}, pins, [], {}, {}, []))
+    bad = 0
+    bad += check(out_region["msg.sender"] == (1, (1 << 160) - 1),
+                 "a bare zero sender is promoted to a non-zero executable slice")
+    bad += check("msg.sender" not in out_pins, "the old zero sender pin is removed")
+    bad += check(establish == [], f"a bare pin materializes NO entry relation: {establish}")
+    bad += check(note and "bare pin" in note and "non-zero sender slice" in note,
+                 f"the bare promotion is auditable: {note}")
+    bad += check(pins["msg.sender"] == 0 and out_holes == {},
+                 "the helper returns copies instead of mutating callers")
+    return bad
+
+
+def test_ambiguous_multiple_zero_owner_candidates_stay_refused():
+    # TWO address-like state coordinates pinned at zero: ambiguous which the
+    # sender binds to, so promotion declines (neither owner-couple nor bare) and
+    # the normal sender==0 refusal stands.
+    pins = {"msg.sender": 0, "state._owner$1": 0, "state._admin$2": 0}
+    state_types = {"_owner": "address", "_admin": "address"}
+    state_store_names = {"_owner": "_owner$1", "_admin": "_admin$2"}
+    _r, _h, out_pins, _establish, note = (promote_zero_sender_owner_slice(
+        {}, {}, pins, [], state_types, state_store_names, []))
+    bad = 0
+    bad += check(note is None, f"ambiguous multi-owner zero pins are not promoted: {note}")
+    bad += check(out_pins.get("msg.sender") == 0, "the zero sender pin is left for the refusal")
+    return bad
+
+
 def test_precheck_only_identifies_rendered_width_not_oracle_strength():
     """A point-shaped rendered region may still carry a verifier oracle."""
     em, case = make_case()
@@ -5324,13 +5361,21 @@ def test_constructor_literal_establishes_immutable_return_pin():
     return bad
 
 
-def test_mismatched_constructor_literal_keeps_immutable_return_refusal():
+def test_mismatched_constructor_literal_redeploys_the_deployment_coordinate():
+    # `_DECIMALS` is copied straight from the constructor parameter, so it is a
+    # DEPLOYMENT coordinate: a setUp() deployment outside the pinned slice is
+    # not a refusal any more, the PUT re-deploys the receiver with the pinned
+    # value and the constructor itself establishes the immutable.
     text, stats, _notes = _immutable_return_put(1)
     bad = 0
-    bad += check("_put_ret" not in text, "a deployment outside the pinned slice is not bound")
-    bad += check(any("constructor-set immutable" in item for item in stats["oracle_skipped"]),
-                 f"the historical soundness refusal remains: {stats['oracle_skipped']}")
-    bad += check(stats["return_asserts"] == 0, "no unestablished oracle is counted")
+    bad += check("c0 = new BobVaultShare(0);" in text,
+                 "the receiver is re-deployed with the pinned constructor argument")
+    bad += check("DEPLOYMENT coordinate" in text, "the re-deployment is reported as such")
+    bad += check("uint8 _put_ret = c0.decimals();" in text, "the immutable-returning call is bound")
+    bad += check(stats["return_asserts"] == 1 and "R2" in stats["oracle_classes"],
+                 f"the assertion is accounted as R2: {stats}")
+    bad += check(not any("constructor-set immutable" in item for item in stats["oracle_skipped"]),
+                 f"no stale immutable refusal remains: {stats['oracle_skipped']}")
     return bad
 
 
@@ -26648,6 +26693,42 @@ def test_certified_basis_materializes_mapping_keyed_by_another_state_variable():
     return bad
 
 
+def test_certified_basis_materializes_mapping_keyed_by_contract_self_address():
+    """A whitelist mapping keyed by the contract's OWN `$address` member
+    (`whiteAddress[address(this)]`) renders: in the harness address(this) is the
+    deployed instance's address, a known value, so the key needs no CE fix.
+    A different object member the CE does not fix still refuses. Measured:
+    reprod_DCFToken owner/totalSupply/balanceOf/allowance/setDistributeAddress
+    (full-20260822-v40 round 19)."""
+    em, case = make_case()
+    source = "\n".join(em.lines) + "\n"
+    certified_ce = {
+        "u": "0",
+        "bps": "250",
+        "state.owner": "0",
+        "state.whiteAddress$77[(&_ESBMC_Object_MergingPool)->$address]": "1",
+    }
+    layout = dict(LAYOUT)
+    maps = {"whiteAddress$77": (4, "address", 1, 0, "whiteAddress", None),
+            "whiteAddress": (4, "address", 1, 0, "whiteAddress", None)}
+    rendered, changed, reason = materialize_concrete_certified_state_point(
+        source, case[1], "setDiscount", certified_ce, layout, maps=maps)
+    body = "\n".join(function_body_lines(rendered, case[1]) or [])
+    bad = 0
+    bad += check(reason is None and changed >= 1,
+                 f"a mapping keyed by the contract's own $address renders: {reason}")
+    bad += check("keccak256" in body,
+                 f"the whitelist slot is a keccak of the self-address key: {body[:200]}")
+    unknown = dict(certified_ce)
+    unknown["state.whiteAddress$77[(&_ESBMC_Object_MergingPool)->mysteryVar$9]"] = unknown.pop(
+        "state.whiteAddress$77[(&_ESBMC_Object_MergingPool)->$address]")
+    _r, _c, miss = materialize_concrete_certified_state_point(
+        source, case[1], "setDiscount", unknown, layout, maps=maps)
+    bad += check(miss is not None and "does not fix" in miss,
+                 f"a different object-member key the CE does not fix still refuses: {miss}")
+    return bad
+
+
 def test_certified_call_point_keeps_dynamic_arguments_the_ce_never_mentions():
     source = """contract T is Test {
   F c0;
@@ -26719,10 +26800,11 @@ def test_certified_call_point_renders_dynamic_arrays_like_bytes():
         source, "test_cov_1", "transfer", params, {"from": "0", "v": "7"})
     bad += check(reason_kept is None and "new address[](4)" in kept,
                  f"an array the CE never mentions keeps the emitter's literal: {reason_kept}")
-    _r, _n3, reason_read = materialize_concrete_certified_call_point(
+    pinned, _n3, reason_read = materialize_concrete_certified_call_point(
         source, "test_cov_1", "transfer", params, {"from": "0", "v": "7", "_tos.length": "2"})
-    bad += check(reason_read is not None and "cannot be rendered exactly" in reason_read,
-                 "an array the CE constrains to a nonzero length still refuses")
+    bad += check(reason_read is None and
+                 'c0.transfer(address(uint160(0)), new address[](2), uint256(7));' in pinned,
+                 f"an array the CE pins at a nonzero length renders new address[](2): {reason_read}")
     # binder on the rendered empty array
     body = function_body_lines(empty, "test_cov_1")
     call_i = find_unit_call(body, "transfer")
@@ -26732,6 +26814,50 @@ def test_certified_call_point_renders_dynamic_arrays_like_bytes():
         {"from": "0", "v": "7", "_tos.length": "0", "msg.sender": "1"}, audit=audit)
     bad += check(digest is not None and bind_error is None,
                  f"the empty array binds as the CE's `_tos.length = 0`: {bind_error}")
+    return bad
+
+
+def test_certified_call_point_renders_multi_array_pinned_lengths():
+    """Two arrays incl. uint256[], each CE-pinned by length ALONE (no element),
+    render as `new T[](N)` at the certified length and bind back -- 0xa1fceeff
+    transfer(address[] tos, uint256[] vs, ...), full-20260822-v40 round 12."""
+    from solidity_path_put import dynamic_fixed_length_call_arg
+    bad = 0
+    bad += check(dynamic_fixed_length_call_arg("address[] memory", 4) == "new address[](4)",
+                 "address[] pinned at 4 -> new address[](4)")
+    bad += check(dynamic_fixed_length_call_arg("uint256[] memory", 3) == "new uint256[](3)",
+                 "uint256[] pinned at 3 -> new uint256[](3)")
+    bad += check(dynamic_fixed_length_call_arg("uint256[] memory", 0) == "new uint256[](0)",
+                 "uint256[] pinned at 0 -> new uint256[](0)")
+    bad += check(dynamic_fixed_length_call_arg("bytes memory", 5) == "new bytes(5)",
+                 "bytes pinned at 5 -> new bytes(5)")
+    bad += check(dynamic_fixed_length_call_arg("string memory", 3) is None,
+                 "string has no length constructor -> refused (kept on the assume path)")
+    source = """contract T is Test {
+  F c0;
+  function setUp() public { c0 = new F(); }
+  function test_cov_1() public {
+    vm.prank(address(uint160(1)));
+    c0.transfer(address(uint160(5700)), new address[](4), new uint256[](3), 7);
+  }
+}
+"""
+    params = [("from", "address"), ("tos", "address[] memory"),
+              ("vs", "uint256[] memory"), ("v", "uint256")]
+    ce = {"from": "0", "v": "7", "tos.length": "4", "vs.length": "3",
+          "msg.sender": "1"}
+    rendered, _n, reason = materialize_concrete_certified_call_point(
+        source, "test_cov_1", "transfer", params, ce)
+    bad += check(reason is None and
+                 "new address[](4), new uint256[](3)" in rendered,
+                 f"both arrays render at their pinned lengths: {reason} / {rendered}")
+    body = function_body_lines(rendered, "test_cov_1")
+    call_i = find_unit_call(body, "transfer")
+    audit = {}
+    digest, bind_error = bind_emitted_source_to_certified_ce(
+        body, call_i, "transfer", params, ce, audit=audit)
+    bad += check(digest is not None and bind_error is None,
+                 f"the pinned-length arrays bind back to the CE lengths: {bind_error}")
     return bad
 
 
@@ -26908,6 +27034,8 @@ def main():
               test_synthetic_claim_can_be_rebuilt_from_authenticated_certified_ce,
               test_pin_with_a_slot_is_established,
               test_zero_sender_owner_pin_is_promoted_to_executable_relation,
+              test_bare_zero_sender_pin_is_promoted_without_a_relation,
+              test_ambiguous_multiple_zero_owner_candidates_stay_refused,
               test_precheck_only_identifies_rendered_width_not_oracle_strength,
               test_no_wide_rendered_coordinate_without_oracle_stays_concrete,
               test_no_wide_rendered_coordinate_with_only_R0_still_emits_put,
@@ -27370,6 +27498,7 @@ def main():
               test_certified_basis_materializes_state_pins_and_binds_full_ce,
               test_certified_basis_state_setup_does_not_leave_pending_prank,
               test_certified_basis_materializes_mapping_keyed_by_another_state_variable,
+              test_certified_basis_materializes_mapping_keyed_by_contract_self_address,
               test_certified_call_point_keeps_dynamic_arguments_the_ce_never_mentions,
               test_certified_basis_projects_unsettable_state_constants,
               test_concrete_value_gate_uses_fresh_status_identifiers,
@@ -27382,6 +27511,7 @@ def main():
               test_crowded_snapshot_locals_are_hoisted_to_storage,
               test_certified_ce_binder_matches_store_alias_and_symbolic_key,
               test_certified_call_point_renders_dynamic_arrays_like_bytes,
+              test_certified_call_point_renders_multi_array_pinned_lengths,
               test_fixed_length_dynamic_ctor_builds_the_pinned_length):
         print(f"--- {t.__name__}")
         registered.add(t.__name__)

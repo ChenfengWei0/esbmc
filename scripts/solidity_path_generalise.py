@@ -4566,6 +4566,98 @@ def lowering_artifacts(coords, declared, param_types=None):
     return out
 
 
+def constructor_param_immutables(ast_path, contract):
+    """Names of `immutable` state variables the deployment of `contract` sets
+    STRAIGHT from a constructor parameter -- DEPLOYMENT coordinates.
+
+    `unsettable_coords` is right that no post-deployment write reaches an
+    immutable. It is wrong to conclude the immutable is not an input: when the
+    constructor copies a parameter into it (`price = price_`, an Assignment
+    whose both sides are bare Identifiers), or forwards the parameter to a base
+    constructor that does (`Base(price_)`), the value is chosen by whoever
+    deploys, and Stage 4 establishes it by deploying with the fuzz value. Read
+    from the solc AST by declaration id, so a parameter shadowing a state name
+    cannot be mistaken for it. Computed copies (`x = p * 2`) are NOT included:
+    establishing `x` would need the inverse of the computation.
+    """
+    if not ast_path or not os.path.exists(ast_path) or not contract:
+        return set()
+    try:
+        txt = open(ast_path).read()
+        ast = json.loads(txt[txt.index("{"):])
+    except (OSError, ValueError):
+        return set()
+    contracts, decls = {}, {}
+
+    def walk(n):
+        if isinstance(n, dict):
+            if n.get("nodeType") == "ContractDefinition":
+                contracts[n.get("id")] = n
+            if n.get("nodeType") == "VariableDeclaration" and n.get("stateVariable"):
+                decls[n.get("id")] = n
+            for v in n.values():
+                walk(v)
+        elif isinstance(n, list):
+            for v in n:
+                walk(v)
+    walk(ast)
+    target = next((c for c in contracts.values() if c.get("name") == contract), None)
+    if target is None:
+        return set()
+    out = set()
+
+    def ident_ref(e):
+        if isinstance(e, dict) and e.get("nodeType") == "Identifier":
+            return e.get("referencedDeclaration")
+        return None
+
+    def ctor_of(c):
+        return next((f for f in c.get("nodes", []) if f.get("nodeType") == "FunctionDefinition"
+                     and f.get("kind") == "constructor"), None)
+
+    def visit(c, free_param_ids, depth):
+        """`free_param_ids`: ids of this constructor's parameters that carry a
+        free deployment input (all of them for the target; the forwarded ones
+        for a base)."""
+        ctor = ctor_of(c)
+        if ctor is None or depth > 6:
+            return
+        params = [p.get("id") for p in ctor.get("parameters", {}).get("parameters", [])]
+        free = {p for p in params if p in free_param_ids}
+        if not free:
+            return
+
+        def scan(n):
+            if isinstance(n, dict):
+                if (n.get("nodeType") == "Assignment" and n.get("operator") == "="
+                        and ident_ref(n.get("rightHandSide")) in free):
+                    d = decls.get(ident_ref(n.get("leftHandSide")))
+                    if d is not None and d.get("mutability") == "immutable":
+                        out.add(d.get("name"))
+                for v in n.values():
+                    scan(v)
+            elif isinstance(n, list):
+                for v in n:
+                    scan(v)
+        scan(ctor.get("body"))
+        for m in ctor.get("modifiers", []) or []:
+            base = contracts.get((m.get("modifierName") or {}).get("referencedDeclaration"))
+            if base is None:
+                continue
+            bctor = ctor_of(base)
+            if bctor is None:
+                continue
+            bparams = [p.get("id") for p in bctor.get("parameters", {}).get("parameters", [])]
+            fwd = {bparams[i] for i, a in enumerate(m.get("arguments") or [])
+                   if i < len(bparams) and ident_ref(a) in free}
+            if fwd:
+                visit(base, fwd, depth + 1)
+    ctor = ctor_of(target)
+    if ctor is not None:
+        visit(target, {p.get("id") for p in ctor.get("parameters", {}).get("parameters", [])}, 0)
+    return out
+
+
 def unsettable_coords(coords, mutability):
     """Coordinates NO generated test can set, with the reason.
 
@@ -8901,6 +8993,14 @@ def main():
                     "coordinate at the query entry; the enumeration keeps "
                     "--max-tx because it needs the setup transactions to "
                     "WITNESS a path.")
+    ap.add_argument("--deployment-coords",
+                    action="store_true",
+                    help="Keep an immutable that the constructor copies straight from "
+                    "a constructor parameter (directly or forwarded to a base "
+                    "constructor) as a FREE coordinate instead of pinning it as "
+                    "unsettable: the deployer chooses it, and Stage 4 establishes it "
+                    "by re-deploying the receiver with the fuzz value. Off by "
+                    "default; certify_all retries with it when a run certifies nothing.")
     ap.add_argument("--free-entry-state",
                     action="store_true",
                     help="FREE every `state.*` coordinate that a query measures, "
@@ -9591,6 +9691,28 @@ def main():
 
     unsettable_query_pins = set()
     unsettable = unsettable_coords(coords, state_mutability(args.ast))
+    # An immutable copied straight from a constructor parameter IS an input:
+    # Stage 4 deploys with the value. Kept as a free coordinate.
+    deploy_coords = constructor_param_immutables(args.ast, args.contract)
+    deploy_kept = sorted(c for c in unsettable
+                         if state_coord_source_name(c) in deploy_coords)
+    if deploy_kept and not args.deployment_coords:
+        # Off by default: freeing a 256-bit immutable widens the query, and a
+        # unit that certifies with the immutable pinned must keep doing so.
+        # certify_all re-runs with --deployment-coords ONLY when this run
+        # certified nothing (`deployment_coords_retry_reason`).
+        print("[coords] DEPLOYMENT coordinate(s) AVAILABLE but pinned in this run: " +
+              ", ".join(deploy_kept) + ". Each is an immutable copied straight from a "
+              "constructor parameter; a retry with --deployment-coords frees them and "
+              "the PUT establishes them by re-deploying")
+        deploy_kept = []
+    if deploy_kept:
+        for c in deploy_kept:
+            unsettable.pop(c, None)
+        print("[coords] DEPLOYMENT coordinate(s), kept free although immutable: " +
+              ", ".join(deploy_kept) + ". The constructor copies each one straight "
+              "from a parameter, so the deployer chooses it and the PUT establishes "
+              "it by re-deploying with the fuzz value")
     if unsettable:
         for c in sorted(unsettable):
             v = next((ce[c] for _, _, ce in paths if c in ce), None)

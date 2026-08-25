@@ -834,6 +834,38 @@ def no_coordinate_retry_reason(out, rc):
     return "no-coordinate-writer-retry"
 
 
+RE_DEPLOY_COORDS_AVAILABLE = re.compile(
+    r"^\[coords\] DEPLOYMENT coordinate\(s\) AVAILABLE but pinned in this run")
+
+
+def deployment_coords_retry_reason(out, rc):
+    """Retry a run that certified NOTHING while immutables copied from
+    constructor parameters were pinned as unsettable.
+
+    Freeing such an immutable (`--deployment-coords`) widens the query, so it
+    is not the default: a unit that certifies with the immutable pinned keeps
+    that certificate untouched (the retry never fires when `certified` is
+    non-empty, and `merge_detail_sidecars` keeps earlier rows anyway). It fires
+    only where the pinned run produced no certified row at all -- there is
+    nothing to lose, and MEASURED on ConstantPriceFeed.latestRoundData the
+    freed run certifies the immutable's whole range and Stage 4 publishes a
+    PUT that re-deploys with the fuzz value.
+    """
+    if rc not in (0, 1):
+        return None
+    if not any(RE_DEPLOY_COORDS_AVAILABLE.match(line) for line in (out or "").splitlines()):
+        return None
+    rec = parse_driver(out or "")
+    # A compiler-inserted ABI value gate certified with no free coordinate is
+    # a structural row, not a region over the unit's inputs: with the
+    # immutable pinned, ConstantPriceFeed.latestRoundData certified exactly
+    # that and nothing else, and the freed run turns it into a region over
+    # the immutable's whole range.
+    if any("STRUCTURAL ABI value gate" not in str(text) for text in rec["certified"].values()):
+        return None
+    return "deployment-coordinate-retry"
+
+
 def coverage_retryable_diagnostic(diagnostic):
     if not isinstance(diagnostic, dict):
         return None
@@ -4322,6 +4354,7 @@ def main():
             probe_goal_cap_retry = None
             bounded_holds_retry = None
             no_coordinate_retry = None
+            deployment_coords_retry = None
             cheap_stage2_retry = None
             ce_region_retry = None
             unknown_certification_retry = None
@@ -4570,12 +4603,57 @@ def main():
                 out, rc = retry_out, retry_rc
                 wall += retry_wall
                 t1 = retry_since
+            # Immutables copied from constructor parameters were pinned and the
+            # run certified nothing: free them and try once more.
+            dc_reason = (deployment_coords_retry_reason(out, rc)
+                         if retry_allowed and "--deployment-coords" not in cmd else None)
+            if dc_reason and int(args.timeout - wall) < CHEAP_RETRY_MIN_BUDGET_S:
+                deployment_coords_retry = {
+                    "reason": dc_reason,
+                    "skipped": "budget",
+                    "remaining_s": round(max(0.0, args.timeout - wall), 1),
+                    "min_budget_s": CHEAP_RETRY_MIN_BUDGET_S,
+                }
+                print(f"[driver] deployment-coordinate-retry SKIPPED: "
+                      f"{deployment_coords_retry['remaining_s']}s left is under the "
+                      f"{CHEAP_RETRY_MIN_BUDGET_S}s floor", flush=True)
+                dc_reason = None
+            if dc_reason:
+                remaining = max(1, int(args.timeout - wall))
+                retry_initial_uwd = active_uwd
+                retry_uwd = uwd + "__retry_deployment_coords"
+                os.makedirs(retry_uwd, exist_ok=True)
+                retry_cmd = replace_driver_workdir(cmd, retry_uwd) + ["--deployment-coords"]
+                print("[driver] deployment-coordinate-retry: immutables copied from "
+                      "constructor parameters are freed as coordinates", flush=True)
+                retry_since = time.time()
+                retry_out, retry_rc, retry_wall = run_driver_subprocess(retry_cmd, remaining)
+                artifact_runs.append(("deployment-coordinate-retry", retry_uwd, retry_since))
+                active_uwd = retry_uwd
+                deployment_coords_retry = {
+                    "reason": dc_reason,
+                    "initial_workdir": retry_initial_uwd,
+                    "retry_workdir": retry_uwd,
+                    "timeout_s": remaining,
+                    "exit": retry_rc,
+                    "wall_s": round(retry_wall, 1),
+                }
+                command_logs.append({
+                    "label": "deployment-coordinate-retry",
+                    "cmd": retry_cmd,
+                    "out": retry_out or "",
+                    "rc": retry_rc,
+                    "wall_s": retry_wall,
+                })
+                out, rc = retry_out, retry_rc
+                wall += retry_wall
+                t1 = retry_since
             cheap_reason = (
                 coverage_retryable_diagnostic(result_driver_diagnostic(out))
                 if retry_allowed else None)
             if (retry_allowed
                     and cheap_reason is None and bounded_holds_retry is None
-                    and no_coordinate_retry is None
+                    and no_coordinate_retry is None and deployment_coords_retry is None
                     and result_driver_diagnostic(out) is None):
                 cheap_reason = empty_witness_retry_reason(out, rc)
             # A retry launched with a one-second budget cannot certify anything:
@@ -4937,6 +5015,7 @@ def main():
                         "auto_resource_retry": resource_retry,
                         "auto_bounded_holds_retry": bounded_holds_retry,
                         "auto_no_coordinate_retry": no_coordinate_retry,
+                        "auto_deployment_coordinate_retry": deployment_coords_retry,
                         "auto_cheap_stage2_retry": cheap_stage2_retry,
                         "auto_ce_region_retry": ce_region_retry,
                         "auto_unknown_certification_retry":

@@ -1500,6 +1500,13 @@ def _enclosing_brace_pair(source, position):
 
 
 def certified_ce_sha256(raw):
+    # `return` is not part of the anchored entry CE (it is popped below), so
+    # its spelling must not decide whether the CE is exact: a tuple return
+    # ("(1, 0, ...)", ConstantPriceFeed.latestRoundData) is no integer, and
+    # counting it against `raw` refused every multi-value unit as "no
+    # renderable exact scalar CE" although every entry coordinate was exact.
+    if isinstance(raw, dict):
+        raw = {k: v for k, v in raw.items() if k != "return"}
     parsed = parse_concrete_ce(raw)
     if not raw or parsed is None or len(parsed) != len(raw):
         return None
@@ -2007,10 +2014,43 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail, representat
     if return_oracles:
         ordered = sorted(return_oracles, key=lambda item: item.get("return_index", -1))
         return_oracles = ordered
-        lhs_match = re.search(r"^(.*?)=", body_lines[call_index])
+        lhs_match = re.match(r"^(\s*)(.*?)\s*=(?!=)\s*(.*)$", body_lines[call_index], re.S)
         if lhs_match is not None:
-            observed_returns = re.findall(r"[A-Za-z_$][A-Za-z0-9_$]*", lhs_match.group(1))
-            observed_returns = observed_returns[-len(ordered):]
+            # Map each oracle's `return_index` onto the PUT's OWN binding slot.
+            # The binding is a destructuring tuple in which an unread return
+            # is an EMPTY slot (`(uint80 a, , uint256 c) = ...`): taking the
+            # trailing identifiers instead paired index 0 with `_put_ret2`
+            # and index 1 with the type token `uint256`, and the fused test
+            # did not compile ("assertEq(uint256, int256(0), ...)",
+            # ConstantPriceFeed.latestRoundData). An empty slot gets a fresh
+            # typed binding so the witness component can be asserted.
+            lhs_text = lhs_match.group(2).strip()
+            if lhs_text.startswith("(") and lhs_text.endswith(")"):
+                components = [c.strip() for c in split_top_level(lhs_text[1:-1])]
+                tuple_form = True
+            else:
+                components = [lhs_text]
+                tuple_form = False
+            arity = max([len(components)] + [int(o.get("return_arity") or 0) for o in ordered])
+            if len(components) != arity:
+                return None, "PUT return binding does not match the certified return arity"
+            rebound_needed = False
+            for oracle in ordered:
+                index = int(oracle.get("return_index") or 0)
+                if index >= len(components):
+                    return None, "PUT return binding does not match the certified return arity"
+                if components[index]:
+                    idents = re.findall(r"[A-Za-z_$][A-Za-z0-9_$]*", components[index])
+                    observed_returns.append(idents[-1])
+                else:
+                    name = f"_veriput_fixed_return_{index}"
+                    components[index] = f"{oracle.get('solidity_type')} {name}"
+                    observed_returns.append(name)
+                    rebound_needed = True
+            if rebound_needed:
+                new_lhs = "(" + ", ".join(components) + ")" if tuple_form else components[0]
+                body_lines[call_index] = (lhs_match.group(1) + new_lhs + " = " +
+                                          lhs_match.group(3))
         else:
             observed_returns = [f"_veriput_fixed_return_{index}" for index in range(len(ordered))]
             declarations = [
