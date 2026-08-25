@@ -11249,6 +11249,16 @@ def _lit_int(expr):
         return 0
     while True:
         m = re.match(r"^(?:address|payable|u?int\d*|bytes\d+)\s*\(\s*(.*)\s*\)$", s)
+        if m is None:
+            # The renderer's user-defined scalar casts (`_concrete_return_literal`):
+            # `I(address(uint160(n)))` for a contract/interface and
+            # `E.Member(uint8(n))` for an enum. Both denote the integer inside.
+            # MEASURED: SablierComptroller.calculateMinFeeWei(Protocol) rendered
+            # `ISablierComptroller.Protocol(uint8(1))` and this parser refused it
+            # as "not an exact scalar CE literal" (fix-20260825-ceargs2), so the
+            # renderer's fix never reached a PUT.
+            m = re.match(r"^[A-Za-z_]\w*(?:\s*\.\s*[A-Za-z_]\w*)*\s*\(\s*"
+                         r"((?:address|uint8)\s*\(.*\))\s*\)$", s)
         if not m:
             break
         s = m.group(1).strip()
