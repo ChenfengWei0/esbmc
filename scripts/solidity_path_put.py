@@ -19068,7 +19068,9 @@ def constructor_param_interface_mock_specs(forge_project, contract):
             helper_matches = [(helper_params, helper_body) for helper_params, header_tail,
                               helper_body in _source_function_decl_infos(scan_chunk, callee)
                               if len(helper_params) == len(named_items)
-                              and not _source_function_header_has_modifier(header_tail)]
+                              and (not _source_function_header_has_modifier(header_tail)
+                                   or _constructor_callee_modifiers_are_mandatory(
+                                       source, scan_chunk, header_tail))]
             if len(helper_matches) != 1:
                 continue
             for helper_params, helper_body in helper_matches:
@@ -19153,10 +19155,18 @@ def constructor_param_interface_mock_specs(forge_project, contract):
             idx, ptype = found
             if not contract_like_type(ptype):
                 continue
+            # A modifier that always runs its body (`onlyOwner` and kin) does
+            # not hide the callee's constructor-time calls: MEASURED on
+            # TREXFactory (fix-20260825-ctor), `setImplementationAuthority`
+            # makes six ITREXImplementationAuthority calls that must return a
+            # nonzero address, and the unconditional modifier skip here left
+            # the replay with 0 mock specs and `setUp()` reverting.
             matches = [
                 (params2, body2)
                 for params2, header_tail, body2 in _source_function_decl_infos(chunk, m.group(1)) if
-                len(params2) == len(args) and not _source_function_header_has_modifier(header_tail)
+                len(params2) == len(args)
+                and (not _source_function_header_has_modifier(header_tail)
+                     or _constructor_callee_modifiers_are_mandatory(source, chunk, header_tail))
             ]
             if len(matches) != 1:
                 continue
