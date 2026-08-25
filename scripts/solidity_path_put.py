@@ -25103,7 +25103,20 @@ def main():
                 if concrete_return_mode_allowed(a.concrete_only,
                                                 a.concrete_stage2_source,
                                                 a.concrete_stage2_witness_check):
-                    if path_exit_kind == "normal" and concrete_rettypes:
+                    if (path_exit_kind == "normal" and concrete_rettypes
+                            and not _return_witness_expressible(concrete_rettypes)):
+                        # Same rule as certified_basis_missing_return_witness: a
+                        # `string`/`bytes`/struct/array return has no scalar
+                        # observation, so asking for one can never succeed.
+                        # MEASURED on fix-20260825-retwit: OwnedResolver.name /
+                        # contenthash / zonehash passed the witness gate and were
+                        # then refused HERE ("cannot be observed as uint256"),
+                        # so the case stayed no-valid with three green PUTs.
+                        # Fuse without a return oracle; exit/event/state oracles
+                        # still authenticate the replay.
+                        notes.append("fixed replay return observation skipped: return type "
+                                     "cannot be spelled as a scalar witness; no return oracle")
+                    elif path_exit_kind == "normal" and concrete_rettypes:
                         remaining = max(1, int(put_deadline - time.monotonic() -
                                                postprocess_reserve_s))
                         witness_return, return_error = observe_fixed_scalar_return_with_forge(
