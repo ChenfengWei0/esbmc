@@ -9189,8 +9189,46 @@ def _constructor_preamble_top_level_names(chunk):
     return names
 
 
-def _constructor_has_nontrivial_modifier(chunk):
+def _source_transitive_base_names(source, chunk, _seen=None):
+    """Every base a contract can name in its constructor preamble.
+
+    Solidity lets a constructor initialise ANY base in its linearisation, not
+    only a direct parent, so `_source_inheritance_names` alone is the wrong
+    alphabet for telling a base initialiser apart from a real modifier.
+
+    MEASURED on euler-vault-kit EulerSavingsRate (a no-valid case in
+    full-20260822-v40). Its constructor preamble is
+    `EVCUtil(_evc) ERC4626(IERC20(_asset)) ERC20(_name, _symbol)` while its
+    direct bases are only EVCUtil and ERC4626 -- ERC20 arrives through ERC4626.
+    `ERC20` therefore read as a foreign modifier,
+    `_constructor_has_nontrivial_modifier` refused the whole contract, and
+    `constructor_param_nonzero_specs` returned [] even though the EVCUtil base
+    constructor opens with
+    `if (_evc == address(0)) revert EVC_InvalidAddress();`. setUp rendered
+    `new EulerSavingsRate(address(uint160(0)), address(uint160(0)), "", "")`
+    and every emitted row died in setUp with that error.
+
+    Cycles cannot occur in a legal contract but the guard is kept anyway: a
+    flattened file can carry two contracts of the same name and the walk must
+    terminate on whatever it is handed.
+    """
+    seen = set() if _seen is None else _seen
+    out = set()
+    for name in _source_inheritance_names(chunk):
+        if name in seen:
+            continue
+        seen.add(name)
+        out.add(name)
+        base_chunk = _source_contract_chunk(source, name)
+        if base_chunk:
+            out |= _source_transitive_base_names(source, base_chunk, seen)
+    return out
+
+
+def _constructor_has_nontrivial_modifier(chunk, source=None):
     inherited = set(_source_inheritance_names(chunk))
+    if source:
+        inherited |= _source_transitive_base_names(source, chunk)
     skip = {"public", "internal", "external", "private", "payable"}
     return any(name not in inherited and name not in skip
                for name in _constructor_preamble_top_level_names(chunk))
@@ -10280,7 +10318,7 @@ def constructor_param_nonzero_specs(source, contract):
     parameter; transformed expressions are deliberately left alone.
     """
     chunk = _source_contract_chunk(source, contract)
-    if not source or not chunk or _constructor_has_nontrivial_modifier(chunk):
+    if not source or not chunk or _constructor_has_nontrivial_modifier(chunk, source):
         return []
     params = _source_constructor_params_from_source(source, contract)
     if not params:
@@ -10311,7 +10349,7 @@ def constructor_param_nonzero_specs(source, contract):
         if current_contract in visiting or not bindings:
             return
         current_chunk = _source_contract_chunk(source, current_contract)
-        if not current_chunk or _constructor_has_nontrivial_modifier(current_chunk):
+        if not current_chunk or _constructor_has_nontrivial_modifier(current_chunk, source):
             return
         current_params = _source_constructor_params_from_source(source, current_contract)
         body = _mask_solidity_comments_and_strings(_constructor_body_text(current_chunk))
@@ -10426,7 +10464,7 @@ def constructor_param_strict_order_specs(source, contract, unit=None):
     constraint needed by a repaired literal replay.
     """
     chunk = _source_contract_chunk(source, contract)
-    if not chunk or _constructor_has_nontrivial_modifier(chunk):
+    if not chunk or _constructor_has_nontrivial_modifier(chunk, source):
         return []
     params = _source_constructor_params_from_source(source, contract)
     body = _mask_solidity_comments_and_strings(_constructor_body_text(chunk))
