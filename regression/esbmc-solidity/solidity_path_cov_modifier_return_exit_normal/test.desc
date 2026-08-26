@@ -1,0 +1,5 @@
+CORE
+contract.sol
+--solidity-path-coverage --contract M --solidity-max-tx 1
+^Path Exits: normal 3, revert 5, undetermined 0$
+^VERIFICATION FAILED$

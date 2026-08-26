@@ -1828,8 +1828,20 @@ bool solidity_convertert::get_func_modifier(
       }
 
       // 3. insert "return aux_var" in the end
+      //
+      // Every source-level `return e` of the wrapped body was rewritten above
+      // into `aux_var = e` (dropping the `sol_source_return` stamp that
+      // solidity_convert_stmt.cpp puts on a RETURN), so this synthesised
+      // RETURN is now the only exit those statements have.  Stamp it: the
+      // coverage exit classifier (goto_coverage.cpp classify_exit) calls a
+      // RETURN with neither an epilogue walk nor this marker "undetermined",
+      // which is what every modifier-wrapped value-returning unit reported --
+      // and an undetermined exit refuses the whole Stage-4 oracle ladder.
+      // Rollback evidence is still tested first there, so a reverting path
+      // through the modifier keeps its revert classification.
       code_returnt return_expr = code_returnt();
       return_expr.return_value() = symbol_expr(ret_sym);
+      return_expr.location().set("sol_source_return", true);
       mod_body.move_to_operands(return_expr);
     }
 
@@ -2160,6 +2172,9 @@ bool solidity_convertert::get_func_modifier(
       func_modifier.type() = aux_type.return_type();
       code_returnt return_expr = code_returnt();
       return_expr.return_value() = func_modifier;
+      // The wrapper's `return <modifier chain>()` is the unit's own exit; see
+      // the matching stamp on the chain's `return aux_var` above.
+      return_expr.location().set("sol_source_return", true);
       _block.move_to_operands(return_expr);
       body_exprt = _block;
     }
