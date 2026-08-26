@@ -10004,10 +10004,21 @@ void goto_coveraget::solidity_path_coverage()
             // would instead find only the tuple container (or nothing).
             const bool marked_low_level_success =
               it->location.get_bool("sol_extcall_success");
+            // A typed external-call return that the source converts on the
+            // spot -- `uint256 ethPrice = uint256(oracle.latestAnswer())` --
+            // is lowered to `ethPrice = (uint256)(NONDET(int256))`. The bound
+            // is placed on the LOCAL after this instruction, so a cast around
+            // the nondet changes nothing about what is pinned; refusing it
+            // MEASURED on Stress243 StablePriceOracle.premium: the query was
+            // refused for `extcall.ethPrice`, the region then refuted at its
+            // single point (division by the unpinned price) -> 0 PUT.
+            expr2tc src = a.source;
+            while (is_typecast2t(src))
+              src = to_typecast2t(src).from;
             if (
               !marked_low_level_success &&
-              (!is_sideeffect2t(a.source) ||
-               to_sideeffect2t(a.source).kind != sideeffect2t::nondet))
+              (!is_sideeffect2t(src) ||
+               to_sideeffect2t(src).kind != sideeffect2t::nondet))
               continue;
             ++sites;
             owners.insert(id);

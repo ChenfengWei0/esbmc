@@ -1,0 +1,7 @@
+CORE
+contract.sol
+--contract Priced --solidity-path-coverage --solidity-max-tx 1 --focus-function toWei --path-cov-certify spec.json --extcall-nondet --overflow-check --div-by-zero-check --result-only
+--path-cov-certify: RESULT: CERTIFIED
+\A(?!(.|\n)*REFUSING THE QUERY)
+\A(?!(.|\n)*RESULT: UNSAFE)
+\A(?!(.|\n)*INTERNAL DEFECT)

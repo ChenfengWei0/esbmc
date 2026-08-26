@@ -1,0 +1,4 @@
+{"unit":"toWei","enc":3,"depth":1,
+ "box":[{"name":"amount","lo":"0","hi":"1000"},
+        {"name":"extcall.p","lo":"1","hi":"1"},
+        {"name":"msg.value","lo":"0","hi":"0"}]}
