@@ -1424,6 +1424,24 @@ protected:
   std::string focus_func;
   bool fixture_focus_closure_built = false;
   std::set<int> fixture_focus_closure;
+  // General focus-closure body prune (see convert_ast_nodes): when a
+  // --focus-function query runs under --extcall-nondet, only callables in the
+  // focused unit's transitive AST reference closure (plus every constructor,
+  // fallback/receive, state-initialiser callee, and every callable sharing a
+  // name with a closure member -- the conservative stand-in for virtual
+  // dispatch) get their bodies converted.  A pruned body is NOT left empty:
+  // it calls the bodiless marker below, so symex prints "no body for function
+  // __ESBMC_focus_closure_prune_violation" the moment a query reaches one, and
+  // the driver re-runs that query with --no-focus-closure-prune.
+  bool focus_closure_prune_attempted = false;
+  bool focus_closure_prune_built = false;
+  std::set<int> focus_closure_prune;
+  std::size_t focus_closure_pruned_bodies = 0;
+  std::size_t focus_closure_kept_bodies = 0;
+  bool build_focus_closure_prune();
+  bool get_focus_closure_prune_marker_body(
+    const locationt &l,
+    exprt &body_exprt);
   //smart contract source file
   const std::string &contract_path;
 

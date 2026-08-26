@@ -1,0 +1,4 @@
+CORE
+contract.sol
+--sol contract.sol --contract Derived --focus-function f --extcall-nondet --no-standard-checks
+^VERIFICATION FAILED$

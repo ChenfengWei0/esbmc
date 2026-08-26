@@ -158,7 +158,56 @@ def _timeout_output(exc):
     return _txt(exc.stdout) + _txt(exc.stderr)
 
 
+# The symex warning, not the bare name: the frontend status line and --help
+# text mention the marker too, and matching those re-ran every pruned query.
+FOCUS_CLOSURE_PRUNE_MARKER = "no body for function __ESBMC_focus_closure_prune_violation"
+FOCUS_CLOSURE_PRUNE_OPT_OUT = "--no-focus-closure-prune"
+
+
 def run(esbmc,
+        sol,
+        contract,
+        extra,
+        max_tx,
+        timeout,
+        cwd,
+        ast=None,
+        focus=None,
+        memlimit="8g",
+        esbmc_args=(),
+        result_only=True,
+        probe_claim_stop=None):
+    """One ESBMC invocation, plus the focus-closure-prune fallback.
+
+    Under `focus` the frontend converts only the bodies in the focused unit's
+    AST reference closure (esbmc: --no-focus-closure-prune describes the
+    rule). A pruned body is not empty: it calls a bodiless marker, so the
+    moment symex reaches one -- the closure missed a dependency -- the output
+    carries `no body for function __ESBMC_focus_closure_prune_violation`.
+    That is a defect of the prune, never a property of the path, so the
+    query is re-run unpruned with whatever is left of `timeout` and BOTH
+    outputs are returned (the second carries the verdict). The first run's
+    time is not refunded: the outer unit budget is the caller's clock.
+    """
+    started = time.monotonic()
+    out = _run_esbmc_once(esbmc, sol, contract, extra, max_tx, timeout, cwd,
+                          ast=ast, focus=focus, memlimit=memlimit,
+                          esbmc_args=esbmc_args, result_only=result_only,
+                          probe_claim_stop=probe_claim_stop)
+    if (not focus or FOCUS_CLOSURE_PRUNE_MARKER not in out
+            or FOCUS_CLOSURE_PRUNE_OPT_OUT in list(esbmc_args)):
+        return out
+    remaining = max(1.0, float(timeout) - (time.monotonic() - started))
+    retry = _run_esbmc_once(esbmc, sol, contract, extra, max_tx, remaining, cwd,
+                            ast=ast, focus=focus, memlimit=memlimit,
+                            esbmc_args=list(esbmc_args) + [FOCUS_CLOSURE_PRUNE_OPT_OUT],
+                            result_only=result_only,
+                            probe_claim_stop=probe_claim_stop)
+    return (out + "\n[run] FOCUS-CLOSURE-PRUNE VIOLATION: a pruned body was reached; "
+            f"re-ran unpruned with {remaining:.1f}s left\n" + retry)
+
+
+def _run_esbmc_once(esbmc,
         sol,
         contract,
         extra,

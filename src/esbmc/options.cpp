@@ -174,6 +174,15 @@ const struct group_opt_templ all_cmd_options[] = {
     {"bound",
      NULL,
      "Model inter-contract function calls within a bounded system"},
+    {"no-focus-closure-prune",
+     NULL,
+     "Disable the focus-closure body prune: under --focus-function with "
+     "--extcall-nondet the Solidity frontend converts only the bodies in the "
+     "focused unit's AST reference closure (constructors, fallbacks, "
+     "state initialisers and every same-named callable included).  A pruned "
+     "body that is nevertheless reached calls the bodiless marker "
+     "__ESBMC_focus_closure_prune_violation; pass this option to convert "
+     "every body instead."},
     {"extcall-nondet",
      NULL,
      "Model an external call as a NONDETERMINISTIC RETURN VALUE instead of a "

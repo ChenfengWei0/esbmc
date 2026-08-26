@@ -366,7 +366,29 @@ bool solidity_convertert::get_function_definition(
     ast_node["id"].is_number_integer() &&
     fixture_focus_closure.count(ast_node["id"].get<int>()) == 0)
     has_body = false;
+  bool focus_pruned = false;
+  if (
+    has_body && focus_closure_prune_built && ast_node.contains("id") &&
+    ast_node["id"].is_number_integer())
+  {
+    if (focus_closure_prune.count(ast_node["id"].get<int>()) == 0)
+    {
+      has_body = false;
+      focus_pruned = true;
+      ++focus_closure_pruned_bodies;
+    }
+    else
+      ++focus_closure_kept_bodies;
+  }
   exprt body_exprt = code_blockt();
+  if (focus_pruned)
+  {
+    // NOT an empty body: reaching it is a closure defect, and the bodiless
+    // marker makes symex say so ("no body for function
+    // __ESBMC_focus_closure_prune_violation") even under --result-only.
+    if (get_focus_closure_prune_marker_body(location_begin, body_exprt))
+      return true;
+  }
   if (has_body)
   {
     log_debug(

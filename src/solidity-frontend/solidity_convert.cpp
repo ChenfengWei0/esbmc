@@ -1695,6 +1695,91 @@ void collect_callable_nodes(
         collect_callable_nodes(child, out);
 }
 
+void collect_state_initializer_refs(
+  const nlohmann::json &source_ast,
+  std::set<int> &out)
+{
+  for (const auto &top : source_ast.value("nodes", nlohmann::json::array()))
+  {
+    if (top.value("nodeType", std::string()) != "ContractDefinition")
+      continue;
+    for (const auto &member : top.value("nodes", nlohmann::json::array()))
+      if (
+        member.value("nodeType", std::string()) == "VariableDeclaration" &&
+        member.contains("value") && !member["value"].is_null())
+        collect_referenced_declarations(member["value"], out);
+  }
+}
+
+// The body set a focused query can reach, computed from the AST alone:
+//   seeds   = every callable named by --focus-function (in ANY contract),
+//             every constructor / fallback / receive, and every callable a
+//             state-variable initialiser references;
+//   closure = fixpoint over `referencedDeclaration` of each member's subtree
+//             (modifiers included), where adding a callable ALSO adds every
+//             callable of the same name.  The same-name rule is what makes
+//             virtual dispatch safe without resolving it: a base body calls
+//             `g()` (referencedDeclaration = Base.g) and the override
+//             Derived.g is pulled in by name.  It also covers overloads and
+//             interface-typed external calls (IFoo.bar -> every `bar`).
+std::set<int> focused_query_body_closure(
+  const nlohmann::json &source_ast,
+  const std::vector<std::string> &focus_names,
+  std::size_t &callable_count)
+{
+  std::map<int, const nlohmann::json *> callable_nodes;
+  collect_callable_nodes(source_ast, callable_nodes);
+  callable_count = callable_nodes.size();
+
+  std::map<std::string, std::vector<int>> by_name;
+  for (const auto &entry : callable_nodes)
+    by_name[entry.second->value("name", std::string())].push_back(entry.first);
+
+  std::set<int> closure;
+  std::vector<int> pending;
+  auto add = [&](const int id) {
+    if (callable_nodes.count(id) != 0 && closure.insert(id).second)
+      pending.push_back(id);
+  };
+  auto add_name = [&](const std::string &name) {
+    const auto it = by_name.find(name);
+    if (it != by_name.end())
+      for (const int id : it->second)
+        add(id);
+  };
+
+  for (const auto &name : focus_names)
+    add_name(name);
+  for (const auto &entry : callable_nodes)
+  {
+    const std::string kind = entry.second->value("kind", std::string());
+    if (kind == "constructor" || kind == "fallback" || kind == "receive")
+      add(entry.first);
+  }
+  std::set<int> init_refs;
+  collect_state_initializer_refs(source_ast, init_refs);
+  for (const int id : init_refs)
+    add(id);
+
+  for (std::size_t i = 0; i < pending.size(); ++i)
+  {
+    const auto node_it = callable_nodes.find(pending[i]);
+    if (node_it == callable_nodes.end())
+      continue;
+    std::set<int> refs;
+    collect_referenced_declarations(*node_it->second, refs);
+    for (const int ref : refs)
+    {
+      const auto ref_it = callable_nodes.find(ref);
+      if (ref_it == callable_nodes.end())
+        continue;
+      add(ref);
+      add_name(ref_it->second->value("name", std::string()));
+    }
+  }
+  return closure;
+}
+
 std::set<int> focused_fixture_function_closure(
   const nlohmann::json &source_ast,
   const int focus_id)
@@ -2064,6 +2149,65 @@ bool safe_vault_admin_minimum_pool_tokens_focus_closure(
 }
 } // namespace
 
+bool solidity_convertert::build_focus_closure_prune()
+{
+  if (focus_closure_prune_attempted)
+    return focus_closure_prune_built;
+  focus_closure_prune_attempted = true;
+  // Only the extcall-nondet model is covered: the reentrant
+  // `_ESBMC_Nondet_Extcall_<C>` dispatch of the default model may call any
+  // public body, which the closure below deliberately does not enumerate.
+  // A --path-cov-fixture keeps its own (exact, hash-checked) closure logic.
+  if (
+    focus_func.empty() || !is_extcall_nondet ||
+    config.options.get_bool_option("no-focus-closure-prune") ||
+    !config.options.get_option("path-cov-fixture").empty() ||
+    fixture_focus_closure_built)
+    return false;
+  const std::vector<std::string> names = focus_function_names(focus_func);
+  if (names.empty())
+    return false;
+  std::size_t callable_count = 0;
+  focus_closure_prune =
+    focused_query_body_closure(src_ast_json, names, callable_count);
+  if (focus_closure_prune.empty())
+    return false;
+  focus_closure_prune_built = true;
+  log_status(
+    "[focus-closure-prune] focus '{}': converting {} of {} callable bodies; "
+    "a pruned body reached at symex reports the bodiless prune-violation "
+    "marker (re-run with --no-focus-closure-prune)",
+    focus_func,
+    focus_closure_prune.size(),
+    callable_count);
+  return true;
+}
+
+bool solidity_convertert::get_focus_closure_prune_marker_body(
+  const locationt &l,
+  exprt &body_exprt)
+{
+  const std::string name = "__ESBMC_focus_closure_prune_violation";
+  const std::string id = "c:@F@" + name;
+  if (context.find_symbol(id) == nullptr)
+  {
+    symbolt s;
+    code_typet ft;
+    ft.return_type() = empty_typet();
+    get_default_symbol(
+      s, get_modulename_from_path(absolute_path), ft, name, id, locationt());
+    s.lvalue = true;
+    move_symbol_to_context(s);
+  }
+  exprt call;
+  get_library_function_call_no_args(name, id, empty_typet(), l, call);
+  code_blockt body;
+  convert_expression_to_code(call);
+  body.copy_to_operands(call);
+  body_exprt = body;
+  return false;
+}
+
 bool solidity_convertert::convert_ast_nodes(
   const nlohmann::json &contract_def,
   const std::string &cname)
@@ -2075,6 +2219,8 @@ bool solidity_convertert::convert_ast_nodes(
   // flag the ctor of abstract/interface/library contracts as non-instantiable
   // so the Foundry coverage-test generator never emits `new <Abstract>(...)`
   mark_ctor_instantiability(cname);
+
+  build_focus_closure_prune();
 
   // A path fixture removes deployment from an exact focused-unit query.  The
   // old frontend still converted every inherited function body merged into
