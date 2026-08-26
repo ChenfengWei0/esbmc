@@ -2023,7 +2023,35 @@ void solidity_convertert::convert_type_expr(
       // member_exprt(<library struct>, "$address") survives the
       // frontend and aborts at migrate.cpp -> irep2_type.cpp
       // get_component_number during goto_convert.
-      if (struct_type_has_component(src_expr.type(), comp_name))
+      //
+      // FORWARD REFERENCE. When the contract/interface is declared AFTER the
+      // function being converted (common in flattened sources: the constructor
+      // of `OwnableAuthentication(IVault vault_)` at line 545 casts a type
+      // declared at line 7704), `tag-<Contract>` is not in the context yet, so
+      // struct_type_has_component() cannot resolve the symbol and returns
+      // false. Falling into the library arm then lowers `address(vault_)` to
+      // the ENCLOSING contract's address -- which is 0 during construction --
+      // so `if (address(vault_) == address(0)) revert VaultNotSet()` reverts
+      // on EVERY deployment. Under a proof query (--path-cov-certify /
+      // --path-cov-assert, where the custom error is `assume(false)`) that
+      // made every post-constructor path of PoolPauseHelper vacuous
+      // ("THE REGION IS VACUOUS" on a path plain coverage mode witnessed).
+      // A pointer to a still-unresolved struct tag of a CONTRACT-typed
+      // expression is a contract instance, and every contract/interface
+      // struct carries `$address` once converted, so build the member
+      // access and let goto conversion resolve the tag.
+      bool has_address = struct_type_has_component(src_expr.type(), comp_name);
+      if (!has_address && src_sol_type == SolidityGrammar::SolType::CONTRACT)
+      {
+        typet rt = src_expr.type();
+        if (rt.id() == "pointer")
+          rt = rt.subtype();
+        if (
+          rt.id() == "symbol" &&
+          context.find_symbol(to_symbol_type(rt).get_identifier()) == nullptr)
+          has_address = true;
+      }
+      if (has_address)
         src_expr = member_exprt(src_expr, comp_name, t);
       else
       {
