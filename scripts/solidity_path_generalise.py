@@ -114,7 +114,9 @@ from solidity_path_put import (
     contract_state_types)
 from solidity_ast_dependencies import (  # noqa: E402,F401
     SLOT_DEPENDENCY_POLICY, contract_state_esbmc_store_names, path_function_declaration_id,
-    unit_mapping_slot_accesses, unit_contains_inline_assembly, unit_state_dependencies)
+    unit_mapping_slot_accesses, unit_contains_inline_assembly, unit_state_dependencies,
+    unit_state_member_dependencies,
+)
 
 UINT256_MAX = (1 << 256) - 1
 SIZE_T_MAX = (1 << 64) - 1
@@ -4129,6 +4131,36 @@ def prefer_esbmc_mapping_aliases(maps):
             continue
         preferred[name] = spec
     return preferred
+
+
+# `state.<var>[$id].<field>...` -- an aggregate STATE variable's top-level
+# field. `state.m[k].f` does not match: the subscript comes first, and mapping
+# entries are governed by the slot budget, not by this filter.
+AGGREGATE_FIELD_COORD_RE = re.compile(r"^state\.([A-Za-z_$][\w$]*?)(?:\$\d+)?\.([A-Za-z_$][\w$]*)")
+
+
+def filter_unreferenced_aggregate_fields(coords, member_dependencies):
+    """Drop `state.<struct>.<field>` coordinates whose field the closure never names.
+
+    `member_dependencies` is `unit_state_member_dependencies`' answer: a
+    variable mapped to None is used whole and keeps every field; one mapped to
+    a member list keeps exactly those members. Packing pads (`anon_pad$N`) are
+    not source members, so they are dropped for any variable the closure only
+    accesses member-wise. Returns (kept, dropped)."""
+    kept, dropped = [], []
+    for coord in coords or []:
+        match = AGGREGATE_FIELD_COORD_RE.match(str(coord))
+        if match is None:
+            kept.append(coord)
+            continue
+        var = match.group(1)
+        field = re.sub(r"\$\d+$", "", match.group(2))
+        allowed = (member_dependencies or {}).get(var, None) if var in (member_dependencies or {}) else "keep"
+        if allowed == "keep" or allowed is None or field in allowed:
+            kept.append(coord)
+        else:
+            dropped.append(coord)
+    return kept, dropped
 
 
 def state_coord_type_ranges(ast_path, contract, coords, state_store_names=None):
@@ -9652,6 +9684,24 @@ def main():
             "dropped": dropped_state_coords,
             "evidence": list(state_dep_evidence),
         }
+        member_deps, member_evidence = unit_state_member_dependencies(
+            args.ast, args.contract, args.unit, declaration_id=declaration_id)
+        if member_deps:
+            coords, dropped_field_coords = filter_unreferenced_aggregate_fields(coords, member_deps)
+            state_dependency_filter["member_fields"] = {
+                name: (members if members is not None else "*")
+                for name, members in member_deps.items()}
+            state_dependency_filter["evidence"].extend(member_evidence or [])
+            if dropped_field_coords:
+                dropped_state_coords = list(dropped_state_coords) + dropped_field_coords
+                for name in dropped_field_coords:
+                    dropped_state_reasons[name] = ("aggregate field the target closure never "
+                                                   "accesses")
+                state_dependency_filter["dropped"] = dropped_state_coords
+                print("[coords] DROPPED aggregate field coordinate(s) the target closure "
+                      "never accesses (the closure names the struct only through "
+                      "specific members): " + ", ".join(dropped_field_coords) +
+                      ". The certified region is widened over these fields")
         if dropped_state_coords:
             print("[coords] DROPPED unrelated state coordinate(s) outside "
                   "the target dependency closure: " +

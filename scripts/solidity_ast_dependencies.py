@@ -389,6 +389,104 @@ def unit_state_dependencies(ast_path, contract, unit, arity=None, declaration_id
     return ordered, evidence
 
 
+def unit_state_member_dependencies(ast_path, contract, unit, arity=None, declaration_id=None):
+    """{state variable: sorted top-level members it is accessed through, or None}.
+
+    The walk is the one ``unit_state_dependencies`` does (modifiers, transitive
+    implemented calls via ``referencedDeclaration``). A struct-typed state
+    variable that the closure touches ONLY as the base of ``var.member``
+    accesses maps to the set of those members; any other reference -- the bare
+    variable passed as an argument, bound to a storage pointer, assigned or
+    deleted whole -- maps to None, because every field may then be touched and
+    a caller must keep them all (fail closed). Variables the closure never
+    reaches are absent.
+
+    WHY: `Governance.governorAdmin()` reads `vaultStorage.governorAdmin` and
+    nothing else, yet all 34 scalar fields of `vaultStorage` (incl. 20
+    `anon_pad$N` packing pads no source can name) became FREE coordinates, the
+    region search split into 34 coordinate shards inside one 60 s unit budget,
+    and the unit was KILLED. Measured across the euler-vault-kit family
+    (Governance, Borrowing, Vault, EVault, RiskManager, Liquidation): trivial
+    getters timing out for the same reason.
+    """
+    ast = _ast_root(ast_path)
+    if ast is None:
+        return None, ["member dependency walk unavailable: AST is absent or unreadable"]
+    nodes = _chain_nodes(ast, contract)
+    if nodes is None:
+        return None, [f"member dependency walk unavailable: contract {contract!r} "
+                      "was not found in the AST"]
+    by_id = _indexed_ast(ast)
+    state_by_id = {}
+    for owner in nodes:
+        for declaration in owner.get("nodes", []) or []:
+            if (declaration.get("nodeType") == "VariableDeclaration"
+                    and declaration.get("stateVariable") and declaration.get("name")):
+                state_by_id[declaration["id"]] = declaration["name"]
+    targets = _unit_targets(nodes, unit, arity, declaration_id)
+    if not targets:
+        getter = _public_state_getter(nodes, unit, arity, declaration_id)
+        if getter is None:
+            return None, _unit_not_found_reason("member dependency walk", contract, unit,
+                                                arity, declaration_id)
+        # A public getter of a struct returns (a projection of) the whole value.
+        return {getter["name"]: None}, [
+            f"state.{getter['name']}: whole variable (public state getter)"]
+    callables = _callables(by_id)
+    seen = set()
+    members = {}
+    whole = {}
+
+    def visit(node):
+        node_id = node.get("id")
+        if node_id in seen:
+            return
+        seen.add(node_id)
+        next_calls = []
+
+        def scan(value):
+            if isinstance(value, dict):
+                if value.get("nodeType") == "MemberAccess":
+                    base = value.get("expression")
+                    ref = base.get("referencedDeclaration") if isinstance(base, dict) else None
+                    if (isinstance(base, dict) and base.get("nodeType") == "Identifier"
+                            and ref in state_by_id):
+                        name = state_by_id[ref]
+                        members.setdefault(name, set()).add(str(value.get("memberName")))
+                        for key, child in value.items():
+                            if key != "expression":
+                                scan(child)
+                        return
+                ref = value.get("referencedDeclaration")
+                if value.get("nodeType") == "Identifier" and ref in state_by_id:
+                    whole[state_by_id[ref]] = str(value.get("src") or "")
+                if ref in callables and ref != node_id:
+                    next_calls.append(callables[ref])
+                for child in value.values():
+                    scan(child)
+            elif isinstance(value, list):
+                for child in value:
+                    scan(child)
+
+        scan(node.get("modifiers") or [])
+        scan(node.get("body"))
+        for callee in next_calls:
+            visit(callee)
+
+    for target in targets:
+        visit(target)
+    out = {}
+    evidence = []
+    for name in sorted(set(members) | set(whole)):
+        if name in whole:
+            out[name] = None
+            evidence.append(f"state.{name}: whole variable referenced at AST src {whole[name]}")
+        else:
+            out[name] = sorted(members[name])
+            evidence.append(f"state.{name}: members {', '.join(out[name])}")
+    return out, evidence
+
+
 def unit_contains_inline_assembly(ast_path, contract, unit, arity=None,
                                   declaration_id=None):
     """Return whether the target unit closure contains inline assembly.

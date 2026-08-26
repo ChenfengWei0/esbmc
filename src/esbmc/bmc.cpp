@@ -36,6 +36,7 @@
 #include <util/location.h>
 
 #include <util/migrate.h>
+#include <util/prefix.h>
 #include <util/show_symbol_table.h>
 #include <util/time_stopping.h>
 #include <util/cache.h>
@@ -6492,7 +6493,35 @@ smt_convt::resultt bmct::multi_property_check(
                       ce.inputs.emplace_back(al->second, val);
                   }
                   else if (nondet_local_seen.insert(name).second)
-                    ce.extcall_returns.emplace_back(name, val);
+                  {
+                    // ---- ONLY A DIRECT NONDET ASSIGNMENT IS HARNESS-CHOSEN ----
+                    //
+                    // `get_nondet_symbol` returns ANY symbol it finds under the
+                    // typecasts/withs, so `return_value$_canPerform$3 = <callee's
+                    // return symbol>` -- an INTERNAL function's result -- landed
+                    // here as "a quantity the harness chose". The driver then
+                    // pinned `extcall.return_value$_canPerform$3`, certification
+                    // refused the query ("no ASSIGN of a NONDET value to a symbol
+                    // with that name"), dropped the pin and re-ran: one wasted
+                    // ESBMC invocation per such name per path, ~8 s each on the
+                    // euler-vault-kit sources, inside a 60 s unit budget.
+                    // MEASURED over 1582 fix-20260826 driver logs: 87 distinct
+                    // `extcall.*` names dropped that way (`__msgSender` 100x,
+                    // `_bytes_static_equal` 217x, `__canPerform` 50x, `tmp$N`
+                    // 74x) against 10 names certification could express.
+                    //
+                    // Certification's rule is a DIRECT nondet assignment to a
+                    // symbol with that name; publish under the same rule, so the
+                    // report never names a pin the query cannot take. The
+                    // frontend-marked low-level `success` locals travel on their
+                    // own channel (`extcall_success_by_depth`) and are untouched.
+                    if (
+                      is_symbol2t(nd) &&
+                      has_prefix(to_symbol2t(nd).thename.as_string(), "nondet$"))
+                      ce.extcall_returns.emplace_back(name, val);
+                    else
+                      ++ce.dropped_internal;
+                  }
                 }
               }
               else
