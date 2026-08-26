@@ -21100,6 +21100,152 @@ def _render_high_level_bool_pin(source, contract, name, pin_value, indent):
     return None, reason
 
 
+_SCALAR_PIN_TYPE_RE = r"(bool|address|uint(?:8|16|32|64|128|160|256)?|int(?:8|16|32|64|128|256)?|bytes32)"
+
+
+def _scalar_pin_value_expr(typ, value):
+    """A Solidity literal of `typ` carrying the certified integer `value`."""
+    typ = _norm_ty(typ)
+    if typ == "bool":
+        return "true" if value else "false"
+    if typ == "address":
+        return f"address(uint160({value}))"
+    if typ == "bytes32":
+        return f"bytes32(uint256({value}))"
+    m = re.fullmatch(r"(u?)int(\d*)", typ)
+    if m is None:
+        return None
+    bits = int(m.group(2) or 256)
+    if m.group(1) == "u":
+        return f"uint{bits}({value})"
+    if value >= 1 << (bits - 1):
+        value -= 1 << bits
+    return f"int{bits}({value})"
+
+
+def _source_state_variable_type(source, contract, name):
+    """(declared type, visibility) of state variable `name` across the chain."""
+    rx = re.compile(r"\b([A-Za-z_][\w.]*)((?:\s+(?:public|private|internal|immutable|constant))*)\s+"
+                    + re.escape(name) + r"\s*(?:=|;)")
+    for _cname, chunk in _source_chain_chunks(source, contract):
+        masked = _mask_solidity_comments_and_strings(chunk)
+        for m in rx.finditer(masked):
+            if m.group(1) in ("return", "new", "delete", "emit", "revert"):
+                continue
+            mods = m.group(2) or ""
+            return m.group(1), ("public" if "public" in mods else "non-public")
+    return None, None
+
+
+def _high_level_scalar_call_sites(source, contract):
+    """`TYPE NAME = IFACE(<expr>).fn(<args>);` and `TYPE NAME = stateVar.fn(<args>);`
+    sites across the inheritance chain, for single-scalar return types.
+
+    Returns {NAME: [(iface, target_kind, target_expr, fn, arity, chunk_name, type), ...]}
+    with target_kind in {"cast", "state"}.  This generalises
+    `_high_level_bool_call_sites` (bool only, cast form only): a certified pin
+    on an external call's return value is an ordinary scalar pin -- the
+    frontend names it after the receiving local -- and DNSRegistrar's
+    `address owner = ens.owner(node)` (immutable interface-typed state
+    variable as the target) is the shape the bool-only matcher refused.
+    """
+    rx = re.compile(r"\b" + _SCALAR_PIN_TYPE_RE + r"\s+([A-Za-z_]\w*)\s*=\s*([A-Za-z_]\w*)\s*([(.])")
+    out = {}
+    for cname, chunk in _source_chain_chunks(source, contract):
+        masked = _mask_solidity_comments_and_strings(chunk)
+        for m in rx.finditer(masked):
+            typ, name, head, opener = m.group(1), m.group(2), m.group(3), m.group(4)
+            pos = m.end()
+            if opener == "(":
+                depth = 1
+                while pos < len(masked) and depth:
+                    depth += (masked[pos] == "(") - (masked[pos] == ")")
+                    pos += 1
+                if depth:
+                    continue
+                target_expr = masked[m.end():pos - 1].strip()
+                tail = re.match(r"\s*\.\s*([A-Za-z_]\w*)\s*\(", masked[pos:])
+                iface, kind = head, "cast"
+            else:
+                tail = re.match(r"\s*([A-Za-z_]\w*)\s*\(", masked[pos:])
+                iface, kind, target_expr = None, "state", head
+            if tail is None:
+                continue
+            fn = tail.group(1)
+            depth, apos = 1, pos + tail.end()
+            while apos < len(masked) and depth:
+                depth += (masked[apos] == "(") - (masked[apos] == ")")
+                apos += 1
+            if depth or not re.match(r"\s*;", masked[apos:]):
+                continue
+            arity = len([a for a in split_top_level(masked[pos + tail.end():apos - 1]) if a.strip()])
+            out.setdefault(name, []).append((iface, kind, target_expr, fn, arity, cname, typ))
+    return out
+
+
+def _render_high_level_scalar_pin(source, contract, name, pin_value, indent):
+    """Render a certified pin on a high-level interface call's scalar result.
+
+    Target shapes: a literal address (direct `vm.mockCall`), an ERC-7201
+    storage handle member (`VERIPUT_EXTCALL_IFACE_SLOT`, resolved at the unit
+    call), and a PUBLIC interface-typed state variable
+    (`VERIPUT_EXTCALL_IFACE_STATE`, resolved at the unit call through the
+    instance's getter).  Returns (lines, None) or (None, reason).
+    """
+    sites = _high_level_scalar_call_sites(source, contract).get(name) or []
+    renders = set()
+    reason = None if sites else f"no `<scalar> {name} = <iface>.fn(...)` site"
+    for iface, kind, target_expr, fn, arity, _cname, typ in sites:
+        state_vis = None
+        if kind == "state":
+            iface, state_vis = _source_state_variable_type(source, contract, target_expr)
+            if iface is None:
+                reason = f"`{target_expr}` is not a declared state variable"
+                continue
+        abis = _source_type_function_abis(source, iface)
+        if not abis:
+            reason = f"`{iface}` declares no function ABI in the flat source"
+            continue
+        choice = _unique_function_choice(abis.get(fn) or [], arity)
+        if choice is None:
+            reason = f"`{iface}.{fn}` with {arity} argument(s) is not a unique ABI"
+            continue
+        signature, returns = choice
+        if len(returns) != 1 or _norm_ty(returns[0]) != _norm_ty(typ):
+            reason = f"`{iface}.{fn}` does not return exactly one `{typ}`"
+            continue
+        value_expr = _scalar_pin_value_expr(typ, pin_value)
+        if value_expr is None:
+            reason = f"`{typ}` is not a renderable scalar pin type"
+            continue
+        if kind == "state":
+            if state_vis != "public":
+                reason = (f"state variable `{target_expr}` has no public getter, so the "
+                          "test cannot address the mocked callee")
+                continue
+            renders.add(f"{indent}// VERIPUT_EXTCALL_IFACE_STATE {target_expr} {signature} {value_expr}")
+            continue
+        hm = re.fullmatch(r"([A-Za-z_]\w*)\s*\(\s*\)\s*\.\s*([A-Za-z_]\w*)", target_expr)
+        lm = re.fullmatch(r"0x[0-9A-Fa-f]{40}", target_expr)
+        if hm is not None:
+            slot, why = _erc7201_storage_member_slot(source, contract, hm.group(1), hm.group(2))
+            if slot is None:
+                reason = why
+                continue
+            renders.add(f"{indent}// VERIPUT_EXTCALL_IFACE_SLOT {hex(slot)} {signature} {value_expr}")
+        elif lm is not None:
+            renders.add(f"{indent}vm.mockCall(address({target_expr}), "
+                        f"abi.encodeWithSignature(\"{signature}\"), abi.encode({value_expr}));")
+        else:
+            reason = (f"high-level call target `{target_expr}` is neither an ERC-7201 storage "
+                      "handle member, a literal address, nor a public state variable")
+    if len(renders) == 1:
+        return [renders.pop()], None
+    if len(renders) > 1:
+        return None, f"`{name} = ...` has {len(renders)} differently rendered sites"
+    return None, reason
+
+
 def runtime_low_level_success_mock_lines(forge_project, contract, unit, extcall_pins, indent):
     """Realise a certified low-level-call success pin with a Foundry mock.
 
@@ -21159,9 +21305,11 @@ def runtime_low_level_success_mock_lines(forge_project, contract, unit, extcall_
         for name, typ in (source_inherited_function_params(source, contract, unit, None) or [])
     }
 
+    # `(target).call(data)` -- a parenthesised target (balancer CallAndRevert)
+    # is the same site; the optional parentheses are matched and dropped.
     rx = re.compile(
-        r"\(\s*bool\s+([A-Za-z_]\w*)\s*,[^)]*\)\s*=\s*"
-        r"(msg\.sender|[A-Za-z_]\w*|0x[0-9A-Fa-f]{40})\s*\.\s*"
+        r"\(\s*bool\s+([A-Za-z_]\w*)\s*,[^)]*\)\s*=\s*\(?\s*"
+        r"(msg\.sender|[A-Za-z_]\w*|0x[0-9A-Fa-f]{40})\s*\)?\s*\.\s*"
         r"(call|staticcall|delegatecall)\s*(\{[^}]*\})?\s*"
         r"\(\s*(.*?)\s*\)\s*;", re.S)
     sites = {m.group(1): m for m in rx.finditer(body)}
@@ -21176,8 +21324,14 @@ def runtime_low_level_success_mock_lines(forge_project, contract, unit, extcall_
                 hl_value = int(str(raw_value), 0)
             except ValueError:
                 return [], f"external-call pin `{full_name}` is not numeric"
+            sc_lines, sc_reason = _render_high_level_scalar_pin(source, contract, name, hl_value,
+                                                                indent)
+            if sc_lines is not None:
+                lines.extend(sc_lines)
+                continue
             if hl_value not in (0, 1):
-                return [], f"external-call success pin `{full_name}` is not boolean"
+                return [], (f"external-call success pin `{full_name}` is not boolean, and no "
+                            f"scalar return-value site renders it ({sc_reason})")
             hl_lines, hl_reason = _render_high_level_bool_pin(source, contract, name, hl_value,
                                                               indent)
             if hl_lines is not None:
@@ -21327,15 +21481,20 @@ def apply_runtime_interface_mocks(lines, emitted, case, unit, contract, mock_lin
     deal_contract = False
     sender_eoa = False
     marker = re.compile(r"^\s*// VERIPUT_EXTCALL_CALLSITE ([A-Za-z_]\w*) ([A-Za-z_]\w*) ([01])\s*$")
-    slot_marker = re.compile(r"^\s*// VERIPUT_EXTCALL_IFACE_SLOT (0x[0-9a-fA-F]+) (\S+) (true|false)\s*$")
+    slot_marker = re.compile(r"^\s*// VERIPUT_EXTCALL_IFACE_SLOT (0x[0-9a-fA-F]+) (\S+) (.+?)\s*$")
+    state_marker = re.compile(r"^\s*// VERIPUT_EXTCALL_IFACE_STATE ([A-Za-z_]\w*) (\S+) (.+?)\s*$")
     iface_slot_specs = []
+    iface_state_specs = []
     for line in mock_lines:
         match = marker.match(line)
         slot_match = slot_marker.match(line)
+        state_match = state_marker.match(line)
         if match:
             callsite_specs.append((match.group(1), match.group(2), match.group(3) == "1"))
         elif slot_match:
             iface_slot_specs.append((slot_match.group(1), slot_match.group(2), slot_match.group(3)))
+        elif state_match:
+            iface_state_specs.append((state_match.group(1), state_match.group(2), state_match.group(3)))
         elif line.strip() == "// VERIPUT_EXTCALL_DEAL_CONTRACT":
             deal_contract = True
         elif line.strip() == "// VERIPUT_EXTCALL_SENDER_EOA":
@@ -21406,7 +21565,7 @@ def apply_runtime_interface_mocks(lines, emitted, case, unit, contract, mock_lin
                         f"{ind}vm.assume({ident}.code.length == 0);",
                     ]
                     break
-    if iface_slot_specs:
+    if iface_slot_specs or iface_state_specs:
         # ---- A PIN ON A HIGH-LEVEL CALL THROUGH A STORAGE HANDLE -----------
         #
         # `bool ok = IFACE(getXStorage().member).fn(...)` targets whatever
@@ -21422,6 +21581,13 @@ def apply_runtime_interface_mocks(lines, emitted, case, unit, contract, mock_lin
             if args is not None and not placed:
                 indent = re.match(r"^\s*", line).group(0)
                 inst = target_instance_for_call([line], 0, unit) or "c0"
+                for k, (var, signature, value_expr) in enumerate(iface_state_specs):
+                    rendered.append(f"{indent}// certified external-call pin on a high-level "
+                                    f"interface call: the callee held in public state "
+                                    f"variable `{var}` answers `{signature}` with {value_expr}")
+                    rendered.append(f"{indent}vm.mockCall(address({inst}.{var}()), "
+                                    f"abi.encodeWithSignature(\"{signature}\"), "
+                                    f"abi.encode({value_expr}));")
                 for k, (slot_hex, signature, value_expr) in enumerate(iface_slot_specs):
                     rendered.append(f"{indent}// certified external-call pin on a high-level "
                                     f"interface call: the handle read from storage slot "
