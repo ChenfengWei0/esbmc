@@ -1326,9 +1326,16 @@ void goto_checkt::goto_check(goto_programt &goto_program)
       check(ret.operand, loc);
     }
 
-    // insert new instructions -- make sure targets are not moved
+    // insert new instructions -- make sure targets are not moved.
+    // The inserted checks belong to the function of the instruction they
+    // guard: without this the claim's `function` id is empty, and a consumer
+    // that keys on it (--path-cov-certify's deployment-arithmetic exclusion in
+    // bmc.cpp) cannot tell a constructor claim from a path claim.
+    const irep_idt checked_function = i.function;
     while (!new_code.instructions.empty())
     {
+      if (new_code.instructions.front().function.empty())
+        new_code.instructions.front().function = checked_function;
       goto_program.insert_swap(it, new_code.instructions.front());
       new_code.instructions.pop_front();
       ++it;

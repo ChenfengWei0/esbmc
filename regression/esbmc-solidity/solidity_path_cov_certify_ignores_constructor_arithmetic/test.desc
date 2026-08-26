@@ -1,0 +1,9 @@
+CORE
+contract.sol
+--contract PauseWindow --solidity-path-coverage --solidity-max-tx 1 --focus-function end --path-cov-certify spec.json --overflow-check --result-only
+--path-cov-certify: RESULT: CERTIFIED
+\A(?!(.|\n)*RESULT: UNSAFE)
+\A(?!(.|\n)*RESULT: VACUOUS)
+\A(?!(.|\n)*RESULT: REFUTED)
+\A(?!(.|\n)*REFUSING THE QUERY)
+\A(?!(.|\n)*INTERNAL DEFECT)

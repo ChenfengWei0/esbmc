@@ -64,6 +64,8 @@ public:
   size_t claim_to_keep;
   std::string claim_msg;
   std::string claim_loc;
+  // goto-function id the kept claim lives in (`sol:@C@X@F@Y#N` for Solidity).
+  std::string claim_function;
   std::string claim_cstr;
   std::string claim_property;
   bool show_slice_info;

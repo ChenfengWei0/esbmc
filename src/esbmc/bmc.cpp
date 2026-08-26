@@ -1100,6 +1100,49 @@ static std::string prettify_solidity_expr(const std::string &expr)
 //
 // Kept as a function rather than deleted so that the day a havoc'd-entry or
 // loop-live exploration mode exists, this is the single place to change.
+// --path-cov-certify: a checked-arithmetic claim located in a CONSTRUCTOR of a
+// query whose focused unit is a different function is DEPLOYMENT-TIME
+// arithmetic, not part of the certified path. MEASURED on Stress243
+// FactoryWidePauseWindow.getNewPoolPauseWindowEndTime: the constructor
+// computes `block.timestamp + pauseWindowDuration` under a free deployment
+// environment; the certified path reads the immutable it pinned and never
+// executes that add, yet the pre-pass reported "1 checked arithmetic assertion
+// refuted" (claim at flat.sol:33 function FactoryWidePauseWindow) and the
+// region was refuted at its own single point -- the witness was a deploy-time
+// revert the path can never observe (a deployment that reverts has no contract
+// to call). Solidity constructor ids are `sol:@C@X@F@X#N` (see
+// solidity_convert.cpp: a constructor's func_name is the contract name).
+static bool is_solidity_constructor_function_id(const std::string &id)
+{
+  const std::string c_tag = "sol:@C@", f_tag = "@F@";
+  if (id.compare(0, c_tag.size(), c_tag) != 0)
+    return false;
+  const size_t f = id.find(f_tag, c_tag.size());
+  if (f == std::string::npos)
+    return false;
+  const std::string cname = id.substr(c_tag.size(), f - c_tag.size());
+  const size_t h = id.find('#', f + f_tag.size());
+  const std::string fname = id.substr(
+    f + f_tag.size(),
+    h == std::string::npos ? std::string::npos : h - f - f_tag.size());
+  return !cname.empty() && cname == fname;
+}
+
+static bool certify_claim_is_deployment_arithmetic(
+  const optionst &options,
+  const std::string &claim_function)
+{
+  if (!goto_coveraget::path_cov_certify_mode)
+    return false;
+  const std::string focus = options.get_option("focus-function");
+  if (focus.empty())
+    return false; // no focused unit: the constructor may be the path itself
+  if (!is_solidity_constructor_function_id(claim_function))
+    return false;
+  // A focused constructor keeps its own claims.
+  return !goto_coveraget::focus_selects_unit(claim_function, focus);
+}
+
 static bool path_cov_can_prove_unreachable()
 {
   return false;
@@ -4306,12 +4349,17 @@ smt_convt::resultt bmct::multi_property_check(
       const std::string prop = it->source.pc->location.property().as_string();
       const std::string loc = it->source.pc->location.as_string();
       const bool probe = goto_coveraget::path_probe_claims.count({it->comment, loc}) > 0;
+      const bool deployment_arith =
+        (prop == "overflow" || prop == "division-by-zero") &&
+        certify_claim_is_deployment_arithmetic(
+          options, it->source.pc->function.as_string());
       const bool certify_safety =
-        goto_coveraget::path_cov_certify_mode &&
+        goto_coveraget::path_cov_certify_mode && !deployment_arith &&
         (prop == "overflow" || prop == "division-by-zero");
       const bool skipped_by_loop =
-        options.get_bool_option("result-only") && !probe && !certify_safety &&
-        prop != "instrumented assertion";
+        deployment_arith ||
+        (options.get_bool_option("result-only") && !probe && !certify_safety &&
+         prop != "instrumented assertion");
       // An assert already ignored in `eq` is un-ignored by claim_slicer when
       // its job runs, so the loop solves it; this pass cannot speak for it.
       const bool eligible = !it->ignore && !skipped_by_loop;
@@ -4611,6 +4659,15 @@ smt_convt::resultt bmct::multi_property_check(
       goto_coveraget::path_cov_certify_mode &&
       (claim.claim_property == "overflow" ||
        claim.claim_property == "division-by-zero");
+    // Deployment-time arithmetic is skipped in certify mode regardless of
+    // --result-only: a hand-run query without it must agree with the driver.
+    if (
+      certify_safety_claim &&
+      certify_claim_is_deployment_arithmetic(options, claim.claim_function))
+    {
+      ++summary.skipped_properties;
+      return;
+    }
     if (
       is_path_cov && options.get_bool_option("result-only") &&
       !is_probe_claim && !certify_safety_claim &&

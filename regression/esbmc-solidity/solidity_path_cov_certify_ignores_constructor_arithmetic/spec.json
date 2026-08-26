@@ -1,0 +1,4 @@
+{"unit":"end","enc":7,"depth":2,
+ "box":[{"name":"block.timestamp","lo":"0","hi":"100"},
+        {"name":"state._end","lo":"200","hi":"300"},
+        {"name":"msg.value","lo":"0","hi":"0"}]}
