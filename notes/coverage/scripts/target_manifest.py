@@ -22,6 +22,18 @@ from pathlib import Path
 DEFAULT_VERIPUT_ROOT = Path(os.environ.get(
     "VERIPUT_ROOT", "/home/samson/workspace/VeriPUT"))
 BENCHMARKS = ("peer182", "bugfix124", "stress243")
+
+# Excluded from the frozen evaluation target set (status "skipped", reason kept
+# on the row). The criterion is a fact about the source, not a file name: the
+# target contract declares NO public/external function, so there is no callable
+# unit for any test generator to exercise. 2026-08-26: applied to the Comet
+# storage-layout base; the same scan found no other hit among the 509
+# (pop_001_Multicall matched only through a truncated flatten, since replaced).
+EXCLUDED_STRESS_TARGETS = {
+    "compound-finance__comet__CometStorage":
+        "target contract declares no public/external function "
+        "(storage-layout base) -- no callable unit, excluded 2026-08-26",
+}
 PEER_REQUIRED_SOURCE_SEGMENT = "contracts_080/"
 
 
@@ -145,6 +157,20 @@ def stress_targets(root: Path, scope: str, *, prepared_ok_only=False) -> list[di
         if subject_id in seen_subjects:
             return
         seen_subjects.add(subject_id)
+        if subject_id in EXCLUDED_STRESS_TARGETS:
+            targets.append({
+                "schema": "veriput-eval-target/v1",
+                "benchmark": "stress243",
+                "subject_id": subject_id,
+                "status": "skipped",
+                "reason": EXCLUDED_STRESS_TARGETS[subject_id],
+                "contract": contract,
+                "source_kind": "stress-source",
+                "sources": [{"variant": "source", "path": _rel(source, root)}],
+                "units_hint": [],
+                "metadata": metadata,
+            })
+            return
         targets.append({
             "schema": "veriput-eval-target/v1",
             "benchmark": "stress243",

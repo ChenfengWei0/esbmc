@@ -31,8 +31,9 @@ from solidity_path_put import k_induction_proof_args as oracle_proof_args  # noq
 DEFAULT_VERIPUT_ROOT = Path("/home/samson/workspace/VeriPUT")
 DEFAULT_OUTPUT_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1_KInduction_Fair600"
 BENCHMARKS = ("peer182", "bugfix124", "real203")
-EXPECTED_COUNTS = {"peer182": 182, "bugfix124": 124, "real203": 203}
-EXPECTED_TOTAL = 509
+# 2026-08-26: real203 is 202 (compound-finance__comet__CometStorage excluded, see target_manifest.py)
+EXPECTED_COUNTS = {"peer182": 182, "bugfix124": 124, "real203": 202}
+EXPECTED_TOTAL = sum(EXPECTED_COUNTS.values())  # 508
 TARGET_UNIVERSE_AUDIT = REPO / "notes" / "coverage" / "rq1_artifact_audit.json"
 
 
@@ -84,7 +85,7 @@ def frozen_targets(veriput_root: Path) -> tuple[list[dict], dict[str, int]]:
         raise rq1_veriput_run.RQ1RunError(f"cannot read frozen RQ1 target audit: {exc}") from exc
     audit_rows = audit.get("rows") if isinstance(audit, dict) else None
     if not isinstance(audit_rows, list) or len(audit_rows) != EXPECTED_TOTAL:
-        raise rq1_veriput_run.RQ1RunError("frozen RQ1 target audit is not exactly 509 rows")
+        raise rq1_veriput_run.RQ1RunError(f"frozen RQ1 target audit is not exactly {EXPECTED_TOTAL} rows")
     targets = []
     counts = {}
     for benchmark in BENCHMARKS:
