@@ -1360,6 +1360,67 @@ def _matching_delimiter(mask, start, opening, closing):
     return None
 
 
+# ---- generated-suite identity in setUp comparisons -------------------------
+#
+# The certified basis replay and the PUT are emitted as two Foundry suites,
+# `<C>CovTest[_N]_<unit>_concrete<enc>p<piece>__basis_root` and
+# `<C>CovTest[_N]_<unit>_put<enc>p<piece>`, and every interface mock ESBMC
+# synthesizes for a constructor argument is named after the suite it lives in
+# (`ESBMCMock_<Iface>_<suite>`). Their setUp bodies therefore differ in the
+# mock's NAME on every subject that needs such a mock, while being the same
+# deployment byte for byte otherwise -- measured 75 of 77 "different setup
+# state" refusals across v40 and every fix root (ens ReverseRegistrar,
+# ETHReverseResolver, Root, BaseRegistrarImplementation, ...): the only diff
+# line was `new ESBMCMock_ENS_<suiteA>()` vs `new ESBMCMock_ENS_<suiteB>()`.
+# Refusing the fusion on a name is a false negative: the mock DEFINITIONS are
+# what decide the setup state, so compare those too, both after the suite
+# name is canonicalised.
+_GENERATED_SUITE_NAME_RE = re.compile(r"CovTest(?:_\d+)?_[A-Za-z0-9_]+")
+
+
+def _canonical_generated_suite_text(text):
+    return _GENERATED_SUITE_NAME_RE.sub("CovTest__SUITE__", text or "")
+
+
+def _generated_mock_definitions(source, body):
+    """(canonical name, canonical definition) of every ESBMCMock_* the body uses."""
+    out = []
+    for name in sorted(set(re.findall(r"\bESBMCMock_\w+", body or ""))):
+        match = re.search(r"\bcontract\s+" + re.escape(name) + r"\b[^{]*\{", source or "")
+        definition = None
+        if match:
+            depth = 0
+            for index in range(match.end() - 1, len(source)):
+                if source[index] == "{":
+                    depth += 1
+                elif source[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        definition = source[match.start():index + 1]
+                        break
+        out.append((_canonical_generated_suite_text(name),
+                    _canonical_generated_suite_text(definition)))
+    return out
+
+
+def setup_state_identity_error(put_source, put_setup, basis_source, basis_setup):
+    """None when the two setUp bodies establish the same state, else the refusal.
+
+    Exact equality first; otherwise equality modulo the generated suite name,
+    which additionally requires every generated mock the bodies instantiate to
+    have the same definition (again modulo the suite name)."""
+    if put_setup == basis_setup:
+        return None
+    if _canonical_generated_suite_text(put_setup) != _canonical_generated_suite_text(basis_setup):
+        return "PUT and certified basis replay use different setup state"
+    put_mocks = _generated_mock_definitions(put_source, put_setup)
+    basis_mocks = _generated_mock_definitions(basis_source, basis_setup)
+    if put_mocks != basis_mocks or any(d is None for _n, d in put_mocks):
+        return ("PUT and certified basis replay use different setup state "
+                "(generated mock definitions differ)")
+    return None
+
+
 def _solidity_function_spans(source, name):
     """Return mask-aware spans for every exactly named Solidity function."""
     mask = _solidity_code_mask(source)
@@ -1845,8 +1906,9 @@ def attach_certified_ce_anchor(put_rec, basis_rec, certified_detail, representat
     if put_setup is None or basis_setup is None:
         return None, ("PUT/basis setup is not uniquely executable: " +
                       str(put_setup_error or basis_setup_error))
-    if put_setup != basis_setup:
-        return None, "PUT and certified basis replay use different setup state"
+    setup_error = setup_state_identity_error(put_source, put_setup, basis_source, basis_setup)
+    if setup_error:
+        return None, setup_error
     start, end, name_start, open_paren, _close_paren, _open_brace, _close_brace = span
     function_source = basis_source[start:end]
     basis_function_source = function_source
