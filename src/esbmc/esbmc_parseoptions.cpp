@@ -3199,6 +3199,16 @@ int esbmc_parseoptionst::do_bmc_strategy(
         any_violation_found = true;
         options.set_option("kind-violation-found", true);
       }
+      // VeriPUT stage-0: the Foundry coverage tests are otherwise written only
+      // when the run concludes, so a --timeout that lands inside depth k+1
+      // discards every witness depth k already produced (measured: KizunaInu
+      // k=1 done in 13 s, k=2 not done in 600 s -> 0 tests). Flush after every
+      // finished depth; generate() deduplicates and rewrites the same file.
+      if (is_coverage && options.get_bool_option("generate-foundry-testcase"))
+      {
+        log_status("Foundry: flushing coverage tests after k = {:d}", k_step);
+        foundry_gen.generate();
+      }
 
       if (is_bcv && !is_coverage)
       {
