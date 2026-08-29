@@ -1,3 +1,4 @@
+#include <chrono>
 #include <goto-symex/foundry.h>
 #include <goto-symex/slice.h>
 // The exit census (revert / rollback-revert / undetermined path sets) is what
@@ -2650,6 +2651,7 @@ void foundry_generator::collect(
   if (tc.empty())
     return;
 
+  {
   std::lock_guard<std::mutex> lock(data_mutex);
   // ---- REFUSE a counterexample whose path is a NAMED OBSTACLE ----
   //
@@ -2748,6 +2750,19 @@ void foundry_generator::collect(
       slot += (slot.empty() ? "" : ", ") + claim;
   }
   test_cases.push_back(std::move(tc));
+  }
+  // VeriPUT stage-0: a --timeout that lands while depth k=1 is still being
+  // solved (55 of 202 real203 subjects at 58 s) would otherwise discard every
+  // counterexample already reconstructed. Throttled flush (>= 5 s apart),
+  // OUTSIDE data_mutex because generate() takes it too.
+  {
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_flush >= std::chrono::seconds(5))
+    {
+      last_flush = now;
+      generate();
+    }
+  }
 }
 
 bool foundry_generator::has_tests() const

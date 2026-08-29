@@ -6,6 +6,7 @@
 #include <util/namespace.h>
 #include <map>
 #include <mutex>
+#include <chrono>
 #include <set>
 #include <string>
 #include <utility>
@@ -137,6 +138,8 @@ private:
   std::vector<test_case> test_cases;
   std::string source_file;
   mutable std::mutex data_mutex;
+  /// VeriPUT stage-0: last throttled flush from collect() (see foundry.cpp).
+  std::chrono::steady_clock::time_point last_flush{};
 
   /// Counterexamples REFUSED because their path is a named obstacle (see
   /// sol_call::named_obstacle). Counted rather than silently dropped: a
