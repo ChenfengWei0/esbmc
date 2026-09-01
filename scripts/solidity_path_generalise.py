@@ -3007,6 +3007,24 @@ def uncontrolled_decision_splits(paths,
             # ⛔ HASH ONLY.  An external call's return value is NOT settable by
             # any cheatcode, so `extcall.*` and external-success decisions keep
             # the refusal untouched.
+            #
+            # ⛔ MEASURED AFTERWARDS, AND IT DOES NOT FIX ether_lotto.  A fresh
+            # run with this relaxation in place still reports stage2
+            # witnessed=3 certified=1 not_certified=2 method_unsupported=2 and
+            # emits zero PUTs for `play`, because the condition correctly does
+            # not fire: the two success-path witnesses are IDENTICAL on every
+            # settable coordinate --
+            #   path:13  ts=0xFF..FF  prevrandao=0  msg.value=10  pot_final=0
+            #   path:7   ts=0xFF..FF  prevrandao=0  msg.value=10  pot_final=10
+            # -- and differ only in the hash outcome, which the solver chose
+            # freely because keccak is uninterpreted.  The witnesses therefore
+            # carry NO information about which timestamp realises which arm, so
+            # no witness-derived pin can force one.  Opening that case needs the
+            # EMITTER to search concretely for a block.timestamp that realises
+            # each arm under the real keccak; that is a new capability, not a
+            # relaxation of this filter, and it is not implemented.  This
+            # relaxation still stands on its own for the case it does describe:
+            # siblings that disagree on a settable coordinate.
             if _hash_split_is_env_forceable(dec_a, dec_b, ce_a, ce_b,
                                             extcall_context, by_key):
                 continue
