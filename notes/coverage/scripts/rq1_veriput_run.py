@@ -10132,11 +10132,23 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                              args.forge_timeout,
                              path_function,
                              getattr(args, "esbmc", "") or None,
-                             emit_concrete_fallbacks=(
-                                 concrete_only_stage4
-                                 or _hash_undecided_fallback_count(
-                                     cert_path, subject.benchmark_key, unit,
-                                     path_function) > 0),
+                             # 2026-09-02: ALWAYS emit eligible concrete fallbacks.
+                             # The old gate (concrete-only cases, plus the hash
+                             # channel) silently discarded witnessed-but-uncertified
+                             # paths on every case that had at least one certified
+                             # unit: MEASURED on peer_syntest__Baz, stage 2 recorded
+                             # 6 gate-eligible CE fallbacks (concrete_fallback=true,
+                             # witness_check UNKNOWN / NOT-CERTIFIED-CE-FALLBACK)
+                             # and stage 4 emitted none of them, leaving the unit
+                             # with only its nonpayable value-gate replay.  put_all
+                             # itself re-checks eligibility per path
+                             # (CONCRETE_FALLBACK_WITNESS_CHECKS + concrete_fallback
+                             # flag + a parseable CE), the forge reference gate and
+                             # the 10k-fuzz harden quarantine still stand between an
+                             # emitted replay and the corpus, and emission happens
+                             # inside the same stage-4 wall deadline, so the 600s
+                             # case budget is unchanged.
+                             emit_concrete_fallbacks=True,
                              foundry_fixture=job.get("source_stage2_fixture_path"),
                              concrete_replay_only=bool(
                                  getattr(args, "concrete_replay_only_ablation", False)),
