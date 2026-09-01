@@ -12759,11 +12759,41 @@ def establish_env_sender(body, call_i, region, holes, pins, used, call_value_exp
     if lo is None:
         return body, call_i, None, None, [], None, None
 
-    if lo == 0 and hi == 0:
-        return (body, call_i, None, None, [],
-                "msg.sender == 0 cannot be established with Foundry `vm.prank`: "
-                "the certified slice is executable in ESBMC's address domain but "
-                "not in Foundry's sender cheatcode domain", None)
+    # ⛔ THERE USED TO BE A HARD REFUSAL HERE for `lo == hi == 0`, on the claim
+    # that "msg.sender == 0 cannot be established with Foundry `vm.prank`: the
+    # certified slice is executable in ESBMC's address domain but not in
+    # Foundry's sender cheatcode domain". THAT CLAIM IS FALSE, and it was never
+    # measured -- it was reasoned from "address(0) cannot sign a transaction",
+    # which is a fact about the mempool, not about a cheatcode.
+    #
+    # MEASURED against the same forge the campaign runs (forge 1.7.1), three
+    # shapes, all PASS, with the callee observing `msg.sender == address(0)`:
+    #     vm.prank(address(0)); c.ping();                            -> PASS
+    #     vm.deal(address(0), 1 ether); vm.prank(address(0));
+    #         c.pay{value: 7 wei}();                                 -> PASS
+    #     ... address(c).call{value: 3 wei}(abi.encodeWithSignature("pay()"))
+    #                                                                -> PASS, ok == true
+    # so both the prank and the `vm.deal` the funding block below emits for a
+    # value-bearing call behave on address(0) exactly as on any other account.
+    # Falling through hands this case to the POINT branch, which renders
+    # `vm.prank(address(uint160(0)))` -- literally `vm.prank(address(0))`.
+    #
+    # WHY REMOVING IT IS PURELY ADDITIVE. The refusal fired unconditionally on
+    # `lo == hi == 0`, so no PUT in any published corpus was ever emitted from
+    # this branch: nothing can regress, only refusals can become PUTs. CENSUS
+    # over the Full campaign roots: 103 refused rows across 51 subjects named
+    # this reason (bugfix124 ether_lotto `play`, roulette `fallback`, mycontract
+    # `sendTo`; real203 ProtocolConfig `setAdmin`/`setFeeReceiver`; peer182 the
+    # `transferOwnership`/`renounceOwnership`/`delBot` family).
+    #
+    # ⛔ THE INTERVAL BRANCH BELOW STILL PUNCHES 0 OUT, deliberately. Dropping
+    # that hole would WIDEN the fuzz range of PUTs that already exist and are
+    # green, and "do not disturb the existing PUT set" outranks consistency
+    # here. Excluding a value from a certified interval stays sound -- the
+    # emitted region is a subset of the proved one -- so the hole costs
+    # coverage, never correctness; putting 0 back is a separate change that
+    # would owe a whole-corpus rerun. Its note text is corrected below to say
+    # that, instead of repeating the disproved claim.
 
     sig_add, pre_add = None, []
     if hi > lo:
@@ -12794,9 +12824,12 @@ def establish_env_sender(body, call_i, region, holes, pins, used, call_value_exp
                 f"interval rather than over one point of it" +
                 (f", and the {len(sender_holes)} punched value(s) are "
                  f"excluded by vm.assume" if sender_holes else "") +
-                ("; 0 is excluded because Foundry cannot prank "
-                 "address(0), and the remaining executable subregion is a "
-                 "subset of the certified region" if lo <= 0 <= hi else ""))
+                ("; 0 is excluded to keep this PUT's fuzz range identical to "
+                 "the one the published corpus already runs -- Foundry CAN "
+                 "prank address(0) (measured), so this is a deliberate "
+                 "narrowing, not a limitation -- and the remaining executable "
+                 "subregion is a subset of the certified region"
+                 if lo <= 0 <= hi else ""))
     else:
         sender_expr = f"address(uint160({lo}))"
         prank = f"    vm.prank({sender_expr});"
