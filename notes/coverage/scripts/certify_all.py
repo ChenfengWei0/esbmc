@@ -766,6 +766,33 @@ def bounded_holds_retry_cmd(cmd, workdir, retry_hint=None):
             out, "--unwindset"):
         out = append_driver_esbmc_value_arg(
             out, "--unwind", hinted_unwind or 16)
+    # ---- A CONSTRUCTOR'S ARRAY COPY IS NOT THIS UNIT'S LOOP ----------------
+    #
+    # A storage `T[] = memory T[]` assignment in the CONSTRUCTOR compiles to a
+    # copy loop whose truncation `assume` the model can never satisfy, so with
+    # --no-unwinding-assertions every path of EVERY unit of the contract is
+    # silently assumed away and the whole subject enumerates to nothing.
+    # MEASURED (12-line reproduction, `_gateways = urls;`): Reached 0 of 3 at
+    # --unwind 8, and still 0 at 16, 64 and 256 -- so it is NOT a bound the
+    # solver could satisfy with a shorter array, and raising the budget is not
+    # the answer.  Under --partial-loops the same file reaches 3 of 3.  Real
+    # subject: ensdomains GatewayProvider, every unit U/unreachable, 0.8 s.
+    #
+    # SOUNDNESS.  --partial-loops ADMITS behaviours, so a `forall input in
+    # box` certification query is asked over a SUPERSET of the real ones: a
+    # proof that survives it survives on the real subset, which is the
+    # direction certification needs.  What it weakens is the non-vacuity
+    # WITNESS -- an enumerated witness may not be realisable -- and that is
+    # exactly what Stage 4's forge reference gate re-checks physically: a test
+    # built on an unrealisable witness is red on the unmodified contract and
+    # is dropped there, as every other unit is.
+    #
+    # BLAST RADIUS.  This is the bounded-holds RETRY, which a unit reaches
+    # only after the ordinary run enumerated NOTHING.  Subjects that already
+    # produce witnesses never enter this path, so the existing PUT corpus
+    # cannot move.
+    if "--esbmc-arg=--partial-loops" not in out:
+        out.append("--esbmc-arg=--partial-loops")
     return out
 
 
