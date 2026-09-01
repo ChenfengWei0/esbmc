@@ -93,6 +93,11 @@ CONCRETE_FALLBACK_WITNESS_CHECKS = {
     "NOT-CERTIFIED-CE-FALLBACK",
     "PARTIAL-WITNESS-JOURNAL-CE",
     "UNKNOWN",
+    # Stage 2's single-point witness query is refuted BY CONSTRUCTION on a
+    # hash-split path (ESBMC's keccak is a free symbol); the forge reference
+    # gate is the authenticator instead.  See solidity_path_generalise.py
+    # run_single_point_witness_check.
+    "HASH-UNDECIDED-FORGE",
 }
 CE_REPLAY_MANIFEST_SCHEMA = "veriput-ce-replay-manifest/1"
 CE_REPLAY_CANDIDATE_SCHEMA = "veriput-ce-replay-candidate/1"
@@ -6463,6 +6468,46 @@ def _format_valid_saturated_concrete_only_skip(valid: int, put_valid: int) -> st
             "subject budget can target PUT/R1/R2 units")
 
 
+def _hash_undecided_fallback_count(cert_path: Path,
+                                   benchmark_key: str,
+                                   unit: str,
+                                   path_function: str | None = None) -> int:
+    """Not-certified paths whose witness verdict defers to the forge gate.
+
+    A unit CAN hold a certified region and still owe its killing power to a
+    hash-split sibling (ether_lotto play: the certified path is the rollback,
+    the bug lives in the hash arms), so these replays are emitted even when
+    n_certified > 0 -- unlike the concrete-only salvage, which by design only
+    fires on units with no certificate at all.
+    """
+    if not cert_path.exists():
+        return 0
+    count = 0
+    for line in cert_path.read_text(errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not _cert_row_matches(row, benchmark_key, unit, path_function):
+            continue
+        details = row.get("not_certified_details") or {}
+        if isinstance(details, list):
+            detail_rows = [d for d in details if isinstance(d, dict)]
+        elif isinstance(details, dict):
+            detail_rows = [v for v in details.values() if isinstance(v, dict)]
+        else:
+            detail_rows = []
+        for detail in detail_rows:
+            ce = detail.get("ce")
+            if (detail.get("witness_check") == "HASH-UNDECIDED-FORGE"
+                    and detail.get("concrete_fallback") is True
+                    and isinstance(ce, (dict, list)) and bool(ce)):
+                count += 1
+    return count
+
+
 def _is_concrete_only_stage4(n_certified: int,
                              n_cleared_fallback: int,
                              n_timeout_fallback: int,
@@ -10087,7 +10132,11 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                              args.forge_timeout,
                              path_function,
                              getattr(args, "esbmc", "") or None,
-                             emit_concrete_fallbacks=concrete_only_stage4,
+                             emit_concrete_fallbacks=(
+                                 concrete_only_stage4
+                                 or _hash_undecided_fallback_count(
+                                     cert_path, subject.benchmark_key, unit,
+                                     path_function) > 0),
                              foundry_fixture=job.get("source_stage2_fixture_path"),
                              concrete_replay_only=bool(
                                  getattr(args, "concrete_replay_only_ablation", False)),

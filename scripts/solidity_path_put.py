@@ -21893,6 +21893,65 @@ def assemble_put_source(emitted,
     return source
 
 
+
+_PRANK_TARGET_RE = re.compile(r"^\s*vm\.prank\(\s*(.+?)\s*\)\s*;\s*$")
+_CALL_VALUE_RE = re.compile(r"\{\s*value\s*:\s*([^}]+?)\s*\}")
+
+
+def fund_pranked_value_calls_for_case(source, test_name):
+    """Insert `vm.deal(<prank target>, <call value>)` before a governed call.
+
+    Modern forge deducts a pranked call's `{value: v}` from the PRANKED
+    account, but the ESBMC-emitted replay body funds `address(this)` (the
+    model where the test contract pays), so a value-bearing pranked call
+    reverts on insufficient funds before the unit's own code runs.  The PUT
+    emission path already funds the pranked sender (`establish_env_sender`);
+    this is the same repair for a concrete replay body that never went
+    through it.  MEASURED (ether_lotto play, HASH-UNDECIDED-FORGE replay):
+    without the deal the reference run is `EvmError: Revert` at 15983 gas;
+    with it the reference is green.  Only inserts when the body names no
+    earlier `vm.deal` for the same target, so a replay that deliberately
+    tracks the sender's balance is left alone.
+    """
+    lines = source.splitlines()
+    rx = re.compile(r"^\s*function\s+" + re.escape(test_name) + r"\s*\(")
+    start = end = None
+    for i, line in enumerate(lines):
+        if not rx.search(line):
+            continue
+        depth = line.count("{") - line.count("}")
+        j = i + 1
+        while j < len(lines):
+            depth += lines[j].count("{") - lines[j].count("}")
+            if depth <= 0:
+                break
+            j += 1
+        start, end = i + 1, j
+        break
+    if start is None:
+        return source
+    for i in range(start, end):
+        m = _PRANK_TARGET_RE.match(lines[i])
+        if not m:
+            continue
+        target = m.group(1)
+        j = i + 1
+        while j < end and (not lines[j].strip() or lines[j].lstrip().startswith("//")):
+            j += 1
+        if j >= end:
+            continue
+        v = _CALL_VALUE_RE.search(lines[j])
+        if not v:
+            continue
+        compact_target = target.replace(" ", "")
+        if any("vm.deal(" in prev and compact_target in prev.replace(" ", "")
+               for prev in lines[start:i]):
+            continue
+        lines.insert(i, f"    vm.deal({target}, {v.group(1)});")
+        return "\n".join(lines) + ("\n" if source.endswith("\n") else "")
+    return source
+
+
 def assemble_concrete_source(emitted,
                              case,
                              new_contract,
@@ -25641,6 +25700,8 @@ def main():
                     indent=2)
             return 1
         fixed_stats = concrete_oracle_stats(concrete_oracles)
+        if a.concrete_stage2_witness_check == "HASH-UNDECIDED-FORGE":
+            txt = fund_pranked_value_calls_for_case(txt, case[1])
         dest = os.path.join(a.forge_project, "test", f"{newc}.t.sol")
         with open(dest, "w") as f:
             f.write(txt)

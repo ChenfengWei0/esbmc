@@ -1509,6 +1509,46 @@ def enumeration_report_snapshot_path(cwd):
     return os.path.join(cwd, "enumeration-report.json")
 
 
+
+def _claim_reads_keccak_local(decision, fallback_path=None):
+    """Does this branch claim reference a local assigned from keccak256?
+
+    Source-level twin of the `__esbmc_hash_result` marker: the recorded
+    branch_claim is source text (`random == 0`), and the hash provenance
+    lives one line up in `uint random = uint(keccak256(...))`.  Read the
+    decision's own file and look for a keccak256 assignment to any
+    identifier the claim names.  Purely a trigger for deferring witness
+    authentication to forge -- a wrong positive costs one red replay at
+    the reference gate, never a counted test.
+    """
+    claim = str(decision.get("branch_claim") or "")
+    path = decision.get("file")
+    if not claim:
+        return False
+    if not path or not os.path.isfile(path):
+        # the recorded file is checkout-relative; the caller's --sol is the
+        # same flattened source by construction of the sweep
+        path = fallback_path
+    if not path:
+        return False
+    names = set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", claim)) - {
+        "true", "false", "uint", "uint256", "int", "int256", "bytes32",
+        "overflow", "require", "assert",
+    }
+    if not names:
+        return False
+    try:
+        with open(path, errors="replace") as handle:
+            source = handle.read()
+    except OSError:
+        return False
+    for name in names:
+        if re.search(r"\b" + re.escape(name) + r"\s*=[^;=][^;]*keccak256\s*\(",
+                     source):
+            return True
+    return False
+
+
 def generalise_progress_path(cwd):
     return os.path.join(cwd, "generalise-progress.json")
 
@@ -11464,6 +11504,48 @@ def main():
                     "DISCHARGED, so this path's witness satisfies the "
                     "compiler-inserted checks and its concrete replay test stands")
         if wv == "FAILED":
+            # ---- A HASH-SPLIT PATH'S SINGLE-POINT REFUTATION IS A MODEL ----
+            # ---- ARTIFACT, AND THE REAL KECCAK IS THE ONLY ARBITER      ----
+            #
+            # ESBMC models keccak as the free symbol `__esbmc_hash_result`, so
+            # on a path whose identity includes a hash-driven branch this query
+            # is REFUTED BY CONSTRUCTION: with every coordinate pinned the
+            # solver may still pick the other hash arm, and no ESBMC query can
+            # ever confirm the point walks this path.  Reality is not free --
+            # the EVM's keccak of the pinned inputs is one concrete value and
+            # exactly one sibling is real at this point.  Which one, only a
+            # real execution can say, so the verdict is downgraded to
+            # HASH-UNDECIDED-FORGE and the concrete replay is emitted; the
+            # forge reference gate (the test must be GREEN on the unmodified
+            # contract) is the authenticator this query cannot be.  A replay
+            # whose path is NOT the real one asserts the wrong post-state and
+            # goes red on the reference, so over-emission is filtered, never
+            # counted (MEASURED, ether_lotto play: paths 7/13 share one env
+            # point, keccak(pack(2**256-1, 0)) is even, so path 7 is real and
+            # path 13's replay is the red one).
+            # ⚠ NARROW ON PURPOSE: only when the path carries a hash decision
+            # and NO extcall-driven decision -- an extcall's return in a forge
+            # run is real code with real state, not a deferred coin flip.
+            _pd = path_decisions.get(enc) or {}
+            _decs = _pd.get("decisions") if isinstance(_pd, dict) else _pd
+            _decs = [d for d in (_decs or []) if isinstance(d, dict)]
+            _claims = [str(d.get("branch_claim") or "") for d in _decs]
+            _hashy = (any("__esbmc_hash_result" in c for c in _claims)
+                      or any(_claim_reads_keccak_local(d, args.sol) for d in _decs))
+            if _hashy and not any("extcall." in c for c in _claims):
+                witness_check[enc] = "HASH-UNDECIDED-FORGE"
+                print(f"[witness enc={enc}] REFUTED at the single point, but the "
+                      "path is hash-split and every coordinate is pinned: the "
+                      "refutation is the free-hash model artifact. Verdict "
+                      "HASH-UNDECIDED-FORGE -- the concrete replay is emitted "
+                      "and the forge reference gate decides")
+                return (". The single-point check was REFUTED, but this path's "
+                        "identity includes a hash-driven branch and ESBMC models "
+                        "the hash as a free symbol, so with every coordinate "
+                        "pinned the refutation is guaranteed by the model and "
+                        "says nothing about the real keccak. The concrete replay "
+                        "is emitted under HASH-UNDECIDED-FORGE; it stands only "
+                        "if forge shows it GREEN on the unmodified contract")
             print(f"[witness enc={enc}] ⛔ REFUTED at the single point: this "
                   "path gets NO test")
             return (". ⛔ AND NO TEST IS EMITTED FOR IT. The single-point check of "
@@ -11498,7 +11580,10 @@ def main():
             return False
         if not args.witness_check:
             return True
-        return witness_check.get(enc) == "SUCCESSFUL"
+        # HASH-UNDECIDED-FORGE: the single point could not be confirmed BY
+        # MODEL (free hash symbol); the forge reference gate downstream is the
+        # authenticator, so the replay is cleared for emission, not for trust.
+        return witness_check.get(enc) in ("SUCCESSFUL", "HASH-UNDECIDED-FORGE")
 
     for enc, box in sorted(pre_structural_regions.items()):
         key = (enc, 1)
