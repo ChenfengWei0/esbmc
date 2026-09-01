@@ -2853,6 +2853,56 @@ def _decision_is_pinned_msg_value_gate(*decisions, pins=None):
     return False
 
 
+# Environment coordinates a generated Foundry test can SET outright with a
+# cheatcode.  Authoritative table: NUMERIC_ENV_SETTERS / ADDRESS_ENV_SETTERS in
+# scripts/solidity_path_put.py; kept as a literal here because the generaliser
+# does not import the emitter.
+CHEATCODE_SETTABLE_ENV = frozenset((
+    "block.timestamp", "block.number", "block.chainid", "block.basefee",
+    "block.blobbasefee", "block.difficulty", "block.prevrandao",
+    "block.coinbase", "tx.gasprice", "msg.sender", "msg.value",
+))
+
+
+def _hash_split_is_env_forceable(dec_a, dec_b, ce_a, ce_b, extcall_context,
+                                 by_key):
+    """Is this sibling split a hash of a value the test can set outright?
+
+    Two conditions, both required:
+
+      1. every decision that actually SEPARATES the pair is hash/nondet driven
+         -- not an external call, whose return no cheatcode can set;
+      2. the two counterexamples disagree on at least one cheatcode-settable
+         environment coordinate, which is the value a per-path pin would fix.
+
+    Returns True to let the pair through to the ordinary region search.  See
+    the block comment at the call site for why this is refutation-safe.
+    """
+    separating = []
+    for d in dec_b or []:
+        key = (d.get("index"), d.get("function"), d.get("line"))
+        other = by_key.get(key)
+        if other is None or other.get("arm") == d.get("arm"):
+            continue
+        separating.append((d, other))
+    if not separating:
+        return False
+    for d, other in separating:
+        if (is_external_success_decision(d, extcall_context)
+                or is_external_success_decision(other, extcall_context)):
+            return False
+        claims = f"{d.get('branch_claim') or ''} {other.get('branch_claim') or ''}"
+        if "extcall." in claims:
+            return False
+        if not ("__esbmc_hash_result" in claims or "NONDET(" in claims):
+            return False
+    for name in CHEATCODE_SETTABLE_ENV:
+        if name in (ce_a or {}) and name in (ce_b or {}):
+            if str(ce_a[name]) != str(ce_b[name]):
+                return True
+    return False
+
+
 def uncontrolled_decision_splits(paths,
                                  path_decisions,
                                  coords,
@@ -2920,6 +2970,45 @@ def uncontrolled_decision_splits(paths,
                     claim = "external-call success"
                 evidence.append(f"decision#{d.get('index')} {claim}")
             if not evidence:
+                continue
+            # ⛔ A HASH SPLIT IS NOT AN UNCONTROLLED SPLIT WHEN THE HASH'S INPUT
+            # IS A CHEATCODE-SETTABLE ENVIRONMENT VALUE.
+            #
+            # The refusal's premise is that "a product region over the available
+            # coordinates cannot force one value of that uncontrolled decision
+            # while excluding the other".  That premise reads the decision's own
+            # relation terms, and a keccak comparison names only the hash
+            # RESULT, never the value hashed.  MEASURED on bugfix124
+            # rc_time_manipulation__ether_lotto: `play()` splits on
+            # `uint(keccak256(abi.encodePacked(block.timestamp))) % 2 == 0`, and
+            # both success paths were refused here -- so the only unit VeriPUT
+            # ever emitted for `play` was the msg.value != 10 ROLLBACK path,
+            # which behaves identically on the bug and on the fix.  The bug is
+            # entirely inside the success paths, so no test could reach it and
+            # the subject was unkillable by construction, not by weakness of the
+            # oracle.
+            #
+            # ESBMC models keccak as uninterpreted, so the SOLVER genuinely
+            # cannot pick a timestamp that lands on an arm -- that is what this
+            # filter was written for.  A generated test does not have to: it can
+            # WARP to the witness's own timestamp and let the EVM compute the
+            # real hash.  So when the sibling counterexamples disagree on a
+            # cheatcode-settable environment coordinate, a per-path pin of that
+            # coordinate is a candidate forcing, and the pair goes through the
+            # ordinary region search instead of being refused unseen.
+            #
+            # This admits nothing unsound.  If the real keccak disagrees with
+            # ESBMC's uninterpreted model at that timestamp, the arm is not
+            # realised, the emitted unit fails its own reference replay, and the
+            # existing reference-validity gate drops it -- the same gate every
+            # other unit passes through.  The cost of being wrong is the
+            # certify budget this filter was saving, never a false claim.
+            #
+            # ⛔ HASH ONLY.  An external call's return value is NOT settable by
+            # any cheatcode, so `extcall.*` and external-success decisions keep
+            # the refusal untouched.
+            if _hash_split_is_env_forceable(dec_a, dec_b, ce_a, ce_b,
+                                            extcall_context, by_key):
                 continue
             reason = ("STATICALLY INSEPARABLE: this path has a witnessed sibling "
                       "whose source-level split is driven by an ESBMC hash/nondet/"
