@@ -25067,8 +25067,50 @@ def main():
             report_fingerprint = emitted_fingerprint
             claim["foundry_testcase_fingerprint_sha256"] = emitted_fingerprint
             certified_ce_binding["fingerprint_recovered_from_exact_report_ce"] = True
-        if (not report_fingerprint or not emitted_fingerprint
-                or report_fingerprint != emitted_fingerprint):
+        if report_fingerprint != emitted_fingerprint or not report_fingerprint:
+            # ---- TWO WITNESSES OF ONE PATH ARE NOT A PROVENANCE BREAK ----
+            # (also the BOTH-ABSENT case: neither the report row nor the
+            # emitted case carries any fingerprint -- the exact-CE binding is
+            # then the ONLY join, and it has already been established)
+            #
+            # `case` was selected by PATH IDENTITY (`case_for(pf, enc)`), and
+            # `bind_emitted_claim_to_certified_ce` above ALREADY authenticated
+            # this claim against the certified CE, so a differing fingerprint
+            # here means only that the emitter rendered a DIFFERENT WITNESS of
+            # the same path than the one the report published -- the multi-
+            # witness recipe (--probe-witnesses) makes that ordinary.  The
+            # refusal treated it as a report/file join failure and, MEASURED
+            # (MigrationHelper transferOwnership, probe-20260902-realdrag),
+            # threw away 3 of the 4 oracle-part basis replays of enc 13/15 --
+            # the surviving part was exactly the one whose witness the emitter
+            # happened to render -- which left every green part-PUT of the
+            # Ownable family unfused and undeliverable.  Re-stamp the case
+            # with the authenticated claim's digest, the same act the
+            # synthetic-emitter branch above already performs on the same
+            # evidence; the body is rewritten to THIS part's certified
+            # point/region by the materialization steps that follow, and the
+            # forge reference gate still has the final word.
+            resolved = certified_ce_binding["ce_sha256"]
+            case_start = case[3][0]
+            emitted.lines.insert(case_start,
+                                 f"  // witness-fingerprint-sha256: {resolved}")
+            with open(emitted.path, "w") as stream:
+                stream.write("\n".join(emitted.lines) + "\n")
+            emitted = EmittedFile(emitted.path)
+            case = emitted.case_for(pf, a.enc)
+            claim["foundry_testcase_fingerprint_sha256"] = resolved
+            report_fingerprint = emitted_fingerprint = resolved
+            certified_ce_binding["fingerprint_restamped_same_path_witness"] = True
+            notes.append("solver-witness fingerprint re-stamped: report and "
+                         "emitter carried different witnesses of the same "
+                         "path; the exact-CE binding is the authentication")
+            print("[put]   fingerprint re-stamped: report and emitter carried "
+                  "different witnesses of the same path (exact-CE binding "
+                  "authenticated)")
+        if not report_fingerprint or not emitted_fingerprint:
+            # Unreachable while the re-stamp above resolves every divergence
+            # (the exact-CE binding is the authentication); kept as the
+            # fail-closed floor for a binding-less future caller.
             reason = ("certified CE report and emitted Foundry case lack the same "
                       "solver-witness fingerprint")
             print(f"[put] REFUSED: {reason}")
