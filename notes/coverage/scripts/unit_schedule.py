@@ -436,7 +436,9 @@ def _unit_cost_rank(unit: str, unit_info: dict | None) -> tuple[int, int, int]:
         tier += 20
     if mutability == "payable":
         tier += 10
-    return (tier, params, returns)
+    # Same-tier tie-break: call-free bodies first (see _internal_call_count for
+    # the measured cost cliff this encodes).  Uniform for every subject.
+    return (tier, int(unit_info.get("internal_call_count") or 0), params, returns)
 
 
 def _job_for_unit(row: dict, unit: str, ordinal: int, ast_cache_root: str | None,
@@ -539,6 +541,72 @@ def _static_obstacles_for_unit(row: dict, subject: dict, unit: str) -> list[dict
     }]
 
 
+_BUILTIN_CALL_NAMES = frozenset((
+    "require", "assert", "revert", "keccak256", "sha256", "ripemd160",
+    "ecrecover", "addmod", "mulmod", "selfdestruct", "blockhash", "gasleft",
+    "abi", "type", "payable", "address", "uint", "uint256", "int", "int256",
+    "bytes", "bytes32", "bool", "string"))
+
+
+def _internal_call_count(declaration: dict, by_id: dict | None = None) -> int:
+    """TRANSITIVE FunctionCall fan-out of the unit body, builtins excluded.
+
+    MEASURED 2026-09-03 (TestDateTime, campaign fix-20260903-tdt): every
+    tier-5 unit whose closure reaches the _daysToDate/_daysFromDate loops was
+    KILLED at the 60 s Stage-2 cap (getYear/getMonth/getDay/getDaysInMonth/
+    isLeapYear-public, 59 s each, 0 witnesses), while every unit with a
+    loop-free closure certified in 2-48 s.  295 s of the subject's 388 s
+    Stage-2 wall went to the five dead probes and the twelve certifiable
+    diff*/add*/sub* units were never attempted.  The direct count cannot
+    separate the two classes on wrapper contracts (every TestDateTime entry
+    delegates once into the API contract), so the count follows
+    referencedDeclaration edges, memoized and cycle-safe."""
+
+    def body_count(decl, seen):
+        decl_id = decl.get("id")
+        if decl_id in seen:
+            return 0
+        seen.add(decl_id)
+        count = 0
+        stack = [decl.get("body") or {}]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, dict):
+                if node.get("nodeType") == "FunctionCall":
+                    expr = node.get("expression") or {}
+                    name = str(expr.get("name") or
+                               (expr.get("memberName") if expr.get("nodeType") == "MemberAccess"
+                                else "") or "")
+                    if (str(node.get("kind") or "") == "functionCall"
+                            and name not in _BUILTIN_CALL_NAMES):
+                        count += 1
+                        ref = expr.get("referencedDeclaration")
+                        callee = (by_id or {}).get(ref)
+                        if callee is not None:
+                            count += body_count(callee, seen)
+                stack.extend(node.values())
+            elif isinstance(node, list):
+                stack.extend(node)
+        return count
+
+    return body_count(declaration, set())
+
+
+def _declarations_by_id(root) -> dict:
+    """id -> FunctionDefinition, over the whole compilation unit."""
+    out = {}
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if node.get("nodeType") == "FunctionDefinition":
+                out[node.get("id")] = node
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)
+    return out
+
+
 def _is_single_return_call(declaration: dict) -> bool:
     """Whether a public entry is only a forwarding `return callee(...)`."""
     statements = ((declaration.get("body") or {}).get("statements") or [])
@@ -578,6 +646,7 @@ def _ast_unit_infos(row: dict, subject: dict, unit: str, templates: list[dict]) 
     visit(ast)
     if target is None:
         return templates
+    declarations_by_id = _declarations_by_id(ast)
     template_arities = {int(item.get("parameter_count") or 0) for item in templates}
     resolved = []
     seen_signatures = set()
@@ -639,6 +708,7 @@ def _ast_unit_infos(row: dict, subject: dict, unit: str, templates: list[dict]) 
                 "path_function": (f"sol:@C@{subject.get('contract')}@F@{unit}#"
                                   f"{declaration.get('id')}"),
                 "delegating_wrapper": _is_single_return_call(declaration),
+                "internal_call_count": _internal_call_count(declaration, declarations_by_id),
             })
             # PROVENANCE, when the declaration came from a base contract. The
             # path function above is already rehomed onto the target, which is
