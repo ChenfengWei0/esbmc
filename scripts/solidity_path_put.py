@@ -14555,8 +14555,19 @@ def path_decision_assumes(path_decisions, coord_ident_abs, assigned_terms=None):
             texts = []
             tautology = False
             for lhs, op, rhs in group:
+                # `x$3` (ESBMC's declaration-id spelling) and `x` (the source
+                # spelling `assigned_source_locals` collects) are ONE variable.
+                # MEASURED (constructor_7 g7, fix-20260904-c7): the decision
+                # `!(x$3 > 0)` sits AFTER `x = 42;`, so its truth is about the
+                # written value, but the `$`-spelled term missed both the
+                # membership test and the `\w`-only identifier match, and the
+                # guard was rendered as an ENTRY `vm.assume(_pre_x_3 > 0)` --
+                # the deployed entry x is 0, every fuzz input was rejected, and
+                # all four body PUTs failed the reference Foundry gate.
                 stale_terms = [
-                    t for t in (lhs, rhs) if t in assigned_terms and re.match(r"^[A-Za-z_]\w*$", t)
+                    t for t in (lhs, rhs)
+                    if re.match(r"^[A-Za-z_]\w*(?:\$\d+)?$", t)
+                    and re.sub(r"\$\d+$", "", t) in assigned_terms
                 ]
                 if stale_terms:
                     skipped.append(f"{claim!r} (`{stale_terms[0]}` is assigned inside "
