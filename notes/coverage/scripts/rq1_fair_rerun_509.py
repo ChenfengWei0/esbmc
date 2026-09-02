@@ -29,7 +29,7 @@ from solidity_path_generalise import k_induction_proof_args as region_proof_args
 from solidity_path_put import k_induction_proof_args as oracle_proof_args  # noqa: E402
 
 DEFAULT_VERIPUT_ROOT = Path("/home/samson/workspace/VeriPUT")
-DEFAULT_OUTPUT_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1_KInduction_Fair600"
+DEFAULT_OUTPUT_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1" / "KInduction_Fair600"
 BENCHMARKS = ("peer182", "bugfix124", "real203")
 # 2026-08-26: real203 is 202 (compound-finance__comet__CometStorage excluded, see target_manifest.py)
 EXPECTED_COUNTS = {"peer182": 182, "bugfix124": 124, "real203": 202}
@@ -268,7 +268,7 @@ def main(argv=None) -> int:
         veriput_root = Path(args.veriput_root).expanduser().resolve()
         output_root = Path(args.output_root).expanduser().resolve()
         esbmc = Path(args.esbmc).expanduser().resolve()
-        expected_root = veriput_root / "Results" / "RQ1_KInduction_Fair600"
+        expected_root = veriput_root / "Results" / "RQ1" / "KInduction_Fair600"
         if output_root != expected_root:
             raise rq1_veriput_run.RQ1RunError(
                 f"--output-root must be the isolated frozen root {expected_root}")

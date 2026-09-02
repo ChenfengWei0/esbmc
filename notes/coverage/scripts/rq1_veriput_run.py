@@ -110,7 +110,7 @@ QUALITY_BUCKET_RANK = {
 
 DEFAULT_VERIPUT_ROOT = Path(os.environ.get("VERIPUT_ROOT", "/home/samson/workspace/VeriPUT"))
 DEFAULT_RESULT_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1" / "VeriPUT"
-DEFAULT_FAIR_RERUN_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1_KInduction_Fair600"
+DEFAULT_FAIR_RERUN_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1" / "KInduction_Fair600"
 DEFAULT_NOPUT_RERUN_ROOT = DEFAULT_VERIPUT_ROOT / "Results" / "RQ1_KInduction_NoPUT600"
 DEFAULT_AST_CACHE_ROOT = Path("/tmp/veriput_rq1_ast_cache")
 RQ3_ABLATION_ROOTS = {
@@ -227,7 +227,7 @@ def validate_roots(veriput_root: Path,
         allowed_results.append(veriput_root / "Results" / "RQ3" /
                                RQ3_ABLATION_ROOTS[rq3_ablation])
     if strict_case_wall_budget:
-        allowed_results.append(veriput_root / "Results" / "RQ1_KInduction_Fair600")
+        allowed_results.append(veriput_root / "Results" / "RQ1" / "KInduction_Fair600")
         allowed_results.append(veriput_root / "Results" / "RQ1_KInduction_NoPUT600")
     if not any(_is_under(result_root, allowed) for allowed in allowed_results):
         allowed_text = ", ".join(str(path) for path in allowed_results)

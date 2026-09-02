@@ -30,7 +30,7 @@ def allowed_result_roots(veriput_root: Path = VERIPUT_ROOT) -> list[Path]:
     root = Path(veriput_root)
     return [
         root / "Results" / "RQ1" / "VeriPUT",
-        root / "Results" / "RQ1_KInduction_Fair600",
+        root / "Results" / "RQ1" / "KInduction_Fair600",
     ]
 
 

@@ -4231,7 +4231,7 @@ contract GuardedResolver is Ownable {
 
 
 def test_transparent_proxy_stage2_fixture_uses_zero_storage_runtime():
-    subject_dir = Path("/home/samson/workspace/VeriPUT/Results/Stress243/subjects/"
+    subject_dir = Path("/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Stress243/subjects/"
                        "compound-finance__comet__ConfiguratorProxy")
     solast = Path("/tmp/veriput_rq1_ast_cache/stress243/"
                   "stress243__compound-finance__comet__ConfiguratorProxy/flat.sol.solast")
@@ -4299,7 +4299,7 @@ def test_transparent_proxy_stage2_fixture_uses_zero_storage_runtime():
 
 
 def test_asset_list_stage2_fixture_uses_empty_array_revert_path():
-    subject_dir = Path("/home/samson/workspace/VeriPUT/Results/Stress243/subjects/"
+    subject_dir = Path("/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Stress243/subjects/"
                        "compound-finance__comet__AssetList")
     solast = Path("/tmp/veriput_rq1_ast_cache/stress243/"
                   "stress243__compound-finance__comet__AssetList/flat.sol.solast")
@@ -4371,7 +4371,7 @@ def test_asset_list_stage2_fixture_uses_empty_array_revert_path():
 
 
 def test_euler_cash_stage2_fixture_uses_proxy_entry_zero_storage():
-    subject_dir = Path("/home/samson/workspace/VeriPUT/Results/Stress243/subjects/"
+    subject_dir = Path("/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Stress243/subjects/"
                        "euler-xyz__euler-vault-kit__Borrowing")
     solast = Path("/tmp/veriput_rq1_ast_cache/stress243/"
                   "stress243__euler-xyz__euler-vault-kit__Borrowing/flat.sol.solast")
@@ -4434,7 +4434,7 @@ def test_euler_cash_stage2_fixture_uses_proxy_entry_zero_storage():
 
 
 def test_peg_stability_module_fixture_uses_legal_foundry_constructor():
-    subject_dir = Path("/home/samson/workspace/VeriPUT/Results/Stress243/subjects/"
+    subject_dir = Path("/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Stress243/subjects/"
                        "euler-xyz__euler-vault-kit__PegStabilityModule")
     solast = Path("/tmp/veriput_rq1_ast_cache/stress243/"
                   "stress243__euler-xyz__euler-vault-kit__PegStabilityModule/"
@@ -4505,7 +4505,7 @@ def test_peg_stability_module_fixture_uses_legal_foundry_constructor():
 
 
 def test_transfer_helper_fixture_retains_zero_conduit_rejection():
-    subject_dir = Path("/home/samson/workspace/VeriPUT/Results/Stress243/subjects/"
+    subject_dir = Path("/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Stress243/subjects/"
                        "ProjectOpenSea__seaport__TransferHelper")
     solast = Path("/tmp/veriput_rq1_ast_cache/stress243/"
                   "stress243__ProjectOpenSea__seaport__TransferHelper/flat.sol.solast")
@@ -4569,7 +4569,7 @@ def test_transfer_helper_fixture_retains_zero_conduit_rejection():
 
 
 def test_euler_initialize_fixture_rebuilds_direct_deploy_guard():
-    subject_dir = Path("/home/samson/workspace/VeriPUT/Results/Stress243/subjects/"
+    subject_dir = Path("/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Stress243/subjects/"
                        "euler-xyz__euler-vault-kit__Initialize")
     solast = Path("/tmp/veriput_rq1_ast_cache/stress243/"
                   "stress243__euler-xyz__euler-vault-kit__Initialize/flat.sol.solast")
@@ -4649,7 +4649,7 @@ def test_euler_initialize_fixture_rebuilds_direct_deploy_guard():
 
 
 def test_euler_risk_manager_fixture_retains_proxy_auth_rejection():
-    subject_dir = Path("/home/samson/workspace/VeriPUT/Results/Stress243/subjects/"
+    subject_dir = Path("/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Stress243/subjects/"
                        "euler-xyz__euler-vault-kit__RiskManager")
     solast = Path("/tmp/veriput_rq1_ast_cache/stress243/"
                   "stress243__euler-xyz__euler-vault-kit__RiskManager/flat.sol.solast")
@@ -4764,7 +4764,7 @@ def test_bounded_wrapper_fixtures_remove_extra_arithmetic_checks():
     bad = 0
     for spec in specs:
         subject_dir = Path(
-            "/home/samson/workspace/VeriPUT/Results/Stress243/subjects") / spec["subject"]
+            "/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Stress243/subjects") / spec["subject"]
         solast = (Path("/tmp/veriput_rq1_ast_cache/stress243") /
                   f"stress243__{spec['subject']}/flat.sol.solast")
         if not subject_dir.exists() or not solast.exists():

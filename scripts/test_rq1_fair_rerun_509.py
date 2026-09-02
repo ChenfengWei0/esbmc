@@ -57,7 +57,7 @@ def test_strict_root_is_isolated(tmp_path):
     veriput = tmp_path / "VeriPUT"
     cache = tmp_path / "cache"
     canonical = veriput / "Results" / "RQ1" / "VeriPUT"
-    isolated = veriput / "Results" / "RQ1_KInduction_Fair600"
+    isolated = veriput / "Results" / "RQ1" / "KInduction_Fair600"
     rq1.validate_roots(veriput, isolated, cache, strict_case_wall_budget=True)
     try:
         rq1.validate_roots(veriput, canonical, cache, strict_case_wall_budget=True)

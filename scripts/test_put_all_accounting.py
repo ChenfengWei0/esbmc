@@ -1188,7 +1188,7 @@ contract FixedArrayGetter {
         bad += check("stale-public-getter-fallback-is-rejected", stale_rows, [])
     finally:
         put_all.enumerate_subject_units = old_enumerate
-    transfer_root = os.path.join("/home/samson/workspace/VeriPUT/Results/Stress243/subjects",
+    transfer_root = os.path.join("/home/samson/workspace/VeriPUT/scripts/Results/workdirs/Stress243/subjects",
                                  "ProjectOpenSea__seaport__TransferHelper")
     transfer_flat = os.path.join(transfer_root, "flat.sol")
     transfer_ast = os.path.join("/tmp/veriput_rq1_ast_cache/stress243",
