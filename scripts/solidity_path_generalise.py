@@ -4203,6 +4203,70 @@ def normalise_sender_keyed_slot(coord, sender_value, alias=None):
     return "state." + (alias or {}).get(name, name) + "[msg.sender]" + tail
 
 
+STATE_MEMBER_KEYED_SLOT = re.compile(
+    r"^state\.([A-Za-z_$][A-Za-z0-9_$]*)"
+    r"\[(?:\((?:unsigned _ExtInt\(\d+\))?\))?\(&[A-Za-z0-9_]+\)->"
+    r"([A-Za-z_$][A-Za-z0-9_$]*)\](.*)$")
+
+
+def normalise_state_member_keyed_payloads(paths):
+    """`state.m[(&Obj)->f]tail` -> `state.m[<payload state.f>]tail`.
+
+    ESBMC's harvest reports a mapping entry whose key is another STATE SCALAR
+    under the object-member spelling, and the certify branch REFUSES any query
+    that names such a coordinate ("cannot be expressed: the target does not
+    resolve to a state coordinate"). The same payload also carries the scalar
+    itself (`state.f`), and the literal-keyed spelling `state.m[<value>]` IS
+    expressible -- the harvest itself prints entries that way. So the entry is
+    renamed to the literal key its own payload reports, exactly as
+    `normalise_sender_keyed_payloads` folds sender-keyed entries.
+
+    MEASURED (Core_Fi_V3.transfer, fix-20260904-c7): `state.balances[(&
+    _ESBMC_Object_Core_Fi_V3)->teamAddress]` made every certification query
+    refuse, so the ERC20 body path was NOT-CERTIFIED in 11 s with 3 witnesses
+    in hand -- the whole transfer-family drag of the peer182/SynTest cell.
+
+    Returns (paths, evidence, key_sources). `key_sources` names the state
+    scalars used as keys (suffix-stripped): the literal-keyed entry denotes the
+    path's slot only while the scalar HOLDS that value at entry, so the caller
+    must keep `state.<f>` as a bounded coordinate -- the dependency filter
+    would otherwise drop it as unreferenced (the unit body never reads it) and
+    the certificate would silently quantify over the key it depends on.
+    """
+    out, evidence, key_sources = [], [], set()
+    for entry in paths or ():
+        enc, depth, ce = entry[0], entry[1], entry[2]
+        if not ce:
+            out.append(entry)
+            continue
+        renamed, fresh = [], dict(ce)
+        for coord in list(ce):
+            m = STATE_MEMBER_KEYED_SLOT.match(str(coord))
+            if not m:
+                continue
+            name, field, tail = m.group(1), m.group(2), m.group(3)
+            bare = re.sub(r"\$\d+$", "", field)
+            key_value = None
+            for spelling in (f"state.{field}", f"state.{bare}"):
+                if spelling in ce and str(ce[spelling]).lstrip("-").isdigit():
+                    key_value = str(ce[spelling])
+                    break
+            if key_value is None:
+                continue
+            target = f"state.{name}[{key_value}]{tail}"
+            if target == coord:
+                continue
+            # the concrete entry's own value wins if both spellings exist
+            fresh.setdefault(target, ce[coord])
+            fresh.pop(coord, None)
+            renamed.append(f"{coord} -> {target}")
+            key_sources.add(bare)
+        if renamed:
+            evidence.append(f"enc={enc}: " + ", ".join(sorted(renamed)))
+        out.append((enc, depth) + (fresh, ) + tuple(entry[3:]))
+    return out, evidence, key_sources
+
+
 def normalise_sender_keyed_payloads(paths, alias=None):
     """Rewrite every path's payload in place of its sender-keyed slot names.
 
@@ -9544,6 +9608,16 @@ def main():
         except (OSError, ValueError):
             sender_key_alias = {}
     paths, sender_key_evidence = normalise_sender_keyed_payloads(paths, sender_key_alias)
+    paths, member_key_evidence, member_key_sources = (
+        normalise_state_member_keyed_payloads(paths))
+    if member_key_evidence:
+        print("[coords] MAPPING ENTRY KEYED BY A STATE SCALAR renamed to the "
+              "literal key its own payload reports (the object-member spelling "
+              "is one no certification query can express): " +
+              "; ".join(member_key_evidence) +
+              ". The key scalar(s) " + ", ".join(sorted(member_key_sources)) +
+              " are kept as coordinates below: the literal-keyed entry denotes "
+              "this path's slot only while the scalar holds that value at entry")
     if sender_key_evidence:
         print("[coords] MAPPING ENTRY AT THE WITNESS'S OWN msg.sender folded "
               "onto the symbolic slot, so one mapping is one coordinate rather "
@@ -9872,6 +9946,21 @@ def main():
                                                                     args.unit,
                                                                     declaration_id=declaration_id)
     if state_deps is not None and not has_assembly:
+        # A state scalar that KEYS a live mapping coordinate is load-bearing
+        # even though the unit body never reads it: the literal-keyed entry
+        # (see normalise_state_member_keyed_payloads) denotes this path's slot
+        # only while the scalar holds that value at entry. Dropping it as
+        # "unreferenced" would leave the key free and the certificate about a
+        # moving slot. MEASURED: Core_Fi_V3.transfer dropped state.teamAddress
+        # here while state.balances[...->teamAddress] stayed a coordinate.
+        if member_key_sources:
+            kept_keys = sorted(k for k in member_key_sources
+                               if k not in {str(n) for n in state_deps})
+            state_deps = set(str(n) for n in state_deps) | member_key_sources
+            if kept_keys:
+                print("[coords] state scalar(s) kept as KEY OF A LIVE MAPPING "
+                      "COORDINATE despite being outside the unit's read "
+                      "closure: " + ", ".join(kept_keys))
         coords, dropped_state_coords, dropped_state_reasons = (
             filter_unreferenced_state_coords(coords, state_deps))
         state_dependency_filter = {
