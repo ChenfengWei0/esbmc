@@ -3114,6 +3114,13 @@ def main():
                          f"({STRONG_RECIPE_VERSION}). Unlike --recipe-version, "
                          "this sets the actual region, slot, environment, and "
                          "ESBMC arguments used by the benchmark runner.")
+    ap.add_argument("--allow-recursive-helper-enumeration",
+                    action="store_true",
+                    help="pass the same flag to the driver so a unit whose call "
+                         "closure reaches a self-recursive helper (e.g. a flattened "
+                         "SafeMath.sub that resolves to itself) is still enumerated "
+                         "for branch-function-coverage, rather than refused whole. "
+                         "Branches that do not touch the helper are then covered.")
     ap.add_argument("--scope", default="focus",
                     help="driver dispatcher alphabet: focus, whole, or a "
                          "comma-separated function set. Default focus preserves "
@@ -4313,6 +4320,8 @@ def main():
                 cmd.append("--log-ladder")
             for extra in args.certify_esbmc_arg:
                 cmd.append(f"--certify-esbmc-arg={extra}")
+            if args.allow_recursive_helper_enumeration:
+                cmd.append("--allow-recursive-helper-enumeration")
             if args.static_extcall_inseparable:
                 cmd.append("--static-extcall-inseparable")
             if args.static_uncontrolled_inseparable:
