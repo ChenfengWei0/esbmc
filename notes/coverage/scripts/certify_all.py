@@ -755,11 +755,22 @@ def bounded_holds_retry_cmd(cmd, workdir, retry_hint=None):
         out.append("--level0")
     if "--skip-bracket" not in out:
         out.append("--skip-bracket")
+    # A retry WIDENS the run it repeats; it never shortens the transaction
+    # bound or narrows the dispatcher alphabet.  The hint says max_tx 2 and an
+    # AST-derived alphabet, which widens a T=1 focus run; applied to a run
+    # already at T >= 2, or already at `whole` / a wider set, it would shrink it.
+    current_max_tx = _driver_option(out, "--max-tx")
     hinted_max_tx = retry_hint.get("max_tx")
     if hinted_max_tx is not None:
-        out = replace_driver_value_flag(out, "--max-tx", hinted_max_tx)
+        try:
+            keep = current_max_tx is not None and int(current_max_tx) >= int(hinted_max_tx)
+        except (TypeError, ValueError):
+            keep = False
+        if not keep:
+            out = replace_driver_value_flag(out, "--max-tx", hinted_max_tx)
+    current_scope = _driver_option(out, "--scope") or "focus"
     hinted_scope = retry_hint.get("scope")
-    if hinted_scope:
+    if hinted_scope and current_scope == "focus":
         out = replace_driver_value_flag(out, "--scope", hinted_scope)
     hinted_unwind = retry_hint.get("unwind")
     if not has_driver_esbmc_arg(out, "--unwind") and not has_driver_esbmc_arg(

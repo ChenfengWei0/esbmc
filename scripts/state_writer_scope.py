@@ -271,6 +271,278 @@ def writer_scope_for_unit(ast_path, contract, unit):
     return [unit] + ordered, evidence
 
 
+
+# ---- SETUP SCOPE FOR A TRANSACTION BUDGET T > 1 ----------------------------
+#
+# `writer_scope_for_unit` above answers a narrower question (which units a
+# bounded-holds RETRY needs) and keeps its answer unchanged, because the
+# published T=1 runs depend on it.  This function answers the question a run at
+# T > 1 asks for every unit: which externally-callable units may run BEFORE the
+# target so that the state the target reads can differ from the constructor's.
+#
+# It differs from `writer_scope_for_unit` in three ways, each a miss there:
+#
+# 1. State the target reads AND writes is still wanted.  `withdraw` both reads
+#    and writes `deposits`; its guard reads the value an earlier `deposit`
+#    left, which its own write cannot supply.  (FeeVault: the old answer was
+#    {withdraw, setDiscount}, missing `deposit`.)
+# 2. Reads and writes are collected over the CALL CLOSURE: modifiers, internal
+#    and private functions, `super` calls and overrides with the same name in
+#    the linearized chain.  `transfer` that delegates to `_transfer` reads and
+#    writes nothing in its own body.
+# 3. A state variable handed to a function through a `storage` parameter
+#    (library `using for`, internal helpers) counts as read and written, and
+#    `.push()` / `.pop()` on a state array count as writes.
+#
+# A read is any mention of a state variable other than as the root of the
+# left-hand side of a plain `=` or the operand of `delete`.
+
+def _callables_by_id(ast):
+    """id -> FunctionDefinition/ModifierDefinition node, over the whole AST."""
+    out = {}
+    for node in _walk(ast):
+        if node.get("nodeType") in ("FunctionDefinition", "ModifierDefinition"):
+            if node.get("id") is not None:
+                out[node.get("id")] = node
+    return out
+
+
+def _chain_callables_by_name(chain):
+    """name -> [definitions] for every function/modifier of the chain."""
+    out = {}
+    for owner in chain:
+        for declaration in owner.get("nodes") or []:
+            if declaration.get("nodeType") in ("FunctionDefinition", "ModifierDefinition"):
+                name = declaration.get("name")
+                if name:
+                    out.setdefault(name, []).append(declaration)
+    return out
+
+
+def _referenced_callables(definition, callables, chain_by_name):
+    """Definitions `definition` may enter: modifiers, called functions, overrides."""
+    found = []
+    for node in _walk(definition):
+        ref = node.get("referencedDeclaration")
+        if ref is None or ref == definition.get("id"):
+            continue
+        target = callables.get(ref)
+        if target is None:
+            continue
+        found.append(target)
+        # A virtual function called from a base runs the most-derived override;
+        # every same-named definition of the chain is kept (a superset).
+        for same in chain_by_name.get(target.get("name") or "", []):
+            if same is not target:
+                found.append(same)
+    return found
+
+
+def _storage_parameter_positions(definition):
+    params = ((definition.get("parameters") or {}).get("parameters")) or []
+    return [i for i, p in enumerate(params) if p.get("storageLocation") == "storage"]
+
+
+def _local_reads_writes(definition, state_ids, callables):
+    """(reads, writes) of state variables in one definition's own body."""
+    aliases = _storage_pointer_aliases(definition, state_ids)
+    resolved = dict(state_ids)
+    resolved.update(aliases)
+    writes = set(unit_state_writes(definition, state_ids))
+    pure_lhs = set()  # AST ids of Identifiers that are only written, not read
+
+    def lhs_root_identifier(expr):
+        node = expr
+        for _ in range(32):
+            if not isinstance(node, dict):
+                return None
+            kind = node.get("nodeType")
+            if kind == "Identifier":
+                return node
+            if kind == "IndexAccess":
+                node = node.get("baseExpression")
+            elif kind == "MemberAccess":
+                node = node.get("expression")
+            elif kind == "TupleExpression":
+                comps = [c for c in (node.get("components") or []) if c]
+                if len(comps) != 1:
+                    return None
+                node = comps[0]
+            else:
+                return None
+        return None
+
+    for node in _walk(definition):
+        kind = node.get("nodeType")
+        if kind == "Assignment" and node.get("operator") == "=":
+            ident = lhs_root_identifier(node.get("leftHandSide"))
+            if ident is not None:
+                pure_lhs.add(ident.get("id"))
+        elif kind == "UnaryOperation" and node.get("operator") == "delete":
+            ident = lhs_root_identifier(node.get("subExpression"))
+            if ident is not None:
+                pure_lhs.add(ident.get("id"))
+        elif kind == "FunctionCall":
+            callee = node.get("expression") or {}
+            if callee.get("nodeType") == "MemberAccess":
+                base = callee.get("expression")
+                root = _root_state_name(base, resolved)
+                if root and callee.get("memberName") in ("push", "pop"):
+                    writes.add(root)
+                target = callables.get(callee.get("referencedDeclaration"))
+                # `x.f(args)` with `using L for T`: x is the first parameter.
+                if root and target is not None and 0 in _storage_parameter_positions(target):
+                    writes.add(root)
+            target = callables.get(callee.get("referencedDeclaration"))
+            if target is not None:
+                positions = _storage_parameter_positions(target)
+                offset = 1 if (callee.get("nodeType") == "MemberAccess"
+                               and target.get("kind") == "function"
+                               and _bound_receiver(callee, callables)) else 0
+                args = node.get("arguments") or []
+                for pos in positions:
+                    idx = pos - offset
+                    if 0 <= idx < len(args):
+                        root = _root_state_name(args[idx], resolved)
+                        if root:
+                            writes.add(root)
+    reads = set()
+    for node in _walk(definition):
+        if node.get("nodeType") == "Identifier" and node.get("id") not in pure_lhs:
+            name = resolved.get(node.get("referencedDeclaration"))
+            if name:
+                reads.add(name)
+    return reads, writes
+
+
+def _bound_receiver(member_access, callables):
+    """True when `a.f(...)` passes `a` as f's first argument (`using for`)."""
+    base = member_access.get("expression") or {}
+    # `Lib.f(...)` names the library itself: no bound receiver.
+    if base.get("nodeType") == "Identifier":
+        type_string = ((base.get("typeDescriptions") or {}).get("typeString") or "")
+        if type_string.startswith("type(library ") or type_string.startswith("type(contract "):
+            return False
+    if base.get("nodeType") == "Identifier" and base.get("name") == "super":
+        return False
+    return True
+
+
+def _closure_reads_writes(definition, state_ids, callables, chain_by_name, memo):
+    """(reads, writes) over everything `definition` may execute."""
+    key = definition.get("id")
+    if key in memo:
+        return memo[key]
+    memo[key] = (set(), set())  # recursion guard
+    reads, writes = _local_reads_writes(definition, state_ids, callables)
+    reads, writes = set(reads), set(writes)
+    stack = list(_referenced_callables(definition, callables, chain_by_name))
+    seen = {key}
+    while stack:
+        current = stack.pop()
+        cid = current.get("id")
+        if cid in seen:
+            continue
+        seen.add(cid)
+        r, w = _local_reads_writes(current, state_ids, callables)
+        reads |= r
+        writes |= w
+        stack.extend(_referenced_callables(current, callables, chain_by_name))
+    memo[key] = (reads, writes)
+    return reads, writes
+
+
+def setup_scope_for_unit(ast_path, contract, unit):
+    """(scope_names, evidence) for a run at transaction budget T > 1.
+
+    scope_names = [unit] + every other externally-callable unit whose call
+    closure writes a state variable that the target's call closure reads.
+    Returns [unit] alone when no such writer exists.
+    """
+    ast = _ast_root(ast_path)
+    if ast is None:
+        return [], [f"setup scope unavailable: AST {ast_path!r} unreadable"]
+    chain = _contract_nodes(ast, contract)
+    if chain is None:
+        return [], [f"setup scope unavailable: contract {contract!r} absent from AST"]
+    state_ids = _state_declaration_ids(chain)
+    definitions = _function_definitions(chain)
+    targets = [d for d in definitions if d.get("name") == unit]
+    if not targets:
+        return [], [f"setup scope: unit {unit!r} is not an externally-callable function"]
+    if not state_ids:
+        return [unit], ["setup scope: contract declares no state variable"]
+    callables = _callables_by_id(ast)
+    chain_by_name = _chain_callables_by_name(chain)
+    memo = {}
+    read = set()
+    for target in targets:
+        read |= _closure_reads_writes(target, state_ids, callables, chain_by_name, memo)[0]
+    if not read:
+        return [unit], [f"setup scope: {unit} reads no state variable"]
+    writers = {}
+    for definition in definitions:
+        name = definition.get("name")
+        if name == unit:
+            continue
+        if definition.get("stateMutability") in ("view", "pure"):
+            continue
+        written = _closure_reads_writes(definition, state_ids, callables, chain_by_name, memo)[1]
+        overlap = written & read
+        if overlap:
+            writers.setdefault(name, set()).update(overlap)
+    ordered = sorted(writers, key=lambda n: (-len(writers[n]), n))
+    evidence = [f"{unit} reads " + ", ".join(sorted(read))]
+    evidence += [f"{name} writes " + ", ".join(sorted(writers[name])) for name in ordered]
+    return [unit] + ordered, evidence
+
+
+def nonview_scope_for_unit(ast_path, contract, unit):
+    """(scope_names, evidence) for a run at transaction budget T > 1.
+
+    scope_names = [unit] + every externally-callable entry of the contract whose
+    most-derived definition is not `view`/`pure` (fallback and receive included,
+    under ESBMC's names "fallback"/"receive").  Dropping view/pure entries from
+    the dispatcher cannot change the reachable entry states: under solc >= 0.8 a
+    view/pure body cannot write storage, emit, transfer value or call a
+    state-changing function, and its external calls compile to STATICCALL.  The
+    focus list matches by NAME, so a name is kept when ANY of its overloads is
+    state-changing (conservative), and the target is kept even when it is view.
+    """
+    ast = _ast_root(ast_path)
+    if ast is None:
+        return [], [f"nonview scope unavailable: AST {ast_path!r} unreadable"]
+    chain = _contract_nodes(ast, contract)
+    if chain is None:
+        return [], [f"nonview scope unavailable: contract {contract!r} absent from AST"]
+    by_signature = {}
+    for owner in chain:  # most-derived first: the first definition seen wins
+        for declaration in owner.get("nodes") or []:
+            if declaration.get("nodeType") != "FunctionDefinition":
+                continue
+            kind = declaration.get("kind") or "function"
+            if kind == "constructor":
+                continue
+            if kind in ("fallback", "receive"):
+                name = kind
+            else:
+                name = declaration.get("name")
+                if not name or declaration.get("visibility") not in ("public", "external"):
+                    continue
+            params = tuple(str((p.get("typeDescriptions") or {}).get("typeString"))
+                           for p in (declaration.get("parameters") or {}).get("parameters") or [])
+            by_signature.setdefault((name, params), declaration.get("stateMutability"))
+    keep, dropped = set(), set()
+    for (name, _params), mutability in by_signature.items():
+        (dropped if mutability in ("view", "pure") else keep).add(name)
+    dropped -= keep
+    names = [unit] + sorted(keep - {unit})
+    evidence = [f"nonview scope: {len(keep - {unit})} state-changing entries kept, "
+                f"{len(dropped - {unit})} view/pure entries dropped: "
+                + ",".join(sorted(dropped - {unit}))]
+    return names, evidence
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser(description=__doc__,
@@ -279,8 +551,11 @@ def main():
     ap.add_argument("--contract", required=True)
     ap.add_argument("--unit", required=True)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--setup", action="store_true",
+                    help="use setup_scope_for_unit (runs at T > 1)")
     args = ap.parse_args()
-    scope, evidence = writer_scope_for_unit(args.ast, args.contract, args.unit)
+    fn = setup_scope_for_unit if args.setup else writer_scope_for_unit
+    scope, evidence = fn(args.ast, args.contract, args.unit)
     if args.json:
         print(json.dumps({"scope": scope, "evidence": evidence}, indent=2))
         return 0

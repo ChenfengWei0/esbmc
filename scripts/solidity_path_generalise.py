@@ -164,7 +164,37 @@ FOCUS_CLOSURE_PRUNE_MARKER = "no body for function __ESBMC_focus_closure_prune_v
 FOCUS_CLOSURE_PRUNE_OPT_OUT = "--no-focus-closure-prune"
 
 
-def run(esbmc,
+QUERY_LOG = "esbmc-queries.jsonl"
+
+
+def _query_log(cwd, record):
+    """Append one accounting row (never raises: accounting must not change a run)."""
+    try:
+        with open(os.path.join(cwd, QUERY_LOG), "a") as stream:
+            stream.write(json.dumps(record, default=str) + "\n")
+    except BudgetStop:
+        raise  # the budget signal must reach the partial-result path
+    except Exception:
+        pass
+
+
+def run(esbmc, sol, contract, extra, max_tx, timeout, cwd, *args, **kwargs):
+    """Every ESBMC invocation of this driver, timed and logged to <cwd>/esbmc-queries.jsonl
+    with the stage that issued it (enumerate_paths / outer_round / certify), so the
+    600 s budget can be split into enumeration vs region search vs certification."""
+    stage = sys._getframe(1).f_code.co_name
+    started_wall, started = time.time(), time.monotonic()
+    out = _run_unlogged(esbmc, sol, contract, extra, max_tx, timeout, cwd, *args, **kwargs)
+    # the focus-closure-prune fallback re-runs ESBMC inside this call: count both
+    retried = "[run] FOCUS-CLOSURE-PRUNE VIOLATION" in (out or "")
+    _query_log(cwd, {"kind": "esbmc", "stage": stage, "t_start": round(started_wall, 3),
+                     "wall_s": round(time.monotonic() - started, 3), "timeout_s": timeout,
+                     "max_tx": max_tx, "esbmc_invocations": 2 if retried else 1,
+                     "pid": os.getpid()})
+    return out
+
+
+def _run_unlogged(esbmc,
         sol,
         contract,
         extra,
@@ -8296,6 +8326,34 @@ def certify(esbmc,
     nb = dict(box)
     nb[coord] = (lo, hi)
     return v, nb, wit, punches, unexp, why, safety_wits
+
+
+_certify_unlogged = certify
+
+
+def certify(esbmc, sol, contract, unit, enc, depth, box, ce, pins, max_tx, timeout, cwd,
+            *args, **kwargs):
+    """One region-certification query, logged to <cwd>/esbmc-queries.jsonl with the
+    candidate region (box, holes), the verdict and the refuting witness: the region
+    candidates the verifier rejected, and their counterexamples, stay on disk."""
+    started_wall, started = time.time(), time.monotonic()
+    result = _certify_unlogged(esbmc, sol, contract, unit, enc, depth, box, ce, pins, max_tx,
+                               timeout, cwd, *args, **kwargs)
+    try:
+        v, nb, wit, punches, unexp, why, safety_wits = result
+        _query_log(cwd, {"kind": "certify", "unit": unit, "enc": enc, "depth": depth,
+                         "box": box, "holes": kwargs.get("holes"), "pins": pins,
+                         "establish": kwargs.get("establish"), "max_tx": max_tx,
+                         "timeout_s": timeout, "verdict": v, "witness": wit,
+                         "safety_witnesses": safety_wits, "unknown_why": why,
+                         "t_start": round(started_wall, 3),
+                         "wall_s": round(time.monotonic() - started, 3), "pid": os.getpid(),
+                         "note": "wall_s includes this query's own kind=esbmc rows; never sum both"})
+    except BudgetStop:
+        raise  # the budget signal must reach the partial-result path
+    except Exception:
+        pass
+    return result
 
 
 def resolve_scope(scope, focus_flag, unit):

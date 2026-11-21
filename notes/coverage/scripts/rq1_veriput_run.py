@@ -229,6 +229,9 @@ def validate_roots(veriput_root: Path,
     if strict_case_wall_budget:
         allowed_results.append(veriput_root / "Results" / "RQ1" / "KInduction_Fair600")
         allowed_results.append(veriput_root / "Results" / "RQ1_KInduction_NoPUT600")
+        # Transaction-budget (T > 1) runs for the TOSEM revision: kept out of the
+        # published Results tree until they are audited.
+        allowed_results.append(veriput_root / "Work" / "tx_budget")
     if not any(_is_under(result_root, allowed) for allowed in allowed_results):
         allowed_text = ", ".join(str(path) for path in allowed_results)
         raise RQ1RunError(f"--result-root must be under one of {allowed_text}; got {result_root}")
@@ -4620,7 +4623,7 @@ def _target_cost_key(veriput_root: Path, row: dict) -> tuple[int, int, str]:
         candidates = [
             veriput_root / "Results" / dirname / "subjects" / subject_id / "flat.sol",
         ]
-        if bench in ("bugfix124", "peer182"):
+        if bench in ("bugfix124", "peer182", "stress243"):
             candidates.append(veriput_root / "scripts" / "Results" / "workdirs" / dirname /
                               "subjects" / subject_id / "flat.sol")
         for flat in candidates:
@@ -4767,6 +4770,82 @@ def apply_stage2_flag(schedule: dict, enabled: bool, flag: str, key: str) -> dic
         jobs.append(job)
     updated["jobs"] = jobs
     updated[key] = True
+    return updated
+
+
+
+def _argv_set(argv: list[str], flag: str, value: str) -> list[str]:
+    out, i, done = [], 0, False
+    while i < len(argv):
+        if argv[i] == flag and i + 1 < len(argv):
+            out += [flag, value]
+            i += 2
+            done = True
+            continue
+        out.append(argv[i])
+        i += 1
+    if not done:
+        out += [flag, value]
+    return out
+
+
+def apply_stage2_transaction_budget(schedule: dict, subject, max_tx: int,
+                                    dispatch_scope: str, query_max_tx: int) -> dict:
+    """Run every Stage-2 job at transaction budget T = max_tx.
+
+    T counts the call to the target as the last transaction (paper, 4.2.1).
+    The dispatcher alphabet the T-1 earlier transactions draw from is:
+      focus  -- the target only (the T=1 default; earlier calls re-enter it);
+      whole  -- every public/external function of the contract;
+      setup  -- the target plus every unit whose call closure writes state the
+                target's call closure reads (state_writer_scope.setup_scope_for_unit);
+      nonview -- every public/external entry except view/pure ones, plus the
+                target (state_writer_scope.nonview_scope_for_unit).
+    A job that already asks for more (the internal-target wrapper asks for
+    `whole` at 2) keeps the larger value.  At T=1 with `focus` this is a no-op.
+    """
+    if max_tx <= 1 and dispatch_scope == "focus" and not query_max_tx:
+        return schedule
+    updated = dict(schedule)
+    jobs = []
+    record = {}
+    for current in schedule.get("jobs") or []:
+        job = dict(current)
+        argv = [str(arg) for arg in job.get("certify_argv") or []]
+        unit = _argv_value(argv, "--unit") or str(job.get("unit") or "")
+        old_tx = int(_argv_value(argv, "--max-tx") or 1)
+        argv = _argv_set(argv, "--max-tx", str(max(old_tx, int(max_tx))))
+        old_scope = _argv_value(argv, "--scope") or "focus"
+        evidence = []
+        if old_scope == "whole" or dispatch_scope == "whole":
+            scope = "whole"
+        elif dispatch_scope in ("setup", "nonview"):
+            from state_writer_scope import nonview_scope_for_unit, setup_scope_for_unit
+            derive = setup_scope_for_unit if dispatch_scope == "setup" else nonview_scope_for_unit
+            try:
+                names, evidence = derive(str(subject.solast or ""),
+                                         str(subject.contract or ""), unit)
+            except Exception as exc:  # derivation failure: keep the job runnable
+                names, evidence = [], [f"{dispatch_scope} scope derivation failed: {exc}"]
+            if dispatch_scope == "nonview" and not names:
+                scope = "whole"   # cannot derive the list: fall back to the full alphabet
+            else:
+                scope = ",".join(names) if len(names) >= 2 else "focus"
+        else:
+            scope = old_scope
+        if scope != "focus" or "--scope" in argv:
+            argv = _argv_set(argv, "--scope", scope)
+        if query_max_tx:
+            argv = _argv_set(argv, "--query-max-tx", str(int(query_max_tx)))
+        job["certify_argv"] = argv
+        job["transaction_budget"] = {"max_tx": max(old_tx, int(max_tx)), "scope": scope,
+                                     "query_max_tx": int(query_max_tx or 0),
+                                     "scope_evidence": evidence}
+        record[unit] = job["transaction_budget"]
+        jobs.append(job)
+    updated["jobs"] = jobs
+    updated["transaction_budget"] = {"max_tx": int(max_tx), "dispatch_scope": dispatch_scope,
+                                     "query_max_tx": int(query_max_tx or 0), "units": record}
     return updated
 
 
@@ -9086,6 +9165,10 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
             schedule, bool(getattr(args, "no_coordinate_writer_retry", False)))
         schedule = apply_stage2_flag(schedule, bool(getattr(args, "log_ladder", False)),
                                      "--log-ladder", "log_ladder")
+        schedule = apply_stage2_transaction_budget(
+            schedule, subject, int(getattr(args, "max_tx", 1) or 1),
+            str(getattr(args, "dispatch_scope", "focus") or "focus"),
+            int(getattr(args, "query_max_tx", 0) or 0))
         annotate_stage2_runtime_policy(schedule, args)
     except Exception as exc:  # Fail-soft at subject granularity.
         result_status = "error"
@@ -9597,7 +9680,10 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                 retry_shard_path = _stage2_retry_cert_shard_path(cert_path, idx, unit,
                                                                  "bounded-holds")
                 retry_argv = _bounded_holds_retry_argv(cert_argv,
-                                                       max_tx=args.bounded_holds_retry_max_tx,
+                                                       max_tx=max(
+                                                           args.bounded_holds_retry_max_tx,
+                                                           int(_argv_value(cert_argv, "--max-tx")
+                                                               or 1)),
                                                        unwind=args.bounded_holds_retry_unwind,
                                                        out_path=retry_shard_path)
                 retry_remaining_s = _remaining(deadline)
@@ -11378,6 +11464,18 @@ def main(argv=None) -> int:
                     "claim was bounded-holds, retry that unit once with a "
                     "deeper bounded profile before giving up; use "
                     "--no-bounded-holds-retry to disable")
+    ap.add_argument("--max-tx", type=int, default=1,
+                    help="transaction budget T for every Stage-2 job (counts the "
+                         "target call). Default 1 = the published configuration.")
+    ap.add_argument("--dispatch-scope", choices=("focus", "whole", "setup", "nonview"),
+                    default="focus",
+                    help="dispatcher alphabet of the T-1 earlier transactions: focus "
+                         "(target only), whole (every public/external function), setup "
+                         "(target + units whose call closure writes state the target "
+                         "reads). See apply_stage2_transaction_budget.")
+    ap.add_argument("--query-max-tx", type=int, default=0,
+                    help="passed to certify_all: transaction bound of the certification "
+                         "queries (0 = same as --max-tx). Used with --free-entry-state.")
     ap.add_argument("--bounded-holds-retry-max-tx",
                     type=int,
                     default=2,

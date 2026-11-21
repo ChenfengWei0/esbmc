@@ -29,6 +29,9 @@ KNOWN_SUBJECT_ROOTS = {
     "bugfix124": VERIPUT_ROOT / "Results" / "BugFix124" / "subjects",
 }
 FALLBACK_SUBJECT_ROOTS = {
+    # Results/Stress243 was folded into scripts/Results/workdirs (results-dir
+    # reorganisation); the subjects are byte-for-byte the same tree.
+    "stress243": (VERIPUT_ROOT / "scripts" / "Results" / "workdirs" / "Stress243" / "subjects", ),
     "peer182": (VERIPUT_ROOT / "scripts" / "Results" / "workdirs" / "Peer182" / "subjects", ),
     "bugfix124": (VERIPUT_ROOT / "scripts" / "Results" / "workdirs" / "BugFix124" / "subjects", ),
 }

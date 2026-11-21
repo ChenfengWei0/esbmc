@@ -76,6 +76,10 @@ def _stress_prepared_subjects(root: Path) -> set[str]:
 def _stress_prepared_meta(root: Path) -> dict[str, dict]:
     subjects = root / "Results" / "Stress243" / "subjects"
     if not subjects.is_dir():
+        fallback = root / "scripts" / "Results" / "workdirs" / "Stress243" / "subjects"
+        if fallback.is_dir():
+            subjects = fallback
+    if not subjects.is_dir():
         raise TargetManifestError(f"missing prepared stress subjects: {subjects}")
     usable = {}
     for meta_path in sorted(subjects.glob("*/meta.json")):
