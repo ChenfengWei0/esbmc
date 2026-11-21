@@ -10877,6 +10877,22 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     return row, detail
 
 
+def _pause_requested(args) -> bool:
+    path = getattr(args, "pause_file", None)
+    return bool(path) and Path(path).exists()
+
+
+def _run_subject_unless_paused(target_row: dict, dataset_label: str, args):
+    """PAUSE (--pause-file exists): a subject that has not STARTED yet is not started --
+    no journal row, no case directory -- so a later --resume-exact run gives it its full,
+    untouched budget.  Subjects already running are never interrupted (their wall clock
+    is the measurement)."""
+    if _pause_requested(args):
+        print(f"[rq1] PAUSED: not started {target_row['subject_id']}", flush=True)
+        return None, None
+    return run_subject(target_row, dataset_label, args)
+
+
 def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                           done: dict[str, dict], args) -> int:
     selected = [
@@ -10892,7 +10908,9 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                 f"[rq1] {dataset_label} {target_row['subject_id']} "
                 f"contract={target_row.get('contract')}",
                 flush=True)
-            row, _detail = run_subject(target_row, dataset_label, args)
+            row, _detail = _run_subject_unless_paused(target_row, dataset_label, args)
+            if row is None:
+                continue
             _append_jsonl(journal, row)
             write_dataset_manifest(Path(args.result_root), dataset_label, journal)
             attempted += 1
@@ -10913,11 +10931,14 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                 f"[rq1] queued {dataset_label} {target_row['subject_id']} "
                 f"contract={target_row.get('contract')}",
                 flush=True)
-            futures[executor.submit(run_subject, target_row, dataset_label, args)] = target_row
+            futures[executor.submit(_run_subject_unless_paused, target_row, dataset_label,
+                                    args)] = target_row
         for future in as_completed(futures):
             target_row = futures[future]
             try:
                 row, _detail = future.result()
+                if row is None:  # paused before it started
+                    continue
             except Exception as exc:  # Subject-level fail-soft.
                 now = round(time.time(), 3)
                 row = {
@@ -11571,6 +11592,15 @@ def main(argv=None) -> int:
     ap.add_argument("--resume",
                     action="store_true",
                     help="skip subject keys already present in results.jsonl")
+    ap.add_argument("--resume-exact",
+                    action="store_true",
+                    help="resume a stopped/paused run: every subject with a journal row is "
+                    "final (no weak-row retry); every other subject runs fresh")
+    ap.add_argument("--pause-file",
+                    default=None,
+                    help="if this file exists, subjects that have not started are not "
+                    "started (running ones finish); the run then exits. Resume with "
+                    "--resume-exact")
     ap.add_argument("--adopt-only",
                     action="store_true",
                     help="normalize and adopt retained subject artifacts, then "
@@ -11652,9 +11682,13 @@ def main(argv=None) -> int:
             validate_jobs(args)
         if args.ce_replay_only and not args.ce_replay_manifest:
             raise RQ1RunError("--ce-replay-only requires --ce-replay-manifest")
+        # --resume-exact is the one resume allowed under the strict budget: it feeds NO
+        # history into any subject (no adoption, no weak-row retry, no reused cache); it
+        # only skips subjects whose run already finished with a journal row.
         if args.strict_case_wall_budget and (args.ce_replay_manifest or args.ce_replay_only
                                              or args.ce_collection_only or args.adopt_only
-                                             or args.fallback_only or args.resume):
+                                             or args.fallback_only
+                                             or (args.resume and not args.resume_exact)):
             raise RQ1RunError(
                 "--strict-case-wall-budget forbids history-fed, partial, adoption, and resume "
                 "modes; run every target through the same fresh pipeline")
@@ -11689,8 +11723,40 @@ def main(argv=None) -> int:
             adopt_existing_subject_results(result_root, dataset_label, rows, journal, done)
             write_dataset_manifest(result_root, dataset_label, journal)
             return 0
-        done = _latest_rows(journal) if args.resume and not args.redo else {}
-        if args.resume and not args.redo and not args.ce_collection_only:
+        if getattr(args, "resume_exact", False):
+            if args.redo or args.ce_collection_only:
+                raise RQ1RunError("--resume-exact cannot be combined with --redo / CE collection")
+            # Every recorded subject is final: NO retry of weak or empty rows (a retry would
+            # give that subject a second budget).  Unrecorded subjects -- never started, or
+            # stopped mid-run (their case dir is set aside as .incomplete.) -- run fresh.
+            done = _latest_rows(journal)
+            stamp = f"{int(time.time())}.{os.getpid()}"
+            set_aside = []
+            for target_row in rows:
+                sid = target_row["subject_id"]
+                if _run_key(sid) in done:
+                    continue
+                # A subject without a row runs as in a fresh run: whatever an interrupted
+                # attempt left (case dir, AST cache, certification scratch) is moved aside,
+                # never adopted or reused.
+                leftovers = [result_root / dataset_label / "subjects" / _safe_name(sid)]
+                leftovers += [p for p in ast_cache_root.glob(f"*/*__{_safe_name(sid)}")]
+                leftovers += [p for p in ast_cache_root.glob(f"*/{dataset_label}/{_safe_name(sid)}")]
+                for path in leftovers:
+                    if path.exists():
+                        target = path.with_name(f"{path.name}.incomplete.{stamp}")
+                        path.rename(target)
+                        set_aside.append(str(target))
+            print(f"[rq1] RESUME-EXACT: {len(done)} recorded subject(s) kept as final; "
+                  f"{sum(1 for r in rows if _run_key(r['subject_id']) not in done)} to run fresh; "
+                  f"{len(set_aside)} leftover path(s) of interrupted attempts set aside",
+                  flush=True)
+            for path in set_aside:
+                print(f"[rq1]   set aside {path}", flush=True)
+        else:
+            done = _latest_rows(journal) if args.resume and not args.redo else {}
+        if args.resume and not args.redo and not args.ce_collection_only \
+                and not getattr(args, "resume_exact", False):
             done = adopt_existing_subject_results(result_root, dataset_label, rows, journal, done)
             retryable = retryable_resume_rows(done, args.resume_quality_floor)
             if retryable:
