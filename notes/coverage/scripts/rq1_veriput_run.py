@@ -10802,7 +10802,11 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
     # are still summarized normally; only cross-directory stale adoption is
     # disabled for this isolated entry point.
     stale_row = None
-    if not getattr(args, "ce_replay_only", False):
+    # Under the strict budget a subject's row is its OWN attempt only: an interrupted
+    # attempt set aside by --resume-exact (.incomplete.) must never be adopted, or the row
+    # would be the better of two budgets.  (A fresh strict arm has no such dirs at all.)
+    if not getattr(args, "ce_replay_only", False) and not getattr(
+            args, "strict_case_wall_budget", False):
         stale_row = _best_stale_artifact_row(target_row, dataset_label, case_dir, row)
         row = _adopt_stale_artifacts(row, stale_row)
     final_valid_tests = [test for test in row.get("valid_tests") or [] if isinstance(test, dict)]
@@ -11130,7 +11134,8 @@ def run_selected_subjects(rows: list[dict], dataset_label: str, journal: Path,
                 row.update(_bounded_holds_retry_policy(args))
                 case_dir = (Path(args.result_root) / dataset_label / "subjects" /
                             _safe_name(target_row["subject_id"]))
-                stale_row = _best_stale_artifact_row(target_row, dataset_label, case_dir, row)
+                stale_row = (None if getattr(args, "strict_case_wall_budget", False) else
+                             _best_stale_artifact_row(target_row, dataset_label, case_dir, row))
                 row = _adopt_stale_artifacts(row, stale_row)
                 if _write_normalized_case_result(
                         case_dir,
