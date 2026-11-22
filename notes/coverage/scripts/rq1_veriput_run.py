@@ -10234,7 +10234,18 @@ def run_subject(target_row: dict, dataset_label: str, args) -> tuple[dict, dict]
                              # emitted replay and the corpus, and emission happens
                              # inside the same stage-4 wall deadline, so the 600s
                              # case budget is unchanged.
-                             emit_concrete_fallbacks=True,
+                             # --published-concrete-fallback-gate restores the gate the
+                             # published v40 T=1 rows ran under (before 657052608b), so a
+                             # run compared against them does not differ in this policy.
+                             emit_concrete_fallbacks=(
+                                 True if not getattr(args, "published_concrete_fallback_gate",
+                                                     False)
+                                 else (_is_concrete_only_stage4(
+                                     n_certified, n_cleared_fallback, n_timeout_fallback,
+                                     n_complete_witness_fallback, n_partial_journal_fallback)
+                                     or _hash_undecided_fallback_count(
+                                         cert_path, subject.benchmark_key, unit,
+                                         path_function) > 0)),
                              foundry_fixture=job.get("source_stage2_fixture_path"),
                              concrete_replay_only=bool(
                                  getattr(args, "concrete_replay_only_ablation", False)),
@@ -11499,6 +11510,11 @@ def main(argv=None) -> int:
                          "(target only), whole (every public/external function), setup "
                          "(target + units whose call closure writes state the target "
                          "reads). See apply_stage2_transaction_budget.")
+    ap.add_argument("--published-concrete-fallback-gate", action="store_true",
+                    help="Stage 4 emits cleared concrete fallbacks only for a unit with no "
+                         "certified region (or a hash-undecided fallback): the gate of the "
+                         "published v40 rows, replaced on 2026-09-02 (657052608b) by "
+                         "always-emit. Use it for a run that is compared with those rows.")
     ap.add_argument("--query-max-tx", type=int, default=0,
                     help="passed to certify_all: transaction bound of the certification "
                          "queries (0 = same as --max-tx). Used with --free-entry-state.")
