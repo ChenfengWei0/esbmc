@@ -9501,6 +9501,18 @@ def main():
     # that took 311s at 3 is what --query-max-tx exists to shorten. Default
     # 0 = the enumeration's bound, i.e. exactly the previous behaviour.
     query_max_tx = int(args.query_max_tx or 0) or args.max_tx
+    # VERIPUT_QUERY_SCOPE=focus: queries that run at --solidity-max-tx 1 while the enumeration
+    # ran at a larger budget (--query-max-tx 1) see only the target call, so their dispatcher
+    # alphabet is the unit alone, as in the published T=1 run (scope=focus).  The enumeration
+    # keeps the full scope.  Measured 2026-11-25 (ChinaCoin.allowance, T=1): with the
+    # multi-function alphabet the certify query used its whole 60 s cap and certified nothing;
+    # with the unit alone it certified in 2 s.  Default (unset): unchanged behaviour.
+    query_focus = focus
+    if (os.environ.get("VERIPUT_QUERY_SCOPE") == "focus" and query_max_tx == 1
+            and args.max_tx > 1 and focus):
+        query_focus = args.unit
+        print(f"[query] VERIPUT_QUERY_SCOPE=focus: 1-transaction queries dispatch only "
+              f"{args.unit}; the enumeration keeps {focus}")
     if query_max_tx != args.max_tx:
         print(f"[query] --query-max-tx {query_max_tx}: outer-box rounds and certification "
               f"queries run at --solidity-max-tx {query_max_tx}; the enumeration ran at "
@@ -10965,7 +10977,7 @@ def main():
             cwd,
             values_by_coord=cand,
             ast=args.ast,
-            focus=focus,
+            focus=query_focus,
             memlimit=args.memlimit,
             esbmc_args=args.esbmc_arg,
             establish=outer_establish(l0_coords)) if l0_coords else (
@@ -11133,7 +11145,7 @@ def main():
                                                                 cwd,
                                                                 values_by_coord=cand2,
                                                                 ast=args.ast,
-                                                                focus=focus,
+                                                                focus=query_focus,
                                                                 memlimit=args.memlimit,
                                                                 esbmc_args=args.esbmc_arg,
                                                                 establish=outer_establish(
@@ -11421,7 +11433,7 @@ def main():
                                   cwd,
                                   geometric=True,
                                   ast=args.ast,
-                                  focus=focus,
+                                  focus=query_focus,
                                   memlimit=args.memlimit,
                                   values_by_coord=eq_values,
                                   extra_values=probe_extra,
@@ -11521,7 +11533,7 @@ def main():
                                   cwd,
                                   spans=spans,
                                   ast=args.ast,
-                                  focus=focus,
+                                  focus=query_focus,
                                   memlimit=args.memlimit,
                                   values_by_coord=eq_values,
                                   extra_values=probe_extra,
@@ -11632,7 +11644,7 @@ def main():
                                                     _witness_timeout,
                                                     cwd,
                                                     ast=args.ast,
-                                                    focus=focus,
+                                                    focus=query_focus,
                                                     memlimit=args.memlimit,
                                                     holes={},
                                                     esbmc_args=tuple(args.esbmc_arg),
@@ -12026,7 +12038,7 @@ def main():
                     certify_timeout,
                     cwd,
                     ast=args.ast,
-                    focus=focus,
+                    focus=query_focus,
                     memlimit=args.memlimit,
                     holes=holes,
                     esbmc_args=tuple(args.esbmc_arg),
@@ -12119,7 +12131,7 @@ def main():
                         certify_timeout,
                         cwd,
                         ast=args.ast,
-                        focus=focus,
+                        focus=query_focus,
                         memlimit=args.memlimit,
                         holes=holes,
                         # ⛔ THIS RE-QUERY DROPPED --esbmc-arg, and that
